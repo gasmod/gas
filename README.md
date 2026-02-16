@@ -182,7 +182,7 @@ func (m *Module) Close() error { return nil }
 
 ```go
 gas.NewApp(
-	gas.WithConfig(gas.Config{
+	gas.WithConfig(&gas.Config{
 		Addr:            ":3000", // default ":8080"
 		ReadTimeout:     10 * time.Second, // default 5s
 		WriteTimeout:    20 * time.Second, // default 10s

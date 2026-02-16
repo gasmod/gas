@@ -21,7 +21,7 @@ type App struct {
 	eventBus      *EventBus
 	activeModules map[string]Module
 	modules       []Module
-	cfg           Config
+	cfg           *Config
 	mu            sync.Mutex
 }
 
@@ -30,7 +30,7 @@ type AppOption func(*App)
 
 // WithConfig sets the server configuration. If not provided,
 // DefaultConfig() is used.
-func WithConfig(cfg Config) AppOption {
+func WithConfig(cfg *Config) AppOption {
 	return func(a *App) { a.cfg = cfg }
 }
 

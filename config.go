@@ -35,8 +35,8 @@ type Config struct {
 }
 
 // DefaultConfig returns a Config with sensible defaults.
-func DefaultConfig() Config {
-	return Config{
+func DefaultConfig() *Config {
+	return &Config{
 		Addr:            ":8080",
 		ReadTimeout:     5 * time.Second,
 		WriteTimeout:    10 * time.Second,
