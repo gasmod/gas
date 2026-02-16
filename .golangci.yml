@@ -155,10 +155,6 @@ linters:
       - testdata
 
 output:
-  formats:
-    colored-line-number:
-      path: stdout
-  sort-results: true
   sort-order:
     - linter
     - severity
