@@ -20,8 +20,8 @@ type App struct {
 	middlewareReg *MiddlewareRegistry
 	eventBus      *EventBus
 	activeModules map[string]Module
-	modules       []Module
 	cfg           *Config
+	modules       []Module
 	mu            sync.Mutex
 }
 
