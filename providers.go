@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"io"
+	"io/fs"
 	"net/http"
 	"time"
 )
@@ -66,4 +67,7 @@ type StorageProvider interface {
 type UIProvider interface {
 	Render(w http.ResponseWriter, name string, data any) error
 	RenderWithStatus(w http.ResponseWriter, status int, name string, data any) error
+	RegisterTemplate(name string, content []byte)
+	RegisterTemplatesFS(fsys fs.FS) error
+	RegisterFuncs(funcs map[string]any)
 }
