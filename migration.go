@@ -16,6 +16,8 @@ type Migration struct {
 // their migrations. The implementation lives in a separate module
 // (gas-migrate) and is wired in by the base server.
 type MigrationManager interface {
+	Module
+
 	// Register adds a migration and tracks which module owns it.
 	Register(module string, m Migration)
 

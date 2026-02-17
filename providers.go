@@ -3,6 +3,7 @@ package gas
 import (
 	"context"
 	"database/sql"
+	"html/template"
 	"io"
 	"io/fs"
 	"net/http"
@@ -69,5 +70,5 @@ type UIProvider interface {
 	RenderWithStatus(w http.ResponseWriter, status int, name string, data any) error
 	RegisterTemplate(name string, content []byte)
 	RegisterTemplatesFS(fsys fs.FS) error
-	RegisterFuncs(funcs map[string]any)
+	RegisterFuncs(funcs template.FuncMap)
 }
