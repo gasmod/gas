@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"io"
+	"net/http"
 	"time"
 )
 
@@ -57,4 +58,12 @@ type StorageProvider interface {
 	Upload(ctx context.Context, key string, data io.Reader) error
 	Download(ctx context.Context, key string) (io.ReadCloser, error)
 	Delete(ctx context.Context, key string) error
+}
+
+// UIProvider abstracts template rendering. Implemented by gas-ui or any
+// other UI module. Modules that need to render HTML pages accept a
+// UIProvider through their functional options.
+type UIProvider interface {
+	Render(w http.ResponseWriter, name string, data any) error
+	RenderWithStatus(w http.ResponseWriter, status int, name string, data any) error
 }
