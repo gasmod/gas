@@ -2,13 +2,16 @@ package gas
 
 import (
 	"context"
+	"database/sql"
 	"io"
 	"time"
 )
 
-// DatabaseProvider abstracts database access. Implemented by gas-postgres,
-// gas-sqlite, or any other database module.
+// DatabaseProvider abstracts database access. Implemented by gas-database
+// or any other database module. DB() exposes the underlying *sql.DB so
+// that sqlc-generated code and transactions can use it directly.
 type DatabaseProvider interface {
+	DB() *sql.DB
 	Query(ctx context.Context, query string, args ...any) (Rows, error)
 	Exec(ctx context.Context, query string, args ...any) (Result, error)
 }
