@@ -126,13 +126,13 @@ bus.SubscribeWithOwner("billing", gas.SystemModuleClosed, func(data gas.EventDat
 
 Modules depend on interfaces, not implementations. Gas defines common providers that any module can accept:
 
-| Interface          | Methods                          |
-|--------------------|----------------------------------|
-| `DatabaseProvider` | `Query`, `Exec`                  |
-| `CacheProvider`    | `Get`, `Set`, `Delete`           |
-| `EmailProvider`    | `Send`                           |
-| `StorageProvider`  | `Upload`, `Download`, `Delete`   |
-| `MigrationManager` | `Register`, `RunPending`, `Down` |
+| Interface          | Methods                                                         |
+|--------------------|-----------------------------------------------------------------|
+| `DatabaseProvider` | `Query`, `Exec`                                                 |
+| `CacheProvider`    | `Get`, `Set`, `Delete`                                          |
+| `EmailProvider`    | `Send`                                                          |
+| `StorageProvider`  | `Upload`, `Download`, `Delete`                                  |
+| `MigrationManager` | `Register`, `RegisterSlice`, `RegisterFS`, `RunPending`, `Down` |
 
 ### Writing a Module
 
