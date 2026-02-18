@@ -99,13 +99,28 @@ router.Use(gas.MiddlewareFunc(func(next http.Handler) http.Handler {
 }))
 ```
 
+You can also use the `UseMiddlewareFunc` and `MiddlewareByName()` helpers to apply middleware func or by name respectively:
+
+```go
+router.UseMiddlewareFunc(func(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// logging, CORS, etc.
+		next.ServeHTTP(w, r)
+	})
+})
+```
+
+```go
+router.UseMiddlewareByName("require-auth")
+```
+
 ### Grouping Routes
 
 Use `Group()` for inline middleware scoping:
 
 ```go
 router.Group(func(sub *gas.Router) {
-	sub.Use(gas.MiddlewareByName("require-auth"))
+	sub.UseMiddlewareByName("require-auth")
 	sub.Handle("admin", "GET", "/admin/dashboard", m.dashboard)
 	sub.Handle("admin", "GET", "/admin/settings", m.settings)
 })

@@ -75,6 +75,17 @@ func (r *Router) Use(middleware ...Middleware) error {
 	return nil
 }
 
+// UseMiddlewareFunc applies a middleware function directly to the router by wrapping it as a MiddlewareFunc.
+func (r *Router) UseMiddlewareFunc(middleware func(http.Handler) http.Handler) {
+	_ = r.Use(MiddlewareFunc(middleware))
+}
+
+// UseMiddlewareByName applies a middleware to the router by resolving it from the registry using its name.
+// returns an error if the middleware is not registered.
+func (r *Router) UseMiddlewareByName(middleware string) error {
+	return r.Use(MiddlewareByName(middleware))
+}
+
 // Group creates an inline route group. The callback receives a sub-Router
 // that shares the parent's middleware registry and route tracking.
 func (r *Router) Group(fn func(sub *Router)) {
@@ -98,16 +109,16 @@ func (r *Router) Handle(module, method, path string, handler http.HandlerFunc, m
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	var h http.Handler = handler
-	for i := len(middleware) - 1; i >= 0; i-- {
-		fn, err := r.resolveMiddleware(middleware[i])
+	middlewareFuncs := make([]func(http.Handler) http.Handler, 0, len(middleware))
+	for _, m := range middleware {
+		fn, err := r.resolveMiddleware(m)
 		if err != nil {
 			return fmt.Errorf("gas: route %s %s: %w", method, path, err)
 		}
-		h = fn(h)
+		middlewareFuncs = append(middlewareFuncs, fn)
 	}
 
-	r.mux.Method(method, path, h)
+	r.mux.With(middlewareFuncs...).Method(method, path, handler)
 
 	r.routes[module] = append(r.routes[module], registeredRoute{
 		method: method,

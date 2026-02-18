@@ -421,15 +421,12 @@ func TestRouter_MultipleModules(t *testing.T) {
 func TestRouter_Use(t *testing.T) {
 	router := NewRouter()
 
-	err := router.Use(MiddlewareFunc(func(next http.Handler) http.Handler {
+	router.UseMiddlewareFunc(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("X-Global", "yes")
 			next.ServeHTTP(w, r)
 		})
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
+	})
 
 	router.Handle("test", "GET", "/hello", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -444,8 +441,39 @@ func TestRouter_Use(t *testing.T) {
 	}
 }
 
-func TestRouter_Use_Named(t *testing.T) {
+func TestRouter_UseMiddlewareOverride(t *testing.T) {
 	router := NewRouter()
+
+	router.UseMiddlewareFunc(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Global", "yes")
+			next.ServeHTTP(w, r)
+		})
+	})
+
+	router.UseMiddlewareFunc(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Global", "no") // override the middleware above
+			next.ServeHTTP(w, r)
+		})
+	})
+
+	router.Handle("test", "GET", "/hello", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest("GET", "/hello", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Header().Get("X-Global") != "no" {
+		t.Fatal("Later middleware override did not take effect")
+	}
+}
+
+func TestRouter_UseMiddlewareOrder(t *testing.T) {
+	router := NewRouter()
+
 	router.Register("auth", "add-global", func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("X-Named-Global", "yes")
@@ -453,7 +481,37 @@ func TestRouter_Use_Named(t *testing.T) {
 		})
 	})
 
-	err := router.Use(MiddlewareByName("add-global"))
+	router.Register("auth", "remove-global", func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Named-Global", "no")
+			next.ServeHTTP(w, r)
+		})
+	})
+
+	router.Handle("test", "GET", "/hello", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}, MiddlewareByName("add-global"), MiddlewareByName("remove-global"))
+
+	req := httptest.NewRequest("GET", "/hello", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Header().Get("X-Named-Global") != "no" {
+		t.Fatal("Middleware order was not respected")
+	}
+}
+
+func TestRouter_Use_Named(t *testing.T) {
+	router := NewRouter()
+
+	router.Register("auth", "add-global", func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Named-Global", "yes")
+			next.ServeHTTP(w, r)
+		})
+	})
+
+	err := router.UseMiddlewareByName("add-global")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -473,7 +531,7 @@ func TestRouter_Use_Named(t *testing.T) {
 
 func TestRouter_Use_UnknownNamed(t *testing.T) {
 	router := NewRouter()
-	err := router.Use(MiddlewareByName("nonexistent"))
+	err := router.UseMiddlewareByName("nonexistent")
 	if err == nil {
 		t.Fatal("expected error for unknown named middleware in Use")
 	}
@@ -483,12 +541,12 @@ func TestRouter_Group(t *testing.T) {
 	router := NewRouter()
 
 	router.Group(func(sub *Router) {
-		sub.Use(MiddlewareFunc(func(next http.Handler) http.Handler {
+		sub.UseMiddlewareFunc(func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("X-Group", "yes")
 				next.ServeHTTP(w, r)
 			})
-		}))
+		})
 		sub.Handle("test", "GET", "/grouped", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		})
