@@ -106,54 +106,63 @@ func TestEventData_Chaining(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// MiddlewareRegistry tests
+// Router.Register (middleware registry) tests
 // ---------------------------------------------------------------------------
 
-func TestMiddlewareRegistry_RegisterAndGet(t *testing.T) {
-	reg := NewMiddlewareRegistry()
+func TestRouter_RegisterAndResolve(t *testing.T) {
+	router := NewRouter()
 
 	called := false
-	reg.Register("auth", "require-auth", func(next http.Handler) http.Handler {
+	router.Register("auth", "require-auth", func(next http.Handler) http.Handler {
 		called = true
 		return next
 	})
 
-	mw, err := reg.Get("require-auth")
+	// Use the middleware via Handle to verify it resolves.
+	err := router.Handle("auth", "GET", "/test", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}, MiddlewareByName("require-auth"))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	req := httptest.NewRequest("GET", "/test", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
 	if !called {
 		t.Fatal("middleware was not called")
 	}
 }
 
-func TestMiddlewareRegistry_GetNotFound(t *testing.T) {
-	reg := NewMiddlewareRegistry()
-	_, err := reg.Get("nonexistent")
+func TestRouter_HandleUnknownNamedMiddleware(t *testing.T) {
+	router := NewRouter()
+	err := router.Handle("billing", "GET", "/test", func(w http.ResponseWriter, r *http.Request) {}, MiddlewareByName("nonexistent"))
 	if err == nil {
 		t.Fatal("expected error for unregistered middleware")
 	}
 }
 
-func TestMiddlewareRegistry_RemoveByModule(t *testing.T) {
-	reg := NewMiddlewareRegistry()
-	reg.Register("auth", "require-auth", func(next http.Handler) http.Handler { return next })
-	reg.Register("auth", "rate-limit", func(next http.Handler) http.Handler { return next })
-	reg.Register("billing", "billing-mw", func(next http.Handler) http.Handler { return next })
+func TestRouter_RemoveByModule_RemovesMiddleware(t *testing.T) {
+	router := NewRouter()
+	router.Register("auth", "require-auth", func(next http.Handler) http.Handler { return next })
+	router.Register("auth", "rate-limit", func(next http.Handler) http.Handler { return next })
+	router.Register("billing", "billing-mw", func(next http.Handler) http.Handler { return next })
 
-	reg.RemoveByModule("auth")
+	router.RemoveByModule("auth")
 
-	_, err := reg.Get("require-auth")
+	// Auth middleware should be gone.
+	err := router.Handle("test", "GET", "/a", func(w http.ResponseWriter, r *http.Request) {}, MiddlewareByName("require-auth"))
 	if err == nil {
 		t.Fatal("expected require-auth to be removed")
 	}
-	_, err = reg.Get("rate-limit")
+	err = router.Handle("test", "GET", "/b", func(w http.ResponseWriter, r *http.Request) {}, MiddlewareByName("rate-limit"))
 	if err == nil {
 		t.Fatal("expected rate-limit to be removed")
 	}
-	_, err = reg.Get("billing-mw")
+
+	// Billing middleware should still exist.
+	err = router.Handle("test", "GET", "/c", func(w http.ResponseWriter, r *http.Request) {}, MiddlewareByName("billing-mw"))
 	if err != nil {
 		t.Fatal("billing-mw should still exist")
 	}
@@ -256,8 +265,7 @@ func TestEventBus_ConcurrentEmit(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRouter_HandleAndServe(t *testing.T) {
-	reg := NewMiddlewareRegistry()
-	router := NewRouter(reg)
+	router := NewRouter()
 
 	err := router.Handle("auth", "POST", "/auth/login", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -280,18 +288,17 @@ func TestRouter_HandleAndServe(t *testing.T) {
 }
 
 func TestRouter_HandleWithMiddleware(t *testing.T) {
-	reg := NewMiddlewareRegistry()
-	reg.Register("auth", "add-header", func(next http.Handler) http.Handler {
+	router := NewRouter()
+	router.Register("auth", "add-header", func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("X-Test", "applied")
 			next.ServeHTTP(w, r)
 		})
 	})
 
-	router := NewRouter(reg)
 	err := router.Handle("billing", "GET", "/billing/plans", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-	}, "add-header")
+	}, MiddlewareByName("add-header"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,19 +312,41 @@ func TestRouter_HandleWithMiddleware(t *testing.T) {
 	}
 }
 
-func TestRouter_HandleUnknownMiddleware(t *testing.T) {
-	reg := NewMiddlewareRegistry()
-	router := NewRouter(reg)
+func TestRouter_HandleWithFuncMiddleware(t *testing.T) {
+	router := NewRouter()
 
-	err := router.Handle("billing", "GET", "/test", func(w http.ResponseWriter, r *http.Request) {}, "nonexistent")
+	err := router.Handle("billing", "GET", "/billing/plans", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}, MiddlewareFunc(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Inline", "yes")
+			next.ServeHTTP(w, r)
+		})
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("GET", "/billing/plans", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Header().Get("X-Inline") != "yes" {
+		t.Fatal("inline MiddlewareFunc middleware was not applied")
+	}
+}
+
+func TestRouter_HandleUnknownMiddleware(t *testing.T) {
+	router := NewRouter()
+
+	err := router.Handle("billing", "GET", "/test", func(w http.ResponseWriter, r *http.Request) {}, MiddlewareByName("nonexistent"))
 	if err == nil {
 		t.Fatal("expected error for unknown middleware")
 	}
 }
 
 func TestRouter_RemoveByModule(t *testing.T) {
-	reg := NewMiddlewareRegistry()
-	router := NewRouter(reg)
+	router := NewRouter()
 
 	router.Handle("auth", "GET", "/auth/me", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -344,8 +373,7 @@ func TestRouter_RemoveByModule(t *testing.T) {
 }
 
 func TestRouter_Mux(t *testing.T) {
-	reg := NewMiddlewareRegistry()
-	router := NewRouter(reg)
+	router := NewRouter()
 
 	mux := router.Mux()
 	if mux == nil {
@@ -354,8 +382,7 @@ func TestRouter_Mux(t *testing.T) {
 }
 
 func TestRouter_MultipleModules(t *testing.T) {
-	reg := NewMiddlewareRegistry()
-	router := NewRouter(reg)
+	router := NewRouter()
 
 	router.Handle("auth", "GET", "/auth/me", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("auth"))
@@ -388,6 +415,135 @@ func TestRouter_MultipleModules(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Router Use/Group/Route tests
+// ---------------------------------------------------------------------------
+
+func TestRouter_Use(t *testing.T) {
+	router := NewRouter()
+
+	err := router.Use(MiddlewareFunc(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Global", "yes")
+			next.ServeHTTP(w, r)
+		})
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	router.Handle("test", "GET", "/hello", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest("GET", "/hello", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Header().Get("X-Global") != "yes" {
+		t.Fatal("Use middleware was not applied")
+	}
+}
+
+func TestRouter_Use_Named(t *testing.T) {
+	router := NewRouter()
+	router.Register("auth", "add-global", func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Named-Global", "yes")
+			next.ServeHTTP(w, r)
+		})
+	})
+
+	err := router.Use(MiddlewareByName("add-global"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	router.Handle("test", "GET", "/hello", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest("GET", "/hello", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Header().Get("X-Named-Global") != "yes" {
+		t.Fatal("MiddlewareByName Use middleware was not applied")
+	}
+}
+
+func TestRouter_Use_UnknownNamed(t *testing.T) {
+	router := NewRouter()
+	err := router.Use(MiddlewareByName("nonexistent"))
+	if err == nil {
+		t.Fatal("expected error for unknown named middleware in Use")
+	}
+}
+
+func TestRouter_Group(t *testing.T) {
+	router := NewRouter()
+
+	router.Group(func(sub *Router) {
+		sub.Use(MiddlewareFunc(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("X-Group", "yes")
+				next.ServeHTTP(w, r)
+			})
+		}))
+		sub.Handle("test", "GET", "/grouped", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+	})
+
+	// Route outside group should not have the middleware.
+	router.Handle("test", "GET", "/ungrouped", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// Grouped route should have header.
+	req := httptest.NewRequest("GET", "/grouped", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Header().Get("X-Group") != "yes" {
+		t.Fatal("Group middleware was not applied to grouped route")
+	}
+
+	// Ungrouped route should not have header.
+	req = httptest.NewRequest("GET", "/ungrouped", nil)
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Header().Get("X-Group") != "" {
+		t.Fatal("Group middleware should not apply to ungrouped route")
+	}
+}
+
+func TestRouter_Route(t *testing.T) {
+	router := NewRouter()
+
+	router.Route("/api", func(sub *Router) {
+		sub.Handle("test", "GET", "/users", func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte("users"))
+		})
+		sub.Handle("test", "GET", "/items", func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte("items"))
+		})
+	})
+
+	req := httptest.NewRequest("GET", "/api/users", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || rr.Body.String() != "users" {
+		t.Fatalf("expected 200 'users', got %d %q", rr.Code, rr.Body.String())
+	}
+
+	req = httptest.NewRequest("GET", "/api/items", nil)
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || rr.Body.String() != "items" {
+		t.Fatalf("expected 200 'items', got %d %q", rr.Code, rr.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
 // App tests
 // ---------------------------------------------------------------------------
 
@@ -415,14 +571,12 @@ func (m *testModule) Close() error {
 
 func TestApp_CloseModule(t *testing.T) {
 	bus := NewEventBus()
-	reg := NewMiddlewareRegistry()
-	router := NewRouter(reg)
+	router := NewRouter()
 
 	mod := &testModule{name: "test-mod"}
 
 	app := NewApp(
 		WithRouter(router),
-		WithMiddlewareRegistry(reg),
 		WithEventBus(bus),
 		WithModule(mod),
 	)
@@ -480,14 +634,12 @@ func TestApp_CloseModule(t *testing.T) {
 
 func TestApp_RestartModule(t *testing.T) {
 	bus := NewEventBus()
-	reg := NewMiddlewareRegistry()
-	router := NewRouter(reg)
+	router := NewRouter()
 
 	mod := &testModule{name: "test-mod"}
 
 	app := NewApp(
 		WithRouter(router),
-		WithMiddlewareRegistry(reg),
 		WithEventBus(bus),
 		WithModule(mod),
 	)
@@ -553,8 +705,7 @@ func TestApp_RestartModule_NotFound(t *testing.T) {
 }
 
 func TestApp_InitFailure(t *testing.T) {
-	reg := NewMiddlewareRegistry()
-	router := NewRouter(reg)
+	router := NewRouter()
 
 	failing := &testModule{name: "bad-mod", initErr: fmt.Errorf("init failed")}
 

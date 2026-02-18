@@ -16,7 +16,6 @@ import (
 // It is constructed with functional options and wired together in main.go.
 type App struct {
 	migrationManagerModuleName string
-	middlewareReg              *MiddlewareRegistry
 	router                     *Router
 	eventBus                   *EventBus
 	activeModules              map[string]Module
@@ -45,11 +44,6 @@ func WithModule(m Module) AppOption {
 // WithRouter sets the smart router for the App.
 func WithRouter(r *Router) AppOption {
 	return func(a *App) { a.router = r }
-}
-
-// WithMiddlewareRegistry sets the middleware registry for the App.
-func WithMiddlewareRegistry(reg *MiddlewareRegistry) AppOption {
-	return func(a *App) { a.middlewareReg = reg }
 }
 
 // WithEventBus sets the event bus for the App.

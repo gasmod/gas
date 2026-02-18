@@ -39,13 +39,11 @@ package main
 import "github.com/gasmod/gas"
 
 func main() {
-	reg := gas.NewMiddlewareRegistry()
-	router := gas.NewRouter(reg)
+	router := gas.NewRouter()
 	bus := gas.NewEventBus()
 
 	app := gas.NewApp(
 		gas.WithRouter(router),
-		gas.WithMiddlewareRegistry(reg),
 		gas.WithEventBus(bus),
 		gas.WithModule(auth.New(
 			auth.WithRouter(router),
@@ -70,21 +68,55 @@ func main() {
 ```go
 func (m *Module) Init() error {
 	m.router.Handle(m.Name(), "GET", "/users", m.listUsers)
-	m.router.Handle(m.Name(), "POST", "/users", m.createUser, "require-auth")
+	m.router.Handle(m.Name(), "POST", "/users", m.createUser, gas.MiddlewareByName("require-auth"))
 	return nil
 }
 ```
 
-Routes declare middleware by name. The router resolves them from the middleware registry at registration time.
+Routes declare middleware using `MiddlewareByName()` (resolved from the router's registry) or `MiddlewareFunc()` (inline).
 
 ### Middleware
 
+Register named middleware on the router:
+
 ```go
-reg.Register("auth", "require-auth", func (next gas.Handler) gas.Handler {
-	return gas.HandlerFunc(func (w http.ResponseWriter, r *http.Request) {
+router.Register("auth", "require-auth", func(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// validate token...
 		next.ServeHTTP(w, r)
 	})
+})
+```
+
+Apply middleware globally with `Use()`:
+
+```go
+router.Use(gas.MiddlewareFunc(func(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// logging, CORS, etc.
+		next.ServeHTTP(w, r)
+	})
+}))
+```
+
+### Grouping Routes
+
+Use `Group()` for inline middleware scoping:
+
+```go
+router.Group(func(sub *gas.Router) {
+	sub.Use(gas.MiddlewareByName("require-auth"))
+	sub.Handle("admin", "GET", "/admin/dashboard", m.dashboard)
+	sub.Handle("admin", "GET", "/admin/settings", m.settings)
+})
+```
+
+Use `Route()` for pattern-scoped groups:
+
+```go
+router.Route("/api", func(sub *gas.Router) {
+	sub.Handle("api", "GET", "/users", m.listUsers)
+	sub.Handle("api", "GET", "/items", m.listItems)
 })
 ```
 
@@ -109,7 +141,7 @@ and `Raw`.
 Disable a module at runtime without restarting the server:
 
 ```go
-app.CloseModule("auth") // routes return 503, subscriptions removed, Close() called
+app.CloseModule("auth") // routes return 503, middleware + subscriptions removed, Close() called
 app.RestartModule("auth") // re-initializes the module
 ```
 

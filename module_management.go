@@ -25,17 +25,12 @@ func (a *App) CloseModule(name string) error {
 		return fmt.Errorf("gas: module %q is not active", name)
 	}
 
-	// 1. Remove routes (replaces them with 503 handlers).
+	// 1. Remove routes and middleware (replaces routes with 503 handlers).
 	if a.router != nil {
 		a.router.RemoveByModule(name)
 	}
 
-	// 2. Remove middleware from registry.
-	if a.middlewareReg != nil {
-		a.middlewareReg.RemoveByModule(name)
-	}
-
-	// 3. Remove event subscriptions.
+	// 2. Remove event subscriptions.
 	if a.eventBus != nil {
 		a.eventBus.RemoveByModule(name)
 	}
