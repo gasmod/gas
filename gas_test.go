@@ -1,4 +1,4 @@
-package gas
+package gas_test
 
 import (
 	"fmt"
@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/gasmod/gas"
 )
 
 // ---------------------------------------------------------------------------
@@ -15,7 +17,7 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestEventData_SetAndGetString(t *testing.T) {
-	d := NewEventData().Set("name", "alice")
+	d := gas.NewEventData().Set("name", "alice")
 
 	v, ok := d.GetString("name")
 	if !ok || v != "alice" {
@@ -24,7 +26,7 @@ func TestEventData_SetAndGetString(t *testing.T) {
 }
 
 func TestEventData_GetString_Missing(t *testing.T) {
-	d := NewEventData()
+	d := gas.NewEventData()
 	v, ok := d.GetString("missing")
 	if ok || v != "" {
 		t.Fatalf("expected (\"\", false), got (%q, %v)", v, ok)
@@ -32,7 +34,7 @@ func TestEventData_GetString_Missing(t *testing.T) {
 }
 
 func TestEventData_GetString_WrongType(t *testing.T) {
-	d := NewEventData().Set("num", 42)
+	d := gas.NewEventData().Set("num", 42)
 	v, ok := d.GetString("num")
 	if ok || v != "" {
 		t.Fatalf("expected (\"\", false), got (%q, %v)", v, ok)
@@ -40,7 +42,7 @@ func TestEventData_GetString_WrongType(t *testing.T) {
 }
 
 func TestEventData_GetInt(t *testing.T) {
-	d := NewEventData().Set("count", 7)
+	d := gas.NewEventData().Set("count", 7)
 	v, ok := d.GetInt("count")
 	if !ok || v != 7 {
 		t.Fatalf("expected (7, true), got (%d, %v)", v, ok)
@@ -48,7 +50,7 @@ func TestEventData_GetInt(t *testing.T) {
 }
 
 func TestEventData_GetBool(t *testing.T) {
-	d := NewEventData().Set("active", true)
+	d := gas.NewEventData().Set("active", true)
 	v, ok := d.GetBool("active")
 	if !ok || !v {
 		t.Fatalf("expected (true, true), got (%v, %v)", v, ok)
@@ -56,7 +58,7 @@ func TestEventData_GetBool(t *testing.T) {
 }
 
 func TestEventData_GetFloat64(t *testing.T) {
-	d := NewEventData().Set("rate", 3.14)
+	d := gas.NewEventData().Set("rate", 3.14)
 	v, ok := d.GetFloat64("rate")
 	if !ok || v != 3.14 {
 		t.Fatalf("expected (3.14, true), got (%f, %v)", v, ok)
@@ -65,7 +67,7 @@ func TestEventData_GetFloat64(t *testing.T) {
 
 func TestEventData_GetTime(t *testing.T) {
 	now := time.Now()
-	d := NewEventData().Set("ts", now)
+	d := gas.NewEventData().Set("ts", now)
 	v, ok := d.GetTime("ts")
 	if !ok || !v.Equal(now) {
 		t.Fatalf("expected (%v, true), got (%v, %v)", now, v, ok)
@@ -73,7 +75,7 @@ func TestEventData_GetTime(t *testing.T) {
 }
 
 func TestEventData_GetStringSlice(t *testing.T) {
-	d := NewEventData().Set("tags", []string{"a", "b"})
+	d := gas.NewEventData().Set("tags", []string{"a", "b"})
 	v, ok := d.GetStringSlice("tags")
 	if !ok || len(v) != 2 || v[0] != "a" || v[1] != "b" {
 		t.Fatalf("expected ([a b], true), got (%v, %v)", v, ok)
@@ -81,7 +83,7 @@ func TestEventData_GetStringSlice(t *testing.T) {
 }
 
 func TestEventData_Raw(t *testing.T) {
-	d := NewEventData().Set("k", "v")
+	d := gas.NewEventData().Set("k", "v")
 	raw := d.Raw()
 	if raw["k"] != "v" {
 		t.Fatalf("expected raw[k]=v, got %v", raw["k"])
@@ -89,7 +91,7 @@ func TestEventData_Raw(t *testing.T) {
 }
 
 func TestEventData_Chaining(t *testing.T) {
-	d := NewEventData().
+	d := gas.NewEventData().
 		Set("a", "one").
 		Set("b", 2).
 		Set("c", true)
@@ -110,7 +112,7 @@ func TestEventData_Chaining(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRouter_RegisterAndResolve(t *testing.T) {
-	router := NewRouter()
+	router := gas.NewRouter()
 
 	called := false
 	router.Register("auth", "require-auth", func(next http.Handler) http.Handler {
@@ -121,7 +123,7 @@ func TestRouter_RegisterAndResolve(t *testing.T) {
 	// Use the middleware via Handle to verify it resolves.
 	err := router.Handle("auth", "GET", "/test", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-	}, MiddlewareByName("require-auth"))
+	}, gas.MiddlewareByName("require-auth"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,15 +138,15 @@ func TestRouter_RegisterAndResolve(t *testing.T) {
 }
 
 func TestRouter_HandleUnknownNamedMiddleware(t *testing.T) {
-	router := NewRouter()
-	err := router.Handle("billing", "GET", "/test", func(w http.ResponseWriter, r *http.Request) {}, MiddlewareByName("nonexistent"))
+	router := gas.NewRouter()
+	err := router.Handle("billing", "GET", "/test", func(w http.ResponseWriter, r *http.Request) {}, gas.MiddlewareByName("nonexistent"))
 	if err == nil {
 		t.Fatal("expected error for unregistered middleware")
 	}
 }
 
 func TestRouter_RemoveByModule_RemovesMiddleware(t *testing.T) {
-	router := NewRouter()
+	router := gas.NewRouter()
 	router.Register("auth", "require-auth", func(next http.Handler) http.Handler { return next })
 	router.Register("auth", "rate-limit", func(next http.Handler) http.Handler { return next })
 	router.Register("billing", "billing-mw", func(next http.Handler) http.Handler { return next })
@@ -152,17 +154,17 @@ func TestRouter_RemoveByModule_RemovesMiddleware(t *testing.T) {
 	router.RemoveByModule("auth")
 
 	// Auth middleware should be gone.
-	err := router.Handle("test", "GET", "/a", func(w http.ResponseWriter, r *http.Request) {}, MiddlewareByName("require-auth"))
+	err := router.Handle("test", "GET", "/a", func(w http.ResponseWriter, r *http.Request) {}, gas.MiddlewareByName("require-auth"))
 	if err == nil {
 		t.Fatal("expected require-auth to be removed")
 	}
-	err = router.Handle("test", "GET", "/b", func(w http.ResponseWriter, r *http.Request) {}, MiddlewareByName("rate-limit"))
+	err = router.Handle("test", "GET", "/b", func(w http.ResponseWriter, r *http.Request) {}, gas.MiddlewareByName("rate-limit"))
 	if err == nil {
 		t.Fatal("expected rate-limit to be removed")
 	}
 
 	// Billing middleware should still exist.
-	err = router.Handle("test", "GET", "/c", func(w http.ResponseWriter, r *http.Request) {}, MiddlewareByName("billing-mw"))
+	err = router.Handle("test", "GET", "/c", func(w http.ResponseWriter, r *http.Request) {}, gas.MiddlewareByName("billing-mw"))
 	if err != nil {
 		t.Fatal("billing-mw should still exist")
 	}
@@ -173,14 +175,14 @@ func TestRouter_RemoveByModule_RemovesMiddleware(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestEventBus_EmitAndSubscribe(t *testing.T) {
-	bus := NewEventBus()
+	bus := gas.NewEventBus()
 
 	var received string
-	bus.Subscribe("user:created", func(data EventData) {
+	bus.Subscribe("user:created", func(data gas.EventData) {
 		received, _ = data.GetString("email")
 	})
 
-	bus.Emit("user:created", NewEventData().Set("email", "test@example.com"))
+	bus.Emit("user:created", gas.NewEventData().Set("email", "test@example.com"))
 
 	if received != "test@example.com" {
 		t.Fatalf("expected test@example.com, got %q", received)
@@ -188,37 +190,37 @@ func TestEventBus_EmitAndSubscribe(t *testing.T) {
 }
 
 func TestEventBus_SubscribeWithOwner(t *testing.T) {
-	bus := NewEventBus()
+	bus := gas.NewEventBus()
 
 	count := 0
-	bus.SubscribeWithOwner("auth", "user:created", func(data EventData) {
+	bus.SubscribeWithOwner("auth", "user:created", func(data gas.EventData) {
 		count++
 	})
-	bus.SubscribeWithOwner("billing", "user:created", func(data EventData) {
+	bus.SubscribeWithOwner("billing", "user:created", func(data gas.EventData) {
 		count++
 	})
 
-	bus.Emit("user:created", NewEventData())
+	bus.Emit("user:created", gas.NewEventData())
 	if count != 2 {
 		t.Fatalf("expected 2 handlers called, got %d", count)
 	}
 }
 
 func TestEventBus_RemoveByModule(t *testing.T) {
-	bus := NewEventBus()
+	bus := gas.NewEventBus()
 
 	authCalled := false
 	billingCalled := false
 
-	bus.SubscribeWithOwner("auth", "test:event", func(data EventData) {
+	bus.SubscribeWithOwner("auth", "test:event", func(data gas.EventData) {
 		authCalled = true
 	})
-	bus.SubscribeWithOwner("billing", "test:event", func(data EventData) {
+	bus.SubscribeWithOwner("billing", "test:event", func(data gas.EventData) {
 		billingCalled = true
 	})
 
 	bus.RemoveByModule("auth")
-	bus.Emit("test:event", NewEventData())
+	bus.Emit("test:event", gas.NewEventData())
 
 	if authCalled {
 		t.Fatal("auth handler should not have been called after removal")
@@ -229,17 +231,17 @@ func TestEventBus_RemoveByModule(t *testing.T) {
 }
 
 func TestEventBus_EmitNoSubscribers(t *testing.T) {
-	bus := NewEventBus()
+	bus := gas.NewEventBus()
 	// Should not panic.
-	bus.Emit("nonexistent", NewEventData())
+	bus.Emit("nonexistent", gas.NewEventData())
 }
 
 func TestEventBus_ConcurrentEmit(t *testing.T) {
-	bus := NewEventBus()
+	bus := gas.NewEventBus()
 
 	var mu sync.Mutex
 	count := 0
-	bus.Subscribe("inc", func(data EventData) {
+	bus.Subscribe("inc", func(data gas.EventData) {
 		mu.Lock()
 		count++
 		mu.Unlock()
@@ -250,7 +252,7 @@ func TestEventBus_ConcurrentEmit(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			bus.Emit("inc", NewEventData())
+			bus.Emit("inc", gas.NewEventData())
 		}()
 	}
 	wg.Wait()
@@ -265,11 +267,11 @@ func TestEventBus_ConcurrentEmit(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRouter_HandleAndServe(t *testing.T) {
-	router := NewRouter()
+	router := gas.NewRouter()
 
 	err := router.Handle("auth", "POST", "/auth/login", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		_, _ = w.Write([]byte("ok"))
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -288,7 +290,7 @@ func TestRouter_HandleAndServe(t *testing.T) {
 }
 
 func TestRouter_HandleWithMiddleware(t *testing.T) {
-	router := NewRouter()
+	router := gas.NewRouter()
 	router.Register("auth", "add-header", func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("X-Test", "applied")
@@ -298,7 +300,7 @@ func TestRouter_HandleWithMiddleware(t *testing.T) {
 
 	err := router.Handle("billing", "GET", "/billing/plans", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-	}, MiddlewareByName("add-header"))
+	}, gas.MiddlewareByName("add-header"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,11 +315,11 @@ func TestRouter_HandleWithMiddleware(t *testing.T) {
 }
 
 func TestRouter_HandleWithFuncMiddleware(t *testing.T) {
-	router := NewRouter()
+	router := gas.NewRouter()
 
 	err := router.Handle("billing", "GET", "/billing/plans", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-	}, MiddlewareFunc(func(next http.Handler) http.Handler {
+	}, gas.MiddlewareFunc(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("X-Inline", "yes")
 			next.ServeHTTP(w, r)
@@ -337,20 +339,23 @@ func TestRouter_HandleWithFuncMiddleware(t *testing.T) {
 }
 
 func TestRouter_HandleUnknownMiddleware(t *testing.T) {
-	router := NewRouter()
+	router := gas.NewRouter()
 
-	err := router.Handle("billing", "GET", "/test", func(w http.ResponseWriter, r *http.Request) {}, MiddlewareByName("nonexistent"))
+	err := router.Handle("billing", "GET", "/test", func(w http.ResponseWriter, r *http.Request) {}, gas.MiddlewareByName("nonexistent"))
 	if err == nil {
 		t.Fatal("expected error for unknown middleware")
 	}
 }
 
 func TestRouter_RemoveByModule(t *testing.T) {
-	router := NewRouter()
+	router := gas.NewRouter()
 
-	router.Handle("auth", "GET", "/auth/me", func(w http.ResponseWriter, r *http.Request) {
+	err := router.Handle("auth", "GET", "/auth/me", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Verify route works.
 	req := httptest.NewRequest("GET", "/auth/me", nil)
@@ -373,7 +378,7 @@ func TestRouter_RemoveByModule(t *testing.T) {
 }
 
 func TestRouter_Mux(t *testing.T) {
-	router := NewRouter()
+	router := gas.NewRouter()
 
 	mux := router.Mux()
 	if mux == nil {
@@ -382,14 +387,21 @@ func TestRouter_Mux(t *testing.T) {
 }
 
 func TestRouter_MultipleModules(t *testing.T) {
-	router := NewRouter()
+	router := gas.NewRouter()
 
-	router.Handle("auth", "GET", "/auth/me", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("auth"))
+	err := router.Handle("auth", "GET", "/auth/me", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("auth"))
 	})
-	router.Handle("billing", "GET", "/billing/plans", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("billing"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = router.Handle("billing", "GET", "/billing/plans", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("billing"))
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Remove only auth.
 	router.RemoveByModule("auth")
@@ -419,7 +431,7 @@ func TestRouter_MultipleModules(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRouter_Use(t *testing.T) {
-	router := NewRouter()
+	router := gas.NewRouter()
 
 	router.UseMiddlewareFunc(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -428,9 +440,12 @@ func TestRouter_Use(t *testing.T) {
 		})
 	})
 
-	router.Handle("test", "GET", "/hello", func(w http.ResponseWriter, r *http.Request) {
+	err := router.Handle("test", "GET", "/hello", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	req := httptest.NewRequest("GET", "/hello", nil)
 	rr := httptest.NewRecorder()
@@ -442,7 +457,7 @@ func TestRouter_Use(t *testing.T) {
 }
 
 func TestRouter_UseMiddlewareOverride(t *testing.T) {
-	router := NewRouter()
+	router := gas.NewRouter()
 
 	router.UseMiddlewareFunc(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -458,9 +473,12 @@ func TestRouter_UseMiddlewareOverride(t *testing.T) {
 		})
 	})
 
-	router.Handle("test", "GET", "/hello", func(w http.ResponseWriter, r *http.Request) {
+	err := router.Handle("test", "GET", "/hello", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	req := httptest.NewRequest("GET", "/hello", nil)
 	rr := httptest.NewRecorder()
@@ -472,7 +490,7 @@ func TestRouter_UseMiddlewareOverride(t *testing.T) {
 }
 
 func TestRouter_UseMiddlewareOrder(t *testing.T) {
-	router := NewRouter()
+	router := gas.NewRouter()
 
 	router.Register("auth", "add-global", func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -488,9 +506,12 @@ func TestRouter_UseMiddlewareOrder(t *testing.T) {
 		})
 	})
 
-	router.Handle("test", "GET", "/hello", func(w http.ResponseWriter, r *http.Request) {
+	err := router.Handle("test", "GET", "/hello", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-	}, MiddlewareByName("add-global"), MiddlewareByName("remove-global"))
+	}, gas.MiddlewareByName("add-global"), gas.MiddlewareByName("remove-global"))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	req := httptest.NewRequest("GET", "/hello", nil)
 	rr := httptest.NewRecorder()
@@ -502,7 +523,7 @@ func TestRouter_UseMiddlewareOrder(t *testing.T) {
 }
 
 func TestRouter_Use_Named(t *testing.T) {
-	router := NewRouter()
+	router := gas.NewRouter()
 
 	router.Register("auth", "add-global", func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -516,9 +537,12 @@ func TestRouter_Use_Named(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	router.Handle("test", "GET", "/hello", func(w http.ResponseWriter, r *http.Request) {
+	err = router.Handle("test", "GET", "/hello", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	req := httptest.NewRequest("GET", "/hello", nil)
 	rr := httptest.NewRecorder()
@@ -530,7 +554,7 @@ func TestRouter_Use_Named(t *testing.T) {
 }
 
 func TestRouter_Use_UnknownNamed(t *testing.T) {
-	router := NewRouter()
+	router := gas.NewRouter()
 	err := router.UseMiddlewareByName("nonexistent")
 	if err == nil {
 		t.Fatal("expected error for unknown named middleware in Use")
@@ -538,24 +562,30 @@ func TestRouter_Use_UnknownNamed(t *testing.T) {
 }
 
 func TestRouter_Group(t *testing.T) {
-	router := NewRouter()
+	router := gas.NewRouter()
 
-	router.Group(func(sub *Router) {
+	router.Group(func(sub *gas.Router) {
 		sub.UseMiddlewareFunc(func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("X-Group", "yes")
 				next.ServeHTTP(w, r)
 			})
 		})
-		sub.Handle("test", "GET", "/grouped", func(w http.ResponseWriter, r *http.Request) {
+		err := sub.Handle("test", "GET", "/grouped", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		})
+		if err != nil {
+			t.Fatal(err)
+		}
 	})
 
 	// Route outside group should not have the middleware.
-	router.Handle("test", "GET", "/ungrouped", func(w http.ResponseWriter, r *http.Request) {
+	err := router.Handle("test", "GET", "/ungrouped", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Grouped route should have header.
 	req := httptest.NewRequest("GET", "/grouped", nil)
@@ -575,15 +605,22 @@ func TestRouter_Group(t *testing.T) {
 }
 
 func TestRouter_Route(t *testing.T) {
-	router := NewRouter()
+	router := gas.NewRouter()
 
-	router.Route("/api", func(sub *Router) {
-		sub.Handle("test", "GET", "/users", func(w http.ResponseWriter, r *http.Request) {
-			w.Write([]byte("users"))
+	router.Route("/api", func(sub *gas.Router) {
+		err := sub.Handle("test", "GET", "/users", func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte("users"))
 		})
-		sub.Handle("test", "GET", "/items", func(w http.ResponseWriter, r *http.Request) {
-			w.Write([]byte("items"))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		err = sub.Handle("test", "GET", "/items", func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte("items"))
 		})
+		if err != nil {
+			t.Fatal(err)
+		}
 	})
 
 	req := httptest.NewRequest("GET", "/api/users", nil)
@@ -628,38 +665,37 @@ func (m *testModule) Close() error {
 }
 
 func TestApp_CloseModule(t *testing.T) {
-	bus := NewEventBus()
-	router := NewRouter()
+	bus := gas.NewEventBus()
+	router := gas.NewRouter()
 
 	mod := &testModule{name: "test-mod"}
 
-	app := NewApp(
-		WithRouter(router),
-		WithEventBus(bus),
-		WithModule(mod),
+	app := gas.NewApp(
+		gas.WithRouter(router),
+		gas.WithEventBus(bus),
+		gas.WithModule(mod),
 	)
 
-	// Manually init to populate activeModules (simulating Run's init phase).
-	if err := mod.Init(); err != nil {
+	if err := app.InitModules(); err != nil {
 		t.Fatal(err)
 	}
-	app.mu.Lock()
-	app.activeModules[mod.Name()] = mod
-	app.mu.Unlock()
 
 	// Register a route owned by this module.
-	router.Handle("test-mod", "GET", "/test", func(w http.ResponseWriter, r *http.Request) {
+	err := router.Handle("test-mod", "GET", "/test", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Track module-closed event.
 	var closedName string
-	bus.Subscribe(SystemModuleClosed, func(data EventData) {
+	bus.Subscribe(gas.SystemModuleClosed, func(data gas.EventData) {
 		closedName, _ = data.GetString("module_name")
 	})
 
 	// Kill-switch.
-	if err := app.CloseModule("test-mod"); err != nil {
+	if err = app.CloseModule("test-mod"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -691,27 +727,28 @@ func TestApp_CloseModule(t *testing.T) {
 }
 
 func TestApp_RestartModule(t *testing.T) {
-	bus := NewEventBus()
-	router := NewRouter()
+	bus := gas.NewEventBus()
+	router := gas.NewRouter()
 
 	mod := &testModule{name: "test-mod"}
 
-	app := NewApp(
-		WithRouter(router),
-		WithEventBus(bus),
-		WithModule(mod),
+	app := gas.NewApp(
+		gas.WithRouter(router),
+		gas.WithEventBus(bus),
+		gas.WithModule(mod),
 	)
 
-	// Simulate init + close.
-	mod.Init()
-	app.mu.Lock()
-	app.activeModules[mod.Name()] = mod
-	app.mu.Unlock()
-	app.CloseModule("test-mod")
+	if err := app.InitModules(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := app.CloseModule("test-mod"); err != nil {
+		t.Fatal(err)
+	}
 
 	// Track restart event.
 	var restartedName string
-	bus.Subscribe(SystemModuleInitialized, func(data EventData) {
+	bus.Subscribe(gas.SystemModuleInitialized, func(data gas.EventData) {
 		restartedName, _ = data.GetString("module_name")
 	})
 
@@ -732,7 +769,7 @@ func TestApp_RestartModule(t *testing.T) {
 }
 
 func TestApp_CloseModule_NotActive(t *testing.T) {
-	app := NewApp()
+	app := gas.NewApp()
 	err := app.CloseModule("nonexistent")
 	if err == nil {
 		t.Fatal("expected error for non-active module")
@@ -741,12 +778,11 @@ func TestApp_CloseModule_NotActive(t *testing.T) {
 
 func TestApp_RestartModule_AlreadyActive(t *testing.T) {
 	mod := &testModule{name: "test-mod"}
-	app := NewApp(WithModule(mod))
+	app := gas.NewApp(gas.WithModule(mod))
 
-	// Mark as active.
-	app.mu.Lock()
-	app.activeModules["test-mod"] = mod
-	app.mu.Unlock()
+	if err := app.InitModules(); err != nil {
+		t.Fatal(err)
+	}
 
 	err := app.RestartModule("test-mod")
 	if err == nil {
@@ -755,7 +791,7 @@ func TestApp_RestartModule_AlreadyActive(t *testing.T) {
 }
 
 func TestApp_RestartModule_NotFound(t *testing.T) {
-	app := NewApp()
+	app := gas.NewApp()
 	err := app.RestartModule("nonexistent")
 	if err == nil {
 		t.Fatal("expected error for unknown module")
@@ -763,16 +799,16 @@ func TestApp_RestartModule_NotFound(t *testing.T) {
 }
 
 func TestApp_InitFailure(t *testing.T) {
-	router := NewRouter()
+	router := gas.NewRouter()
 
 	failing := &testModule{name: "bad-mod", initErr: fmt.Errorf("init failed")}
 
-	app := NewApp(
-		WithRouter(router),
-		WithModule(failing),
+	app := gas.NewApp(
+		gas.WithRouter(router),
+		gas.WithModule(failing),
 	)
 
-	err := app.Run()
+	err := app.InitModules()
 	if err == nil {
 		t.Fatal("expected error from failing module init")
 	}
@@ -782,11 +818,10 @@ func TestApp_ActiveModules(t *testing.T) {
 	mod1 := &testModule{name: "mod-a"}
 	mod2 := &testModule{name: "mod-b"}
 
-	app := NewApp(WithModule(mod1), WithModule(mod2))
-	app.mu.Lock()
-	app.activeModules["mod-a"] = mod1
-	app.activeModules["mod-b"] = mod2
-	app.mu.Unlock()
+	app := gas.NewApp(gas.WithModule(mod1), gas.WithModule(mod2))
+	if err := app.InitModules(); err != nil {
+		t.Fatal(err)
+	}
 
 	names := app.ActiveModules()
 	if len(names) != 2 {

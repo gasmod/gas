@@ -22,6 +22,7 @@ type App struct {
 	cfg                        *Config
 	modules                    []Module
 	mu                         sync.Mutex
+	initModsOnce               sync.Once
 }
 
 // AppOption configures an App.
@@ -71,6 +72,24 @@ func NewApp(opts ...AppOption) *App {
 	return a
 }
 
+// InitModules initializes all registered modules by calling their Init() method and stores them in the activeModules map.
+// DO NOT CALL THIS METHOD DIRECTLY. Use Run() instead.
+func (a *App) InitModules() (err error) {
+	a.initModsOnce.Do(func() {
+		for _, m := range a.modules {
+			a.cfg.Logger.Info("initializing module", "module", m.Name())
+			if initErr := m.Init(); initErr != nil {
+				err = fmt.Errorf("gas: init %s: %w", m.Name(), initErr)
+				return
+			}
+			a.mu.Lock()
+			a.activeModules[m.Name()] = m
+			a.mu.Unlock()
+		}
+	})
+	return
+}
+
 // Run initializes all modules, runs pending migrations, starts the HTTP
 // server, and blocks until a shutdown signal is received.
 //
@@ -84,14 +103,8 @@ func NewApp(opts ...AppOption) *App {
 //  7. Close all modules in reverse registration order
 func (a *App) Run() error {
 	// 1. Init all modules.
-	for _, m := range a.modules {
-		a.cfg.Logger.Info("initializing module", "module", m.Name())
-		if err := m.Init(); err != nil {
-			return fmt.Errorf("gas: init %s: %w", m.Name(), err)
-		}
-		a.mu.Lock()
-		a.activeModules[m.Name()] = m
-		a.mu.Unlock()
+	if err := a.InitModules(); err != nil {
+		return err
 	}
 
 	// 2. Run pending migrations.
