@@ -8,6 +8,8 @@ import (
 	"io/fs"
 	"net/http"
 	"time"
+
+	config "github.com/gasmod/gas-config"
 )
 
 // DatabaseProvider abstracts database access. Implemented by gas-database
@@ -71,4 +73,15 @@ type UIProvider interface {
 	RegisterTemplate(name string, content []byte)
 	RegisterTemplatesFS(fsys fs.FS) error
 	RegisterFuncs(funcs template.FuncMap)
+}
+
+// ConfigProvider defines the config struct API, used by other modules that needs access to the config provider.
+type ConfigProvider interface {
+	SetDefault(key string, value any)
+	SetDefaults(values any) error
+	Set(key string, value any)
+	Bind(dest any, options ...config.BindOption) error
+	Get(key string) any
+	Find(key string) (value any, exist bool)
+	Values() map[string]any
 }
