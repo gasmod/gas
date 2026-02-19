@@ -113,6 +113,11 @@ func (a *App) bindConfig() error {
 			return fmt.Errorf("gas: config binding: %w", err)
 		}
 	}
+
+	if err := a.cfg.Validate(); err != nil {
+		return fmt.Errorf("gas: config validation: %w", err)
+	}
+
 	return nil
 }
 
@@ -154,17 +159,19 @@ func (a *App) Run() error {
 		return fmt.Errorf("gas: router is required")
 	}
 
+	addr := fmt.Sprintf("%s:%d", a.cfg.ServerHost, a.cfg.ServerPort)
+
 	srv := &http.Server{
-		Addr:         a.cfg.Addr,
+		Addr:         addr,
 		Handler:      a.router,
-		ReadTimeout:  a.cfg.ReadTimeout,
-		WriteTimeout: a.cfg.WriteTimeout,
-		IdleTimeout:  a.cfg.IdleTimeout,
+		ReadTimeout:  a.cfg.ServerReadTimeout,
+		WriteTimeout: a.cfg.ServerWriteTimeout,
+		IdleTimeout:  a.cfg.ServerIdleTimeout,
 	}
 
 	errCh := make(chan error, 1)
 	go func() {
-		a.logger.Info("server listening", "addr", a.cfg.Addr)
+		a.logger.Info("server listening", "addr", addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
