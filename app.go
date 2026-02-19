@@ -26,6 +26,7 @@ type App struct {
 	cfg                        *Config
 	logger                     *slog.Logger
 	modules                    []Module
+	customConfigProvided       bool
 	mu                         sync.Mutex
 	initModsOnce               sync.Once
 }
@@ -49,6 +50,15 @@ func WithRouter(r *Router) AppOption {
 // WithEventBus sets the event bus for the App.
 func WithEventBus(bus *EventBus) AppOption {
 	return func(a *App) { a.eventBus = bus }
+}
+
+// WithConfig sets the server configuration. If not provided,
+// DefaultConfig() is used.
+func WithConfig(cfg *Config) AppOption {
+	return func(a *App) {
+		a.cfg = cfg
+		a.customConfigProvided = true
+	}
 }
 
 // WithConfigProvider sets a configuration provider for the application and ensures it is registered as the first module.
@@ -107,10 +117,13 @@ func (a *App) InitModules() (err error) {
 }
 
 func (a *App) bindConfig() error {
-	if cfgProvider := a.GetConfigProvider(); cfgProvider != nil {
-		a.logger.Info("using config provider", "name", cfgProvider.Name())
-		if err := cfgProvider.Bind(a.cfg); err != nil {
-			return fmt.Errorf("gas: config binding: %w", err)
+	if !a.customConfigProvided {
+		// no custom config provided, try to bind from config-module
+		if cfgProvider := a.GetConfigProvider(); cfgProvider != nil {
+			a.logger.Info("using config provider", "name", cfgProvider.Name())
+			if err := cfgProvider.Bind(a.cfg); err != nil {
+				return fmt.Errorf("gas: config binding: %w", err)
+			}
 		}
 	}
 
