@@ -235,3 +235,22 @@ func (a *App) Emit(event string, data EventData) {
 		a.eventBus.Emit(event, data)
 	}
 }
+
+// Subscribe registers a handler function for a specific event name using the App's event bus.
+func (a *App) Subscribe(event string, handler func(EventData)) {
+	if a.eventBus != nil {
+		a.eventBus.Subscribe(event, handler)
+	}
+}
+
+// SubscribeWithOwner registers an event handler for a specific event under a module's ownership via the event bus.
+func (a *App) SubscribeWithOwner(module, event string, handler func(EventData)) {
+	if a.eventBus != nil {
+		a.eventBus.SubscribeWithOwner(module, event, handler)
+	}
+}
+
+// GetConfig retrieves the application's configuration and returns it as a pointer to a Config object.
+func (a *App) GetConfig() *Config {
+	return a.cfg
+}
