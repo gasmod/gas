@@ -3,7 +3,7 @@ module github.com/gasmod/gas
 go 1.25.6
 
 require (
-	github.com/gasmod/gas-config v0.0.1
+	github.com/gasmod/gas-config v0.0.14
 	github.com/go-chi/chi/v5 v5.2.5
 )
 

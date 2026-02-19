@@ -1,5 +1,9 @@
 package gas
 
+import (
+	config "github.com/gasmod/gas-config"
+)
+
 // FindModuleByName retrieves a module by its name from the list of all registered modules.
 // Returns nil if not found.
 func (a *App) FindModuleByName(name string) Module {
@@ -41,4 +45,23 @@ func (a *App) GetMigrationManager() MigrationManager {
 	}
 
 	return mgr
+}
+
+// GetConfigProvider retrieves the active configuration provider module if available or returns nil otherwise.
+func (a *App) GetConfigProvider() *config.Config {
+	if a.configModuleName == "" {
+		return nil
+	}
+
+	mod := a.FindActiveModuleByName(a.configModuleName)
+	if mod == nil {
+		return nil
+	}
+
+	cfg, ok := mod.(*config.Config)
+	if !ok {
+		return nil
+	}
+
+	return cfg
 }

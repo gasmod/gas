@@ -1,6 +1,8 @@
 package gas
 
-import "fmt"
+import (
+	"fmt"
+)
 
 // ActiveModules returns the names of all currently active modules.
 func (a *App) ActiveModules() []string {
@@ -37,7 +39,7 @@ func (a *App) CloseModule(name string) error {
 
 	// 4. Close the module (internal cleanup).
 	if err := mod.Close(); err != nil {
-		a.cfg.Logger.Error("module close failed", "module", name, "error", err)
+		a.logger.Error("module close failed", "module", name, "error", err)
 	}
 
 	// 5. Remove from active modules.
@@ -45,11 +47,11 @@ func (a *App) CloseModule(name string) error {
 
 	// 6. Notify all other modules.
 	if a.eventBus != nil {
-		a.eventBus.Emit(SystemModuleClosed, NewEventData().
+		a.Emit(SystemModuleClosed, NewEventData().
 			Set("module_name", name))
 	}
 
-	a.cfg.Logger.Info("module closed", "module", name)
+	a.logger.Info("module closed", "module", name)
 	return nil
 }
 
@@ -84,10 +86,10 @@ func (a *App) RestartModule(name string) error {
 
 	// Notify all modules.
 	if a.eventBus != nil {
-		a.eventBus.Emit(SystemModuleInitialized, NewEventData().
+		a.Emit(SystemModuleInitialized, NewEventData().
 			Set("module_name", name))
 	}
 
-	a.cfg.Logger.Info("module restarted", "module", name)
+	a.logger.Info("module restarted", "module", name)
 	return nil
 }

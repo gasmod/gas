@@ -1,7 +1,6 @@
 package gas
 
 import (
-	"log/slog"
 	"time"
 
 	env "github.com/gasmod/gas-config/extensions/gas-env"
@@ -10,10 +9,6 @@ import (
 // Config holds server-level configuration passed from the host server
 // to the App. Sensible defaults are applied via DefaultConfig().
 type Config struct {
-	// Logger is the structured logger used by the App and available to modules.
-	// Defaults to slog.Default().
-	Logger *slog.Logger
-
 	// Addr is the address the HTTP server listens on (e.g., ":8080").
 	Addr string
 
@@ -42,6 +37,5 @@ func DefaultConfig() *Config {
 		WriteTimeout:    10 * time.Second,
 		IdleTimeout:     120 * time.Second,
 		ShutdownTimeout: 30 * time.Second,
-		Logger:          slog.Default(),
 	}
 }
