@@ -35,6 +35,22 @@ func (bus *EventBus) Emit(event string, data EventData) {
 	}
 }
 
+// EmitAsync delivers an event to all subscribers concurrently.
+// Each handler runs in its own goroutine. The returned sync.WaitGroup
+// can be used to wait for all handlers to complete.
+func (bus *EventBus) EmitAsync(event string, data EventData) *sync.WaitGroup {
+	bus.mu.RLock()
+	subs := make([]subscriber, len(bus.subscribers[event]))
+	copy(subs, bus.subscribers[event])
+	bus.mu.RUnlock()
+
+	var wg sync.WaitGroup
+	for _, s := range subs {
+		wg.Go(func() { s.handler(data) })
+	}
+	return &wg
+}
+
 // Subscribe registers a handler for an event without module ownership.
 // Use SubscribeWithOwner when subscribing from a module so that
 // RemoveByModule can clean up subscriptions.

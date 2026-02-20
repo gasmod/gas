@@ -14,4 +14,7 @@ const (
 
 	// SystemServerShuttingDown is emitted when the server is shutting down.
 	SystemServerShuttingDown = "gas:server-shutting-down"
+
+	// AppConfigUpdated is emitted when the app config is updated.
+	AppConfigUpdated = "gas:config-updated"
 )

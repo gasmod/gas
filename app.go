@@ -131,6 +131,9 @@ func (a *App) bindConfig() error {
 		return fmt.Errorf("gas: config validation: %w", err)
 	}
 
+	a.Emit(AppConfigUpdated, NewEventData().
+		Set("config", a.cfg))
+
 	return nil
 }
 
@@ -205,9 +208,7 @@ func (a *App) Run() error {
 	}
 
 	// Emit shutdown event.
-	if a.eventBus != nil {
-		a.eventBus.Emit(SystemServerShuttingDown, NewEventData())
-	}
+	a.Emit(SystemServerShuttingDown, NewEventData())
 
 	// Gracefully shut down the HTTP server.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -234,6 +235,14 @@ func (a *App) Emit(event string, data EventData) {
 	if a.eventBus != nil {
 		a.eventBus.Emit(event, data)
 	}
+}
+
+// EmitAsync sends an event asynchronously using the event bus if it is initialized.
+func (a *App) EmitAsync(event string, data EventData) *sync.WaitGroup {
+	if a.eventBus == nil {
+		return nil
+	}
+	return a.eventBus.EmitAsync(event, data)
 }
 
 // Subscribe registers a handler function for a specific event name using the App's event bus.
