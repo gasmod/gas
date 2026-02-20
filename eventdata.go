@@ -20,6 +20,12 @@ func (e EventData) Set(key string, value any) EventData {
 	return e
 }
 
+// Get returns the value for key, or (nil, false) if not present.
+func (e EventData) Get(key string) (any, bool) {
+	v, ok := e.data[key]
+	return v, ok
+}
+
 // GetString returns the string value for key, or ("", false) if not
 // present or not a string.
 func (e EventData) GetString(key string) (string, bool) {
