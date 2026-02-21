@@ -121,7 +121,7 @@ router.UseMiddlewareFunc(func(next http.Handler) http.Handler {
 })
 ```
 
-Or by name:
+Or by name (panics if not registered):
 
 ```go
 router.UseMiddlewareByName("require-auth")

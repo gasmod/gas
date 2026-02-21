@@ -137,6 +137,7 @@ func TestRouter_RegisterAndResolve(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}, gas.MiddlewareByName("require-auth"))
 
+	router.Seal()
 	req := httptest.NewRequest("GET", "/test", nil)
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
@@ -148,12 +149,9 @@ func TestRouter_RegisterAndResolve(t *testing.T) {
 
 func TestRouter_HandleUnknownNamedMiddleware(t *testing.T) {
 	router := gas.NewRouter()
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for unregistered middleware")
-		}
-	}()
-	router.Handle("billing", "GET", "/test", func(w http.ResponseWriter, r *http.Request) {}, gas.MiddlewareByName("nonexistent"))
+	assertPanics(t, "unregistered middleware", func() {
+		router.Handle("billing", "GET", "/test", func(w http.ResponseWriter, r *http.Request) {}, gas.MiddlewareByName("nonexistent"))
+	})
 }
 
 func TestRouter_RemoveByModule_RemovesMiddleware(t *testing.T) {
@@ -174,6 +172,7 @@ func TestRouter_RemoveByModule_RemovesMiddleware(t *testing.T) {
 
 	// Billing middleware should still exist — no panic.
 	router.Handle("test", "GET", "/c", func(w http.ResponseWriter, r *http.Request) {}, gas.MiddlewareByName("billing-mw"))
+	router.Seal()
 }
 
 // ---------------------------------------------------------------------------
@@ -280,6 +279,7 @@ func TestRouter_HandleAndServe(t *testing.T) {
 		_, _ = w.Write([]byte("ok"))
 	})
 
+	router.Seal()
 	req := httptest.NewRequest("POST", "/auth/login", nil)
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
@@ -305,6 +305,7 @@ func TestRouter_HandleWithMiddleware(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}, gas.MiddlewareByName("add-header"))
 
+	router.Seal()
 	req := httptest.NewRequest("GET", "/billing/plans", nil)
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
@@ -326,6 +327,7 @@ func TestRouter_HandleWithFuncMiddleware(t *testing.T) {
 		})
 	}))
 
+	router.Seal()
 	req := httptest.NewRequest("GET", "/billing/plans", nil)
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
@@ -337,13 +339,9 @@ func TestRouter_HandleWithFuncMiddleware(t *testing.T) {
 
 func TestRouter_HandleUnknownMiddleware(t *testing.T) {
 	router := gas.NewRouter()
-
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for unknown middleware")
-		}
-	}()
-	router.Handle("billing", "GET", "/test", func(w http.ResponseWriter, r *http.Request) {}, gas.MiddlewareByName("nonexistent"))
+	assertPanics(t, "unknown middleware", func() {
+		router.Handle("billing", "GET", "/test", func(w http.ResponseWriter, r *http.Request) {}, gas.MiddlewareByName("nonexistent"))
+	})
 }
 
 func TestRouter_RemoveByModule(t *testing.T) {
@@ -353,6 +351,7 @@ func TestRouter_RemoveByModule(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
+	router.Seal()
 	// Verify route works.
 	req := httptest.NewRequest("GET", "/auth/me", nil)
 	rr := httptest.NewRecorder()
@@ -392,6 +391,8 @@ func TestRouter_MultipleModules(t *testing.T) {
 	router.Handle("billing", "GET", "/billing/plans", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("billing"))
 	})
+
+	router.Seal()
 	// Remove only auth.
 	router.RemoveByModule("auth")
 
@@ -432,6 +433,7 @@ func TestRouter_Use(t *testing.T) {
 	router.Handle("test", "GET", "/hello", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
+	router.Seal()
 	req := httptest.NewRequest("GET", "/hello", nil)
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
@@ -461,6 +463,7 @@ func TestRouter_UseMiddlewareOverride(t *testing.T) {
 	router.Handle("test", "GET", "/hello", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
+	router.Seal()
 	req := httptest.NewRequest("GET", "/hello", nil)
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
@@ -490,6 +493,7 @@ func TestRouter_UseMiddlewareOrder(t *testing.T) {
 	router.Handle("test", "GET", "/hello", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}, gas.MiddlewareByName("add-global"), gas.MiddlewareByName("remove-global"))
+	router.Seal()
 	req := httptest.NewRequest("GET", "/hello", nil)
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
@@ -509,14 +513,12 @@ func TestRouter_Use_Named(t *testing.T) {
 		})
 	})
 
-	err := router.UseMiddlewareByName("add-global")
-	if err != nil {
-		t.Fatal(err)
-	}
+	router.UseMiddlewareByName("add-global")
 
 	router.Handle("test", "GET", "/hello", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
+	router.Seal()
 	req := httptest.NewRequest("GET", "/hello", nil)
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
@@ -528,10 +530,9 @@ func TestRouter_Use_Named(t *testing.T) {
 
 func TestRouter_Use_UnknownNamed(t *testing.T) {
 	router := gas.NewRouter()
-	err := router.UseMiddlewareByName("nonexistent")
-	if err == nil {
-		t.Fatal("expected error for unknown named middleware in Use")
-	}
+	assertPanics(t, "unknown named middleware in Use", func() {
+		router.UseMiddlewareByName("nonexistent")
+	})
 }
 
 func TestRouter_Group(t *testing.T) {
@@ -554,6 +555,7 @@ func TestRouter_Group(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
+	router.Seal()
 	// Grouped route should have header.
 	req := httptest.NewRequest("GET", "/grouped", nil)
 	rr := httptest.NewRecorder()
@@ -584,6 +586,7 @@ func TestRouter_Route(t *testing.T) {
 		})
 	})
 
+	router.Seal()
 	req := httptest.NewRequest("GET", "/api/users", nil)
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)

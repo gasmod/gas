@@ -134,14 +134,19 @@ func (a *App) InitServices() (err error) {
 		})
 
 		// Install per-request scope middleware on the router.
-		a.router.mux.Use(func(next http.Handler) http.Handler {
+		a.router.Use(MiddlewareFunc(func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				scope := a.serviceContainer.NewScope()
 				defer func() { _ = scope.Close() }()
 				ctx := context.WithValue(r.Context(), requestScopeKey{}, scope)
 				next.ServeHTTP(w, r.WithContext(ctx))
 			})
-		})
+		}))
+
+		// Seal the router: flush all pending middleware first, then routes.
+		// This ensures middleware registered during Init() is applied before
+		// any routes, regardless of service initialization order.
+		a.router.Seal()
 
 		a.Emit(SystemAllServicesInitialized, NewEventData())
 	})

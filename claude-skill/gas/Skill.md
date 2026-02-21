@@ -169,9 +169,9 @@ gas.MiddlewareFunc(fn func (http.Handler) http.Handler) Middleware
 // Register named middleware
 router.Register(module, name string, mw func (http.Handler) http.Handler)
 
-// Apply globally
-router.Use(middleware ...Middleware) error
-router.UseMiddlewareByName(name string) error
+// Apply globally (panics if named middleware not registered)
+router.Use(middleware ...Middleware)
+router.UseMiddlewareByName(name string)
 router.UseMiddlewareFunc(fn func (http.Handler) http.Handler)
 ```
 
@@ -185,11 +185,24 @@ router.Group(fn func (sub *Router))
 router.Route(pattern string, fn func (sub *Router))
 ```
 
+### Deferred registration
+
+Top-level routers (created via `NewRouter()`) start **unsealed**: `Use`, `Handle`,
+`Group`, and `Route` calls are deferred until `Seal()` is called. This lets
+services register middleware and routes in any order during `Init()`. `Seal()`
+flushes all pending middleware first, then replays route operations —
+guaranteeing the middleware-before-routes ordering that Chi requires.
+
+Sub-routers (created inside `Group`/`Route` callbacks) are always sealed.
+
+The `App` calls `Seal()` automatically after all services are initialized.
+
 ### Other Router methods
 
 | Method                          | Description                                               |
 |---------------------------------|-----------------------------------------------------------|
 | `Mux() chi.Router`              | Underlying Chi router for global middleware / http.Server |
+| `Seal()`                        | Flush deferred middleware then routes; idempotent         |
 | `RemoveByModule(module string)` | Replace module routes with 503, remove middleware         |
 | `ServeHTTP(w, req)`             | Implements http.Handler                                   |
 

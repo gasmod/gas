@@ -18,14 +18,29 @@ type registeredRoute struct {
 // at registration time. The base server uses RemoveByModule during
 // kill-switch to replace a closed module's routes with 503 handlers and
 // remove its middleware.
+//
+// Top-level routers created via NewRouter() start unsealed: Use, Handle,
+// Group, and Route calls are deferred until Seal() is called. This lets
+// services register middleware and routes in any order during Init().
+// Seal() flushes all pending middleware first (via chi.Use), then replays
+// pending route operations — guaranteeing middleware-before-routes ordering
+// that Chi requires.
+//
+// Sub-routers (created inside Group/Route callbacks) are always sealed so
+// their calls pass through to Chi immediately.
 type Router struct {
-	mux      chi.Router
-	routes   map[string][]registeredRoute
-	registry map[string]namedMiddleware
-	mu       sync.RWMutex
+	mux        chi.Router
+	routes     map[string][]registeredRoute
+	registry   map[string]namedMiddleware
+	pendingMW  []func(http.Handler) http.Handler // queued Use() calls
+	pendingOps []func()                          // queued Handle/Group/Route calls
+	sealed     bool                              // after Seal(), ops go directly to chi
+	mu         sync.RWMutex
 }
 
 // NewRouter creates a Router backed by Chi with an empty middleware registry.
+// The router starts unsealed — Use/Handle/Group/Route calls are deferred
+// until Seal() is called.
 func NewRouter() *Router {
 	return &Router{
 		mux:      chi.NewRouter(),
@@ -36,12 +51,15 @@ func NewRouter() *Router {
 
 // newSubRouter creates a sub-Router that shares the parent's registry, routes
 // map, and mutex but operates on the given chi.Router (e.g. from Group/Route).
+// Sub-routers are always sealed — they're created inside deferred callbacks
+// that execute during Seal(), so their calls pass through to Chi immediately.
 func newSubRouter(mux chi.Router, parent *Router) *Router {
 	return &Router{
 		mux:      mux,
 		routes:   parent.routes,
 		registry: parent.registry,
 		mu:       sync.RWMutex{},
+		sealed:   true,
 	}
 }
 
@@ -61,50 +79,72 @@ func (r *Router) Register(module, name string, mw func(http.Handler) http.Handle
 
 // Use applies middleware to the router. Each Middleware is resolved (by name
 // from the registry or used directly) and applied via chi's Use.
-func (r *Router) Use(middleware ...Middleware) error {
+// Panics if a named middleware is not registered.
+// When the router is unsealed, middleware is queued and applied during Seal().
+func (r *Router) Use(middleware ...Middleware) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	for _, m := range middleware {
 		fn, err := r.resolveMiddleware(m)
 		if err != nil {
-			return err
+			panic(err)
 		}
-		r.mux.Use(fn)
+		if r.sealed {
+			r.mux.Use(fn)
+		} else {
+			r.pendingMW = append(r.pendingMW, fn)
+		}
 	}
-	return nil
 }
 
 // UseMiddlewareFunc applies a middleware function directly to the router by wrapping it as a MiddlewareFunc.
 func (r *Router) UseMiddlewareFunc(middleware func(http.Handler) http.Handler) {
-	_ = r.Use(MiddlewareFunc(middleware))
+	r.Use(MiddlewareFunc(middleware))
 }
 
 // UseMiddlewareByName applies a middleware to the router by resolving it from the registry using its name.
-// returns an error if the middleware is not registered.
-func (r *Router) UseMiddlewareByName(middleware string) error {
-	return r.Use(MiddlewareByName(middleware))
+// Panics if the middleware is not registered.
+func (r *Router) UseMiddlewareByName(middleware string) {
+	r.Use(MiddlewareByName(middleware))
 }
 
 // Group creates an inline route group. The callback receives a sub-Router
 // that shares the parent's middleware registry and route tracking.
+// When the router is unsealed, the group is deferred until Seal().
 func (r *Router) Group(fn func(sub *Router)) {
-	r.mux.Group(func(cr chi.Router) {
-		fn(newSubRouter(cr, r))
-	})
+	op := func() {
+		r.mux.Group(func(cr chi.Router) {
+			fn(newSubRouter(cr, r))
+		})
+	}
+	if r.sealed {
+		op()
+	} else {
+		r.pendingOps = append(r.pendingOps, op)
+	}
 }
 
 // Route creates a pattern-scoped route group. The callback receives a
 // sub-Router that shares the parent's middleware registry and route tracking.
+// When the router is unsealed, the route is deferred until Seal().
 func (r *Router) Route(pattern string, fn func(sub *Router)) {
-	r.mux.Route(pattern, func(cr chi.Router) {
-		fn(newSubRouter(cr, r))
-	})
+	op := func() {
+		r.mux.Route(pattern, func(cr chi.Router) {
+			fn(newSubRouter(cr, r))
+		})
+	}
+	if r.sealed {
+		op()
+	} else {
+		r.pendingOps = append(r.pendingOps, op)
+	}
 }
 
 // Handle registers a route and tracks ownership. Middleware is resolved from
 // the internal registry (for MiddlewareByName) or used directly (for MiddlewareFunc) and applied
-// in order (outermost first).
+// in order (outermost first). Panics if a named middleware is not registered.
+// When the router is unsealed, the registration is deferred until Seal().
 func (r *Router) Handle(module, method, path string, handler http.HandlerFunc, middleware ...Middleware) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -118,7 +158,15 @@ func (r *Router) Handle(module, method, path string, handler http.HandlerFunc, m
 		middlewareFuncs = append(middlewareFuncs, fn)
 	}
 
-	r.mux.With(middlewareFuncs...).Method(method, path, handler)
+	op := func() {
+		r.mux.With(middlewareFuncs...).Method(method, path, handler)
+	}
+
+	if r.sealed {
+		op()
+	} else {
+		r.pendingOps = append(r.pendingOps, op)
+	}
 
 	r.routes[module] = append(r.routes[module], registeredRoute{
 		method: method,
@@ -147,6 +195,27 @@ func (r *Router) RemoveByModule(module string) {
 			delete(r.registry, name)
 		}
 	}
+}
+
+// Seal flushes all deferred middleware and route registrations to Chi.
+// Middleware is applied first (via chi.Use), then route operations are
+// replayed in order. After Seal, all subsequent calls go directly to Chi.
+// Seal is idempotent — calling it on an already-sealed router is a no-op.
+func (r *Router) Seal() {
+	if r.sealed {
+		return
+	}
+	r.sealed = true
+
+	for _, fn := range r.pendingMW {
+		r.mux.Use(fn)
+	}
+	for _, op := range r.pendingOps {
+		op()
+	}
+
+	r.pendingMW = nil
+	r.pendingOps = nil
 }
 
 // ServeHTTP implements http.Handler, delegating to the underlying Chi router.
