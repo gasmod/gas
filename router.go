@@ -14,9 +14,9 @@ type registeredRoute struct {
 }
 
 // Router is a smart router that wraps Chi and tracks route and middleware
-// ownership by module. MiddlewareByName middleware is resolved from an internal registry
+// ownership by service. MiddlewareByName middleware is resolved from an internal registry
 // at registration time. The base server uses RemoveByModule during
-// kill-switch to replace a closed module's routes with 503 handlers and
+// kill-switch to replace a closed service's routes with 503 handlers and
 // remove its middleware.
 //
 // Top-level routers created via NewRouter() start unsealed: Use, Handle,
@@ -29,13 +29,17 @@ type registeredRoute struct {
 // Sub-routers (created inside Group/Route callbacks) are always sealed so
 // their calls pass through to Chi immediately.
 type Router struct {
-	mux        chi.Router
-	routes     map[string][]registeredRoute
-	registry   map[string]namedMiddleware
+	mux chi.Router
+
+	routes                 map[string][]registeredRoute
+	registry               map[string]namedMiddleware
+	notFoundHandlerService string
+
 	pendingMW  []func(http.Handler) http.Handler // queued Use() calls
 	pendingOps []func()                          // queued Handle/Group/Route calls
 	sealed     bool                              // after Seal(), ops go directly to chi
-	mu         sync.RWMutex
+
+	mu sync.RWMutex
 }
 
 // NewRouter creates a Router backed by Chi with an empty middleware registry.
@@ -70,11 +74,11 @@ func (r *Router) Mux() chi.Router {
 }
 
 // Register adds a named middleware to the internal registry and tracks which
-// module owns it.
-func (r *Router) Register(module, name string, mw func(http.Handler) http.Handler) {
+// service owns it.
+func (r *Router) Register(service, name string, mw func(http.Handler) http.Handler) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.registry[name] = namedMiddleware{module: module, fn: mw}
+	r.registry[name] = namedMiddleware{service: service, fn: mw}
 }
 
 // Use applies middleware to the router. Each Middleware is resolved (by name
@@ -145,7 +149,7 @@ func (r *Router) Route(pattern string, fn func(sub *Router)) {
 // the internal registry (for MiddlewareByName) or used directly (for MiddlewareFunc) and applied
 // in order (outermost first). Panics if a named middleware is not registered.
 // When the router is unsealed, the registration is deferred until Seal().
-func (r *Router) Handle(module, method, path string, handler http.HandlerFunc, middleware ...Middleware) {
+func (r *Router) Handle(service, method, path string, handler http.HandlerFunc, middleware ...Middleware) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -168,30 +172,40 @@ func (r *Router) Handle(module, method, path string, handler http.HandlerFunc, m
 		r.pendingOps = append(r.pendingOps, op)
 	}
 
-	r.routes[module] = append(r.routes[module], registeredRoute{
+	r.routes[service] = append(r.routes[service], registeredRoute{
 		method: method,
 		path:   path,
 	})
 }
 
+// NotFound registers a custom not-found handler for the router, associated with the specified service.
+// Panics if a not found handler is already registered by another service.
+func (r *Router) NotFound(service string, handler http.HandlerFunc) {
+	if r.notFoundHandlerService != "" {
+		panic(fmt.Errorf("gas: service %q already registered a not found handler", r.notFoundHandlerService))
+	}
+	r.notFoundHandlerService = service
+	r.mux.NotFound(handler)
+}
+
 // RemoveByModule removes all routes and middleware registered by the given
-// module. Routes are replaced with 503 Service Unavailable handlers.
-func (r *Router) RemoveByModule(module string) {
+// service. Routes are replaced with 503 Service Unavailable handlers.
+func (r *Router) RemoveByModule(service string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	// Remove routes.
-	routes, ok := r.routes[module]
+	routes, ok := r.routes[service]
 	if ok {
 		for _, route := range routes {
 			r.mux.Method(route.method, route.path, http.HandlerFunc(r.handleUnavailable))
 		}
-		delete(r.routes, module)
+		delete(r.routes, service)
 	}
 
-	// Remove middleware owned by this module.
+	// Remove middleware owned by this service.
 	for name, nm := range r.registry {
-		if nm.module == module {
+		if nm.service == service {
 			delete(r.registry, name)
 		}
 	}

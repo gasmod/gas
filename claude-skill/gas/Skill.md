@@ -144,13 +144,17 @@ svc, ok := gas.Resolve[*MyScopedService](scope)
 
 ## Router
 
-`Router` wraps Chi and tracks route/middleware ownership by module. During
-kill-switch, `RemoveByModule` replaces closed module routes with 503 handlers.
+`Router` wraps Chi and tracks route/middleware ownership by service. During
+kill-switch, `RemoveByModule` replaces closed service routes with 503 handlers.
 
 ### Registering routes
 
 ```go
-router.Handle(module, method, path string, handler http.HandlerFunc, middleware ...Middleware)
+router.Handle(service, method, path string, handler http.HandlerFunc, middleware ...Middleware)
+```
+
+```go
+router.NotFound(service string, handler handler http.HandlerFunc)
 ```
 
 ### Middleware
@@ -163,7 +167,7 @@ gas.MiddlewareByName(name string) Middleware
 gas.MiddlewareFunc(fn func (http.Handler) http.Handler) Middleware
 
 // Register named middleware
-router.Register(module, name string, mw func (http.Handler) http.Handler)
+router.Register(service, name string, mw func (http.Handler) http.Handler)
 
 // Apply globally (panics if named middleware not registered)
 router.Use(middleware ...Middleware)
@@ -195,12 +199,12 @@ The `App` calls `Seal()` automatically after all services are initialized.
 
 ### Other Router methods
 
-| Method                          | Description                                               |
-|---------------------------------|-----------------------------------------------------------|
-| `Mux() chi.Router`              | Underlying Chi router for global middleware / http.Server |
-| `Seal()`                        | Flush deferred middleware then routes; idempotent         |
-| `RemoveByModule(module string)` | Replace module routes with 503, remove middleware         |
-| `ServeHTTP(w, req)`             | Implements http.Handler                                   |
+| Method                           | Description                                               |
+|----------------------------------|-----------------------------------------------------------|
+| `Mux() chi.Router`               | Underlying Chi router for global middleware / http.Server |
+| `Seal()`                         | Flush deferred middleware then routes; idempotent         |
+| `RemoveByModule(service string)` | Replace service routes with 503, remove middleware        |
+| `ServeHTTP(w, req)`              | Implements http.Handler                                   |
 
 ## EventBus
 
@@ -222,11 +226,11 @@ type UserCreatedPayload struct {
 // Emit dispatches a typed event concurrently; returns *sync.WaitGroup.
 gas.Emit[T](bus *EventBus, event Event[T], data T) *sync.WaitGroup
 
-// Subscribe registers a typed handler without module ownership.
+// Subscribe registers a typed handler without service ownership.
 gas.Subscribe[T](bus *EventBus, event Event[T], handler func(T))
 
-// SubscribeWithOwner registers a typed handler with module ownership tracking.
-gas.SubscribeWithOwner[T](bus *EventBus, module string, event Event[T], handler func(T))
+// SubscribeWithOwner registers a typed handler with service ownership tracking.
+gas.SubscribeWithOwner[T](bus *EventBus, service string, event Event[T], handler func(T))
 ```
 
 ### Low-level EventBus methods
@@ -236,8 +240,8 @@ bus := gas.NewEventBus()
 
 bus.Emit(event string, data any) *sync.WaitGroup
 bus.Subscribe(event string, handler func(any))
-bus.SubscribeWithOwner(module, event string, handler func(any))
-bus.RemoveByModule(module string)
+bus.SubscribeWithOwner(service, event string, handler func(any))
+bus.RemoveByModule(service string)
 ```
 
 ## System Events
@@ -303,9 +307,9 @@ type UIProvider interface {
 
 type MigrationManager interface {
 	Service
-	Register(module string, m Migration)
-	RegisterSlice(module string, migrations []Migration)
-	RegisterFS(module string, fsys fs.FS) error
+	Register(service string, m Migration)
+	RegisterSlice(service string, migrations []Migration)
+	RegisterFS(service string, fsys fs.FS) error
 	RunPending() error
 	Down(n int) error
 }
@@ -319,7 +323,7 @@ type Email struct {
 }
 
 type Migration struct {
-	Version, Module, Description, Up, Down string
+	Version, Service, Description, Up, Down string
 }
 
 type Rows interface {

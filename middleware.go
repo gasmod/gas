@@ -3,8 +3,8 @@ package gas
 import "net/http"
 
 type namedMiddleware struct {
-	fn     func(http.Handler) http.Handler
-	module string
+	fn      func(http.Handler) http.Handler
+	service string
 }
 
 // Middleware represents either a named middleware (resolved from the router's

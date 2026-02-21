@@ -284,7 +284,7 @@ func TestRouter_RemoveByModule(t *testing.T) {
 		t.Fatalf("expected 200 before removal, got %d", rr.Code)
 	}
 
-	// Remove module routes.
+	// Remove service routes.
 	router.RemoveByModule("auth")
 
 	// Route should now return 503.

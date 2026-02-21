@@ -4,10 +4,10 @@ import "sync"
 
 type subscriber struct {
 	handler func(any)
-	module  string
+	service string
 }
 
-// EventBus is a publish/subscribe message bus with module ownership tracking.
+// EventBus is a publish/subscribe message bus with service ownership tracking.
 type EventBus struct {
 	subscribers map[string][]subscriber
 	mu          sync.RWMutex
@@ -34,8 +34,8 @@ func (bus *EventBus) Emit(event string, data any) *sync.WaitGroup {
 	return &wg
 }
 
-// Subscribe registers a handler for an event without module ownership.
-// Use SubscribeWithOwner when subscribing from a module so that
+// Subscribe registers a handler for an event without service ownership.
+// Use SubscribeWithOwner when subscribing from a service so that
 // RemoveByModule can clean up subscriptions.
 func (bus *EventBus) Subscribe(event string, handler func(any)) {
 	bus.mu.Lock()
@@ -45,26 +45,26 @@ func (bus *EventBus) Subscribe(event string, handler func(any)) {
 	})
 }
 
-// SubscribeWithOwner registers a handler for an event with module ownership
+// SubscribeWithOwner registers a handler for an event with service ownership
 // tracking. The base server uses this ownership info during kill-switch
-// to remove all subscriptions belonging to a closed module.
-func (bus *EventBus) SubscribeWithOwner(module, event string, handler func(any)) {
+// to remove all subscriptions belonging to a closed service.
+func (bus *EventBus) SubscribeWithOwner(service, event string, handler func(any)) {
 	bus.mu.Lock()
 	defer bus.mu.Unlock()
 	bus.subscribers[event] = append(bus.subscribers[event], subscriber{
-		module:  module,
+		service: service,
 		handler: handler,
 	})
 }
 
-// RemoveByModule removes all subscriptions registered by the given module.
-func (bus *EventBus) RemoveByModule(module string) {
+// RemoveByModule removes all subscriptions registered by the given service.
+func (bus *EventBus) RemoveByModule(service string) {
 	bus.mu.Lock()
 	defer bus.mu.Unlock()
 	for event, subs := range bus.subscribers {
 		filtered := subs[:0]
 		for _, s := range subs {
-			if s.module != module {
+			if s.service != service {
 				filtered = append(filtered, s)
 			}
 		}

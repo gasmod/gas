@@ -2,10 +2,10 @@ package gas
 
 import "io/fs"
 
-// Migration represents a single database migration owned by a module.
+// Migration represents a single database migration owned by a service.
 type Migration struct {
 	Version     string
-	Module      string
+	Service     string
 	Description string
 	Up          string
 	Down        string
@@ -18,17 +18,17 @@ type Migration struct {
 type MigrationManager interface {
 	Service
 
-	// Register adds a migration and tracks which module owns it.
-	Register(module string, m Migration)
+	// Register adds a migration and tracks which service owns it.
+	Register(service string, m Migration)
 
-	// RegisterSlice adds multiple migrations at once for the given module.
-	RegisterSlice(module string, migrations []Migration)
+	// RegisterSlice adds multiple migrations at once for the given service.
+	RegisterSlice(service string, migrations []Migration)
 
 	// RegisterFS reads .up.sql/.down.sql files from an fs.FS and registers
-	// them as migrations for the given module. Files must follow the naming
+	// them as migrations for the given service. Files must follow the naming
 	// convention: {version}_{description}.up.sql / {version}_{description}.down.sql
 	// (e.g. 20250216_001_create_users.up.sql).
-	RegisterFS(module string, fsys fs.FS) error
+	RegisterFS(service string, fsys fs.FS) error
 
 	// RunPending applies all unapplied migrations in global version order.
 	// If any migration is marked dirty, execution is blocked until the

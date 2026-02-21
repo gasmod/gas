@@ -13,7 +13,7 @@ import (
 )
 
 // DatabaseProvider abstracts database access. Implemented by gas-database
-// or any other database module. DB() exposes the underlying *sql.DB so
+// or any other database service. DB() exposes the underlying *sql.DB so
 // that sqlc-generated code and transactions can use it directly.
 type DatabaseProvider interface {
 	DB() *sql.DB
@@ -65,7 +65,7 @@ type StorageProvider interface {
 }
 
 // UIProvider abstracts template rendering. Implemented by gas-ui or any
-// other UI module. Modules that need to render HTML pages accept a
+// other UI service. Modules that need to render HTML pages accept a
 // UIProvider through their functional options.
 type UIProvider interface {
 	Render(w http.ResponseWriter, name string, data any) error
