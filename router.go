@@ -105,7 +105,7 @@ func (r *Router) Route(pattern string, fn func(sub *Router)) {
 // Handle registers a route and tracks ownership. Middleware is resolved from
 // the internal registry (for MiddlewareByName) or used directly (for MiddlewareFunc) and applied
 // in order (outermost first).
-func (r *Router) Handle(module, method, path string, handler http.HandlerFunc, middleware ...Middleware) error {
+func (r *Router) Handle(module, method, path string, handler http.HandlerFunc, middleware ...Middleware) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -113,7 +113,7 @@ func (r *Router) Handle(module, method, path string, handler http.HandlerFunc, m
 	for _, m := range middleware {
 		fn, err := r.resolveMiddleware(m)
 		if err != nil {
-			return fmt.Errorf("gas: route %s %s: %w", method, path, err)
+			panic(fmt.Errorf("gas: route %s %s: %w", method, path, err))
 		}
 		middlewareFuncs = append(middlewareFuncs, fn)
 	}
@@ -124,8 +124,6 @@ func (r *Router) Handle(module, method, path string, handler http.HandlerFunc, m
 		method: method,
 		path:   path,
 	})
-
-	return nil
 }
 
 // RemoveByModule removes all routes and middleware registered by the given
