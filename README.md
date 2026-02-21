@@ -150,19 +150,24 @@ router.Route("/api", func(sub *gas.Router) {
 
 ### Events
 
+Events use typed `Event[T]` definitions for compile-time safety:
+
 ```go
-// Subscribe
-bus.SubscribeWithOwner("billing", "user:created", func(data gas.EventData) {
-	email, _ := data.GetString("email")
-	// provision billing account...
+// Define a typed event
+var UserCreated = gas.Event[UserCreatedPayload]{Name: "user:created"}
+
+type UserCreatedPayload struct {
+	Email string
+}
+
+// Subscribe with ownership tracking
+gas.SubscribeWithOwner(bus, s.Name(), UserCreated, func(data UserCreatedPayload) {
+	// provision billing account for data.Email
 })
 
-// Emit
-bus.Emit("user:created", gas.NewEventData().Set("email", "user@example.com"))
+// Emit (returns *sync.WaitGroup for concurrent handlers)
+gas.Emit(bus, UserCreated, UserCreatedPayload{Email: "user@example.com"}).Wait()
 ```
-
-`EventData` provides type-safe accessors: `GetString`, `GetInt`, `GetBool`, `GetFloat64`, `GetTime`, `GetStringSlice`,
-and `Raw`.
 
 ### Kill-Switch
 
@@ -176,9 +181,8 @@ app.RestartService("auth") // re-initializes the service
 Other services can react to closures:
 
 ```go
-bus.SubscribeWithOwner("billing", gas.SystemServiceClosed, func(data gas.EventData) {
-	name, _ := data.GetString("service_name")
-	// enter degraded mode if needed
+gas.SubscribeWithOwner(bus, s.Name(), gas.SystemServiceClosed, func(data gas.SystemServiceClosedPayload) {
+	// enter degraded mode if data.ServiceName was a dependency
 })
 ```
 
@@ -249,7 +253,7 @@ func (s *Service) Name() string { return "myservice" }
 
 func (s *Service) Init() error {
 	s.router.Handle(s.Name(), "GET", "/hello", s.handleHello)
-	s.bus.SubscribeWithOwner(s.Name(), gas.SystemServiceClosed, s.onServiceClosed)
+	gas.SubscribeWithOwner(s.bus, s.Name(), gas.SystemServiceClosed, s.onServiceClosed)
 	return nil
 }
 
@@ -266,13 +270,13 @@ app := gas.NewApp(
 
 ## System Events
 
-| Constant                           | Fired When                                      |
-|------------------------------------|-------------------------------------------------|
-| `gas.SystemServiceClosed`          | A service is killed via `CloseService`          |
-| `gas.SystemServiceInitialized`     | A service finishes `Init` (including restart)   |
-| `gas.SystemAllServicesInitialized` | All services have been successfully initialized |
-| `gas.SystemServerShuttingDown`     | Server begins graceful shutdown                 |
-| `gas.AppConfigUpdated`             | App config is updated after binding             |
+| Event                              | Payload Type                             | Fired When                                      |
+|------------------------------------|------------------------------------------|-------------------------------------------------|
+| `gas.SystemServiceClosed`          | `SystemServiceClosedPayload`             | A service is killed via `CloseService`          |
+| `gas.SystemServiceInitialized`     | `SystemServiceInitializedPayload`        | A service finishes `Init` (including restart)   |
+| `gas.SystemAllServicesInitialized` | `SystemAllServicesInitializedPayload`    | All services have been successfully initialized |
+| `gas.SystemServerShuttingDown`     | `SystemServerShuttingDownPayload`        | Server begins graceful shutdown                 |
+| `gas.AppConfigUpdated`             | `AppConfigUpdatedPayload`                | App config is updated after binding             |
 
 ## App Accessors
 

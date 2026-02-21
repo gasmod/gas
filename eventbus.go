@@ -3,12 +3,11 @@ package gas
 import "sync"
 
 type subscriber struct {
-	handler func(EventData)
+	handler func(any)
 	module  string
 }
 
-// EventBus provides publish/subscribe messaging between modules using
-// string-based event names and typed EventData payloads.
+// EventBus is a publish/subscribe message bus with module ownership tracking.
 type EventBus struct {
 	subscribers map[string][]subscriber
 	mu          sync.RWMutex
@@ -21,24 +20,8 @@ func NewEventBus() *EventBus {
 	}
 }
 
-// Emit delivers an event to all subscribers. Handlers are called
-// synchronously in subscription order. The subscriber slice is copied
-// before delivery to avoid holding the lock during handler execution.
-func (bus *EventBus) Emit(event string, data EventData) {
-	bus.mu.RLock()
-	subs := make([]subscriber, len(bus.subscribers[event]))
-	copy(subs, bus.subscribers[event])
-	bus.mu.RUnlock()
-
-	for _, s := range subs {
-		s.handler(data)
-	}
-}
-
-// EmitAsync delivers an event to all subscribers concurrently.
-// Each handler runs in its own goroutine. The returned sync.WaitGroup
-// can be used to wait for all handlers to complete.
-func (bus *EventBus) EmitAsync(event string, data EventData) *sync.WaitGroup {
+// Emit dispatches an event to all subscribers concurrently and returns a WaitGroup.
+func (bus *EventBus) Emit(event string, data any) *sync.WaitGroup {
 	bus.mu.RLock()
 	subs := make([]subscriber, len(bus.subscribers[event]))
 	copy(subs, bus.subscribers[event])
@@ -54,7 +37,7 @@ func (bus *EventBus) EmitAsync(event string, data EventData) *sync.WaitGroup {
 // Subscribe registers a handler for an event without module ownership.
 // Use SubscribeWithOwner when subscribing from a module so that
 // RemoveByModule can clean up subscriptions.
-func (bus *EventBus) Subscribe(event string, handler func(EventData)) {
+func (bus *EventBus) Subscribe(event string, handler func(any)) {
 	bus.mu.Lock()
 	defer bus.mu.Unlock()
 	bus.subscribers[event] = append(bus.subscribers[event], subscriber{
@@ -65,7 +48,7 @@ func (bus *EventBus) Subscribe(event string, handler func(EventData)) {
 // SubscribeWithOwner registers a handler for an event with module ownership
 // tracking. The base server uses this ownership info during kill-switch
 // to remove all subscriptions belonging to a closed module.
-func (bus *EventBus) SubscribeWithOwner(module, event string, handler func(EventData)) {
+func (bus *EventBus) SubscribeWithOwner(module, event string, handler func(any)) {
 	bus.mu.Lock()
 	defer bus.mu.Unlock()
 	bus.subscribers[event] = append(bus.subscribers[event], subscriber{

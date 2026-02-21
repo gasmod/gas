@@ -8,7 +8,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/gasmod/gas"
 )
@@ -25,99 +24,17 @@ func assertPanics(t *testing.T, name string, fn func()) {
 }
 
 // ---------------------------------------------------------------------------
-// EventData tests
+// Typed Event helpers for tests
 // ---------------------------------------------------------------------------
 
-func TestEventData_SetAndGetString(t *testing.T) {
-	d := gas.NewEventData().Set("name", "alice")
+var testUserCreated = gas.Event[testUserPayload]{Name: "user:created"}
 
-	v, ok := d.GetString("name")
-	if !ok || v != "alice" {
-		t.Fatalf("expected (alice, true), got (%q, %v)", v, ok)
-	}
+type testUserPayload struct {
+	Email string
 }
 
-func TestEventData_GetString_Missing(t *testing.T) {
-	d := gas.NewEventData()
-	v, ok := d.GetString("missing")
-	if ok || v != "" {
-		t.Fatalf("expected (\"\", false), got (%q, %v)", v, ok)
-	}
-}
-
-func TestEventData_GetString_WrongType(t *testing.T) {
-	d := gas.NewEventData().Set("num", 42)
-	v, ok := d.GetString("num")
-	if ok || v != "" {
-		t.Fatalf("expected (\"\", false), got (%q, %v)", v, ok)
-	}
-}
-
-func TestEventData_GetInt(t *testing.T) {
-	d := gas.NewEventData().Set("count", 7)
-	v, ok := d.GetInt("count")
-	if !ok || v != 7 {
-		t.Fatalf("expected (7, true), got (%d, %v)", v, ok)
-	}
-}
-
-func TestEventData_GetBool(t *testing.T) {
-	d := gas.NewEventData().Set("active", true)
-	v, ok := d.GetBool("active")
-	if !ok || !v {
-		t.Fatalf("expected (true, true), got (%v, %v)", v, ok)
-	}
-}
-
-func TestEventData_GetFloat64(t *testing.T) {
-	d := gas.NewEventData().Set("rate", 3.14)
-	v, ok := d.GetFloat64("rate")
-	if !ok || v != 3.14 {
-		t.Fatalf("expected (3.14, true), got (%f, %v)", v, ok)
-	}
-}
-
-func TestEventData_GetTime(t *testing.T) {
-	now := time.Now()
-	d := gas.NewEventData().Set("ts", now)
-	v, ok := d.GetTime("ts")
-	if !ok || !v.Equal(now) {
-		t.Fatalf("expected (%v, true), got (%v, %v)", now, v, ok)
-	}
-}
-
-func TestEventData_GetStringSlice(t *testing.T) {
-	d := gas.NewEventData().Set("tags", []string{"a", "b"})
-	v, ok := d.GetStringSlice("tags")
-	if !ok || len(v) != 2 || v[0] != "a" || v[1] != "b" {
-		t.Fatalf("expected ([a b], true), got (%v, %v)", v, ok)
-	}
-}
-
-func TestEventData_Raw(t *testing.T) {
-	d := gas.NewEventData().Set("k", "v")
-	raw := d.Raw()
-	if raw["k"] != "v" {
-		t.Fatalf("expected raw[k]=v, got %v", raw["k"])
-	}
-}
-
-func TestEventData_Chaining(t *testing.T) {
-	d := gas.NewEventData().
-		Set("a", "one").
-		Set("b", 2).
-		Set("c", true)
-
-	if v, ok := d.GetString("a"); !ok || v != "one" {
-		t.Fatalf("expected (one, true), got (%q, %v)", v, ok)
-	}
-	if v, ok := d.GetInt("b"); !ok || v != 2 {
-		t.Fatalf("expected (2, true), got (%d, %v)", v, ok)
-	}
-	if v, ok := d.GetBool("c"); !ok || !v {
-		t.Fatalf("expected (true, true), got (%v, %v)", v, ok)
-	}
-}
+var testEvent = gas.Event[struct{}]{Name: "test:event"}
+var testInc = gas.Event[struct{}]{Name: "inc"}
 
 // ---------------------------------------------------------------------------
 // Router.Register (middleware registry) tests
@@ -183,11 +100,11 @@ func TestEventBus_EmitAndSubscribe(t *testing.T) {
 	bus := gas.NewEventBus()
 
 	var received string
-	bus.Subscribe("user:created", func(data gas.EventData) {
-		received, _ = data.GetString("email")
+	gas.Subscribe(bus, testUserCreated, func(data testUserPayload) {
+		received = data.Email
 	})
 
-	bus.Emit("user:created", gas.NewEventData().Set("email", "test@example.com"))
+	gas.Emit(bus, testUserCreated, testUserPayload{Email: "test@example.com"}).Wait()
 
 	if received != "test@example.com" {
 		t.Fatalf("expected test@example.com, got %q", received)
@@ -197,15 +114,20 @@ func TestEventBus_EmitAndSubscribe(t *testing.T) {
 func TestEventBus_SubscribeWithOwner(t *testing.T) {
 	bus := gas.NewEventBus()
 
+	var mu sync.Mutex
 	count := 0
-	bus.SubscribeWithOwner("auth", "user:created", func(data gas.EventData) {
+	gas.SubscribeWithOwner(bus, "auth", testUserCreated, func(data testUserPayload) {
+		mu.Lock()
 		count++
+		mu.Unlock()
 	})
-	bus.SubscribeWithOwner("billing", "user:created", func(data gas.EventData) {
+	gas.SubscribeWithOwner(bus, "billing", testUserCreated, func(data testUserPayload) {
+		mu.Lock()
 		count++
+		mu.Unlock()
 	})
 
-	bus.Emit("user:created", gas.NewEventData())
+	gas.Emit(bus, testUserCreated, testUserPayload{}).Wait()
 	if count != 2 {
 		t.Fatalf("expected 2 handlers called, got %d", count)
 	}
@@ -214,18 +136,23 @@ func TestEventBus_SubscribeWithOwner(t *testing.T) {
 func TestEventBus_RemoveByModule(t *testing.T) {
 	bus := gas.NewEventBus()
 
+	var mu sync.Mutex
 	authCalled := false
 	billingCalled := false
 
-	bus.SubscribeWithOwner("auth", "test:event", func(data gas.EventData) {
+	gas.SubscribeWithOwner(bus, "auth", testEvent, func(data struct{}) {
+		mu.Lock()
 		authCalled = true
+		mu.Unlock()
 	})
-	bus.SubscribeWithOwner("billing", "test:event", func(data gas.EventData) {
+	gas.SubscribeWithOwner(bus, "billing", testEvent, func(data struct{}) {
+		mu.Lock()
 		billingCalled = true
+		mu.Unlock()
 	})
 
 	bus.RemoveByModule("auth")
-	bus.Emit("test:event", gas.NewEventData())
+	gas.Emit(bus, testEvent, struct{}{}).Wait()
 
 	if authCalled {
 		t.Fatal("auth handler should not have been called after removal")
@@ -238,18 +165,15 @@ func TestEventBus_RemoveByModule(t *testing.T) {
 func TestEventBus_EmitNoSubscribers(t *testing.T) {
 	bus := gas.NewEventBus()
 	// Should not panic.
-	bus.Emit("nonexistent", gas.NewEventData())
+	gas.Emit(bus, testEvent, struct{}{}).Wait()
 }
 
 func TestEventBus_ConcurrentEmit(t *testing.T) {
 	bus := gas.NewEventBus()
 
-	var mu sync.Mutex
-	count := 0
-	bus.Subscribe("inc", func(data gas.EventData) {
-		mu.Lock()
-		count++
-		mu.Unlock()
+	var count atomic.Int64
+	gas.Subscribe(bus, testInc, func(data struct{}) {
+		count.Add(1)
 	})
 
 	var wg sync.WaitGroup
@@ -257,13 +181,13 @@ func TestEventBus_ConcurrentEmit(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			bus.Emit("inc", gas.NewEventData())
+			gas.Emit(bus, testInc, struct{}{}).Wait()
 		}()
 	}
 	wg.Wait()
 
-	if count != 100 {
-		t.Fatalf("expected 100, got %d", count)
+	if count.Load() != 100 {
+		t.Fatalf("expected 100, got %d", count.Load())
 	}
 }
 
@@ -648,8 +572,8 @@ func TestApp_CloseService(t *testing.T) {
 
 	// Track service-closed event.
 	var closedName string
-	app.EventBus().Subscribe(gas.SystemServiceClosed, func(data gas.EventData) {
-		closedName, _ = data.GetString("service_name")
+	gas.Subscribe(app.EventBus(), gas.SystemServiceClosed, func(data gas.SystemServiceClosedPayload) {
+		closedName = data.ServiceName
 	})
 
 	// Kill-switch.
@@ -701,8 +625,8 @@ func TestApp_RestartService(t *testing.T) {
 
 	// Track restart event.
 	var restartedName string
-	app.EventBus().Subscribe(gas.SystemServiceInitialized, func(data gas.EventData) {
-		restartedName, _ = data.GetString("service_name")
+	gas.Subscribe(app.EventBus(), gas.SystemServiceInitialized, func(data gas.SystemServiceInitializedPayload) {
+		restartedName = data.ServiceName
 	})
 
 	// Restart.

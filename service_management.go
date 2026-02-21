@@ -46,8 +46,7 @@ func (a *App) CloseService(name string) error {
 	delete(a.activeServices, name)
 
 	// 5. Notify all other services.
-	a.Emit(SystemServiceClosed, NewEventData().
-		Set("service_name", name))
+	Emit(a.eventBus, SystemServiceClosed, SystemServiceClosedPayload{ServiceName: name}).Wait()
 
 	a.logger.Info("service closed", "service", name)
 	return nil
@@ -83,8 +82,7 @@ func (a *App) RestartService(name string) error {
 
 	a.activeServices[name] = svc
 
-	a.Emit(SystemServiceInitialized, NewEventData().
-		Set("service_name", name))
+	Emit(a.eventBus, SystemServiceInitialized, SystemServiceInitializedPayload{ServiceName: name}).Wait()
 
 	a.logger.Info("service restarted", "service", name)
 	return nil

@@ -93,10 +93,6 @@ shutdown, services are closed in reverse init order.
 | `ActiveServices`     | `() []string`                                      | Names of currently active services                 |
 | `CloseService`       | `(name string) error`                              | Kill-switch: 503 routes, remove subs, call Close() |
 | `RestartService`     | `(name string) error`                              | Re-initialize a previously closed service          |
-| `Emit`               | `(event string, data EventData)`                   | Emit event synchronously                           |
-| `EmitAsync`          | `(event string, data EventData) *sync.WaitGroup`   | Emit event concurrently                            |
-| `Subscribe`          | `(event string, handler func(EventData))`          | Subscribe without ownership                        |
-| `SubscribeWithOwner` | `(service, event string, handler func(EventData))` | Subscribe with ownership tracking                  |
 
 ## DI Container
 
@@ -208,50 +204,56 @@ The `App` calls `Seal()` automatically after all services are initialized.
 
 ## EventBus
 
-Publish/subscribe messaging between modules using string-based event names.
+Typed publish/subscribe messaging between modules using `Event[T]` definitions.
+
+### Defining events
+
+```go
+var UserCreated = gas.Event[UserCreatedPayload]{Name: "user:created"}
+
+type UserCreatedPayload struct {
+	Email string
+}
+```
+
+### Top-level generic functions
+
+```go
+// Emit dispatches a typed event concurrently; returns *sync.WaitGroup.
+gas.Emit[T](bus *EventBus, event Event[T], data T) *sync.WaitGroup
+
+// Subscribe registers a typed handler without module ownership.
+gas.Subscribe[T](bus *EventBus, event Event[T], handler func(T))
+
+// SubscribeWithOwner registers a typed handler with module ownership tracking.
+gas.SubscribeWithOwner[T](bus *EventBus, module string, event Event[T], handler func(T))
+```
+
+### Low-level EventBus methods
 
 ```go
 bus := gas.NewEventBus()
 
-// Subscribe
-bus.Subscribe(event string, handler func (EventData))
-bus.SubscribeWithOwner(module, event string, handler func (EventData))
-
-// Emit
-bus.Emit(event string, data EventData) // synchronous, subscription order
-bus.EmitAsync(event string, data EventData) *sync.WaitGroup // concurrent goroutines
-
-// Cleanup
+bus.Emit(event string, data any) *sync.WaitGroup
+bus.Subscribe(event string, handler func(any))
+bus.SubscribeWithOwner(module, event string, handler func(any))
 bus.RemoveByModule(module string)
-```
-
-## EventData
-
-Typed event payloads. Each accessor returns `(value, found)`.
-
-```go
-data := gas.NewEventData()
-data = data.Set("email", "user@example.com") // chainable
-
-data.Get(key string) (any, bool)
-data.GetString(key string) (string, bool)
-data.GetInt(key string) (int, bool)
-data.GetBool(key string) (value, exists bool)
-data.GetFloat64(key string) (float64, bool)
-data.GetTime(key string) (time.Time, bool)
-data.GetStringSlice(key string) ([]string, bool)
-data.Raw() map[string]any
 ```
 
 ## System Events
 
-| Constant                           | Fired When                                  | EventData                 |
-|------------------------------------|---------------------------------------------|---------------------------|
-| `gas.SystemServiceClosed`          | Service killed via `CloseService`           | `"service_name"` (string) |
-| `gas.SystemServiceInitialized`     | Service finishes `Init` (including restart) | `"service_name"` (string) |
-| `gas.SystemAllServicesInitialized` | All services initialized                    | —                         |
-| `gas.SystemServerShuttingDown`     | Server begins graceful shutdown             | —                         |
-| `gas.AppConfigUpdated`             | App config updated after binding            | —                         |
+| Event                              | Payload Type                          | Fired When                                  |
+|------------------------------------|---------------------------------------|---------------------------------------------|
+| `gas.SystemServiceClosed`          | `SystemServiceClosedPayload`          | Service killed via `CloseService`           |
+| `gas.SystemServiceInitialized`     | `SystemServiceInitializedPayload`     | Service finishes `Init` (including restart) |
+| `gas.SystemAllServicesInitialized` | `SystemAllServicesInitializedPayload` | All services initialized                    |
+| `gas.SystemServerShuttingDown`     | `SystemServerShuttingDownPayload`     | Server begins graceful shutdown             |
+| `gas.AppConfigUpdated`             | `AppConfigUpdatedPayload`             | App config updated after binding            |
+
+Payload structs with fields:
+- `SystemServiceClosedPayload{ServiceName string}`
+- `SystemServiceInitializedPayload{ServiceName string}`
+- `AppConfigUpdatedPayload{Config Config}`
 
 ## Provider Interfaces
 
@@ -370,7 +372,7 @@ func (s *Service) Name() string { return "myservice" }
 
 func (s *Service) Init() error {
 	s.router.Handle(s.Name(), "GET", "/hello", s.handleHello)
-	s.bus.SubscribeWithOwner(s.Name(), gas.SystemServiceClosed, s.onServiceClosed)
+	gas.SubscribeWithOwner(s.bus, s.Name(), gas.SystemServiceClosed, s.onServiceClosed)
 	return nil
 }
 

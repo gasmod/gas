@@ -148,7 +148,7 @@ func (a *App) InitServices() (err error) {
 		// any routes, regardless of service initialization order.
 		a.router.Seal()
 
-		a.Emit(SystemAllServicesInitialized, NewEventData())
+		Emit(a.eventBus, SystemAllServicesInitialized, SystemAllServicesInitializedPayload{}).Wait()
 	})
 	return
 }
@@ -167,8 +167,7 @@ func (a *App) bindConfig() error {
 		return fmt.Errorf("gas: config validation: %w", err)
 	}
 
-	a.Emit(AppConfigUpdated, NewEventData().
-		Set("config", a.cfg))
+	Emit(a.eventBus, AppConfigUpdated, AppConfigUpdatedPayload{Config: *a.cfg}).Wait()
 
 	return nil
 }
@@ -225,7 +224,7 @@ func (a *App) Run() error {
 		}
 	}
 
-	a.Emit(SystemServerShuttingDown, NewEventData())
+	Emit(a.eventBus, SystemServerShuttingDown, SystemServerShuttingDownPayload{}).Wait()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -244,33 +243,4 @@ func (a *App) Run() error {
 
 	a.logger.Info("shutdown complete")
 	return nil
-}
-
-// Emit sends an event with the given name and associated data using the event bus.
-func (a *App) Emit(event string, data EventData) {
-	if a.eventBus != nil {
-		a.eventBus.Emit(event, data)
-	}
-}
-
-// EmitAsync sends an event asynchronously using the event bus.
-func (a *App) EmitAsync(event string, data EventData) *sync.WaitGroup {
-	if a.eventBus == nil {
-		return nil
-	}
-	return a.eventBus.EmitAsync(event, data)
-}
-
-// Subscribe registers a handler function for a specific event name.
-func (a *App) Subscribe(event string, handler func(EventData)) {
-	if a.eventBus != nil {
-		a.eventBus.Subscribe(event, handler)
-	}
-}
-
-// SubscribeWithOwner registers an event handler under a service's ownership.
-func (a *App) SubscribeWithOwner(service, event string, handler func(EventData)) {
-	if a.eventBus != nil {
-		a.eventBus.SubscribeWithOwner(service, event, handler)
-	}
 }
