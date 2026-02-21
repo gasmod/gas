@@ -1,16 +1,16 @@
 package gas
 
 const (
-	// SystemModuleClosed is emitted when a module is closed at runtime.
-	// EventData contains: "module_name" (string)
-	SystemModuleClosed = "gas:module-closed"
+	// SystemServiceClosed is emitted when a service is closed at runtime.
+	// EventData contains: "service_name" (string)
+	SystemServiceClosed = "gas:service-closed"
 
-	// SystemModuleInitialized is emitted when a module is (re-)initialized at runtime.
-	// EventData contains: "module_name" (string)
-	SystemModuleInitialized = "gas:module-initialized"
+	// SystemServiceInitialized is emitted when a service is (re-)initialized at runtime.
+	// EventData contains: "service_name" (string)
+	SystemServiceInitialized = "gas:service-initialized"
 
-	// SystemAllModulesInitialized is emitted when all modules have been successfully initialized.
-	SystemAllModulesInitialized = "gas:all-modules-initialized"
+	// SystemAllServicesInitialized is emitted when all services have been successfully initialized.
+	SystemAllServicesInitialized = "gas:all-services-initialized"
 
 	// SystemServerShuttingDown is emitted when the server is shutting down.
 	SystemServerShuttingDown = "gas:server-shutting-down"

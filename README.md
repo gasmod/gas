@@ -1,8 +1,8 @@
 # Gas
 
-Gas is the core module of a modular Gas ecosystem for building micro-SaaS applications. It provides shared
-infrastructure — routing, middleware, events, migrations, and module lifecycle management — so you can focus on business
-logic instead of rebuilding the same plumbing for every project.
+Gas is the core of a modular Gas ecosystem for building micro-SaaS applications. It provides shared
+infrastructure — dependency injection, routing, middleware, events, migrations, and service lifecycle management — so you
+can focus on business logic instead of rebuilding the same plumbing for every project.
 
 ## Install
 
@@ -12,22 +12,31 @@ go get github.com/gasmod/gas
 
 ## Key Concepts
 
-**Modules** are self-contained units of functionality (auth, billing, etc.) that implement a simple three-method
+**Services** are self-contained units of functionality (auth, billing, etc.) that implement a simple three-method
 interface:
 
 ```go
-type Module interface {
+type Service interface {
 	Name() string // Unique identifier, e.g. "gas-auth"
 	Init() error  // Register routes, middleware, subscriptions
 	Close() error // Cleanup internal resources
 }
 ```
 
-**Infrastructure flows inward.** Modules never import each other. They receive shared infrastructure (router, event bus,
-providers) through functional options and communicate via events and provider interfaces.
+**Dependency injection.** Services are registered with the DI container via constructors. The container resolves
+dependencies automatically, performs topological sorting, validates lifetime rules, and calls `Init()` on every
+`Service` after construction.
 
-**Ownership tracking.** Every route, middleware, and event subscription is tagged with its owning module, enabling
-surgical teardown of a single module at runtime.
+**Three lifetimes:**
+- **Singleton** — created once, shared everywhere. `Init()` is called during `BuildAll()`.
+- **Scoped** — created once per `Scope`. `Init()` is called on first resolution within the scope.
+- **Transient** — created fresh on every resolution. **Cannot implement `Service`** (registration panics).
+
+**Infrastructure flows inward.** Services never import each other. They receive shared infrastructure (router, event bus,
+providers) through constructor injection and communicate via events and provider interfaces.
+
+**Ownership tracking.** Every route, middleware, and event subscription is tagged with its owning service, enabling
+surgical teardown of a single service at runtime.
 
 ## Usage
 
@@ -39,20 +48,9 @@ package main
 import "github.com/gasmod/gas"
 
 func main() {
-	router := gas.NewRouter()
-	bus := gas.NewEventBus()
-
 	app := gas.NewApp(
-		gas.WithRouter(router),
-		gas.WithEventBus(bus),
-		gas.WithModule(auth.New(
-			auth.WithRouter(router),
-			auth.WithEventBus(bus),
-		)),
-		gas.WithModule(billing.New(
-			billing.WithRouter(router),
-			billing.WithEventBus(bus),
-		)),
+		gas.WithService[*auth.Service](auth.New, gas.ServiceLifetimeSingleton),
+		gas.WithService[*billing.Service](billing.New, gas.ServiceLifetimeSingleton),
 	)
 
 	if err := app.Run(); err != nil {
@@ -61,14 +59,38 @@ func main() {
 }
 ```
 
-`Run()` initializes all modules, runs pending migrations, starts the HTTP server, and waits for a shutdown signal.
+The `App` creates a `Router` and `EventBus` internally and registers them in the DI container. Services receive them
+via constructor injection:
+
+```go
+func New(router *gas.Router, bus *gas.EventBus) *Service {
+	return &Service{router: router, bus: bus}
+}
+```
+
+`Run()` initializes all services (via the DI container), runs pending migrations, starts the HTTP server, and waits for
+a shutdown signal. On shutdown, services are closed in reverse init order.
+
+### Registering Services
+
+Register constructor-based services with a lifetime:
+
+```go
+gas.WithService[*auth.Service](auth.New, gas.ServiceLifetimeSingleton)
+```
+
+Register pre-built instances (treated as singletons):
+
+```go
+gas.WithServiceInstance[*MyService](myInstance)
+```
 
 ### Routing
 
 ```go
-func (m *Module) Init() error {
-	m.router.Handle(m.Name(), "GET", "/users", m.listUsers)
-	m.router.Handle(m.Name(), "POST", "/users", m.createUser, gas.MiddlewareByName("require-auth"))
+func (s *Service) Init() error {
+	s.router.Handle(s.Name(), "GET", "/users", s.listUsers)
+	s.router.Handle(s.Name(), "POST", "/users", s.createUser, gas.MiddlewareByName("require-auth"))
 	return nil
 }
 ```
@@ -88,18 +110,7 @@ router.Register("auth", "require-auth", func(next http.Handler) http.Handler {
 })
 ```
 
-Apply middleware globally with `Use()`:
-
-```go
-router.Use(gas.MiddlewareFunc(func(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// logging, CORS, etc.
-		next.ServeHTTP(w, r)
-	})
-}))
-```
-
-You can also use the `UseMiddlewareFunc` and `MiddlewareByName()` helpers to apply middleware func or by name respectively:
+Apply middleware globally:
 
 ```go
 router.UseMiddlewareFunc(func(next http.Handler) http.Handler {
@@ -109,6 +120,8 @@ router.UseMiddlewareFunc(func(next http.Handler) http.Handler {
 	})
 })
 ```
+
+Or by name:
 
 ```go
 router.UseMiddlewareByName("require-auth")
@@ -121,8 +134,8 @@ Use `Group()` for inline middleware scoping:
 ```go
 router.Group(func(sub *gas.Router) {
 	sub.UseMiddlewareByName("require-auth")
-	sub.Handle("admin", "GET", "/admin/dashboard", m.dashboard)
-	sub.Handle("admin", "GET", "/admin/settings", m.settings)
+	sub.Handle("admin", "GET", "/admin/dashboard", s.dashboard)
+	sub.Handle("admin", "GET", "/admin/settings", s.settings)
 })
 ```
 
@@ -130,8 +143,8 @@ Use `Route()` for pattern-scoped groups:
 
 ```go
 router.Route("/api", func(sub *gas.Router) {
-	sub.Handle("api", "GET", "/users", m.listUsers)
-	sub.Handle("api", "GET", "/items", m.listItems)
+	sub.Handle("api", "GET", "/users", s.listUsers)
+	sub.Handle("api", "GET", "/items", s.listItems)
 })
 ```
 
@@ -139,7 +152,7 @@ router.Route("/api", func(sub *gas.Router) {
 
 ```go
 // Subscribe
-bus.SubscribeWithOwner("billing", "user:created", func (data gas.EventData) {
+bus.SubscribeWithOwner("billing", "user:created", func(data gas.EventData) {
 	email, _ := data.GetString("email")
 	// provision billing account...
 })
@@ -153,89 +166,120 @@ and `Raw`.
 
 ### Kill-Switch
 
-Disable a module at runtime without restarting the server:
+Disable a service at runtime without restarting the server:
 
 ```go
-app.CloseModule("auth") // routes return 503, middleware + subscriptions removed, Close() called
-app.RestartModule("auth") // re-initializes the module
+app.CloseService("auth") // routes return 503, middleware + subscriptions removed, Close() called
+app.RestartService("auth") // re-initializes the service
 ```
 
-Other modules can react to closures:
+Other services can react to closures:
 
 ```go
-bus.SubscribeWithOwner("billing", gas.SystemModuleClosed, func(data gas.EventData) {
-	name, _ := data.GetString("module_name")
+bus.SubscribeWithOwner("billing", gas.SystemServiceClosed, func(data gas.EventData) {
+	name, _ := data.GetString("service_name")
 	// enter degraded mode if needed
 })
 ```
 
+### Request Scopes
+
+The App automatically installs middleware that creates a DI `Scope` per HTTP request. Scoped services get a fresh
+instance for each request — `Init()` is called on first resolution and `Close()` is called when the request completes.
+
+Resolve scoped services in any handler using `gas.RequestScope(r)`:
+
+```go
+func (s *Service) handleOrder(w http.ResponseWriter, r *http.Request) {
+	scope := gas.RequestScope(r)
+	txLog := gas.MustResolve[*TransactionLog](scope)
+	txLog.Record("order created")
+	// txLog.Close() is called automatically when the request ends
+}
+```
+
+Register scoped services with `ServiceLifetimeScoped`:
+
+```go
+app := gas.NewApp(
+	gas.WithService[*TransactionLog](NewTransactionLog, gas.ServiceLifetimeScoped),
+)
+```
+
+For non-HTTP use cases (background jobs, tests), create scopes manually:
+
+```go
+scope := container.NewScope()
+defer scope.Close() // calls Close() on all scoped Service instances
+
+svc, ok := gas.Resolve[*MyScopedService](scope)
+```
+
 ### Provider Interfaces
 
-Modules depend on interfaces, not implementations. Gas defines common providers that any module can accept:
+Services depend on interfaces, not implementations. Gas defines common providers that any service can accept:
 
 | Interface          | Methods                                                         |
 |--------------------|-----------------------------------------------------------------|
-| `DatabaseProvider` | `Query`, `Exec`                                                 |
+| `DatabaseProvider` | `Query`, `Exec`, `DB`                                           |
 | `CacheProvider`    | `Get`, `Set`, `Delete`                                          |
 | `EmailProvider`    | `Send`                                                          |
 | `StorageProvider`  | `Upload`, `Download`, `Delete`                                  |
+| `ConfigProvider`   | `SetDefault`, `Set`, `Bind`, `Get`, `Find`, `Values`            |
 | `MigrationManager` | `Register`, `RegisterSlice`, `RegisterFS`, `RunPending`, `Down` |
 
-### Writing a Module
+### Writing a Service
 
 ```go
-package mymodule
+package myservice
 
 import "github.com/gasmod/gas"
 
-type Module struct {
+type Service struct {
 	router *gas.Router
 	bus    *gas.EventBus
 }
 
-type Option func(*Module)
-
-func WithRouter(r *gas.Router) Option     { return func(m *Module) { m.router = r } }
-func WithEventBus(b *gas.EventBus) Option { return func(m *Module) { m.bus = b } }
-
-func New(opts ...Option) *Module {
-	m := &Module{}
-	for _, opt := range opts {
-		opt(m)
-	}
-	return m
+// New is the constructor — dependencies are injected by the DI container.
+func New(router *gas.Router, bus *gas.EventBus) *Service {
+	return &Service{router: router, bus: bus}
 }
 
-func (m *Module) Name() string { return "mymodule" }
+func (s *Service) Name() string { return "myservice" }
 
-func (m *Module) Init() error {
-	m.router.Handle(m.Name(), "GET", "/hello", m.handleHello)
-	m.bus.SubscribeWithOwner(m.Name(), gas.SystemModuleClosed, m.onModuleClosed)
+func (s *Service) Init() error {
+	s.router.Handle(s.Name(), "GET", "/hello", s.handleHello)
+	s.bus.SubscribeWithOwner(s.Name(), gas.SystemServiceClosed, s.onServiceClosed)
 	return nil
 }
 
-func (m *Module) Close() error { return nil }
+func (s *Service) Close() error { return nil }
+```
+
+Register it in the App:
+
+```go
+app := gas.NewApp(
+	gas.WithService[*myservice.Service](myservice.New, gas.ServiceLifetimeSingleton),
+)
 ```
 
 ## System Events
 
-| Constant                       | Fired When                                   |
-|--------------------------------|----------------------------------------------|
-| `gas.SystemModuleClosed`       | A module is killed via `CloseModule`         |
-| `gas.SystemModuleInitialized`  | A module finishes `Init` (including restart) |
-| `gas.SystemServerShuttingDown` | Server begins graceful shutdown              |
+| Constant                           | Fired When                                      |
+|------------------------------------|-------------------------------------------------|
+| `gas.SystemServiceClosed`          | A service is killed via `CloseService`          |
+| `gas.SystemServiceInitialized`     | A service finishes `Init` (including restart)   |
+| `gas.SystemAllServicesInitialized` | All services have been successfully initialized |
+| `gas.SystemServerShuttingDown`     | Server begins graceful shutdown                 |
+| `gas.AppConfigUpdated`             | App config is updated after binding             |
 
-## Configuration
+## App Accessors
 
-```go
-gas.NewApp(
-	gas.WithConfig(&gas.Config{
-		Addr:            ":3000", // default ":8080"
-		ReadTimeout:     10 * time.Second, // default 5s
-		WriteTimeout:    20 * time.Second, // default 10s
-		IdleTimeout:     60 * time.Second, // default 120s
-		ShutdownTimeout: 15 * time.Second, // default 30s
-		Logger:          slog.Default(),
-	}),
-)
-```
+| Method                   | Returns                     |
+|--------------------------|-----------------------------|
+| `app.Router()`           | `*Router`                   |
+| `app.EventBus()`         | `*EventBus`                 |
+| `app.Config()`           | `*Config`                   |
+| `app.MigrationManager()` | `MigrationManager` (or nil) |
+| `app.ConfigProvider()`   | `ConfigProvider` (or nil)   |

@@ -12,11 +12,11 @@ type Migration struct {
 }
 
 // MigrationManager is the interface for registering and executing
-// database migrations. Modules call Register during Init() to declare
-// their migrations. The implementation lives in a separate module
-// (gas-migrate) and is wired in by the base server.
+// database migrations. Services call Register during Init() to declare
+// their migrations. The implementation lives in a separate service
+// (gas-migrate) and is wired in by the App.
 type MigrationManager interface {
-	Module
+	Service
 
 	// Register adds a migration and tracks which module owns it.
 	Register(module string, m Migration)
