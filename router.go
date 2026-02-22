@@ -3,6 +3,7 @@ package gas
 import (
 	"fmt"
 	"net/http"
+	"reflect"
 	"sync"
 
 	"github.com/go-chi/chi/v5"
@@ -11,6 +12,15 @@ import (
 type registeredRoute struct {
 	method string
 	path   string
+}
+
+// pendingHandler records a DI-aware handler's dependency types for boot-time
+// validation. Collected during Handle() and inspected in InitServices().
+type pendingHandler struct {
+	service  string
+	method   string
+	path     string
+	depTypes []reflect.Type
 }
 
 // Router is a smart router that wraps Chi and tracks route and middleware
@@ -35,6 +45,9 @@ type Router struct {
 	registry               map[string]namedMiddleware
 	notFoundHandlerService string
 
+	errorHandler    ErrorHandler      // converts handler errors into HTTP responses
+	pendingHandlers *[]pendingHandler // DI handler deps for boot-time validation (shared across sub-routers)
+
 	pendingMW  []func(http.Handler) http.Handler // queued Use() calls
 	pendingOps []func()                          // queued Handle/Group/Route calls
 	sealed     bool                              // after Seal(), ops go directly to chi
@@ -46,10 +59,12 @@ type Router struct {
 // The router starts unsealed — Use/Handle/Group/Route calls are deferred
 // until Seal() is called.
 func NewRouter() *Router {
+	ph := make([]pendingHandler, 0)
 	return &Router{
-		mux:      chi.NewRouter(),
-		routes:   make(map[string][]registeredRoute),
-		registry: make(map[string]namedMiddleware),
+		mux:             chi.NewRouter(),
+		routes:          make(map[string][]registeredRoute),
+		registry:        make(map[string]namedMiddleware),
+		pendingHandlers: &ph,
 	}
 }
 
@@ -59,11 +74,13 @@ func NewRouter() *Router {
 // that execute during Seal(), so their calls pass through to Chi immediately.
 func newSubRouter(mux chi.Router, parent *Router) *Router {
 	return &Router{
-		mux:      mux,
-		routes:   parent.routes,
-		registry: parent.registry,
-		mu:       sync.RWMutex{},
-		sealed:   true,
+		mux:             mux,
+		routes:          parent.routes,
+		registry:        parent.registry,
+		errorHandler:    parent.errorHandler,
+		pendingHandlers: parent.pendingHandlers,
+		mu:              sync.RWMutex{},
+		sealed:          true,
 	}
 }
 
@@ -71,6 +88,12 @@ func newSubRouter(mux chi.Router, parent *Router) *Router {
 // global middleware, mount sub-routers, or pass it to http.Server.
 func (r *Router) Mux() chi.Router {
 	return r.mux
+}
+
+// SetErrorHandler configures the function that converts DI-aware handler
+// errors into HTTP responses. Must be called before Handle() registrations.
+func (r *Router) SetErrorHandler(h ErrorHandler) {
+	r.errorHandler = h
 }
 
 // Register adds a named middleware to the internal registry and tracks which
@@ -97,6 +120,7 @@ func (r *Router) Use(middleware ...Middleware) {
 		if r.sealed {
 			r.mux.Use(fn)
 		} else {
+			// [ 0, 1, 2 ]
 			r.pendingMW = append(r.pendingMW, fn)
 		}
 	}
@@ -145,11 +169,16 @@ func (r *Router) Route(pattern string, fn func(sub *Router)) {
 	}
 }
 
-// Handle registers a route and tracks ownership. Middleware is resolved from
-// the internal registry (for MiddlewareByName) or used directly (for MiddlewareFunc) and applied
-// in order (outermost first). Panics if a named middleware is not registered.
+// Handle registers a route and tracks ownership. The handler can be:
+//   - http.HandlerFunc or func(http.ResponseWriter, *http.Request) — passed through directly
+//   - A DI-aware function: func(gas.Context, Dep1, Dep2, ...) error — dependencies are
+//     auto-resolved from the per-request scope at call time
+//
+// Middleware is resolved from the internal registry (for MiddlewareByName) or used
+// directly (for MiddlewareFunc) and applied in order (outermost first).
+// Panics if a named middleware is not registered or if a DI-aware handler has an invalid signature.
 // When the router is unsealed, the registration is deferred until Seal().
-func (r *Router) Handle(service, method, path string, handler http.HandlerFunc, middleware ...Middleware) {
+func (r *Router) Handle(service, method, path string, handler any, middleware ...Middleware) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -162,8 +191,27 @@ func (r *Router) Handle(service, method, path string, handler http.HandlerFunc, 
 		middlewareFuncs = append(middlewareFuncs, fn)
 	}
 
+	var httpHandler http.HandlerFunc
+	switch h := handler.(type) {
+	case http.HandlerFunc:
+		httpHandler = h
+	case func(http.ResponseWriter, *http.Request):
+		httpHandler = h
+	default:
+		var depTypes []reflect.Type
+		httpHandler, depTypes = adaptHandler(handler, r.errorHandler)
+		if len(depTypes) > 0 {
+			*r.pendingHandlers = append(*r.pendingHandlers, pendingHandler{
+				service:  service,
+				method:   method,
+				path:     path,
+				depTypes: depTypes,
+			})
+		}
+	}
+
 	op := func() {
-		r.mux.With(middlewareFuncs...).Method(method, path, handler)
+		r.mux.With(middlewareFuncs...).Method(method, path, httpHandler)
 	}
 
 	if r.sealed {
@@ -179,13 +227,25 @@ func (r *Router) Handle(service, method, path string, handler http.HandlerFunc, 
 }
 
 // NotFound registers a custom not-found handler for the router, associated with the specified service.
+// The handler can be http.HandlerFunc or a DI-aware function (same rules as Handle).
 // Panics if a not found handler is already registered by another service.
-func (r *Router) NotFound(service string, handler http.HandlerFunc) {
+func (r *Router) NotFound(service string, handler any) {
 	if r.notFoundHandlerService != "" {
 		panic(fmt.Errorf("gas: service %q already registered a not found handler", r.notFoundHandlerService))
 	}
 	r.notFoundHandlerService = service
-	r.mux.NotFound(handler)
+
+	var httpHandler http.HandlerFunc
+	switch h := handler.(type) {
+	case http.HandlerFunc:
+		httpHandler = h
+	case func(http.ResponseWriter, *http.Request):
+		httpHandler = h
+	default:
+		httpHandler, _ = adaptHandler(handler, r.errorHandler)
+	}
+
+	r.mux.NotFound(httpHandler)
 }
 
 // RemoveByModule removes all routes and middleware registered by the given

@@ -79,6 +79,12 @@ Register constructor-based services with a lifetime:
 gas.WithService[*auth.Service](auth.New, gas.ServiceLifetimeSingleton)
 ```
 
+Shorthand for singleton registration (`WithService` with `ServiceLifetimeSingleton`):
+
+```go
+gas.WithAppModule[*auth.Service](auth.New)
+```
+
 Register pre-built instances (treated as singletons):
 
 ```go
@@ -87,15 +93,75 @@ gas.WithServiceInstance[*MyService](myInstance)
 
 ### Routing
 
+`Handle` accepts both classic `http.HandlerFunc` handlers and DI-aware typed handlers:
+
 ```go
 func (s *Service) Init() error {
+	// Classic http.HandlerFunc — still works, no wrapping.
 	s.router.Handle(s.Name(), "GET", "/users", s.listUsers)
+
+	// DI-aware handler — dependencies are auto-resolved from the request scope.
 	s.router.Handle(s.Name(), "POST", "/users", s.createUser, gas.MiddlewareByName("require-auth"))
 	return nil
 }
 ```
 
 Routes declare middleware using `MiddlewareByName()` (resolved from the router's registry) or `MiddlewareFunc()` (inline).
+
+### DI-Aware Handlers
+
+Handlers can declare dependencies as typed function parameters. The router resolves each dependency from the
+per-request DI scope automatically — no manual `RequestScope` / `MustResolve` calls needed.
+
+**Handler contract:** `gas.Context` first, dependencies in between, `error` return.
+
+```go
+func (s *Service) createUser(ctx gas.Context, db gas.DatabaseProvider, mailer gas.EmailProvider) error {
+	var req CreateUserRequest
+	if err := ctx.BindJSON(&req); err != nil {
+		return err
+	}
+	// db and mailer are resolved from the request-scoped DI container
+	return ctx.JSON(http.StatusCreated, user)
+}
+```
+
+At startup, `InitServices()` validates that every handler dependency is registered in the container. If a type is
+missing, initialization fails immediately — no runtime surprises.
+
+### Context
+
+`gas.Context` wraps `http.ResponseWriter` and `*http.Request` with convenience methods:
+
+| Method                                 | Description                        |
+|----------------------------------------|------------------------------------|
+| `ResponseWriter() http.ResponseWriter` | Underlying response writer         |
+| `Request() *http.Request`              | Underlying request                 |
+| `JSON(status int, v any) error`        | Write JSON response                |
+| `Text(status int, s string) error`     | Write plain-text response          |
+| `NoContent() error`                    | Write 204 No Content               |
+| `Redirect(status int, url string)`     | Send HTTP redirect                 |
+| `Param(key string) string`             | URL path parameter (chi.URLParam)  |
+| `Query(key string) string`             | Query string parameter             |
+| `Header(key string) string`            | Request header value               |
+| `SetHeader(key, value string)`         | Set response header                |
+| `BindJSON(dest any) error`             | Decode JSON request body into dest |
+
+### Error Handling
+
+When a DI-aware handler returns a non-nil error, it is passed to the `ErrorHandler`. The default writes a
+500 Internal Server Error with the default `http.StatusText(http.StatusInternalServerError)` body,
+and logs the error if a logger is registered in the service container.
+
+Override it with `WithErrorHandler`:
+
+```go
+app := gas.NewApp(
+	gas.WithErrorHandler(func(ctx gas.Context, err error) {
+		ctx.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}),
+)
+```
 
 ### Middleware
 
@@ -191,15 +257,29 @@ gas.SubscribeWithOwner(bus, s.Name(), gas.SystemServiceClosed, func(data gas.Sys
 The App automatically installs middleware that creates a DI `Scope` per HTTP request. Scoped services get a fresh
 instance for each request — `Init()` is called on first resolution and `Close()` is called when the request completes.
 
-Resolve scoped services in any handler using `gas.RequestScope(r)`:
+DI-aware handlers resolve scoped services automatically — just declare the dependency as a parameter. For classic
+`http.HandlerFunc` handlers, use the request-scope convenience helpers:
 
 ```go
 func (s *Service) handleOrder(w http.ResponseWriter, r *http.Request) {
-	scope := gas.RequestScope(r)
-	txLog := gas.MustResolve[*TransactionLog](scope)
+	txLog := gas.MustResolveFromRequestScope[*TransactionLog](r)
 	txLog.Record("order created")
 	// txLog.Close() is called automatically when the request ends
 }
+```
+
+Or the two-value form to handle missing registrations without panicking:
+
+```go
+txLog, ok := gas.ResolveFromRequestScope[*TransactionLog](r)
+```
+
+Both helpers are thin wrappers around `gas.RequestScope(r)` + `gas.Resolve`/`gas.MustResolve`. For full scope
+access (e.g. resolving multiple services), use `gas.RequestScope(r)` directly:
+
+```go
+scope := gas.RequestScope(r)
+txLog := gas.MustResolve[*TransactionLog](scope)
 ```
 
 Register scoped services with `ServiceLifetimeScoped`:
@@ -248,7 +328,11 @@ l := gas.LoggerFromContext(ctx)
 ```go
 package myservice
 
-import "github.com/gasmod/gas"
+import (
+	"net/http"
+
+	"github.com/gasmod/gas"
+)
 
 type Service struct {
 	router *gas.Router
@@ -263,9 +347,20 @@ func New(router *gas.Router, bus *gas.EventBus) *Service {
 func (s *Service) Name() string { return "myservice" }
 
 func (s *Service) Init() error {
+	// DI-aware handler — db is resolved per-request from the scoped container.
 	s.router.Handle(s.Name(), "GET", "/hello", s.handleHello)
+
+	// Classic http.HandlerFunc still works.
+	s.router.Handle(s.Name(), "GET", "/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
 	gas.SubscribeWithOwner(s.bus, s.Name(), gas.SystemServiceClosed, s.onServiceClosed)
 	return nil
+}
+
+func (s *Service) handleHello(ctx gas.Context, db gas.DatabaseProvider) error {
+	return ctx.JSON(http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *Service) Close() error { return nil }

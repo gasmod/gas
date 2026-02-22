@@ -3,6 +3,7 @@ package gas
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"reflect"
 )
 
@@ -134,6 +135,18 @@ func MustResolve[T any](r Resolver) T {
 		panic(fmt.Sprintf("failed to resolve %v", reflect.TypeFor[T]()))
 	}
 	return v
+}
+
+// ResolveFromRequestScope retrieves or builds a service of type T from the per-request scope in the provided *http.Request.
+func ResolveFromRequestScope[T any](r *http.Request) (T, bool) {
+	//goland:noinspection GoResourceLeak
+	return Resolve[T](RequestScope(r))
+}
+
+// MustResolveFromRequestScope retrieves a service of type T from the request's Scope and panics if it cannot be resolved.
+func MustResolveFromRequestScope[T any](r *http.Request) T {
+	//goland:noinspection GoResourceLeak
+	return MustResolve[T](RequestScope(r))
 }
 
 // --- ServiceContainer as Resolver ---
@@ -356,6 +369,16 @@ func (c *ServiceContainer) findRegistration(t reflect.Type) (registration, bool)
 		}
 	}
 	return registration{}, false
+}
+
+// CanResolve reports whether the container has an instance or registration
+// that can satisfy the given type (including interface matching).
+func (c *ServiceContainer) CanResolve(t reflect.Type) bool {
+	if _, ok := c.lookupInstance(t); ok {
+		return true
+	}
+	_, ok := c.findRegistration(t)
+	return ok
 }
 
 // --- internal: topological sort ---

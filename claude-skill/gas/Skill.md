@@ -5,9 +5,9 @@ description: >
   the foundational layer of the Gas ecosystem for rapid SaaS development. Use
   this skill when writing, reviewing, or debugging Go code that imports or
   extends the gas core package. Covers the App lifecycle, DI container, service
-  registration and lifetimes, Router with ownership tracking, EventBus,
-  middleware, migrations, request scopes, logging, provider interfaces, and
-  system events.
+  registration and lifetimes, Router with ownership tracking, DI-aware handlers,
+  Context, ErrorHandler, EventBus, middleware, migrations, request scopes,
+  logging, provider interfaces, and system events.
 ---
 
 # Gas Core Package Reference
@@ -72,7 +72,9 @@ container. Services receive them via constructor injection.
 
 ```go
 gas.WithService[T any](ctor any, lifetime ServiceLifetime) AppOption
+gas.WithAppModule[T any](ctor any) AppOption  // shorthand: WithService(ctor, ServiceLifetimeSingleton)
 gas.WithServiceInstance[T any](val T) AppOption
+gas.WithErrorHandler(h ErrorHandler) AppOption
 ```
 
 ### App.Run()
@@ -130,8 +132,24 @@ The App installs middleware that creates a DI `Scope` per HTTP request. Scoped
 services get a fresh instance per request — `Init()` on first resolution,
 `Close()` when the request completes.
 
+DI-aware handlers resolve scoped services automatically via their parameter
+list. For classic `http.HandlerFunc` handlers, use the request-scope
+convenience helpers:
+
 ```go
-scope := gas.RequestScope(r *http.Request) *Scope // panics outside scope middleware
+// Returns (T, bool) — safe, no panic on missing registration.
+gas.ResolveFromRequestScope[T any](r *http.Request) (T, bool)
+
+// Panics if T cannot be resolved.
+gas.MustResolveFromRequestScope[T any](r *http.Request) T
+```
+
+Both are thin wrappers around `gas.RequestScope(r)` + `gas.Resolve`/
+`gas.MustResolve`. For full scope access (resolving multiple services),
+use `gas.RequestScope` directly:
+
+```go
+scope := gas.RequestScope(r) // *Scope — panics outside scope middleware
 svc := gas.MustResolve[*MyScopedService](scope)
 ```
 
@@ -151,12 +169,45 @@ kill-switch, `RemoveByModule` replaces closed service routes with 503 handlers.
 ### Registering routes
 
 ```go
-router.Handle(service, method, path string, handler http.HandlerFunc, middleware ...Middleware)
+router.Handle(service, method, path string, handler any, middleware ...Middleware)
 ```
 
 ```go
-router.NotFound(service string, handler handler http.HandlerFunc)
+router.NotFound(service string, handler any)
 ```
+
+The `handler` parameter accepts:
+
+- `http.HandlerFunc` or `func(http.ResponseWriter, *http.Request)` — passed
+  through directly to Chi with no wrapping.
+- A DI-aware function — validated and wrapped via reflection. See
+  [DI-Aware Handlers](#di-aware-handlers) below.
+
+### DI-Aware Handlers
+
+Handlers can declare dependencies as typed function parameters. The router
+resolves each dependency from the per-request DI scope automatically.
+
+**Handler contract:** `gas.Context` first, dependencies in between, `error` return.
+
+```go
+func(ctx gas.Context) error
+func(ctx gas.Context, dep1 Dep1, dep2 Dep2, ...) error
+```
+
+**Signature validation** (panics at `Handle()` call time):
+- Must be a function
+- First parameter must be `gas.Context`
+- Must return exactly one value of type `error`
+
+**Boot-time validation:** `InitServices()` verifies (after `Seal()`) that every
+handler dependency type is registered in the container. Returns an error on the
+first unresolvable type — the app fails fast at startup.
+
+**Runtime flow:** For each request, the adapter constructs a `Context`, resolves
+each dependency from the request-scoped container via `Scope.resolveType()`,
+calls the handler via reflection, and passes any returned error to the
+`ErrorHandler`.
 
 ### Middleware
 
@@ -200,12 +251,64 @@ The `App` calls `Seal()` automatically after all services are initialized.
 
 ### Other Router methods
 
-| Method                           | Description                                               |
-|----------------------------------|-----------------------------------------------------------|
-| `Mux() chi.Router`               | Underlying Chi router for global middleware / http.Server |
-| `Seal()`                         | Flush deferred middleware then routes; idempotent         |
-| `RemoveByModule(service string)` | Replace service routes with 503, remove middleware        |
-| `ServeHTTP(w, req)`              | Implements http.Handler                                   |
+| Method                            | Description                                               |
+|-----------------------------------|-----------------------------------------------------------|
+| `Mux() chi.Router`                | Underlying Chi router for global middleware / http.Server |
+| `Seal()`                          | Flush deferred middleware then routes; idempotent         |
+| `RemoveByModule(service string)`  | Replace service routes with 503, remove middleware        |
+| `SetErrorHandler(h ErrorHandler)` | Set the error handler for DI-aware handlers               |
+| `ServeHTTP(w, req)`               | Implements http.Handler                                   |
+
+## Context
+
+`Context` is the first parameter of every DI-aware handler. It wraps
+`http.ResponseWriter` and `*http.Request` with convenience methods.
+
+```go
+type Context struct { /* unexported fields */ }
+
+gas.NewContext(w http.ResponseWriter, r *http.Request) Context
+```
+
+### Context methods
+
+| Method                                 | Description                       |
+|----------------------------------------|-----------------------------------|
+| `ResponseWriter() http.ResponseWriter` | Underlying response writer        |
+| `Request() *http.Request`              | Underlying request                |
+| `JSON(status int, v any) error`        | Write JSON response               |
+| `Text(status int, s string) error`     | Write plain-text response         |
+| `NoContent() error`                    | Write 204 No Content              |
+| `Redirect(status int, url string)`     | Send HTTP redirect                |
+| `Param(key string) string`             | URL path parameter (chi.URLParam) |
+| `Query(key string) string`             | Query string parameter            |
+| `Header(key string) string`            | Request header value              |
+| `SetHeader(key, value string)`         | Set response header               |
+| `BindJSON(dest any) error`             | Decode JSON request body          |
+
+## ErrorHandler
+
+`ErrorHandler` converts a handler error into an HTTP response. The default writes a
+500 Internal Server Error with the default `http.StatusText(http.StatusInternalServerError)` body,
+and logs the error if a logger is registered in the service container.
+
+```go
+type ErrorHandler func(ctx Context, err error)
+```
+
+Override at the App level:
+
+```go
+gas.WithErrorHandler(func(ctx gas.Context, err error) {
+	ctx.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+})
+```
+
+Or on the Router directly:
+
+```go
+router.SetErrorHandler(h ErrorHandler)
+```
 
 ## EventBus
 
@@ -400,7 +503,11 @@ config.Validate() error
 ```go
 package myservice
 
-import "github.com/gasmod/gas"
+import (
+	"net/http"
+
+	"github.com/gasmod/gas"
+)
 
 type Service struct {
 	router *gas.Router
@@ -414,9 +521,20 @@ func New(router *gas.Router, bus *gas.EventBus) *Service {
 func (s *Service) Name() string { return "myservice" }
 
 func (s *Service) Init() error {
+	// DI-aware handler — db is resolved per-request from the scoped container.
 	s.router.Handle(s.Name(), "GET", "/hello", s.handleHello)
+
+	// Classic http.HandlerFunc still works.
+	s.router.Handle(s.Name(), "GET", "/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
 	gas.SubscribeWithOwner(s.bus, s.Name(), gas.SystemServiceClosed, s.onServiceClosed)
 	return nil
+}
+
+func (s *Service) handleHello(ctx gas.Context, db gas.DatabaseProvider) error {
+	return ctx.JSON(http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *Service) Close() error { return nil }

@@ -53,10 +53,26 @@ func WithService[T any](ctor any, lifetime ServiceLifetime) AppOption {
 	}
 }
 
+// WithAppModule registers a constructor-based app module as a singleton.
+// This is the equivalent to WithService(ctor, ServiceLifetimeSingleton).
+func WithAppModule[T any](ctor any) AppOption {
+	return func(a *App) {
+		RegisterCtor[T](a.serviceContainer, ctor, ServiceLifetimeSingleton)
+	}
+}
+
 // WithServiceInstance registers a pre-built service instance (singleton).
 func WithServiceInstance[T any](val T) AppOption {
 	return func(a *App) {
 		RegisterInstance[T](a.serviceContainer, val)
+	}
+}
+
+// WithErrorHandler configures the function that converts DI-aware handler
+// errors into HTTP responses.
+func WithErrorHandler(h ErrorHandler) AppOption {
+	return func(a *App) {
+		a.router.SetErrorHandler(h)
 	}
 }
 
@@ -66,13 +82,13 @@ func NewApp(opts ...AppOption) *App {
 	a := &App{
 		cfg:              DefaultConfig(),
 		serviceContainer: NewServiceContainer(),
+		router:           NewRouter(),
+		eventBus:         NewEventBus(),
 		logger:           slog.With("component", "gas"),
 		activeServices:   make(map[string]Service),
 	}
 
-	// Create infra and register as instances in the container.
-	a.router = NewRouter()
-	a.eventBus = NewEventBus()
+	// Register infra as instances in the container.
 	RegisterInstance[*Router](a.serviceContainer, a.router)
 	RegisterInstance[*EventBus](a.serviceContainer, a.eventBus)
 
@@ -119,6 +135,16 @@ func (a *App) ConfigProvider() ConfigProvider {
 // DO NOT CALL THIS METHOD DIRECTLY. Use Run() instead.
 func (a *App) InitServices() (err error) {
 	a.initOnce.Do(func() {
+		// Install per-request scope middleware on the router before the rest of the services register theirs.
+		a.router.Use(MiddlewareFunc(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				scope := a.serviceContainer.NewScope()
+				defer func() { _ = scope.Close() }()
+				ctx := context.WithValue(r.Context(), requestScopeKey{}, scope)
+				next.ServeHTTP(w, r.WithContext(ctx))
+			})
+		}))
+
 		if err = a.serviceContainer.BuildAll(); err != nil {
 			return
 		}
@@ -133,20 +159,24 @@ func (a *App) InitServices() (err error) {
 			}
 		})
 
-		// Install per-request scope middleware on the router.
-		a.router.Use(MiddlewareFunc(func(next http.Handler) http.Handler {
-			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				scope := a.serviceContainer.NewScope()
-				defer func() { _ = scope.Close() }()
-				ctx := context.WithValue(r.Context(), requestScopeKey{}, scope)
-				next.ServeHTTP(w, r.WithContext(ctx))
-			})
-		}))
-
 		// Seal the router: flush all pending middleware first, then routes.
 		// This ensures middleware registered during Init() is applied before
 		// any routes, regardless of service initialization order.
 		a.router.Seal()
+
+		// Validate all DI-aware handler dependencies. This runs after Seal()
+		// so handlers registered inside Group/Route callbacks are included.
+		for _, ph := range *a.router.pendingHandlers {
+			for _, depType := range ph.depTypes {
+				if !a.serviceContainer.CanResolve(depType) {
+					err = fmt.Errorf(
+						"gas: handler %s %s (service %q): dependency %v is not registered in the container",
+						ph.method, ph.path, ph.service, depType,
+					)
+					return
+				}
+			}
+		}
 
 		Emit(a.eventBus, SystemAllServicesInitialized, SystemAllServicesInitializedPayload{}).Wait()
 	})
