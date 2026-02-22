@@ -310,7 +310,7 @@ Services depend on interfaces, not implementations. Gas defines common providers
 | `EmailProvider`    | `Send`                                                          |
 | `StorageProvider`  | `Upload`, `Download`, `Delete`                                  |
 | `ConfigProvider`   | `SetDefault`, `Set`, `Bind`, `Get`, `Find`, `Values`            |
-| `Logger`           | `Trace`, `Debug`, `Info`, `Warn`, `Error`, `With`, `Flush`      |
+| `Logger`           | `Trace`, `Debug`, `Info`, `Warn`, `Error`, `With`, `SetBaseFields`, `Flush` |
 
 Logger context helpers:
 
@@ -321,6 +321,22 @@ ctx = gas.WithLogger(ctx, logger)
 // Retrieve it downstream (returns nil if absent)
 l := gas.LoggerFromContext(ctx)
 ```
+
+`With()` branches into a new Logger instance. For request-scoped middleware that shares one Logger instance across the
+whole request, use `SetBaseFields()` instead — it mutates the receiver in place so every subsequent log call carries
+the attached fields automatically:
+
+```go
+func authMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        logger := gas.MustResolveFromRequestScope[gas.Logger](r)
+        logger.SetBaseFields().Str("user_id", userID).Str("trace_id", traceID).Apply()
+        // All subsequent log calls within this request — including in the handler — carry user_id and trace_id.
+        next.ServeHTTP(w, r)
+    })
+}
+```
+
 | `MigrationManager` | `Register`, `RegisterSlice`, `RegisterFS`, `RunPending`, `Down` |
 
 ### Writing a Service

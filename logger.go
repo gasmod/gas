@@ -41,6 +41,12 @@ type Logger interface {
 	// With returns a LoggerContext for building a sub-logger with persistent fields.
 	With() LoggerContext
 
+	// SetBaseFields returns a MutableLoggerContext for attaching persistent fields
+	// directly to this logger instance. Unlike With, which branches into a new logger,
+	// SetBaseFields mutates the receiver so that all subsequent log events carry the
+	// accumulated fields. Intended for use by request-scoped middleware.
+	SetBaseFields() MutableLoggerContext
+
 	// Flush writes any buffered log entries to the underlying output.
 	Flush()
 }
@@ -59,6 +65,24 @@ type LoggerContext interface {
 	Any(key string, val any) LoggerContext
 	// Logger returns a new Logger that includes all fields added to this context.
 	Logger() Logger
+}
+
+// MutableLoggerContext is a builder for attaching persistent fields directly to
+// an existing Logger instance. Unlike LoggerContext (returned by With), which
+// produces a new branched Logger, MutableLoggerContext.Apply() mutates the
+// receiver in place. Intended for use in request-scoped middleware where the
+// same Logger instance is shared across the whole request.
+type MutableLoggerContext interface {
+	Str(key, val string) MutableLoggerContext
+	Int(key string, val int) MutableLoggerContext
+	Int64(key string, val int64) MutableLoggerContext
+	Float64(key string, val float64) MutableLoggerContext
+	Bool(key string, val bool) MutableLoggerContext
+	Err(key string, val error) MutableLoggerContext
+	Duration(key string, val time.Duration) MutableLoggerContext
+	Any(key string, val any) MutableLoggerContext
+	// Apply mutates the originating Logger in place with all accumulated fields.
+	Apply()
 }
 
 // LogEvent is a single structured log entry. Field methods return the same

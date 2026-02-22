@@ -37,33 +37,17 @@ func (m *Module) Close() error {
 func (m *Module) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		logger := gas.MustResolveFromRequestScope[gas.Logger](r)
-
-		evt := logger.Info("middleware")
-
-		if l, ok := logger.(*SlogLogger); ok {
-			// this will always return 1
-			evt = evt.Int("logger_instance", l.instanceId)
-			l.instanceId++
-		}
-
-		evt.Send()
-
+		// Attach a request-scoped field to the shared logger instance.
+		// The handler will see "source":"middleware" on every log event.
+		logger.SetBaseFields().Str("source", "middleware").Apply()
+		logger.Info("middleware").Send()
 		next.ServeHTTP(w, r)
 	})
 }
 
 func (m *Module) handleIndex(ctx gas.Context, logger gas.Logger) error {
-	evt := logger.Info("handler")
-
-	if l, ok := logger.(*SlogLogger); ok {
-		// this will always return 2
-		evt = evt.Int("logger_instance", l.instanceId)
-		// each handler gets a new (scoped) instance, so this won't affect the next request
-		l.instanceId++
-	}
-
-	evt.Send()
-
+	// "source":"middleware" is already baked in from the middleware above
+	logger.Info("handler").Send()
 	return ctx.Text(http.StatusOK, "Hello, world!")
 }
 

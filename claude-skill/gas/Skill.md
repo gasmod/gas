@@ -413,6 +413,18 @@ type UIProvider interface {
 gas.WithLogger(ctx context.Context, l Logger) context.Context
 gas.LoggerFromContext(ctx context.Context) Logger // returns nil if absent
 
+// With() vs SetBaseFields()
+// With() always branches — it returns a LoggerContext whose Logger() produces a NEW Logger instance.
+// SetBaseFields() mutates the receiver in place via Apply(). Use it in request-scoped middleware
+// where one Logger instance is shared across the whole request and you want every subsequent log
+// call (in other middleware and in the handler) to carry fields like request_id, user_id, trace_id
+// automatically — without threading a new Logger reference around.
+//
+// Typical middleware pattern:
+//   logger := gas.MustResolveFromRequestScope[gas.Logger](r)
+//   logger.SetBaseFields().Str("request_id", reqID).Str("user_id", userID).Apply()
+//   // All log calls for the rest of this request carry request_id and user_id.
+
 type Logger interface {
 	Trace(msg string) LogEvent
 	Debug(msg string) LogEvent
@@ -420,6 +432,7 @@ type Logger interface {
 	Warn(msg string) LogEvent
 	Error(msg string) LogEvent
 	With() LoggerContext
+	SetBaseFields() MutableLoggerContext
 	Flush()
 }
 
@@ -432,7 +445,23 @@ type LoggerContext interface {
 	Err(key string, val error) LoggerContext
 	Duration(key string, val time.Duration) LoggerContext
 	Any(key string, val any) LoggerContext
-	Logger() Logger
+	Logger() Logger // returns a new branched Logger
+}
+
+// MutableLoggerContext mutates the originating Logger in place.
+// Use SetBaseFields() (not With()) when you need a shared Logger instance
+// to carry persistent fields for the rest of the request without threading
+// a new Logger reference through every caller.
+type MutableLoggerContext interface {
+	Str(key, val string) MutableLoggerContext
+	Int(key string, val int) MutableLoggerContext
+	Int64(key string, val int64) MutableLoggerContext
+	Float64(key string, val float64) MutableLoggerContext
+	Bool(key string, val bool) MutableLoggerContext
+	Err(key string, val error) MutableLoggerContext
+	Duration(key string, val time.Duration) MutableLoggerContext
+	Any(key string, val any) MutableLoggerContext
+	Apply() // mutates the originating Logger in place
 }
 
 type LogEvent interface {
