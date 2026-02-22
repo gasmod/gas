@@ -1,6 +1,9 @@
 package gas
 
-import "net/http"
+import (
+	"context"
+	"net/http"
+)
 
 type namedMiddleware struct {
 	fn      func(http.Handler) http.Handler
@@ -23,4 +26,15 @@ func MiddlewareByName(name string) Middleware {
 // MiddlewareFunc creates a Middleware that wraps an inline handler function directly.
 func MiddlewareFunc(fn func(http.Handler) http.Handler) Middleware {
 	return Middleware{fn: fn}
+}
+
+func requestScopeMiddleware(container *ServiceContainer) func(next http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			scope := container.NewScope()
+			defer func() { _ = scope.Close() }()
+			ctx := context.WithValue(r.Context(), requestScopeKey{}, scope)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
 }

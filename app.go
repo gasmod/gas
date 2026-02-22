@@ -95,6 +95,10 @@ func NewApp(opts ...AppOption) *App {
 	for _, opt := range opts {
 		opt(a)
 	}
+
+	// Install per-request scope middleware on the router at app initialization time, before services are registered.
+	a.router.Use(MiddlewareFunc(requestScopeMiddleware(a.serviceContainer)))
+
 	return a
 }
 
@@ -135,16 +139,6 @@ func (a *App) ConfigProvider() ConfigProvider {
 // DO NOT CALL THIS METHOD DIRECTLY. Use Run() instead.
 func (a *App) InitServices() (err error) {
 	a.initOnce.Do(func() {
-		// Install per-request scope middleware on the router before the rest of the services register theirs.
-		a.router.Use(MiddlewareFunc(func(next http.Handler) http.Handler {
-			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				scope := a.serviceContainer.NewScope()
-				defer func() { _ = scope.Close() }()
-				ctx := context.WithValue(r.Context(), requestScopeKey{}, scope)
-				next.ServeHTTP(w, r.WithContext(ctx))
-			})
-		}))
-
 		if err = a.serviceContainer.BuildAll(); err != nil {
 			return
 		}
