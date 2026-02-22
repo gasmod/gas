@@ -6,7 +6,8 @@ description: >
   this skill when writing, reviewing, or debugging Go code that imports or
   extends the gas core package. Covers the App lifecycle, DI container, service
   registration and lifetimes, Router with ownership tracking, EventBus,
-  middleware, migrations, request scopes, provider interfaces, and system events.
+  middleware, migrations, request scopes, logging, provider interfaces, and
+  system events.
 ---
 
 # Gas Core Package Reference
@@ -303,6 +304,44 @@ type UIProvider interface {
 	RegisterTemplate(name string, content []byte)
 	RegisterTemplatesFS(fsys fs.FS) error
 	RegisterFuncs(funcs template.FuncMap)
+}
+
+// Context helpers — store / retrieve a Logger in context.Context.
+gas.WithLogger(ctx context.Context, l Logger) context.Context
+gas.LoggerFromContext(ctx context.Context) Logger // returns nil if absent
+
+type Logger interface {
+	Trace(msg string) LogEvent
+	Debug(msg string) LogEvent
+	Info(msg string) LogEvent
+	Warn(msg string) LogEvent
+	Error(msg string) LogEvent
+	With() LoggerContext
+	Flush()
+}
+
+type LoggerContext interface {
+	Str(key, val string) LoggerContext
+	Int(key string, val int) LoggerContext
+	Int64(key string, val int64) LoggerContext
+	Float64(key string, val float64) LoggerContext
+	Bool(key string, val bool) LoggerContext
+	Err(key string, val error) LoggerContext
+	Duration(key string, val time.Duration) LoggerContext
+	Any(key string, val any) LoggerContext
+	Logger() Logger
+}
+
+type LogEvent interface {
+	Str(key, val string) LogEvent
+	Int(key string, val int) LogEvent
+	Int64(key string, val int64) LogEvent
+	Float64(key string, val float64) LogEvent
+	Bool(key string, val bool) LogEvent
+	Err(key string, val error) LogEvent
+	Duration(key string, val time.Duration) LogEvent
+	Any(key string, val any) LogEvent
+	Send()
 }
 
 type MigrationManager interface {

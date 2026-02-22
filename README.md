@@ -230,6 +230,17 @@ Services depend on interfaces, not implementations. Gas defines common providers
 | `EmailProvider`    | `Send`                                                          |
 | `StorageProvider`  | `Upload`, `Download`, `Delete`                                  |
 | `ConfigProvider`   | `SetDefault`, `Set`, `Bind`, `Get`, `Find`, `Values`            |
+| `Logger`           | `Trace`, `Debug`, `Info`, `Warn`, `Error`, `With`, `Flush`      |
+
+Logger context helpers:
+
+```go
+// Store a logger in a context (e.g. in middleware)
+ctx = gas.WithLogger(ctx, logger)
+
+// Retrieve it downstream (returns nil if absent)
+l := gas.LoggerFromContext(ctx)
+```
 | `MigrationManager` | `Register`, `RegisterSlice`, `RegisterFS`, `RunPending`, `Down` |
 
 ### Writing a Service
