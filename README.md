@@ -91,6 +91,14 @@ Register pre-built instances (treated as singletons):
 gas.WithServiceInstance[*MyService](myInstance)
 ```
 
+Convenience shorthands that infer the lifetime from the function name:
+
+```go
+gas.WithSingletonService[*auth.Service](auth.New)   // equivalent to WithService(ctor, ServiceLifetimeSingleton)
+gas.WithScopedService[*RequestLog](NewRequestLog)    // equivalent to WithService(ctor, ServiceLifetimeScoped)
+gas.WithTransientService[*Nonce](NewNonce)           // equivalent to WithService(ctor, ServiceLifetimeTransient)
+```
+
 ### Routing
 
 `Handle` accepts both classic `http.HandlerFunc` handlers and DI-aware typed handlers:

@@ -48,32 +48,39 @@ type AppOption func(*App)
 
 // WithService registers a constructor-based service with the given lifetime.
 func WithService[T any](ctor any, lifetime ServiceLifetime) AppOption {
-	return func(a *App) {
-		RegisterCtor[T](a.serviceContainer, ctor, lifetime)
-	}
+	return func(a *App) { RegisterCtor[T](a.serviceContainer, ctor, lifetime) }
 }
 
 // WithAppModule registers a constructor-based app module as a singleton.
 // This is the equivalent to WithService(ctor, ServiceLifetimeSingleton).
 func WithAppModule[T any](ctor any) AppOption {
-	return func(a *App) {
-		RegisterCtor[T](a.serviceContainer, ctor, ServiceLifetimeSingleton)
-	}
+	return func(a *App) { RegisterCtor[T](a.serviceContainer, ctor, ServiceLifetimeSingleton) }
 }
 
 // WithServiceInstance registers a pre-built service instance (singleton).
 func WithServiceInstance[T any](val T) AppOption {
-	return func(a *App) {
-		RegisterInstance[T](a.serviceContainer, val)
-	}
+	return func(a *App) { RegisterInstance[T](a.serviceContainer, val) }
+}
+
+// WithTransientService registers a transient service constructor for a specified type in the application's service container.
+func WithTransientService[T any](ctor any) AppOption {
+	return func(a *App) { RegisterCtor[T](a.serviceContainer, ctor, ServiceLifetimeTransient) }
+}
+
+// WithScopedService registers a service constructor with a scoped lifetime for the application.
+func WithScopedService[T any](ctor any) AppOption {
+	return func(a *App) { RegisterCtor[T](a.serviceContainer, ctor, ServiceLifetimeScoped) }
+}
+
+// WithSingletonService registers a singleton service constructor with the App, ensuring a single instance is shared.
+func WithSingletonService[T any](ctor any) AppOption {
+	return func(a *App) { RegisterCtor[T](a.serviceContainer, ctor, ServiceLifetimeSingleton) }
 }
 
 // WithErrorHandler configures the function that converts DI-aware handler
 // errors into HTTP responses.
 func WithErrorHandler(h ErrorHandler) AppOption {
-	return func(a *App) {
-		a.router.SetErrorHandler(h)
-	}
+	return func(a *App) { a.router.SetErrorHandler(h) }
 }
 
 // NewApp creates an App with the given options.
