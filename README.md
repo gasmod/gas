@@ -400,6 +400,34 @@ app := gas.NewApp(
 | `gas.SystemServerShuttingDown`     | `SystemServerShuttingDownPayload`        | Server begins graceful shutdown                 |
 | `gas.AppConfigUpdated`             | `AppConfigUpdatedPayload`                | App config is updated after binding             |
 
+## Configuration
+
+`gas.DefaultConfig()` returns a `*Config` with sensible defaults. Pass a custom config via `WithServiceInstance`:
+
+```go
+cfg := gas.DefaultConfig()
+cfg.Server.Port = 9090
+
+app := gas.NewApp(
+	gas.WithServiceInstance[*gas.Config](cfg),
+)
+```
+
+### Config fields
+
+`Config` embeds `env.WithGasEnv` (from gas-env) for environment detection, and holds a `Server ServerSettings` sub-struct.
+
+| Field                    | Default    | Valid range           | Description                                              |
+|--------------------------|------------|-----------------------|----------------------------------------------------------|
+| `Server.Host`            | `0.0.0.0`  | non-empty, resolvable | Hostname or IP address to bind                           |
+| `Server.Port`            | `8080`     | 1 – 65535             | TCP port to listen on                                    |
+| `Server.ReadTimeout`     | `5s`       | 1s – 5m               | Maximum duration for reading the entire request          |
+| `Server.WriteTimeout`    | `10s`      | 1s – 10m              | Maximum duration before timing out response writes       |
+| `Server.IdleTimeout`     | `2m`       | 1s – 10m              | Maximum idle time between keep-alive requests            |
+| `Server.ShutdownTimeout` | `30s`      | 1s – 2m               | How long to wait for in-flight requests during shutdown  |
+
+`Config.Validate()` checks all fields and returns a descriptive error on the first violation.
+
 ## App Accessors
 
 | Method                   | Returns                     |

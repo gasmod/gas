@@ -38,11 +38,11 @@ type Config struct {
 	// Embedded GasEnv
 	env.WithGasEnv
 
-	Server ServerConfig
+	Server ServerSettings
 }
 
-// ServerConfig defines the configuration for a server, including host, port, timeouts, and graceful shutdown settings.
-type ServerConfig struct {
+// ServerSettings defines the configuration for a server, including host, port, timeouts, and graceful shutdown settings.
+type ServerSettings struct {
 	// Host specifies the hostname or IP address where the server will be hosted.
 	Host string
 
@@ -66,7 +66,7 @@ type ServerConfig struct {
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
-		Server: ServerConfig{
+		Server: ServerSettings{
 			Host:            defaultHost,
 			Port:            defaultPort,
 			ReadTimeout:     defaultReadTimeout,

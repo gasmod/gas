@@ -122,6 +122,7 @@ func (c *ServiceContainer) NewScope() *Scope {
 func Resolve[T any](r Resolver) (T, bool) {
 	v, err := r.resolveType(reflect.TypeFor[T]())
 	if err != nil {
+		// TODO: we're swallowing this error!!!
 		var zero T
 		return zero, false
 	}

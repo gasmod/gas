@@ -515,12 +515,16 @@ type Result interface {
 ```go
 type Config struct {
 	env.WithGasEnv
-	ServerHost             string
-	ServerPort             int
-	ServerReadTimeout      time.Duration
-	ServerWriteTimeout     time.Duration
-	ServerIdleTimeout      time.Duration
-	ServerShutdownTimeout  time.Duration
+	Server ServerSettings
+}
+
+type ServerSettings struct {
+	Host            string
+	Port            int
+	ReadTimeout     time.Duration
+	WriteTimeout    time.Duration
+	IdleTimeout     time.Duration
+	ShutdownTimeout time.Duration
 }
 
 gas.DefaultConfig() *Config
