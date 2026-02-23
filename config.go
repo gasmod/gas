@@ -38,57 +38,64 @@ type Config struct {
 	// Embedded GasEnv
 	env.WithGasEnv
 
-	// ServerHost specifies the hostname or IP address where the server will be hosted.
-	ServerHost string
+	Server ServerConfig
+}
 
-	// ServerPort is the port number on which the server listens for incoming requests.
-	ServerPort int
+// ServerConfig defines the configuration for a server, including host, port, timeouts, and graceful shutdown settings.
+type ServerConfig struct {
+	// Host specifies the hostname or IP address where the server will be hosted.
+	Host string
 
-	// ServerReadTimeout is the maximum duration for reading the entire request.
-	ServerReadTimeout time.Duration
+	// Port is the port number on which the server listens for incoming requests.
+	Port int
 
-	// ServerWriteTimeout is the maximum duration before timing out writes of the response.
-	ServerWriteTimeout time.Duration
+	// ReadTimeout is the maximum duration for reading the entire request.
+	ReadTimeout time.Duration
 
-	// ServerIdleTimeout is the maximum time to wait for the next request when keep-alives are enabled.
-	ServerIdleTimeout time.Duration
+	// WriteTimeout is the maximum duration before timing out writes of the response.
+	WriteTimeout time.Duration
 
-	// ServerShutdownTimeout is how long to wait for in-flight requests to complete
+	// IdleTimeout is the maximum time to wait for the next request when keep-alives are enabled.
+	IdleTimeout time.Duration
+
+	// ShutdownTimeout is how long to wait for in-flight requests to complete
 	// during graceful shutdown.
-	ServerShutdownTimeout time.Duration
+	ShutdownTimeout time.Duration
 }
 
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
-		ServerHost:            defaultHost,
-		ServerPort:            defaultPort,
-		ServerReadTimeout:     defaultReadTimeout,
-		ServerWriteTimeout:    defaultWriteTimeout,
-		ServerIdleTimeout:     defaultIdleTimeout,
-		ServerShutdownTimeout: defaultShutdownTimeout,
+		Server: ServerConfig{
+			Host:            defaultHost,
+			Port:            defaultPort,
+			ReadTimeout:     defaultReadTimeout,
+			WriteTimeout:    defaultWriteTimeout,
+			IdleTimeout:     defaultIdleTimeout,
+			ShutdownTimeout: defaultShutdownTimeout,
+		},
 	}
 }
 
 // Validate checks that the Config fields are valid.
 func (c *Config) Validate() error {
-	if err := validateHost(c.ServerHost); err != nil {
-		return fmt.Errorf("ServerHost: %w", err)
+	if err := validateHost(c.Server.Host); err != nil {
+		return fmt.Errorf("Server.Host: %w", err)
 	}
-	if c.ServerPort < minPort || c.ServerPort > maxPort {
-		return fmt.Errorf("ServerPort must be between %d and %d, got %d", minPort, maxPort, c.ServerPort)
+	if c.Server.Port < minPort || c.Server.Port > maxPort {
+		return fmt.Errorf("Server.Port must be between %d and %d, got %d", minPort, maxPort, c.Server.Port)
 	}
-	if c.ServerReadTimeout < minReadTimeout || c.ServerReadTimeout > maxReadTimeout {
-		return fmt.Errorf("ServerReadTimeout must be between %s and %s, got %s", minReadTimeout, maxReadTimeout, c.ServerReadTimeout)
+	if c.Server.ReadTimeout < minReadTimeout || c.Server.ReadTimeout > maxReadTimeout {
+		return fmt.Errorf("Server.ReadTimeout must be between %s and %s, got %s", minReadTimeout, maxReadTimeout, c.Server.ReadTimeout)
 	}
-	if c.ServerWriteTimeout < minWriteTimeout || c.ServerWriteTimeout > maxWriteTimeout {
-		return fmt.Errorf("ServerWriteTimeout must be between %s and %s, got %s", minWriteTimeout, maxWriteTimeout, c.ServerWriteTimeout)
+	if c.Server.WriteTimeout < minWriteTimeout || c.Server.WriteTimeout > maxWriteTimeout {
+		return fmt.Errorf("Server.WriteTimeout must be between %s and %s, got %s", minWriteTimeout, maxWriteTimeout, c.Server.WriteTimeout)
 	}
-	if c.ServerIdleTimeout < minIdleTimeout || c.ServerIdleTimeout > maxIdleTimeout {
-		return fmt.Errorf("ServerIdleTimeout must be between %s and %s, got %s", minIdleTimeout, maxIdleTimeout, c.ServerIdleTimeout)
+	if c.Server.IdleTimeout < minIdleTimeout || c.Server.IdleTimeout > maxIdleTimeout {
+		return fmt.Errorf("Server.IdleTimeout must be between %s and %s, got %s", minIdleTimeout, maxIdleTimeout, c.Server.IdleTimeout)
 	}
-	if c.ServerShutdownTimeout < minShutdownTimeout || c.ServerShutdownTimeout > maxShutdownTimeout {
-		return fmt.Errorf("ServerShutdownTimeout must be between %s and %s, got %s", minShutdownTimeout, maxShutdownTimeout, c.ServerShutdownTimeout)
+	if c.Server.ShutdownTimeout < minShutdownTimeout || c.Server.ShutdownTimeout > maxShutdownTimeout {
+		return fmt.Errorf("Server.ShutdownTimeout must be between %s and %s, got %s", minShutdownTimeout, maxShutdownTimeout, c.Server.ShutdownTimeout)
 	}
 	return nil
 }

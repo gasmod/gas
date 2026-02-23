@@ -217,14 +217,14 @@ func (a *App) Run() error {
 		}
 	}
 
-	addr := fmt.Sprintf("%s:%d", a.cfg.ServerHost, a.cfg.ServerPort)
+	addr := fmt.Sprintf("%s:%d", a.cfg.Server.Host, a.cfg.Server.Port)
 
 	srv := &http.Server{
 		Addr:         addr,
 		Handler:      a.router,
-		ReadTimeout:  a.cfg.ServerReadTimeout,
-		WriteTimeout: a.cfg.ServerWriteTimeout,
-		IdleTimeout:  a.cfg.ServerIdleTimeout,
+		ReadTimeout:  a.cfg.Server.ReadTimeout,
+		WriteTimeout: a.cfg.Server.WriteTimeout,
+		IdleTimeout:  a.cfg.Server.IdleTimeout,
 	}
 
 	errCh := make(chan error, 1)
