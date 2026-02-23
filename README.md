@@ -133,19 +133,20 @@ missing, initialization fails immediately — no runtime surprises.
 
 `gas.Context` wraps `http.ResponseWriter` and `*http.Request` with convenience methods:
 
-| Method                                 | Description                        |
-|----------------------------------------|------------------------------------|
-| `ResponseWriter() http.ResponseWriter` | Underlying response writer         |
-| `Request() *http.Request`              | Underlying request                 |
-| `JSON(status int, v any) error`        | Write JSON response                |
-| `Text(status int, s string) error`     | Write plain-text response          |
-| `NoContent() error`                    | Write 204 No Content               |
-| `Redirect(status int, url string)`     | Send HTTP redirect                 |
-| `Param(key string) string`             | URL path parameter (chi.URLParam)  |
-| `Query(key string) string`             | Query string parameter             |
-| `Header(key string) string`            | Request header value               |
-| `SetHeader(key, value string)`         | Set response header                |
-| `BindJSON(dest any) error`             | Decode JSON request body into dest |
+| Method                                 | Description                         |
+|----------------------------------------|-------------------------------------|
+| `ResponseWriter() http.ResponseWriter` | Underlying response writer          |
+| `Request() *http.Request`              | Underlying request                  |
+| `RequestContext() context.Context`     | Context of the current HTTP request |
+| `JSON(status int, v any) error`        | Write JSON response                 |
+| `Text(status int, s string) error`     | Write plain-text response           |
+| `NoContent() error`                    | Write 204 No Content                |
+| `Redirect(status int, url string)`     | Send HTTP redirect                  |
+| `Param(key string) string`             | URL path parameter (chi.URLParam)   |
+| `Query(key string) string`             | Query string parameter              |
+| `Header(key string) string`            | Request header value                |
+| `SetHeader(key, value string)`         | Set response header                 |
+| `BindJSON(dest any) error`             | Decode JSON request body into dest  |
 
 ### Error Handling
 
@@ -430,10 +431,11 @@ app := gas.NewApp(
 
 ## App Accessors
 
-| Method                   | Returns                     |
-|--------------------------|-----------------------------|
-| `app.Router()`           | `*Router`                   |
-| `app.EventBus()`         | `*EventBus`                 |
-| `app.Config()`           | `*Config`                   |
-| `app.MigrationManager()` | `MigrationManager` (or nil) |
-| `app.ConfigProvider()`   | `ConfigProvider` (or nil)   |
+| Method                       | Returns                     |
+|------------------------------|-----------------------------|
+| `app.Router()`               | `*Router`                   |
+| `app.EventBus()`             | `*EventBus`                 |
+| `app.Config()`               | `*Config`                   |
+| `app.ServiceContainer()`     | `*ServiceContainer`         |
+| `app.MigrationManager()`     | `MigrationManager` (or nil) |
+| `app.ConfigProvider()`       | `ConfigProvider` (or nil)   |

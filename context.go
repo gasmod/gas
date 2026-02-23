@@ -1,6 +1,7 @@
 package gas
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -27,6 +28,9 @@ func NewContext(w http.ResponseWriter, r *http.Request) Context {
 
 // ResponseWriter returns the underlying http.ResponseWriter.
 func (c Context) ResponseWriter() http.ResponseWriter { return c.w }
+
+// RequestContext returns the context associated with the current HTTP request.
+func (c Context) RequestContext() context.Context { return c.r.Context() }
 
 // Request returns the underlying *http.Request.
 func (c Context) Request() *http.Request { return c.r }

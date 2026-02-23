@@ -113,6 +113,11 @@ func (a *App) Router() *Router { return a.router }
 // EventBus returns the App's event bus.
 func (a *App) EventBus() *EventBus { return a.eventBus }
 
+// ServiceContainer returns the application's dependency injection container.
+func (a *App) ServiceContainer() *ServiceContainer {
+	return a.serviceContainer
+}
+
 // MigrationManager resolves the MigrationManager from the DI container.
 // Returns nil if no MigrationManager is registered.
 func (a *App) MigrationManager() MigrationManager {

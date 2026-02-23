@@ -93,6 +93,7 @@ shutdown, services are closed in reverse init order.
 | `Router`             | `() *Router`                                       | The app's router                                   |
 | `EventBus`           | `() *EventBus`                                     | The app's event bus                                |
 | `MigrationManager`   | `() MigrationManager`                              | Resolved from DI, nil if unregistered              |
+| `ServiceContainer`   | `() *ServiceContainer`                             | The application's DI container                     |
 | `ActiveServices`     | `() []string`                                      | Names of currently active services                 |
 | `CloseService`       | `(name string) error`                              | Kill-switch: 503 routes, remove subs, call Close() |
 | `RestartService`     | `(name string) error`                              | Re-initialize a previously closed service          |
@@ -276,6 +277,7 @@ gas.NewContext(w http.ResponseWriter, r *http.Request) Context
 |----------------------------------------|-----------------------------------|
 | `ResponseWriter() http.ResponseWriter` | Underlying response writer        |
 | `Request() *http.Request`              | Underlying request                |
+| `RequestContext() context.Context`     | Context of the current HTTP request |
 | `JSON(status int, v any) error`        | Write JSON response               |
 | `Text(status int, s string) error`     | Write plain-text response         |
 | `NoContent() error`                    | Write 204 No Content              |
