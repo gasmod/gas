@@ -68,8 +68,8 @@ func New(router *gas.Router, bus *gas.EventBus) *Service {
 }
 ```
 
-`Run()` initializes all services (via the DI container), runs pending migrations, starts the HTTP server, and waits for
-a shutdown signal. On shutdown, services are closed in reverse init order.
+`Run()` initializes all services (via the DI container), runs pending migrations, executes any registered ready hooks,
+starts the HTTP server, and waits for a shutdown signal. On shutdown, services are closed in reverse init order.
 
 ### Registering Services
 
@@ -260,6 +260,24 @@ gas.SubscribeWithOwner(bus, s.Name(), gas.SystemServiceClosed, func(data gas.Sys
 	// enter degraded mode if data.ServiceName was a dependency
 })
 ```
+
+### Ready Hooks
+
+Register functions that run after all services are initialized and migrations have completed, but before the HTTP
+server starts accepting traffic. Use this for data seeding or any other pre-traffic startup work that requires a live
+DI container:
+
+```go
+app := gas.NewApp(
+	gas.WithSingletonService[*DB](NewDB),
+	gas.WithReadyFunc(func(sc *gas.ServiceContainer) error {
+		db := gas.MustResolve[*DB](sc)
+		return seed.Run(db)
+	}),
+)
+```
+
+Multiple hooks are called in registration order. Any error aborts startup before the server starts.
 
 ### Request Scopes
 

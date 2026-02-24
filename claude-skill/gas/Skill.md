@@ -75,13 +75,31 @@ gas.WithService[T any](ctor any, lifetime ServiceLifetime) AppOption
 gas.WithAppModule[T any](ctor any) AppOption  // shorthand: WithService(ctor, ServiceLifetimeSingleton)
 gas.WithServiceInstance[T any](val T) AppOption
 gas.WithErrorHandler(h ErrorHandler) AppOption
+gas.WithReadyFunc(fn func(*ServiceContainer) error) AppOption
+```
+
+`WithReadyFunc` registers a hook that runs after all services are initialized
+and migrations have run, but before the HTTP server starts accepting traffic.
+Multiple hooks are called in registration order; any error aborts startup.
+Intended for data seeding and other pre-traffic startup tasks.
+
+```go
+app := gas.NewApp(
+    gas.WithSingletonService[*DB](NewDB),
+    gas.WithReadyFunc(func(sc *gas.ServiceContainer) error {
+        db := gas.MustResolve[*DB](sc)
+        return seed.Run(db)
+    }),
+)
 ```
 
 ### App.Run()
 
 `Run()` initializes all services (via DI container), runs pending migrations,
-starts the HTTP server, and blocks until a shutdown signal is received. On
-shutdown, services are closed in reverse init order.
+executes ready hooks, starts the HTTP server, and blocks until a shutdown signal
+is received. On shutdown, services are closed in reverse init order.
+
+**Startup sequence:** `InitServices` → `bindConfig` → migrations → ready hooks → HTTP server.
 
 ### App methods
 

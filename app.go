@@ -38,6 +38,7 @@ type App struct {
 	activeServices map[string]Service // runtime kill-switch tracking
 	serviceOrder   []Service          // init order for reverse-close at shutdown
 
+	readyFuncs           []func(*ServiceContainer) error
 	customConfigProvided bool
 	mu                   sync.Mutex
 	initOnce             sync.Once
@@ -75,6 +76,14 @@ func WithScopedService[T any](ctor any) AppOption {
 // WithSingletonService registers a singleton service constructor with the App, ensuring a single instance is shared.
 func WithSingletonService[T any](ctor any) AppOption {
 	return func(a *App) { RegisterCtor[T](a.serviceContainer, ctor, ServiceLifetimeSingleton) }
+}
+
+// WithReadyFunc registers a function that runs after all services are
+// initialized but before the HTTP server starts. Use it for data seeding
+// or other startup tasks that require a live DI container.
+// Multiple funcs are called in registration order and any error aborts startup.
+func WithReadyFunc(fn func(*ServiceContainer) error) AppOption {
+	return func(a *App) { a.readyFuncs = append(a.readyFuncs, fn) }
 }
 
 // WithErrorHandler configures the function that converts DI-aware handler
@@ -226,6 +235,13 @@ func (a *App) Run() error {
 		a.logger.Info("running pending migrations")
 		if err := migrationMgr.RunPending(); err != nil {
 			return fmt.Errorf("gas: migrations: %w", err)
+		}
+	}
+
+	// Run ready hooks (e.g. data seeding) after migrations but before the server accepts traffic.
+	for _, fn := range a.readyFuncs {
+		if err := fn(a.serviceContainer); err != nil {
+			return fmt.Errorf("gas: ready hook: %w", err)
 		}
 	}
 
