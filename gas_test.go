@@ -785,8 +785,8 @@ func TestScopedService_PerRequestLifecycle(t *testing.T) {
 	// Request 1
 	scope1 := c.NewScope()
 
-	rl1, ok := gas.Resolve[*requestLogger](scope1)
-	if !ok {
+	rl1, err := gas.Resolve[*requestLogger](scope1)
+	if err != nil {
 		t.Fatal("expected to resolve requestLogger in scope1")
 	}
 	rl1.Log("request 1: start")
@@ -811,8 +811,8 @@ func TestScopedService_PerRequestLifecycle(t *testing.T) {
 	// Request 2 — gets a completely fresh instance.
 	scope2 := c.NewScope()
 
-	rl2, ok := gas.Resolve[*requestLogger](scope2)
-	if !ok {
+	rl2, err := gas.Resolve[*requestLogger](scope2)
+	if err != nil {
 		t.Fatal("expected to resolve requestLogger in scope2")
 	}
 	if rl2 == rl1 {

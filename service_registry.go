@@ -119,27 +119,26 @@ func (c *ServiceContainer) NewScope() *Scope {
 
 // Resolve retrieves or builds a service of type T from a Resolver
 // (either *ServiceContainer or *Scope).
-func Resolve[T any](r Resolver) (T, bool) {
+func Resolve[T any](r Resolver) (T, error) {
 	v, err := r.resolveType(reflect.TypeFor[T]())
 	if err != nil {
-		// TODO: we're swallowing this error!!!
 		var zero T
-		return zero, false
+		return zero, err
 	}
-	return v.Interface().(T), true
+	return v.Interface().(T), nil
 }
 
 // MustResolve is like Resolve but panics if the service cannot be resolved.
 func MustResolve[T any](r Resolver) T {
-	v, ok := Resolve[T](r)
-	if !ok {
-		panic(fmt.Sprintf("failed to resolve %v", reflect.TypeFor[T]()))
+	v, err := Resolve[T](r)
+	if err != nil {
+		panic(fmt.Sprintf("failed to resolve %v: %v", reflect.TypeFor[T](), err))
 	}
 	return v
 }
 
 // ResolveFromRequestScope retrieves or builds a service of type T from the per-request scope in the provided *http.Request.
-func ResolveFromRequestScope[T any](r *http.Request) (T, bool) {
+func ResolveFromRequestScope[T any](r *http.Request) (T, error) {
 	//goland:noinspection GoResourceLeak
 	return Resolve[T](RequestScope(r))
 }

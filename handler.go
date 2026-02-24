@@ -10,7 +10,7 @@ import (
 type ErrorHandler func(ctx Context, err error)
 
 func defaultErrorHandler(ctx Context, err error) {
-	if logger, ok := ResolveFromRequestScope[Logger](ctx.Request()); ok {
+	if logger, err := ResolveFromRequestScope[Logger](ctx.Request()); err == nil {
 		logger.Error("unhandled request error").Err("error", err).Send()
 	}
 	http.Error(ctx.ResponseWriter(), http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)

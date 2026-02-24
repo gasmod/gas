@@ -137,8 +137,8 @@ func (a *App) ServiceContainer() *ServiceContainer {
 // MigrationManager resolves the MigrationManager from the DI container.
 // Returns nil if no MigrationManager is registered.
 func (a *App) MigrationManager() MigrationManager {
-	mgr, ok := Resolve[MigrationManager](a.serviceContainer)
-	if !ok {
+	mgr, err := Resolve[MigrationManager](a.serviceContainer)
+	if err != nil {
 		return nil
 	}
 	return mgr
@@ -147,8 +147,8 @@ func (a *App) MigrationManager() MigrationManager {
 // ConfigProvider resolves the ConfigProvider from the DI container.
 // Returns nil if no ConfigProvider is registered.
 func (a *App) ConfigProvider() ConfigProvider {
-	cfg, ok := Resolve[ConfigProvider](a.serviceContainer)
-	if !ok {
+	cfg, err := Resolve[ConfigProvider](a.serviceContainer)
+	if err != nil {
 		return nil
 	}
 	return cfg

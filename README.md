@@ -298,7 +298,7 @@ func (s *Service) handleOrder(w http.ResponseWriter, r *http.Request) {
 Or the two-value form to handle missing registrations without panicking:
 
 ```go
-txLog, ok := gas.ResolveFromRequestScope[*TransactionLog](r)
+txLog, err := gas.ResolveFromRequestScope[*TransactionLog](r)
 ```
 
 Both helpers are thin wrappers around `gas.RequestScope(r)` + `gas.Resolve`/`gas.MustResolve`. For full scope
@@ -323,7 +323,7 @@ For non-HTTP use cases (background jobs, tests), create scopes manually:
 scope := container.NewScope()
 defer scope.Close() // calls Close() on all scoped Service instances
 
-svc, ok := gas.Resolve[*MyScopedService](scope)
+svc, err := gas.Resolve[*MyScopedService](scope)
 ```
 
 ### Provider Interfaces

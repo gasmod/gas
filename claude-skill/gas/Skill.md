@@ -130,7 +130,7 @@ Constructor signature: `func(DepA, DepB, ...) T` or `func(DepA, DepB, ...) (T, e
 ### Resolution
 
 ```go
-gas.Resolve[T any](r Resolver) (T, bool)
+gas.Resolve[T any](r Resolver) (T, error)
 gas.MustResolve[T any](r Resolver) T // panics on failure
 ```
 
@@ -156,8 +156,8 @@ list. For classic `http.HandlerFunc` handlers, use the request-scope
 convenience helpers:
 
 ```go
-// Returns (T, bool) — safe, no panic on missing registration.
-gas.ResolveFromRequestScope[T any](r *http.Request) (T, bool)
+// Returns (T, error) — safe, no panic on missing registration.
+gas.ResolveFromRequestScope[T any](r *http.Request) (T, error)
 
 // Panics if T cannot be resolved.
 gas.MustResolveFromRequestScope[T any](r *http.Request) T
@@ -177,7 +177,7 @@ For non-HTTP contexts (background jobs, tests):
 ```go
 scope := container.NewScope()
 defer scope.Close()
-svc, ok := gas.Resolve[*MyScopedService](scope)
+svc, err := gas.Resolve[*MyScopedService](scope)
 ```
 
 ## Router
