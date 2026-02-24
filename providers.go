@@ -17,8 +17,11 @@ import (
 // that sqlc-generated code and transactions can use it directly.
 type DatabaseProvider interface {
 	DB() *sql.DB
+	Ping(ctx context.Context) error
 	Query(ctx context.Context, query string, args ...any) (Rows, error)
 	Exec(ctx context.Context, query string, args ...any) (Result, error)
+	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
+	WithTx(ctx context.Context, opts *sql.TxOptions, fn func(*sql.Tx) error) (err error)
 }
 
 // Rows represents the result set of a query. Mirrors the standard

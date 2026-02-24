@@ -312,13 +312,13 @@ svc, ok := gas.Resolve[*MyScopedService](scope)
 
 Services depend on interfaces, not implementations. Gas defines common providers that any service can accept:
 
-| Interface          | Methods                                                         |
-|--------------------|-----------------------------------------------------------------|
-| `DatabaseProvider` | `Query`, `Exec`, `DB`                                           |
-| `CacheProvider`    | `Get`, `Set`, `Delete`                                          |
-| `EmailProvider`    | `Send`                                                          |
-| `StorageProvider`  | `Upload`, `Download`, `Delete`                                  |
-| `ConfigProvider`   | `SetDefault`, `Set`, `Bind`, `Get`, `Find`, `Values`            |
+| Interface          | Methods                                                                     |
+|--------------------|-----------------------------------------------------------------------------|
+| `DatabaseProvider` | `DB`, `Ping`, `Query`, `Exec`, `BeginTx`, `WithTx`                          |
+| `CacheProvider`    | `Get`, `Set`, `Delete`                                                      |
+| `EmailProvider`    | `Send`                                                                      |
+| `StorageProvider`  | `Upload`, `Download`, `Delete`                                              |
+| `ConfigProvider`   | `SetDefault`, `Set`, `Bind`, `Get`, `Find`, `Values`                        |
 | `Logger`           | `Trace`, `Debug`, `Info`, `Warn`, `Error`, `With`, `SetBaseFields`, `Flush` |
 
 Logger context helpers:

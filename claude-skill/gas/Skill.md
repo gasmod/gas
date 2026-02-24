@@ -273,20 +273,20 @@ gas.NewContext(w http.ResponseWriter, r *http.Request) Context
 
 ### Context methods
 
-| Method                                 | Description                       |
-|----------------------------------------|-----------------------------------|
-| `ResponseWriter() http.ResponseWriter` | Underlying response writer        |
-| `Request() *http.Request`              | Underlying request                |
+| Method                                 | Description                         |
+|----------------------------------------|-------------------------------------|
+| `ResponseWriter() http.ResponseWriter` | Underlying response writer          |
+| `Request() *http.Request`              | Underlying request                  |
 | `RequestContext() context.Context`     | Context of the current HTTP request |
-| `JSON(status int, v any) error`        | Write JSON response               |
-| `Text(status int, s string) error`     | Write plain-text response         |
-| `NoContent() error`                    | Write 204 No Content              |
-| `Redirect(status int, url string)`     | Send HTTP redirect                |
-| `Param(key string) string`             | URL path parameter (chi.URLParam) |
-| `Query(key string) string`             | Query string parameter            |
-| `Header(key string) string`            | Request header value              |
-| `SetHeader(key, value string)`         | Set response header               |
-| `BindJSON(dest any) error`             | Decode JSON request body          |
+| `JSON(status int, v any) error`        | Write JSON response                 |
+| `Text(status int, s string) error`     | Write plain-text response           |
+| `NoContent() error`                    | Write 204 No Content                |
+| `Redirect(status int, url string)`     | Send HTTP redirect                  |
+| `Param(key string) string`             | URL path parameter (chi.URLParam)   |
+| `Query(key string) string`             | Query string parameter              |
+| `Header(key string) string`            | Request header value                |
+| `SetHeader(key, value string)`         | Set response header                 |
+| `BindJSON(dest any) error`             | Decode JSON request body            |
 
 ## ErrorHandler
 
@@ -373,8 +373,11 @@ core package; implementations live in separate modules.
 ```go
 type DatabaseProvider interface {
 	DB() *sql.DB
+	Ping(ctx context.Context) error
 	Query(ctx context.Context, query string, args ...any) (Rows, error)
 	Exec(ctx context.Context, query string, args ...any) (Result, error)
+	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
+	WithTx(ctx context.Context, opts *sql.TxOptions, fn func(*sql.Tx) error) (err error)
 }
 
 type CacheProvider interface {
