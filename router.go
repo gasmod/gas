@@ -10,8 +10,16 @@ import (
 )
 
 type registeredRoute struct {
-	method string
-	path   string
+	method     string
+	path       string
+	middleware []string
+}
+
+// RegisteredRoute is an exported snapshot of a registered route.
+type RegisteredRoute struct {
+	Method     string
+	Path       string
+	Middleware []string
 }
 
 // pendingHandler records a DI-aware handler's dependency types for boot-time
@@ -183,12 +191,18 @@ func (r *Router) Handle(service, method, path string, handler any, middleware ..
 	defer r.mu.Unlock()
 
 	middlewareFuncs := make([]func(http.Handler) http.Handler, 0, len(middleware))
+	middlewareNames := make([]string, 0, len(middleware))
 	for _, m := range middleware {
 		fn, err := r.resolveMiddleware(m)
 		if err != nil {
 			panic(fmt.Errorf("gas: route %s %s: %w", method, path, err))
 		}
 		middlewareFuncs = append(middlewareFuncs, fn)
+		if m.name != "" {
+			middlewareNames = append(middlewareNames, m.name)
+		} else {
+			middlewareNames = append(middlewareNames, "(anonymous)")
+		}
 	}
 
 	var httpHandler http.HandlerFunc
@@ -221,8 +235,9 @@ func (r *Router) Handle(service, method, path string, handler any, middleware ..
 	}
 
 	r.routes[service] = append(r.routes[service], registeredRoute{
-		method: method,
-		path:   path,
+		method:     method,
+		path:       path,
+		middleware: middlewareNames,
 	})
 }
 
@@ -269,6 +284,35 @@ func (r *Router) RemoveByModule(service string) {
 			delete(r.registry, name)
 		}
 	}
+}
+
+// Routes returns a snapshot of all registered routes grouped by service.
+func (r *Router) Routes() map[string][]RegisteredRoute {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make(map[string][]RegisteredRoute, len(r.routes))
+	for svc, routes := range r.routes {
+		exported := make([]RegisteredRoute, len(routes))
+		for i, rt := range routes {
+			mw := make([]string, len(rt.middleware))
+			copy(mw, rt.middleware)
+			exported[i] = RegisteredRoute{Method: rt.method, Path: rt.path, Middleware: mw}
+		}
+		out[svc] = exported
+	}
+	return out
+}
+
+// NamedMiddleware returns a snapshot of the named middleware registry
+// as a map of middleware name to owning service.
+func (r *Router) NamedMiddleware() map[string]string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make(map[string]string, len(r.registry))
+	for name, nm := range r.registry {
+		out[name] = nm.service
+	}
+	return out
 }
 
 // Seal flushes all deferred middleware and route registrations to Chi.

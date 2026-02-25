@@ -33,7 +33,7 @@ type App struct {
 	router           *Router
 	eventBus         *EventBus
 	cfg              *Config
-	logger           *slog.Logger
+	logger           Logger
 
 	activeServices map[string]Service // runtime kill-switch tracking
 	serviceOrder   []Service          // init order for reverse-close at shutdown
@@ -100,7 +100,6 @@ func NewApp(opts ...AppOption) *App {
 		serviceContainer: NewServiceContainer(),
 		router:           NewRouter(),
 		eventBus:         NewEventBus(),
-		logger:           slog.With("component", "gas"),
 		activeServices:   make(map[string]Service),
 	}
 
@@ -201,7 +200,6 @@ func (a *App) InitServices() (err error) {
 func (a *App) bindConfig() error {
 	if !a.customConfigProvided {
 		if cfgProvider := a.ConfigProvider(); cfgProvider != nil {
-			a.logger.Info("using config provider", "name", "ConfigProvider")
 			if err := cfgProvider.Bind(a.cfg); err != nil {
 				return fmt.Errorf("gas: config binding: %w", err)
 			}
@@ -228,22 +226,24 @@ func (a *App) Run() error {
 		return err
 	}
 
-	a.logger = slog.With("component", "gas")
-
 	// Run pending migrations.
 	if migrationMgr := a.MigrationManager(); migrationMgr != nil {
-		a.logger.Info("running pending migrations")
-		if err := migrationMgr.RunPending(); err != nil {
-			return fmt.Errorf("gas: migrations: %w", err)
+		a.getLogger().Info("applying pending migrations").Send()
+		if mErr := migrationMgr.RunPending(); mErr != nil {
+			return fmt.Errorf("gas: migrations: %w", mErr)
 		}
 	}
 
 	// Run ready hooks (e.g. data seeding) after migrations but before the server accepts traffic.
 	for _, fn := range a.readyFuncs {
-		if err := fn(a.serviceContainer); err != nil {
-			return fmt.Errorf("gas: ready hook: %w", err)
+		if fnErr := fn(a.serviceContainer); fnErr != nil {
+			a.getLogger().Error("ready hook failed").Err("error", fnErr).Send()
+			return fmt.Errorf("gas: ready hook: %w", fnErr)
 		}
 	}
+
+	// log route map
+	a.logRouteMap(a.cfg.GasEnv.IsDevelopment())
 
 	addr := fmt.Sprintf("%s:%d", a.cfg.Server.Host, a.cfg.Server.Port)
 
@@ -257,7 +257,10 @@ func (a *App) Run() error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		a.logger.Info("server listening", "addr", addr)
+		a.getLogger().Info("server started").
+			Str("environment", a.cfg.GasEnv.String()).
+			Str("addr", addr).
+			Send()
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
@@ -269,10 +272,10 @@ func (a *App) Run() error {
 
 	select {
 	case sig := <-quit:
-		a.logger.Info("shutdown signal received", "signal", sig)
-	case err := <-errCh:
-		if err != nil {
-			return fmt.Errorf("gas: server error: %w", err)
+		a.getLogger().Info("shutdown signal received").Str("signal", sig.String()).Send()
+	case chnErr := <-errCh:
+		if chnErr != nil {
+			return fmt.Errorf("gas: server error: %w", chnErr)
 		}
 	}
 
@@ -280,19 +283,38 @@ func (a *App) Run() error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
-		a.logger.Error("server shutdown error", "error", err)
+	if srvErr := srv.Shutdown(ctx); srvErr != nil {
+		a.getLogger().Error("server shutdown error").Err("error", srvErr).Send()
 	}
 
 	// Close all services in reverse init order.
 	for i := len(a.serviceOrder) - 1; i >= 0; i-- {
 		svc := a.serviceOrder[i]
-		a.logger.Info("closing service", "service", svc.Name())
-		if err := svc.Close(); err != nil {
-			a.logger.Error("service close error", "service", svc.Name(), "error", err)
+		a.getLogger().Info("closing service").Str("service", svc.Name()).Send()
+		if svcErr := svc.Close(); svcErr != nil {
+			a.getLogger().Error("service close error").
+				Str("service", svc.Name()).
+				Err("error", svcErr).
+				Send()
 		}
 	}
 
-	a.logger.Info("shutdown complete")
+	a.getLogger().Info("shutdown complete").Send()
 	return nil
+}
+
+func (a *App) getLogger() Logger {
+	if a.logger == nil {
+		// See if we have a logger registered
+		logger, err := Resolve[Logger](a.serviceContainer)
+		if err != nil {
+			// fallback to slog
+			logger = newSlogLogger(slog.Default())
+			RegisterInstance[Logger](a.serviceContainer, logger)
+			logger.Warn("no logger registered, falling back to slog").
+				Err("error", err).Send()
+		}
+		a.logger = logger
+	}
+	return a.logger
 }

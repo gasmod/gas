@@ -39,7 +39,7 @@ func (a *App) CloseService(name string) error {
 
 	// 3. Close the service (internal cleanup).
 	if err := svc.Close(); err != nil {
-		a.logger.Error("service close failed", "service", name, "error", err)
+		a.getLogger().Error("service close failed").Str("service", name).Err("error", err).Send()
 	}
 
 	// 4. Remove from active services.
@@ -48,7 +48,7 @@ func (a *App) CloseService(name string) error {
 	// 5. Notify all other services.
 	Emit(a.eventBus, SystemServiceClosed, SystemServiceClosedPayload{ServiceName: name}).Wait()
 
-	a.logger.Info("service closed", "service", name)
+	a.getLogger().Info("service closed").Str("service", name).Send()
 	return nil
 }
 
@@ -84,6 +84,6 @@ func (a *App) RestartService(name string) error {
 
 	Emit(a.eventBus, SystemServiceInitialized, SystemServiceInitializedPayload{ServiceName: name}).Wait()
 
-	a.logger.Info("service restarted", "service", name)
+	a.getLogger().Info("service restarted").Str("service", name).Send()
 	return nil
 }
