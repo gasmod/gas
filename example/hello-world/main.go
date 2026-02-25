@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
@@ -22,23 +23,32 @@ func main() {
 	}
 
 	app := gas.NewApp(
-		// Register config provider
-		gas.WithServiceInstance(cfg),
+		// Register config provider.
+		gas.WithServiceInstance[gas.ConfigProvider](cfg),
 
-		// Register services
+		// Register services with different lifetimes.
 		gas.WithSingletonService[gas.Logger](NewSlogLogger(slog.Default())),
 		gas.WithScopedService[RequestLogger](NewSlogLogger(slog.Default())),
+		gas.WithTransientService[*RequestID](NewRequestID),
 
-		// Register app modules
-		gas.WithAppModule[*Module](NewModule()),
+		// Register app modules.
+		gas.WithAppModule[*GreetModule](NewGreetModule()),
+		gas.WithAppModule[*NotesModule](NewNotesModule()),
+
+		// Custom error handler.
+		gas.WithErrorHandler(func(ctx gas.Context, err error) {
+			logger := gas.MustResolveFromRequestScope[RequestLogger](ctx.Request())
+			logger.Error("request failed").Err("error", err).Send()
+			http.Error(ctx.ResponseWriter(), fmt.Sprintf("error: %v", err), http.StatusInternalServerError)
+		}),
+
+		// Ready hook — runs after all services are initialized, before the server starts.
+		gas.WithReadyFunc(func(sc *gas.ServiceContainer) error {
+			logger := gas.MustResolve[gas.Logger](sc)
+			logger.Info("ready hook: all services initialized, server starting").Send()
+			return nil
+		}),
 	)
-
-	// register a custom error handler
-	app.Router().SetErrorHandler(func(ctx gas.Context, err error) {
-		logger := gas.MustResolveFromRequestScope[RequestLogger](ctx.Request())
-		logger.Error("custom error handler").Err("error", err).Send()
-		http.Error(ctx.ResponseWriter(), "response from custom error handler", http.StatusInternalServerError)
-	})
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)

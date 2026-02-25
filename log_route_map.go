@@ -114,20 +114,12 @@ func writeNamedMiddlewareDev(b *strings.Builder, named map[string]string, sep st
 	}
 	sort.Strings(mwServices)
 
-	maxName := 0
-	for mw := range named {
-		if len(mw) > maxName {
-			maxName = len(mw)
-		}
-	}
-	aliasFmt := fmt.Sprintf("      %%-%ds → %%s", maxName)
-
 	b.WriteString("\n  named middleware:\n")
 	for _, svc := range mwServices {
 		b.WriteString("\n  [" + svc + "]:")
 		sort.Strings(svcMiddleware[svc])
 		for _, mw := range svcMiddleware[svc] {
-			b.WriteString("\n" + fmt.Sprintf(aliasFmt, mw, named[mw]))
+			b.WriteString("\n      " + mw)
 		}
 	}
 

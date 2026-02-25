@@ -53,7 +53,10 @@ type Router struct {
 	registry               map[string]namedMiddleware
 	notFoundHandlerService string
 
-	errorHandler    ErrorHandler      // converts handler errors into HTTP responses
+	prefix          string   // accumulated path prefix from Route() nesting
+	scopeMiddleware []string // middleware names applied via Use() on this router and its ancestors
+
+	errorHandler ErrorHandler // converts handler errors into HTTP responses
 	pendingHandlers *[]pendingHandler // DI handler deps for boot-time validation (shared across sub-routers)
 
 	pendingMW  []func(http.Handler) http.Handler // queued Use() calls
@@ -80,11 +83,15 @@ func NewRouter() *Router {
 // map, and mutex but operates on the given chi.Router (e.g. from Group/Route).
 // Sub-routers are always sealed — they're created inside deferred callbacks
 // that execute during Seal(), so their calls pass through to Chi immediately.
-func newSubRouter(mux chi.Router, parent *Router) *Router {
+func newSubRouter(mux chi.Router, parent *Router, prefix string) *Router {
+	inherited := make([]string, len(parent.scopeMiddleware))
+	copy(inherited, parent.scopeMiddleware)
 	return &Router{
 		mux:             mux,
 		routes:          parent.routes,
 		registry:        parent.registry,
+		prefix:          parent.prefix + prefix,
+		scopeMiddleware: inherited,
 		errorHandler:    parent.errorHandler,
 		pendingHandlers: parent.pendingHandlers,
 		mu:              sync.RWMutex{},
@@ -128,8 +135,11 @@ func (r *Router) Use(middleware ...Middleware) {
 		if r.sealed {
 			r.mux.Use(fn)
 		} else {
-			// [ 0, 1, 2 ]
 			r.pendingMW = append(r.pendingMW, fn)
+		}
+
+		if m.name != "" {
+			r.scopeMiddleware = append(r.scopeMiddleware, m.name)
 		}
 	}
 }
@@ -151,7 +161,7 @@ func (r *Router) UseMiddlewareByName(middleware string) {
 func (r *Router) Group(fn func(sub *Router)) {
 	op := func() {
 		r.mux.Group(func(cr chi.Router) {
-			fn(newSubRouter(cr, r))
+			fn(newSubRouter(cr, r, ""))
 		})
 	}
 	if r.sealed {
@@ -167,7 +177,7 @@ func (r *Router) Group(fn func(sub *Router)) {
 func (r *Router) Route(pattern string, fn func(sub *Router)) {
 	op := func() {
 		r.mux.Route(pattern, func(cr chi.Router) {
-			fn(newSubRouter(cr, r))
+			fn(newSubRouter(cr, r, pattern))
 		})
 	}
 	if r.sealed {
@@ -200,8 +210,6 @@ func (r *Router) Handle(service, method, path string, handler any, middleware ..
 		middlewareFuncs = append(middlewareFuncs, fn)
 		if m.name != "" {
 			middlewareNames = append(middlewareNames, m.name)
-		} else {
-			middlewareNames = append(middlewareNames, "(anonymous)")
 		}
 	}
 
@@ -234,10 +242,14 @@ func (r *Router) Handle(service, method, path string, handler any, middleware ..
 		r.pendingOps = append(r.pendingOps, op)
 	}
 
+	allMiddlewareNames := make([]string, 0, len(r.scopeMiddleware)+len(middlewareNames))
+	allMiddlewareNames = append(allMiddlewareNames, r.scopeMiddleware...)
+	allMiddlewareNames = append(allMiddlewareNames, middlewareNames...)
+
 	r.routes[service] = append(r.routes[service], registeredRoute{
 		method:     method,
-		path:       path,
-		middleware: middlewareNames,
+		path:       r.prefix + path,
+		middleware: allMiddlewareNames,
 	})
 }
 

@@ -1,3 +1,11 @@
 {
-  "GasEnv": "development"
+  "GasEnv": "development",
+  "Server": {
+    "Host": "localhost",
+    "Port": 8080,
+    "ReadTimeout": "1m",
+    "WriteTimeout": "1m",
+    "IdleTimeout": "2m",
+    "ShutdownTimeout": "1m"
+  }
 }
