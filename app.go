@@ -310,9 +310,7 @@ func (a *App) getLogger() Logger {
 		if err != nil {
 			// fallback to slog
 			logger = newSlogLogger(slog.Default())
-			RegisterInstance[Logger](a.serviceContainer, logger)
-			logger.Warn("no logger registered, falling back to slog").
-				Err("error", err).Send()
+			logger.Warn("no logger registered").Err("reason", err).Send()
 		}
 		a.logger = logger
 	}
