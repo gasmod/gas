@@ -186,13 +186,7 @@ func (c *ServiceContainer) lookupInstance(t reflect.Type) (reflect.Value, bool) 
 	if v, ok := c.instances[t]; ok {
 		return v, true
 	}
-	if t.Kind() == reflect.Interface {
-		for _, v := range c.instances {
-			if v.Type().Implements(t) {
-				return v, true
-			}
-		}
-	}
+	// DO NOT try to resolve by interface satisfaction!
 	return reflect.Value{}, false
 }
 
@@ -265,13 +259,7 @@ func (s *Scope) lookupScoped(t reflect.Type) (reflect.Value, bool) {
 	if v, ok := s.resolved[t]; ok {
 		return v, true
 	}
-	if t.Kind() == reflect.Interface {
-		for _, v := range s.resolved {
-			if v.Type().Implements(t) {
-				return v, true
-			}
-		}
-	}
+	// DO NOT try to resolve by interface satisfaction!
 	return reflect.Value{}, false
 }
 
