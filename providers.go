@@ -17,6 +17,7 @@ import (
 // that sqlc-generated code and transactions can use it directly.
 type DatabaseProvider interface {
 	DB() *sql.DB
+	Driver() string
 	Ping(ctx context.Context) error
 	Query(ctx context.Context, query string, args ...any) (Rows, error)
 	Exec(ctx context.Context, query string, args ...any) (Result, error)
