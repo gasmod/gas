@@ -391,6 +391,7 @@ core package; implementations live in separate modules.
 ```go
 type DatabaseProvider interface {
 	DB() *sql.DB
+	Driver() string
 	Ping(ctx context.Context) error
 	Query(ctx context.Context, query string, args ...any) (Rows, error)
 	Exec(ctx context.Context, query string, args ...any) (Result, error)
@@ -405,8 +406,8 @@ type CacheProvider interface {
 }
 
 type EmailProvider interface {
-	Send(ctx context.Context, msg Email) error
-	SendFromTemplate(ctx context.Context, template string, msg Email) error
+	Send(ctx context.Context, msg *Email) error
+	SendFromTemplate(ctx context.Context, msg *TemplatedEmail) error
 }
 
 type StorageProvider interface {
@@ -514,7 +515,25 @@ type MigrationManager interface {
 
 ```go
 type Email struct {
-	To, From, Subject, Body, HTML string
+	To       []string
+	Cc       []string
+	Bcc      []string
+	From     string
+	ReplyTo  string
+	Subject  string
+	TextBody string
+	HTMLBody string
+	Headers  map[string]string
+}
+
+type TemplatedEmail struct {
+	Email
+
+	SubjectTemplate string
+	TextTemplate    string
+	HTMLTemplate    string
+
+	Data any
 }
 
 type Migration struct {

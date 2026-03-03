@@ -330,14 +330,15 @@ svc, err := gas.Resolve[*MyScopedService](scope)
 
 Services depend on interfaces, not implementations. Gas defines common providers that any service can accept:
 
-| Interface          | Methods                                                                     |
-|--------------------|-----------------------------------------------------------------------------|
-| `DatabaseProvider` | `DB`, `Ping`, `Query`, `Exec`, `BeginTx`, `WithTx`                          |
-| `CacheProvider`    | `Get`, `Set`, `Delete`                                                      |
-| `EmailProvider`    | `Send`                                                                      |
-| `StorageProvider`  | `Upload`, `Download`, `Delete`                                              |
-| `ConfigProvider`   | `SetDefault`, `Set`, `Bind`, `Get`, `Find`, `Values`                        |
-| `Logger`           | `Trace`, `Debug`, `Info`, `Warn`, `Error`, `With`, `SetBaseFields`, `Flush` |
+| Interface          | Methods                                                                                  |
+|--------------------|------------------------------------------------------------------------------------------|
+| `DatabaseProvider` | `DB`, `Driver`, `Ping`, `Query`, `Exec`, `BeginTx`, `WithTx`                             |
+| `CacheProvider`    | `Get`, `Set`, `Delete`                                                                   |
+| `EmailProvider`    | `Send`, `SendFromTemplate`                                                               |
+| `StorageProvider`  | `Upload`, `Download`, `Delete`                                                           |
+| `ConfigProvider`   | `SetDefault`, `SetDefaults`, `Set`, `Bind`, `Get`, `Find`, `Values`                      |
+| `UIProvider`       | `Render`, `RenderWithStatus`, `RegisterTemplate`, `RegisterTemplatesFS`, `RegisterFuncs` |
+| `Logger`           | `Trace`, `Debug`, `Info`, `Warn`, `Error`, `With`, `SetBaseFields`, `Flush`              |
 
 Logger context helpers:
 
@@ -465,3 +466,4 @@ app := gas.NewApp(
 | `app.ServiceContainer()`     | `*ServiceContainer`         |
 | `app.MigrationManager()`     | `MigrationManager` (or nil) |
 | `app.ConfigProvider()`       | `ConfigProvider` (or nil)   |
+| `app.ActiveServices()`       | `[]string`                  |
