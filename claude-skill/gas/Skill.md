@@ -406,6 +406,7 @@ type CacheProvider interface {
 
 type EmailProvider interface {
 	Send(ctx context.Context, msg Email) error
+	SendFromTemplate(ctx context.Context, template string, msg Email) error
 }
 
 type StorageProvider interface {

@@ -50,6 +50,7 @@ type CacheProvider interface {
 // EmailProvider abstracts email sending.
 type EmailProvider interface {
 	Send(ctx context.Context, msg Email) error
+	SendFromTemplate(ctx context.Context, template string, msg Email) error
 }
 
 // Email represents an email message.
