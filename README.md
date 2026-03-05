@@ -202,6 +202,64 @@ Or by name (panics if not registered):
 router.UseMiddlewareByName("require-auth")
 ```
 
+#### Built-in Middleware
+
+Gas ships with ready-to-use middleware for common concerns:
+
+**RequestLogger** — logs every HTTP request/response with method, path, status, bytes, duration, and remote address.
+Responses with status >= 400 are logged at error level. Requires a scoped `Logger` in the DI container. If chi's
+`RequestID` middleware is mounted upstream, the request ID is automatically attached to the logger's base fields.
+
+```go
+router.UseMiddlewareFunc(gas.RequestLogger[*mylogger.Logger]())
+
+// Disable automatic request ID attachment:
+router.UseMiddlewareFunc(gas.RequestLogger[*mylogger.Logger](
+	gas.WithRequestLoggerOptionAppendRequestId(false),
+))
+```
+
+**SecurityHeaders** — sets common security response headers with secure defaults. Each header can be overridden or
+disabled (by passing an empty string):
+
+| Header                 | Default                                    |
+|------------------------|--------------------------------------------|
+| X-Content-Type-Options | `nosniff`                                  |
+| X-Frame-Options        | `DENY`                                     |
+| X-XSS-Protection       | `1; mode=block`                            |
+| Referrer-Policy        | `strict-origin-when-cross-origin`          |
+| Permissions-Policy     | `camera=(), microphone=(), geolocation=()` |
+
+```go
+// Secure defaults — no options needed:
+router.UseMiddlewareFunc(gas.SecurityHeaders())
+
+// Override a specific header:
+router.UseMiddlewareFunc(gas.SecurityHeaders(
+	gas.WithSecurityHeadersOptionFrameOptions("SAMEORIGIN"),
+))
+```
+
+**CacheControl** — sets the `Cache-Control` response header based on path matching rules and configured directives.
+If no path filters are specified, the header applies to all requests. If no directives are specified, the middleware
+passes through without setting any header.
+
+```go
+// Cache static assets for 1 year:
+router.UseMiddlewareFunc(gas.CacheControl(
+	gas.WithCacheControlOptionPathPrefix("/static/"),
+	gas.WithCacheControlOptionPublic(),
+	gas.WithCacheControlOptionMaxAge(365 * 24 * time.Hour),
+	gas.WithCacheControlOptionImmutable(),
+))
+
+// Disable caching for API responses:
+router.UseMiddlewareFunc(gas.CacheControl(
+	gas.WithCacheControlOptionPathPrefix("/api/"),
+	gas.WithCacheControlOptionNoStore(),
+))
+```
+
 ### Grouping Routes
 
 Use `Group()` for inline middleware scoping:
