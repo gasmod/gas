@@ -60,9 +60,9 @@ type RequestLoggerOptions struct {
 // RequestLoggerOption is a functional option for configuring RequestLogger.
 type RequestLoggerOption func(*RequestLoggerOptions)
 
-// WithRequestLoggerOptionAppendRequestID controls whether the request ID (from chi's
+// WithRequestLoggerAppendRequestID controls whether the request ID (from chi's
 // RequestID middleware) is added to the logger's base fields. Defaults to true.
-func WithRequestLoggerOptionAppendRequestID(val bool) RequestLoggerOption {
+func WithRequestLoggerAppendRequestID(val bool) RequestLoggerOption {
 	return func(opt *RequestLoggerOptions) { opt.appendRequestID = val }
 }
 
@@ -135,33 +135,33 @@ type SecurityHeadersOptions struct {
 // SecurityHeadersOption is a functional option for configuring SecurityHeaders.
 type SecurityHeadersOption func(*SecurityHeadersOptions)
 
-// WithSecurityHeadersOptionContentTypeOptions sets the X-Content-Type-Options header value.
+// WithSecurityHeadersContentTypeOptions sets the X-Content-Type-Options header value.
 // Pass an empty string to disable this header. Default: "nosniff".
-func WithSecurityHeadersOptionContentTypeOptions(val string) SecurityHeadersOption {
+func WithSecurityHeadersContentTypeOptions(val string) SecurityHeadersOption {
 	return func(opt *SecurityHeadersOptions) { opt.contentTypeOptions = val }
 }
 
-// WithSecurityHeadersOptionFrameOptions sets the X-Frame-Options header value.
+// WithSecurityHeadersFrameOptions sets the X-Frame-Options header value.
 // Pass an empty string to disable this header. Default: "DENY".
-func WithSecurityHeadersOptionFrameOptions(val string) SecurityHeadersOption {
+func WithSecurityHeadersFrameOptions(val string) SecurityHeadersOption {
 	return func(opt *SecurityHeadersOptions) { opt.frameOptions = val }
 }
 
-// WithSecurityHeadersOptionXSSProtection sets the X-XSS-Protection header value.
+// WithSecurityHeadersXSSProtection sets the X-XSS-Protection header value.
 // Pass an empty string to disable this header. Default: "1; mode=block".
-func WithSecurityHeadersOptionXSSProtection(val string) SecurityHeadersOption {
+func WithSecurityHeadersXSSProtection(val string) SecurityHeadersOption {
 	return func(opt *SecurityHeadersOptions) { opt.xssProtection = val }
 }
 
-// WithSecurityHeadersOptionReferrerPolicy sets the Referrer-Policy header value.
+// WithSecurityHeadersReferrerPolicy sets the Referrer-Policy header value.
 // Pass an empty string to disable this header. Default: "strict-origin-when-cross-origin".
-func WithSecurityHeadersOptionReferrerPolicy(val string) SecurityHeadersOption {
+func WithSecurityHeadersReferrerPolicy(val string) SecurityHeadersOption {
 	return func(opt *SecurityHeadersOptions) { opt.referrerPolicy = val }
 }
 
-// WithSecurityHeadersOptionPermissionsPolicy sets the Permissions-Policy header value.
+// WithSecurityHeadersPermissionsPolicy sets the Permissions-Policy header value.
 // Pass an empty string to disable this header. Default: "camera=(), microphone=(), geolocation=()".
-func WithSecurityHeadersOptionPermissionsPolicy(val string) SecurityHeadersOption {
+func WithSecurityHeadersPermissionsPolicy(val string) SecurityHeadersOption {
 	return func(opt *SecurityHeadersOptions) { opt.permissionsPolicy = val }
 }
 
@@ -251,124 +251,124 @@ func (opt *CacheControlOptions) shouldCachePath(path string) bool {
 // CacheControlOption is a functional option for configuring CacheControl.
 type CacheControlOption func(*CacheControlOptions)
 
-// WithCacheControlOptionPath adds an exact path that should receive the Cache-Control header.
-func WithCacheControlOptionPath(val string) CacheControlOption {
+// WithCacheControlPath adds an exact path that should receive the Cache-Control header.
+func WithCacheControlPath(val string) CacheControlOption {
 	return func(opt *CacheControlOptions) { opt.paths = append(opt.paths, val) }
 }
 
-// WithCacheControlOptionPaths adds multiple exact paths that should receive the Cache-Control header.
-func WithCacheControlOptionPaths(val []string) CacheControlOption {
+// WithCacheControlPaths adds multiple exact paths that should receive the Cache-Control header.
+func WithCacheControlPaths(val []string) CacheControlOption {
 	return func(opt *CacheControlOptions) { opt.paths = append(opt.paths, val...) }
 }
 
-// WithCacheControlOptionPathPrefix adds a path prefix to match against. Any request whose
+// WithCacheControlPathPrefix adds a path prefix to match against. Any request whose
 // path starts with this prefix will receive the Cache-Control header.
-func WithCacheControlOptionPathPrefix(val string) CacheControlOption {
+func WithCacheControlPathPrefix(val string) CacheControlOption {
 	return func(opt *CacheControlOptions) { opt.pathPrefixes = append(opt.pathPrefixes, val) }
 }
 
-// WithCacheControlOptionPathPrefixes adds multiple path prefixes to match against.
-func WithCacheControlOptionPathPrefixes(val []string) CacheControlOption {
+// WithCacheControlPathPrefixes adds multiple path prefixes to match against.
+func WithCacheControlPathPrefixes(val []string) CacheControlOption {
 	return func(opt *CacheControlOptions) { opt.pathPrefixes = append(opt.pathPrefixes, val...) }
 }
 
-// WithCacheControlOptionPathSuffix adds a path suffix to match against (e.g., ".css", ".js").
+// WithCacheControlPathSuffix adds a path suffix to match against (e.g., ".css", ".js").
 // Any request whose path ends with this suffix will receive the Cache-Control header.
-func WithCacheControlOptionPathSuffix(val string) CacheControlOption {
+func WithCacheControlPathSuffix(val string) CacheControlOption {
 	return func(opt *CacheControlOptions) { opt.pathSuffixes = append(opt.pathSuffixes, val) }
 }
 
-// WithCacheControlOptionPathSuffixes adds multiple path suffixes to match against.
-func WithCacheControlOptionPathSuffixes(val []string) CacheControlOption {
+// WithCacheControlPathSuffixes adds multiple path suffixes to match against.
+func WithCacheControlPathSuffixes(val []string) CacheControlOption {
 	return func(opt *CacheControlOptions) { opt.pathSuffixes = append(opt.pathSuffixes, val...) }
 }
 
-// WithCacheControlOptionMaxAge appends a "max-age" directive with the given duration.
-func WithCacheControlOptionMaxAge(val time.Duration) CacheControlOption {
+// WithCacheControlMaxAge appends a "max-age" directive with the given duration.
+func WithCacheControlMaxAge(val time.Duration) CacheControlOption {
 	return func(opt *CacheControlOptions) {
 		opt.cacheControlDirectives = append(opt.cacheControlDirectives, fmt.Sprintf("max-age=%d", int(val.Seconds())))
 	}
 }
 
-// WithCacheControlOptionSMaxAge appends an "s-maxage" directive (shared/CDN cache max age).
-func WithCacheControlOptionSMaxAge(val time.Duration) CacheControlOption {
+// WithCacheControlSMaxAge appends an "s-maxage" directive (shared/CDN cache max age).
+func WithCacheControlSMaxAge(val time.Duration) CacheControlOption {
 	return func(opt *CacheControlOptions) {
 		opt.cacheControlDirectives = append(opt.cacheControlDirectives, fmt.Sprintf("s-maxage=%d", int(val.Seconds())))
 	}
 }
 
-// WithCacheControlOptionNoCache appends the "no-cache" directive.
-func WithCacheControlOptionNoCache() CacheControlOption {
+// WithCacheControlNoCache appends the "no-cache" directive.
+func WithCacheControlNoCache() CacheControlOption {
 	return func(opt *CacheControlOptions) {
 		opt.cacheControlDirectives = append(opt.cacheControlDirectives, "no-cache")
 	}
 }
 
-// WithCacheControlOptionNoStore appends the "no-store" directive.
-func WithCacheControlOptionNoStore() CacheControlOption {
+// WithCacheControlNoStore appends the "no-store" directive.
+func WithCacheControlNoStore() CacheControlOption {
 	return func(opt *CacheControlOptions) {
 		opt.cacheControlDirectives = append(opt.cacheControlDirectives, "no-store")
 	}
 }
 
-// WithCacheControlOptionNoTransform appends the "no-transform" directive.
-func WithCacheControlOptionNoTransform() CacheControlOption {
+// WithCacheControlNoTransform appends the "no-transform" directive.
+func WithCacheControlNoTransform() CacheControlOption {
 	return func(opt *CacheControlOptions) {
 		opt.cacheControlDirectives = append(opt.cacheControlDirectives, "no-transform")
 	}
 }
 
-// WithCacheControlOptionMustRevalidate appends the "must-revalidate" directive.
-func WithCacheControlOptionMustRevalidate() CacheControlOption {
+// WithCacheControlMustRevalidate appends the "must-revalidate" directive.
+func WithCacheControlMustRevalidate() CacheControlOption {
 	return func(opt *CacheControlOptions) {
 		opt.cacheControlDirectives = append(opt.cacheControlDirectives, "must-revalidate")
 	}
 }
 
-// WithCacheControlOptionProxyRevalidate appends the "proxy-revalidate" directive.
-func WithCacheControlOptionProxyRevalidate() CacheControlOption {
+// WithCacheControlProxyRevalidate appends the "proxy-revalidate" directive.
+func WithCacheControlProxyRevalidate() CacheControlOption {
 	return func(opt *CacheControlOptions) {
 		opt.cacheControlDirectives = append(opt.cacheControlDirectives, "proxy-revalidate")
 	}
 }
 
-// WithCacheControlOptionMustUnderstand appends the "must-understand" directive.
-func WithCacheControlOptionMustUnderstand() CacheControlOption {
+// WithCacheControlMustUnderstand appends the "must-understand" directive.
+func WithCacheControlMustUnderstand() CacheControlOption {
 	return func(opt *CacheControlOptions) {
 		opt.cacheControlDirectives = append(opt.cacheControlDirectives, "must-understand")
 	}
 }
 
-// WithCacheControlOptionPrivate appends the "private" directive.
-func WithCacheControlOptionPrivate() CacheControlOption {
+// WithCacheControlPrivate appends the "private" directive.
+func WithCacheControlPrivate() CacheControlOption {
 	return func(opt *CacheControlOptions) {
 		opt.cacheControlDirectives = append(opt.cacheControlDirectives, "private")
 	}
 }
 
-// WithCacheControlOptionPublic appends the "public" directive.
-func WithCacheControlOptionPublic() CacheControlOption {
+// WithCacheControlPublic appends the "public" directive.
+func WithCacheControlPublic() CacheControlOption {
 	return func(opt *CacheControlOptions) {
 		opt.cacheControlDirectives = append(opt.cacheControlDirectives, "public")
 	}
 }
 
-// WithCacheControlOptionImmutable appends the "immutable" directive.
-func WithCacheControlOptionImmutable() CacheControlOption {
+// WithCacheControlImmutable appends the "immutable" directive.
+func WithCacheControlImmutable() CacheControlOption {
 	return func(opt *CacheControlOptions) {
 		opt.cacheControlDirectives = append(opt.cacheControlDirectives, "immutable")
 	}
 }
 
-// WithCacheControlOptionStaleWhileRevalidate appends a "stale-while-revalidate" directive.
-func WithCacheControlOptionStaleWhileRevalidate(val time.Duration) CacheControlOption {
+// WithCacheControlStaleWhileRevalidate appends a "stale-while-revalidate" directive.
+func WithCacheControlStaleWhileRevalidate(val time.Duration) CacheControlOption {
 	return func(opt *CacheControlOptions) {
 		opt.cacheControlDirectives = append(opt.cacheControlDirectives, fmt.Sprintf("stale-while-revalidate=%d", int(val.Seconds())))
 	}
 }
 
-// WithCacheControlOptionStaleIfError appends a "stale-if-error" directive.
-func WithCacheControlOptionStaleIfError(val time.Duration) CacheControlOption {
+// WithCacheControlStaleIfError appends a "stale-if-error" directive.
+func WithCacheControlStaleIfError(val time.Duration) CacheControlOption {
 	return func(opt *CacheControlOptions) {
 		opt.cacheControlDirectives = append(opt.cacheControlDirectives, fmt.Sprintf("stale-if-error=%d", int(val.Seconds())))
 	}

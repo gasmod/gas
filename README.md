@@ -215,7 +215,7 @@ router.UseMiddlewareFunc(gas.RequestLogger[*mylogger.Logger]())
 
 // Disable automatic request ID attachment:
 router.UseMiddlewareFunc(gas.RequestLogger[*mylogger.Logger](
-	gas.WithRequestLoggerOptionAppendRequestId(false),
+	gas.WithRequestLoggerAppendRequestID(false),
 ))
 ```
 
@@ -236,7 +236,7 @@ router.UseMiddlewareFunc(gas.SecurityHeaders())
 
 // Override a specific header:
 router.UseMiddlewareFunc(gas.SecurityHeaders(
-	gas.WithSecurityHeadersOptionFrameOptions("SAMEORIGIN"),
+	gas.WithSecurityHeadersFrameOptions("SAMEORIGIN"),
 ))
 ```
 
@@ -247,16 +247,16 @@ passes through without setting any header.
 ```go
 // Cache static assets for 1 year:
 router.UseMiddlewareFunc(gas.CacheControl(
-	gas.WithCacheControlOptionPathPrefix("/static/"),
-	gas.WithCacheControlOptionPublic(),
-	gas.WithCacheControlOptionMaxAge(365 * 24 * time.Hour),
-	gas.WithCacheControlOptionImmutable(),
+	gas.WithCacheControlPathPrefix("/static/"),
+	gas.WithCacheControlPublic(),
+	gas.WithCacheControlMaxAge(365 * 24 * time.Hour),
+	gas.WithCacheControlImmutable(),
 ))
 
 // Disable caching for API responses:
 router.UseMiddlewareFunc(gas.CacheControl(
-	gas.WithCacheControlOptionPathPrefix("/api/"),
-	gas.WithCacheControlOptionNoStore(),
+	gas.WithCacheControlPathPrefix("/api/"),
+	gas.WithCacheControlNoStore(),
 ))
 ```
 

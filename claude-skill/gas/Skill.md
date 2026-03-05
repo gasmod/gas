@@ -269,7 +269,7 @@ Options:
 
 ```go
 // Controls whether the request ID is added to the logger's base fields. Default: true.
-gas.WithRequestLoggerOptionAppendRequestId(val bool) RequestLoggerOption
+gas.WithRequestLoggerAppendRequestID(val bool) RequestLoggerOption
 ```
 
 #### SecurityHeaders
@@ -291,11 +291,11 @@ Defaults:
 Options:
 
 ```go
-gas.WithSecurityHeadersOptionContentTypeOptions(val string) SecurityHeadersOption
-gas.WithSecurityHeadersOptionFrameOptions(val string) SecurityHeadersOption
-gas.WithSecurityHeadersOptionXSSProtection(val string) SecurityHeadersOption
-gas.WithSecurityHeadersOptionReferrerPolicy(val string) SecurityHeadersOption
-gas.WithSecurityHeadersOptionPermissionsPolicy(val string) SecurityHeadersOption
+gas.WithSecurityHeadersContentTypeOptions(val string) SecurityHeadersOption
+gas.WithSecurityHeadersFrameOptions(val string) SecurityHeadersOption
+gas.WithSecurityHeadersXSSProtection(val string) SecurityHeadersOption
+gas.WithSecurityHeadersReferrerPolicy(val string) SecurityHeadersOption
+gas.WithSecurityHeadersPermissionsPolicy(val string) SecurityHeadersOption
 ```
 
 #### CacheControl
@@ -312,30 +312,30 @@ gas.CacheControl(opt ...CacheControlOption) func(next http.Handler) http.Handler
 Path matching options:
 
 ```go
-gas.WithCacheControlOptionPath(val string) CacheControlOption
-gas.WithCacheControlOptionPaths(val []string) CacheControlOption
-gas.WithCacheControlOptionPathPrefix(val string) CacheControlOption
-gas.WithCacheControlOptionPathPrefixes(val []string) CacheControlOption
-gas.WithCacheControlOptionPathSuffix(val string) CacheControlOption
-gas.WithCacheControlOptionPathSuffixes(val []string) CacheControlOption
+gas.WithCacheControlPath(val string) CacheControlOption
+gas.WithCacheControlPaths(val []string) CacheControlOption
+gas.WithCacheControlPathPrefix(val string) CacheControlOption
+gas.WithCacheControlPathPrefixes(val []string) CacheControlOption
+gas.WithCacheControlPathSuffix(val string) CacheControlOption
+gas.WithCacheControlPathSuffixes(val []string) CacheControlOption
 ```
 
 Directive options:
 
 ```go
-gas.WithCacheControlOptionMaxAge(val time.Duration) CacheControlOption
-gas.WithCacheControlOptionSMaxAge(val time.Duration) CacheControlOption
-gas.WithCacheControlOptionNoCache() CacheControlOption
-gas.WithCacheControlOptionNoStore() CacheControlOption
-gas.WithCacheControlOptionNoTransform() CacheControlOption
-gas.WithCacheControlOptionMustRevalidate() CacheControlOption
-gas.WithCacheControlOptionProxyRevalidate() CacheControlOption
-gas.WithCacheControlOptionMustUnderstand() CacheControlOption
-gas.WithCacheControlOptionPrivate() CacheControlOption
-gas.WithCacheControlOptionPublic() CacheControlOption
-gas.WithCacheControlOptionImmutable() CacheControlOption
-gas.WithCacheControlOptionStaleWhileRevalidate(val time.Duration) CacheControlOption
-gas.WithCacheControlOptionStaleIfError(val time.Duration) CacheControlOption
+gas.WithCacheControlMaxAge(val time.Duration) CacheControlOption
+gas.WithCacheControlSMaxAge(val time.Duration) CacheControlOption
+gas.WithCacheControlNoCache() CacheControlOption
+gas.WithCacheControlNoStore() CacheControlOption
+gas.WithCacheControlNoTransform() CacheControlOption
+gas.WithCacheControlMustRevalidate() CacheControlOption
+gas.WithCacheControlProxyRevalidate() CacheControlOption
+gas.WithCacheControlMustUnderstand() CacheControlOption
+gas.WithCacheControlPrivate() CacheControlOption
+gas.WithCacheControlPublic() CacheControlOption
+gas.WithCacheControlImmutable() CacheControlOption
+gas.WithCacheControlStaleWhileRevalidate(val time.Duration) CacheControlOption
+gas.WithCacheControlStaleIfError(val time.Duration) CacheControlOption
 ```
 
 ### Route grouping
