@@ -44,6 +44,7 @@ func (c Context) JSON(status int, v any) error {
 	return json.NewEncoder(c.w).Encode(v)
 }
 
+// XML serializes v as XML and writes it with the given status code.
 func (c Context) XML(status int, v any) error {
 	c.w.Header().Set("Content-Type", "application/rss+xml; charset=utf-8")
 	c.w.WriteHeader(status)
