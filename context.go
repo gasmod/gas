@@ -3,6 +3,8 @@ package gas
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -40,6 +42,30 @@ func (c Context) JSON(status int, v any) error {
 	c.w.Header().Set("Content-Type", "application/json")
 	c.w.WriteHeader(status)
 	return json.NewEncoder(c.w).Encode(v)
+}
+
+func (c Context) XML(status int, v any) error {
+	c.w.Header().Set("Content-Type", "application/rss+xml; charset=utf-8")
+	c.w.WriteHeader(status)
+
+	if _, err := c.w.Write([]byte(xml.Header)); err != nil {
+		return fmt.Errorf("failed to write XML header: %w", err)
+	}
+
+	enc := xml.NewEncoder(c.w)
+
+	if err := enc.Encode(v); err != nil {
+		if closeErr := enc.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+		return fmt.Errorf("failed to encode XML: %w", err)
+	}
+
+	if closeErr := enc.Close(); closeErr != nil {
+		return fmt.Errorf("failed to close XML encoder: %w", closeErr)
+	}
+
+	return nil
 }
 
 // Text writes a plain-text response with the given status code.

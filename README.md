@@ -147,6 +147,7 @@ missing, initialization fails immediately — no runtime surprises.
 | `Request() *http.Request`              | Underlying request                  |
 | `RequestContext() context.Context`     | Context of the current HTTP request |
 | `JSON(status int, v any) error`        | Write JSON response                 |
+| `XML(status int, v any) error`         | Write XML response                  |
 | `Text(status int, s string) error`     | Write plain-text response           |
 | `NoContent() error`                    | Write 204 No Content                |
 | `Redirect(status int, url string)`     | Send HTTP redirect                  |
