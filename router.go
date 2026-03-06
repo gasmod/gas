@@ -221,7 +221,7 @@ func (r *Router) Handle(service, method, path string, handler any, middleware ..
 		httpHandler = h
 	default:
 		var depTypes []reflect.Type
-		httpHandler, depTypes = adaptHandler(handler, r.errorHandler)
+		httpHandler, depTypes = adaptHandler(handler, func() ErrorHandler { return r.errorHandler })
 		if len(depTypes) > 0 {
 			*r.pendingHandlers = append(*r.pendingHandlers, pendingHandler{
 				service:  service,
@@ -269,7 +269,7 @@ func (r *Router) NotFound(service string, handler any) {
 	case func(http.ResponseWriter, *http.Request):
 		httpHandler = h
 	default:
-		httpHandler, _ = adaptHandler(handler, r.errorHandler)
+		httpHandler, _ = adaptHandler(handler, func() ErrorHandler { return r.errorHandler })
 	}
 
 	r.mux.NotFound(httpHandler)

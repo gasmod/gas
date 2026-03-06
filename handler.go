@@ -10,7 +10,7 @@ import (
 type ErrorHandler func(ctx Context, err error)
 
 func defaultErrorHandler(ctx Context, err error) {
-	if logger, err := ResolveFromRequestScope[Logger](ctx.Request()); err == nil {
+	if logger, resRrr := ResolveFromRequestScope[Logger](ctx.Request()); resRrr == nil {
 		logger.Error("unhandled request error").Err("error", err).Send()
 	}
 	http.Error(ctx.ResponseWriter(), http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -32,10 +32,7 @@ type handlerMeta struct {
 //	func(gas.Context, Dep1, Dep2, ...) error
 //
 // Panics if the signature is invalid.
-func adaptHandler(handler any, errorHandler ErrorHandler) (http.HandlerFunc, []reflect.Type) {
-	if errorHandler == nil {
-		errorHandler = defaultErrorHandler
-	}
+func adaptHandler(handler any, getErrorHandler func() ErrorHandler) (http.HandlerFunc, []reflect.Type) {
 
 	handlerVal := reflect.ValueOf(handler)
 	handlerType := handlerVal.Type()
@@ -63,7 +60,7 @@ func adaptHandler(handler any, errorHandler ErrorHandler) (http.HandlerFunc, []r
 		depTypes[i-1] = handlerType.In(i)
 	}
 
-	meta := handlerMeta{
+	meta := &handlerMeta{
 		fn:       handlerVal,
 		depTypes: depTypes,
 	}
@@ -78,7 +75,11 @@ func adaptHandler(handler any, errorHandler ErrorHandler) (http.HandlerFunc, []r
 		for i, depType := range meta.depTypes {
 			val, err := scope.resolveType(depType)
 			if err != nil {
-				errorHandler(ctx, fmt.Errorf("gas: resolving %v: %w", depType, err))
+				eh := getErrorHandler()
+				if eh == nil {
+					eh = defaultErrorHandler
+				}
+				eh(ctx, fmt.Errorf("gas: resolving %v: %w", depType, err))
 				return
 			}
 			args[i+1] = val
@@ -87,7 +88,11 @@ func adaptHandler(handler any, errorHandler ErrorHandler) (http.HandlerFunc, []r
 		results := meta.fn.Call(args)
 
 		if errVal := results[0]; !errVal.IsNil() {
-			errorHandler(ctx, errVal.Interface().(error))
+			eh := getErrorHandler()
+			if eh == nil {
+				eh = defaultErrorHandler
+			}
+			eh(ctx, errVal.Interface().(error))
 		}
 	}
 
