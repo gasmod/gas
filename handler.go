@@ -33,7 +33,6 @@ type handlerMeta struct {
 //
 // Panics if the signature is invalid.
 func adaptHandler(handler any, getErrorHandler func() ErrorHandler) (http.HandlerFunc, []reflect.Type) {
-
 	handlerVal := reflect.ValueOf(handler)
 	handlerType := handlerVal.Type()
 
