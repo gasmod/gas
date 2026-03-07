@@ -235,6 +235,16 @@ each dependency from the request-scoped container via `Scope.resolveType()`,
 calls the handler via reflection, and passes any returned error to the
 `ErrorHandler`.
 
+**Panic recovery:** The adapter installs a `defer`/`recover` guard around every
+DI-aware handler invocation. On panic:
+1. `http.ErrAbortHandler` is re-panicked (preserves `net/http` connection teardown).
+2. The stack trace is written to stderr unconditionally.
+3. If a `Logger` can be resolved from the request scope, the panic and stack are logged at error level.
+4. The panic is converted to `fmt.Errorf("gas: handler panic: %v", rec)` and passed to the `ErrorHandler`.
+
+This means custom `ErrorHandler` implementations should be prepared to receive
+panic-originated errors in addition to errors returned by handlers.
+
 ### Middleware
 
 ```go

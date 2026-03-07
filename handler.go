@@ -1,9 +1,12 @@
 package gas
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"reflect"
+	"runtime/debug"
 )
 
 // ErrorHandler converts a handler error into an HTTP response.
@@ -65,6 +68,31 @@ func adaptHandler(handler any, getErrorHandler func() ErrorHandler) (http.Handle
 	}
 
 	adapted := func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				if err, ok := rec.(error); ok && errors.Is(err, http.ErrAbortHandler) {
+					// don't recover http.ErrAbortHandler
+					panic(rec)
+				}
+
+				err := fmt.Errorf("gas: handler panic: %v", rec)
+
+				debugStack := debug.Stack()
+
+				// write to stderr regardless if we have a logger or not
+				_, _ = os.Stderr.Write(debugStack)
+
+				logger, resErr := ResolveFromRequestScope[Logger](r)
+				if resErr == nil {
+					logger.Error("handler panic").
+						Err("panic", err).Str("stack", string(debugStack)).Send()
+				}
+
+				eh := getErrorHandler()
+				eh(NewContext(w, r), err)
+			}
+		}()
+
 		ctx := NewContext(w, r)
 		scope := RequestScope(r)
 
@@ -75,9 +103,6 @@ func adaptHandler(handler any, getErrorHandler func() ErrorHandler) (http.Handle
 			val, err := scope.resolveType(depType)
 			if err != nil {
 				eh := getErrorHandler()
-				if eh == nil {
-					eh = defaultErrorHandler
-				}
 				eh(ctx, fmt.Errorf("gas: resolving %v: %w", depType, err))
 				return
 			}
@@ -88,9 +113,6 @@ func adaptHandler(handler any, getErrorHandler func() ErrorHandler) (http.Handle
 
 		if errVal := results[0]; !errVal.IsNil() {
 			eh := getErrorHandler()
-			if eh == nil {
-				eh = defaultErrorHandler
-			}
 			eh(ctx, errVal.Interface().(error))
 		}
 	}

@@ -50,6 +50,8 @@ func (m *GreetModule) Init() error {
 	m.router.Handle(m.Name(), http.MethodGet, "/greet/{name}", m.handleGreet)
 	m.router.Handle(m.Name(), http.MethodGet, "/json", m.handleJSON)
 	m.router.Handle(m.Name(), http.MethodGet, "/error", m.handleError)
+	m.router.Handle(m.Name(), http.MethodGet, "/panic", m.handlePanic)
+	m.router.Handle(m.Name(), http.MethodGet, "/abort", m.handleErrAbortHandler)
 
 	// Custom 404 handler.
 	m.router.NotFound(m.Name(), m.handleNotFound)
@@ -98,6 +100,16 @@ func (m *GreetModule) handleJSON(ctx gas.Context, reqID *RequestID) error {
 // handleError — demonstrates error propagation to the custom ErrorHandler.
 func (m *GreetModule) handleError(gas.Context) error {
 	return errExample
+}
+
+func (m *GreetModule) handlePanic(gas.Context) error {
+	panic("panic!")
+	return nil
+}
+
+func (m *GreetModule) handleErrAbortHandler(gas.Context) error {
+	panic(http.ErrAbortHandler)
+	return nil
 }
 
 // handleNotFound — custom 404 with DI-aware handler signature.

@@ -56,7 +56,7 @@ type Router struct {
 	prefix          string   // accumulated path prefix from Route() nesting
 	scopeMiddleware []string // middleware names applied via Use() on this router and its ancestors
 
-	errorHandler ErrorHandler // converts handler errors into HTTP responses
+	errorHandler    ErrorHandler      // converts handler errors into HTTP responses
 	pendingHandlers *[]pendingHandler // DI handler deps for boot-time validation (shared across sub-routers)
 
 	pendingMW  []func(http.Handler) http.Handler // queued Use() calls
@@ -75,6 +75,7 @@ func NewRouter() *Router {
 		mux:             chi.NewRouter(),
 		routes:          make(map[string][]registeredRoute),
 		registry:        make(map[string]namedMiddleware),
+		errorHandler:    defaultErrorHandler,
 		pendingHandlers: &ph,
 	}
 }

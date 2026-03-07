@@ -163,6 +163,11 @@ When a DI-aware handler returns a non-nil error, it is passed to the `ErrorHandl
 500 Internal Server Error with the default `http.StatusText(http.StatusInternalServerError)` body,
 and logs the error if a logger is registered in the service container.
 
+**Panic recovery:** DI-aware handlers automatically recover from panics. When a handler panics, the stack trace is
+written to stderr, the error is logged via the request-scoped `Logger` (if available), and the panic is routed
+through the `ErrorHandler` as a `gas: handler panic: <value>` error. `http.ErrAbortHandler` is re-panicked to
+preserve `net/http`'s connection-teardown behavior.
+
 Override it with `WithErrorHandler`:
 
 ```go
