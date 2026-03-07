@@ -442,6 +442,17 @@ defer scope.Close() // calls Close() on all scoped Service instances
 svc, err := gas.Resolve[*MyScopedService](scope)
 ```
 
+To inject a scope into a `context.Context` (useful in tests or background jobs that call code expecting a request
+scope):
+
+```go
+scope := container.NewScope()
+defer scope.Close()
+
+ctx := gas.WithRequestScopeKey(context.Background(), scope)
+// code that calls gas.RequestScope(r) on a request built from ctx will find this scope
+```
+
 ### Provider Interfaces
 
 Services depend on interfaces, not implementations. Gas defines common providers that any service can accept:
