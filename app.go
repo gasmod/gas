@@ -27,6 +27,12 @@ func RequestScope(r *http.Request) *Scope {
 	return s
 }
 
+// WithRequestScopeKey adds a Scope instance to the context using a custom key for managing scoped service lifetimes.
+// Useful for testing and managing scoped service lifetimes within request contexts.
+func WithRequestScopeKey(ctx context.Context, scope *Scope) context.Context {
+	return context.WithValue(ctx, requestScopeKey{}, scope)
+}
+
 // App manages service lifecycle, the HTTP server, and graceful shutdown.
 type App struct {
 	serviceContainer *ServiceContainer

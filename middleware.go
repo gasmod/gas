@@ -1,7 +1,6 @@
 package gas
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -46,8 +45,7 @@ func requestScopeMiddleware(container *ServiceContainer) func(next http.Handler)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			scope := container.NewScope()
 			defer func() { _ = scope.Close() }()
-			ctx := context.WithValue(r.Context(), requestScopeKey{}, scope)
-			next.ServeHTTP(w, r.WithContext(ctx))
+			next.ServeHTTP(w, r.WithContext(WithRequestScopeKey(r.Context(), scope)))
 		})
 	}
 }
