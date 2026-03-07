@@ -414,7 +414,8 @@ func TestDIHandler_NilError(t *testing.T) {
 
 func TestContext_JSON(t *testing.T) {
 	rr := httptest.NewRecorder()
-	ctx := gas.NewContext(rr, httptest.NewRequest("GET", "/", nil))
+	req := httptest.NewRequest("GET", "/", nil)
+	ctx := gas.NewContext(req.Context(), rr, req)
 
 	if err := ctx.JSON(http.StatusCreated, map[string]string{"key": "val"}); err != nil {
 		t.Fatal(err)
@@ -438,7 +439,8 @@ func TestContext_JSON(t *testing.T) {
 
 func TestContext_Text(t *testing.T) {
 	rr := httptest.NewRecorder()
-	ctx := gas.NewContext(rr, httptest.NewRequest("GET", "/", nil))
+	req := httptest.NewRequest("GET", "/", nil)
+	ctx := gas.NewContext(req.Context(), rr, req)
 
 	if err := ctx.Text(http.StatusOK, "hello"); err != nil {
 		t.Fatal(err)
@@ -457,7 +459,8 @@ func TestContext_Text(t *testing.T) {
 
 func TestContext_NoContent(t *testing.T) {
 	rr := httptest.NewRecorder()
-	ctx := gas.NewContext(rr, httptest.NewRequest("GET", "/", nil))
+	req := httptest.NewRequest("GET", "/", nil)
+	ctx := gas.NewContext(req.Context(), rr, req)
 
 	if err := ctx.NoContent(); err != nil {
 		t.Fatal(err)
@@ -473,7 +476,7 @@ func TestContext_Bind(t *testing.T) {
 	req := httptest.NewRequest("POST", "/", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
-	ctx := gas.NewContext(rr, req)
+	ctx := gas.NewContext(req.Context(), rr, req)
 
 	var dest struct {
 		Name string `json:"name"`
@@ -488,7 +491,7 @@ func TestContext_Bind(t *testing.T) {
 
 func TestContext_Query(t *testing.T) {
 	req := httptest.NewRequest("GET", "/search?q=hello&page=2", nil)
-	ctx := gas.NewContext(httptest.NewRecorder(), req)
+	ctx := gas.NewContext(req.Context(), httptest.NewRecorder(), req)
 
 	if ctx.Query("q") != "hello" {
 		t.Fatalf("expected q=hello, got %q", ctx.Query("q"))
@@ -504,7 +507,7 @@ func TestContext_Query(t *testing.T) {
 func TestContext_Header(t *testing.T) {
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("X-Custom", "value")
-	ctx := gas.NewContext(httptest.NewRecorder(), req)
+	ctx := gas.NewContext(req.Context(), httptest.NewRecorder(), req)
 
 	if ctx.Header("X-Custom") != "value" {
 		t.Fatalf("expected 'value', got %q", ctx.Header("X-Custom"))
@@ -513,7 +516,8 @@ func TestContext_Header(t *testing.T) {
 
 func TestContext_SetHeader(t *testing.T) {
 	rr := httptest.NewRecorder()
-	ctx := gas.NewContext(rr, httptest.NewRequest("GET", "/", nil))
+	req := httptest.NewRequest("GET", "/", nil)
+	ctx := gas.NewContext(req.Context(), rr, req)
 
 	ctx.SetHeader("X-Out", "set")
 

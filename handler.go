@@ -13,7 +13,7 @@ import (
 type ErrorHandler func(ctx Context, err error)
 
 func defaultErrorHandler(ctx Context, err error) {
-	if logger, resRrr := ResolveFromRequestScope[Logger](ctx.Request()); resRrr == nil {
+	if logger, resErr := ResolveFromRequestScope[Logger](ctx.Request()); resErr == nil {
 		logger.Error("unhandled request error").Err("error", err).Send()
 	}
 	http.Error(ctx.ResponseWriter(), http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -62,12 +62,12 @@ func adaptHandler(handler any, getErrorHandler func() ErrorHandler) (http.Handle
 		depTypes[i-1] = handlerType.In(i)
 	}
 
-	meta := &handlerMeta{
-		fn:       handlerVal,
-		depTypes: depTypes,
-	}
+	meta := &handlerMeta{fn: handlerVal, depTypes: depTypes}
 
 	adapted := func(w http.ResponseWriter, r *http.Request) {
+		// don't recover context initialization panics
+		ctx := NewContext(r.Context(), w, r)
+
 		defer func() {
 			if rec := recover(); rec != nil {
 				if err, ok := rec.(error); ok && errors.Is(err, http.ErrAbortHandler) {
@@ -89,11 +89,10 @@ func adaptHandler(handler any, getErrorHandler func() ErrorHandler) (http.Handle
 				}
 
 				eh := getErrorHandler()
-				eh(NewContext(w, r), err)
+				eh(ctx, err)
 			}
 		}()
 
-		ctx := NewContext(w, r)
 		scope := RequestScope(r)
 
 		args := make([]reflect.Value, 1+len(meta.depTypes))

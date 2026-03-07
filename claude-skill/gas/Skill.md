@@ -230,13 +230,15 @@ func(ctx gas.Context, dep1 Dep1, dep2 Dep2, ...) error
 handler dependency type is registered in the container. Returns an error on the
 first unresolvable type — the app fails fast at startup.
 
-**Runtime flow:** For each request, the adapter constructs a `Context`, resolves
+**Runtime flow:** For each request, the adapter constructs a `Context` via
+`NewContext(r.Context(), w, r)` **before** the panic recovery defer, resolves
 each dependency from the request-scoped container via `Scope.resolveType()`,
 calls the handler via reflection, and passes any returned error to the
-`ErrorHandler`.
+`ErrorHandler`. Context initialization panics (nil args) are intentionally
+not recovered — they indicate framework bugs.
 
 **Panic recovery:** The adapter installs a `defer`/`recover` guard around every
-DI-aware handler invocation. On panic:
+DI-aware handler invocation (after context creation). On panic:
 1. `http.ErrAbortHandler` is re-panicked (preserves `net/http` connection teardown).
 2. The stack trace is written to stderr unconditionally.
 3. If a `Logger` can be resolved from the request scope, the panic and stack are logged at error level.
@@ -389,32 +391,68 @@ The `App` calls `Seal()` automatically after all services are initialized.
 
 ## Context
 
-`Context` is the first parameter of every DI-aware handler. It wraps
-`http.ResponseWriter` and `*http.Request` with convenience methods.
+`Context` is an **interface** that embeds `context.Context`. It is the first
+parameter of every DI-aware handler. It wraps `http.ResponseWriter` and
+`*http.Request` with convenience methods.
+
+Because `Context` satisfies `context.Context`, it can be passed directly to any
+function that accepts a `context.Context` (database calls, gRPC, tracing, etc.)
+without unwrapping.
+
+The concrete implementation (`reqContext`) is unexported. Create instances via
+`NewContext`:
 
 ```go
-type Context struct { /* unexported fields */ }
+type Context interface {
+	context.Context
+	ResponseWriter() http.ResponseWriter
+	Request() *http.Request
+	JSON(status int, v any) error
+	XML(status int, v any) error
+	Text(status int, s string) error
+	NoContent() error
+	Redirect(status int, url string)
+	Param(key string) string
+	Query(key string) string
+	Header(key string) string
+	SetHeader(key, value string)
+	BindJSON(dest any) error
+}
 
-gas.NewContext(w http.ResponseWriter, r *http.Request) Context
+gas.NewContext(parent context.Context, w http.ResponseWriter, r *http.Request) Context
 ```
+
+`NewContext` panics if any argument is nil. Internally it calls
+`r.WithContext(ctx)` so that `ctx.Request().Context()` returns the `Context`
+itself — middleware reading from `r.Context()` sees values stored on the
+`gas.Context`.
 
 ### Context methods
 
-| Method                                 | Description                         |
-|----------------------------------------|-------------------------------------|
-| `ResponseWriter() http.ResponseWriter` | Underlying response writer          |
-| `Request() *http.Request`              | Underlying request                  |
-| `RequestContext() context.Context`     | Context of the current HTTP request |
-| `JSON(status int, v any) error`        | Write JSON response                 |
-| `XML(status int, v any) error`         | Write XML response                  |
-| `Text(status int, s string) error`     | Write plain-text response           |
-| `NoContent() error`                    | Write 204 No Content                |
-| `Redirect(status int, url string)`     | Send HTTP redirect                  |
-| `Param(key string) string`             | URL path parameter (chi.URLParam)   |
-| `Query(key string) string`             | Query string parameter              |
-| `Header(key string) string`            | Request header value                |
-| `SetHeader(key, value string)`         | Set response header                 |
-| `BindJSON(dest any) error`             | Decode JSON request body            |
+| Method                                 | Description                                    |
+|----------------------------------------|------------------------------------------------|
+| `ResponseWriter() http.ResponseWriter` | Underlying response writer                     |
+| `Request() *http.Request`              | Underlying request                             |
+| `JSON(status int, v any) error`        | Write JSON response                            |
+| `XML(status int, v any) error`         | Write XML response                             |
+| `Text(status int, s string) error`     | Write plain-text response                      |
+| `NoContent() error`                    | Write 204 No Content                           |
+| `Redirect(status int, url string)`     | Send HTTP redirect                             |
+| `Param(key string) string`             | URL path parameter (chi.URLParam)              |
+| `Query(key string) string`             | Query string parameter                         |
+| `Header(key string) string`            | Request header value                           |
+| `SetHeader(key, value string)`         | Set response header                            |
+| `BindJSON(dest any) error`             | Decode JSON request body                       |
+
+### Mocking Context in tests
+
+Because `Context` is an interface, tests can mock it without an HTTP server:
+
+```go
+type mockContext struct {
+	gas.Context
+}
+```
 
 ## ErrorHandler
 

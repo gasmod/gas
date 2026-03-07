@@ -11,41 +11,76 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// TODO: Convert Context to interface so we can mock it in tests
-
 // Context is the first parameter of every DI-aware handler. It wraps the
 // HTTP response writer and request into a single value. The per-request
 // scope is accessible via RequestScope(c.Request()) — the adapter resolves
 // dependencies automatically, so handlers rarely need to access the scope
 // directly.
-type Context struct {
+type Context interface {
+	context.Context
+	// ResponseWriter returns the underlying http.ResponseWriter.
+	ResponseWriter() http.ResponseWriter
+	// Request returns the underlying *http.Request.
+	Request() *http.Request
+	// JSON serializes v as JSON and writes it with the given status code.
+	JSON(status int, v any) error
+	// XML serializes v as XML and writes it with the given status code.
+	XML(status int, v any) error
+	// Text writes a plain-text response with the given status code.
+	Text(status int, s string) error
+	// NoContent writes a 204 No Content response.
+	NoContent() error
+	// Redirect sends an HTTP redirect to the given URL with the given status code.
+	Redirect(status int, url string)
+	// Param returns the URL parameter value by name (chi.URLParam).
+	Param(key string) string
+	// Query returns the query string parameter value by name.
+	Query(key string) string
+	// Header returns the request header value by name.
+	Header(key string) string
+	// SetHeader sets a response header.
+	SetHeader(key, value string)
+	// BindJSON decodes the request body as JSON into dest.
+	BindJSON(dest any) error
+}
+
+type reqContext struct {
+	context.Context
+
 	w http.ResponseWriter
 	r *http.Request
 }
 
+var _ Context = (*reqContext)(nil)
+
 // NewContext creates a Context from the standard HTTP pair.
-func NewContext(w http.ResponseWriter, r *http.Request) Context {
-	return Context{w: w, r: r}
+func NewContext(parent context.Context, w http.ResponseWriter, r *http.Request) Context {
+	if parent == nil {
+		panic("cannot create context from nil parent")
+	}
+	if w == nil {
+		panic("cannot create context from nil http.ResponseWriter")
+	}
+	if r == nil {
+		panic("cannot create context from nil http.Request")
+	}
+	ctx := &reqContext{Context: parent, w: w, r: r}
+	//nolint:contextcheck // intentionally non-inherited
+	ctx.r = ctx.r.WithContext(ctx)
+	return ctx
 }
 
-// ResponseWriter returns the underlying http.ResponseWriter.
-func (c Context) ResponseWriter() http.ResponseWriter { return c.w }
+func (c *reqContext) ResponseWriter() http.ResponseWriter { return c.w }
 
-// RequestContext returns the context associated with the current HTTP request.
-func (c Context) RequestContext() context.Context { return c.r.Context() }
+func (c *reqContext) Request() *http.Request { return c.r }
 
-// Request returns the underlying *http.Request.
-func (c Context) Request() *http.Request { return c.r }
-
-// JSON serializes v as JSON and writes it with the given status code.
-func (c Context) JSON(status int, v any) error {
+func (c *reqContext) JSON(status int, v any) error {
 	c.w.Header().Set("Content-Type", "application/json")
 	c.w.WriteHeader(status)
 	return json.NewEncoder(c.w).Encode(v)
 }
 
-// XML serializes v as XML and writes it with the given status code.
-func (c Context) XML(status int, v any) error {
+func (c *reqContext) XML(status int, v any) error {
 	c.w.Header().Set("Content-Type", "application/rss+xml; charset=utf-8")
 	c.w.WriteHeader(status)
 
@@ -69,8 +104,7 @@ func (c Context) XML(status int, v any) error {
 	return nil
 }
 
-// Text writes a plain-text response with the given status code.
-func (c Context) Text(status int, s string) error {
+func (c *reqContext) Text(status int, s string) error {
 	c.w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	c.w.WriteHeader(status)
 	_, err := c.w.Write([]byte(s))
@@ -80,38 +114,31 @@ func (c Context) Text(status int, s string) error {
 	return nil
 }
 
-// NoContent writes a 204 No Content response.
-func (c Context) NoContent() error {
+func (c *reqContext) NoContent() error {
 	c.w.WriteHeader(http.StatusNoContent)
 	return nil
 }
 
-// Redirect sends an HTTP redirect to the given URL with the given status code.
-func (c Context) Redirect(status int, url string) {
+func (c *reqContext) Redirect(status int, url string) {
 	http.Redirect(c.w, c.r, url, status)
 }
 
-// Param returns the URL parameter value by name (chi.URLParam).
-func (c Context) Param(key string) string {
+func (c *reqContext) Param(key string) string {
 	return chi.URLParam(c.r, key)
 }
 
-// Query returns the query string parameter value by name.
-func (c Context) Query(key string) string {
+func (c *reqContext) Query(key string) string {
 	return c.r.URL.Query().Get(key)
 }
 
-// Header returns the request header value by name.
-func (c Context) Header(key string) string {
+func (c *reqContext) Header(key string) string {
 	return c.r.Header.Get(key)
 }
 
-// SetHeader sets a response header.
-func (c Context) SetHeader(key, value string) {
+func (c *reqContext) SetHeader(key, value string) {
 	c.w.Header().Set(key, value)
 }
 
-// BindJSON decodes the request body as JSON into dest.
-func (c Context) BindJSON(dest any) error {
+func (c *reqContext) BindJSON(dest any) error {
 	return json.NewDecoder(c.r.Body).Decode(dest)
 }

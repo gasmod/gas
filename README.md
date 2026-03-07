@@ -139,23 +139,39 @@ missing, initialization fails immediately — no runtime surprises.
 
 ### Context
 
-`gas.Context` wraps `http.ResponseWriter` and `*http.Request` with convenience methods:
+`gas.Context` is an interface that embeds `context.Context` and wraps `http.ResponseWriter` and `*http.Request` with
+convenience methods. Because it satisfies `context.Context`, you can pass it directly to database calls, gRPC clients,
+tracing libraries, and any other API that accepts a `context.Context` — no unwrapping needed.
 
-| Method                                 | Description                         |
-|----------------------------------------|-------------------------------------|
-| `ResponseWriter() http.ResponseWriter` | Underlying response writer          |
-| `Request() *http.Request`              | Underlying request                  |
-| `RequestContext() context.Context`     | Context of the current HTTP request |
-| `JSON(status int, v any) error`        | Write JSON response                 |
-| `XML(status int, v any) error`         | Write XML response                  |
-| `Text(status int, s string) error`     | Write plain-text response           |
-| `NoContent() error`                    | Write 204 No Content                |
-| `Redirect(status int, url string)`     | Send HTTP redirect                  |
-| `Param(key string) string`             | URL path parameter (chi.URLParam)   |
-| `Query(key string) string`             | Query string parameter              |
-| `Header(key string) string`            | Request header value                |
-| `SetHeader(key, value string)`         | Set response header                 |
-| `BindJSON(dest any) error`             | Decode JSON request body into dest  |
+Create one with `NewContext`:
+
+```go
+ctx := gas.NewContext(parent, w, r) // parent is a context.Context
+```
+
+| Method                                 | Description                                    |
+|----------------------------------------|------------------------------------------------|
+| `ResponseWriter() http.ResponseWriter` | Underlying response writer                     |
+| `Request() *http.Request`              | Underlying request                             |
+| `JSON(status int, v any) error`        | Write JSON response                            |
+| `XML(status int, v any) error`         | Write XML response                             |
+| `Text(status int, s string) error`     | Write plain-text response                      |
+| `NoContent() error`                    | Write 204 No Content                           |
+| `Redirect(status int, url string)`     | Send HTTP redirect                             |
+| `Param(key string) string`             | URL path parameter (chi.URLParam)              |
+| `Query(key string) string`             | Query string parameter                         |
+| `Header(key string) string`            | Request header value                           |
+| `SetHeader(key, value string)`         | Set response header                            |
+| `BindJSON(dest any) error`             | Decode JSON request body into dest             |
+
+Since `gas.Context` is an interface, you can mock it in tests without an HTTP server:
+
+```go
+type mockContext struct {
+	gas.Context // embed for default implementations
+	// override only the methods your test needs
+}
+```
 
 ### Error Handling
 
