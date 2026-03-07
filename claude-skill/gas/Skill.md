@@ -191,13 +191,13 @@ To inject a scope into a `context.Context` (useful in tests or background jobs
 that call code expecting a request scope):
 
 ```go
-gas.WithRequestScopeKey(ctx context.Context, scope *Scope) context.Context
+gas.WithRequestScope(ctx context.Context, scope *Scope) context.Context
 ```
 
 ```go
 scope := container.NewScope()
 defer scope.Close()
-ctx := gas.WithRequestScopeKey(context.Background(), scope)
+ctx := gas.WithRequestScope(context.Background(), scope)
 ```
 
 ## Router

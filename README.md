@@ -449,7 +449,7 @@ scope):
 scope := container.NewScope()
 defer scope.Close()
 
-ctx := gas.WithRequestScopeKey(context.Background(), scope)
+ctx := gas.WithRequestScope(context.Background(), scope)
 // code that calls gas.RequestScope(r) on a request built from ctx will find this scope
 ```
 

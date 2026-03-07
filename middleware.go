@@ -45,7 +45,7 @@ func requestScopeMiddleware(container *ServiceContainer) func(next http.Handler)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			scope := container.NewScope()
 			defer func() { _ = scope.Close() }()
-			next.ServeHTTP(w, r.WithContext(WithRequestScopeKey(r.Context(), scope)))
+			next.ServeHTTP(w, r.WithContext(WithRequestScope(r.Context(), scope)))
 		})
 	}
 }
