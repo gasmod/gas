@@ -33,6 +33,7 @@ type App struct {
 	router           *Router
 	eventBus         *EventBus
 	cfg              *Config
+	csrfProtection   *http.CrossOriginProtection
 	logger           Logger
 
 	activeServices map[string]Service // runtime kill-switch tracking
@@ -92,6 +93,32 @@ func WithErrorHandler(h ErrorHandler) AppOption {
 	return func(a *App) { a.router.SetErrorHandler(h) }
 }
 
+// WithTrustedOrigin adds an origin that is permitted to make cross-origin
+// non-safe requests (POST, PUT, PATCH, DELETE, etc.). The origin must be an
+// absolute URL with a scheme and host, e.g. "https://app.example.com".
+// Panics if the origin is not a valid absolute URL.
+func WithTrustedOrigin(origin string) AppOption {
+	return func(a *App) {
+		if err := a.csrfProtection.AddTrustedOrigin(origin); err != nil {
+			panic(fmt.Errorf("failed to add trusted origin: %w", err))
+		}
+	}
+}
+
+// WithCSRFInsecureBypassPattern adds a URL path pattern that bypasses CSRF
+// cross-origin protection. Use only for endpoints that require unauthenticated
+// cross-origin access and implement their own request validation (e.g. webhook
+// receivers).
+func WithCSRFInsecureBypassPattern(pattern string) AppOption {
+	return func(a *App) { a.csrfProtection.AddInsecureBypassPattern(pattern) }
+}
+
+// WithCSRFDenyHandler sets the handler invoked when a cross-origin request is
+// rejected by CSRF protection. The default handler returns 403 Forbidden.
+func WithCSRFDenyHandler(h http.Handler) AppOption {
+	return func(a *App) { a.csrfProtection.SetDenyHandler(h) }
+}
+
 // NewApp creates an App with the given options.
 // Router and EventBus are created internally and registered in the container.
 func NewApp(opts ...AppOption) *App {
@@ -100,6 +127,7 @@ func NewApp(opts ...AppOption) *App {
 		serviceContainer: NewServiceContainer(),
 		router:           NewRouter(),
 		eventBus:         NewEventBus(),
+		csrfProtection:   http.NewCrossOriginProtection(),
 		activeServices:   make(map[string]Service),
 	}
 
@@ -249,7 +277,7 @@ func (a *App) Run() error {
 
 	srv := &http.Server{
 		Addr:         addr,
-		Handler:      a.router,
+		Handler:      a.csrfProtection.Handler(a.router),
 		ReadTimeout:  a.cfg.Server.ReadTimeout,
 		WriteTimeout: a.cfg.Server.WriteTimeout,
 		IdleTimeout:  a.cfg.Server.IdleTimeout,

@@ -338,6 +338,42 @@ app := gas.NewApp(
 
 Multiple hooks are called in registration order. Any error aborts startup before the server starts.
 
+### CSRF Protection
+
+Gas enables cross-origin request protection by default using Go's
+[`net/http.CrossOriginProtection`](https://pkg.go.dev/net/http#CrossOriginProtection). It rejects non-safe
+cross-origin browser requests (POST, PUT, PATCH, DELETE, etc.) that originate from untrusted origins.
+Safe methods (GET, HEAD, OPTIONS) are always allowed. Requests without `Sec-Fetch-Site` or `Origin` headers
+(e.g. non-browser clients, curl) are also allowed.
+
+No configuration is required for same-origin apps. For apps that receive cross-origin requests from known
+front-ends, add trusted origins:
+
+```go
+app := gas.NewApp(
+	gas.WithTrustedOrigin("https://app.example.com"),
+	gas.WithTrustedOrigin("https://admin.example.com"),
+)
+```
+
+To bypass protection for specific paths (e.g. webhook receivers that validate their own signatures):
+
+```go
+app := gas.NewApp(
+	gas.WithCSRFInsecureBypassPattern("/webhooks/stripe"),
+)
+```
+
+To customize the response returned for rejected requests (default: 403 Forbidden):
+
+```go
+app := gas.NewApp(
+	gas.WithCSRFDenyHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "cross-origin request denied", http.StatusForbidden)
+	})),
+)
+```
+
 ### Request Scopes
 
 The App automatically installs middleware that creates a DI `Scope` per HTTP request. Scoped services get a fresh

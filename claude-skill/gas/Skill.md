@@ -66,7 +66,9 @@ app := gas.NewApp(opts ...AppOption) *App
 ```
 
 `NewApp` creates a `Router` and `EventBus` internally and registers them in the
-container. Services receive them via constructor injection.
+container. Services receive them via constructor injection. CSRF protection
+(`net/http.CrossOriginProtection`) is enabled by default — non-safe cross-origin
+browser requests are rejected unless the origin is explicitly trusted.
 
 ### AppOption functions
 
@@ -76,6 +78,11 @@ gas.WithAppModule[T any](ctor any) AppOption  // shorthand: WithService(ctor, Se
 gas.WithServiceInstance[T any](val T) AppOption
 gas.WithErrorHandler(h ErrorHandler) AppOption
 gas.WithReadyFunc(fn func(*ServiceContainer) error) AppOption
+
+// CSRF protection (enabled by default via net/http.CrossOriginProtection)
+gas.WithTrustedOrigin(origin string) AppOption          // allow cross-origin requests from the given absolute URL; panics if invalid
+gas.WithCSRFInsecureBypassPattern(pattern string) AppOption // bypass CSRF check for paths matching pattern (use for webhooks with their own validation)
+gas.WithCSRFDenyHandler(h http.Handler) AppOption       // custom handler for rejected cross-origin requests (default: 403 Forbidden)
 ```
 
 `WithReadyFunc` registers a hook that runs after all services are initialized
