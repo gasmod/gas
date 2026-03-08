@@ -422,6 +422,7 @@ type Context interface {
 	Request() *http.Request
 	JSON(status int, v any) error
 	XML(status int, v any) error
+	HTML(status int, v any) error
 	Text(status int, s string) error
 	NoContent() error
 	Redirect(status int, url string)
@@ -442,20 +443,21 @@ itself — middleware reading from `r.Context()` sees values stored on the
 
 ### Context methods
 
-| Method                                 | Description                                    |
-|----------------------------------------|------------------------------------------------|
-| `ResponseWriter() http.ResponseWriter` | Underlying response writer                     |
-| `Request() *http.Request`              | Underlying request                             |
-| `JSON(status int, v any) error`        | Write JSON response                            |
-| `XML(status int, v any) error`         | Write XML response                             |
-| `Text(status int, s string) error`     | Write plain-text response                      |
-| `NoContent() error`                    | Write 204 No Content                           |
-| `Redirect(status int, url string)`     | Send HTTP redirect                             |
-| `Param(key string) string`             | URL path parameter (chi.URLParam)              |
-| `Query(key string) string`             | Query string parameter                         |
-| `Header(key string) string`            | Request header value                           |
-| `SetHeader(key, value string)`         | Set response header                            |
-| `BindJSON(dest any) error`             | Decode JSON request body                       |
+| Method                                 | Description                       |
+|----------------------------------------|-----------------------------------|
+| `ResponseWriter() http.ResponseWriter` | Underlying response writer        |
+| `Request() *http.Request`              | Underlying request                |
+| `JSON(status int, v any) error`        | Write JSON response               |
+| `XML(status int, v any) error`         | Write XML response                |
+| `HTML(status int, v any) error`        | Write HTML response               |
+| `Text(status int, s string) error`     | Write plain-text response         |
+| `NoContent() error`                    | Write 204 No Content              |
+| `Redirect(status int, url string)`     | Send HTTP redirect                |
+| `Param(key string) string`             | URL path parameter (chi.URLParam) |
+| `Query(key string) string`             | Query string parameter            |
+| `Header(key string) string`            | Request header value              |
+| `SetHeader(key, value string)`         | Set response header               |
+| `BindJSON(dest any) error`             | Decode JSON request body          |
 
 ### Mocking Context in tests
 

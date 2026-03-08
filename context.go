@@ -26,6 +26,8 @@ type Context interface {
 	JSON(status int, v any) error
 	// XML serializes v as XML and writes it with the given status code.
 	XML(status int, v any) error
+	// HTML writes an HTML response with the given status code and content string.
+	HTML(status int, s string) error
 	// Text writes a plain-text response with the given status code.
 	Text(status int, s string) error
 	// NoContent writes a 204 No Content response.
@@ -101,6 +103,16 @@ func (c *reqContext) XML(status int, v any) error {
 		return fmt.Errorf("failed to close XML encoder: %w", closeErr)
 	}
 
+	return nil
+}
+
+func (c *reqContext) HTML(status int, s string) error {
+	c.w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	c.w.WriteHeader(status)
+	_, err := c.w.Write([]byte(s))
+	if err != nil {
+		return fmt.Errorf("failed to write response: %w", err)
+	}
 	return nil
 }
 
