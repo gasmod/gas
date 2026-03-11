@@ -149,21 +149,22 @@ Create one with `NewContext`:
 ctx := gas.NewContext(parent, w, r) // parent is a context.Context
 ```
 
-| Method                                 | Description                        |
-|----------------------------------------|------------------------------------|
-| `ResponseWriter() http.ResponseWriter` | Underlying response writer         |
-| `Request() *http.Request`              | Underlying request                 |
-| `JSON(status int, v any) error`        | Write JSON response                |
-| `XML(status int, v any) error`         | Write XML response                 |
-| `HTML(status int, s string) error`     | Write HTML response                |
-| `Text(status int, s string) error`     | Write plain-text response          |
-| `NoContent() error`                    | Write 204 No Content               |
-| `Redirect(status int, url string)`     | Send HTTP redirect                 |
-| `Param(key string) string`             | URL path parameter (chi.URLParam)  |
-| `Query(key string) string`             | Query string parameter             |
-| `Header(key string) string`            | Request header value               |
-| `SetHeader(key, value string)`         | Set response header                |
-| `BindJSON(dest any) error`             | Decode JSON request body into dest |
+| Method                                 | Description                                          |
+|----------------------------------------|------------------------------------------------------|
+| `ResponseWriter() http.ResponseWriter` | Underlying response writer                           |
+| `Request() *http.Request`              | Underlying request                                   |
+| `JSON(status int, v any) error`        | Write JSON response                                  |
+| `XML(status int, v any) error`         | Write XML response                                   |
+| `HTML(status int, s string) error`     | Write HTML response                                  |
+| `Text(status int, s string) error`     | Write plain-text response                            |
+| `NoContent() error`                    | Write 204 No Content                                 |
+| `Redirect(status int, url string)`     | Send HTTP redirect                                   |
+| `Param(key string) string`             | URL path parameter (chi.URLParam)                    |
+| `Query(key string) string`             | Query string parameter                               |
+| `Header(key string) string`            | Request header value                                 |
+| `SetHeader(key, value string)`         | Set response header                                  |
+| `BindJSON(dest any) error`             | Decode JSON request body into dest and auto-validate |
+| `BindForm(dest any) error`             | Decode Form request body into dest and auto-validate |
 
 Since `gas.Context` is an interface, you can mock it in tests without an HTTP server:
 

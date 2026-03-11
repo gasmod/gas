@@ -7,6 +7,8 @@ import (
 	"sync"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-playground/validator/v10"
+	"github.com/gorilla/schema"
 )
 
 type registeredRoute struct {
@@ -59,6 +61,9 @@ type Router struct {
 	errorHandler    ErrorHandler      // converts handler errors into HTTP responses
 	pendingHandlers *[]pendingHandler // DI handler deps for boot-time validation (shared across sub-routers)
 
+	validator   *validator.Validate
+	formDecoder *schema.Decoder
+
 	pendingMW  []func(http.Handler) http.Handler // queued Use() calls
 	pendingOps []func()                          // queued Handle/Group/Route calls
 	sealed     bool                              // after Seal(), ops go directly to chi
@@ -71,12 +76,19 @@ type Router struct {
 // until Seal() is called.
 func NewRouter() *Router {
 	ph := make([]pendingHandler, 0)
+
+	dec := schema.NewDecoder()
+	dec.SetAliasTag("form")
+	dec.IgnoreUnknownKeys(true)
+
 	return &Router{
 		mux:             chi.NewRouter(),
 		routes:          make(map[string][]registeredRoute),
 		registry:        make(map[string]namedMiddleware),
 		errorHandler:    defaultErrorHandler,
 		pendingHandlers: &ph,
+		validator:       validator.New(),
+		formDecoder:     dec,
 	}
 }
 
@@ -222,7 +234,7 @@ func (r *Router) Handle(service, method, path string, handler any, middleware ..
 		httpHandler = h
 	default:
 		var depTypes []reflect.Type
-		httpHandler, depTypes = adaptHandler(handler, func() ErrorHandler { return r.errorHandler })
+		httpHandler, depTypes = adaptHandler(handler, func() ErrorHandler { return r.errorHandler }, r.validator, r.formDecoder)
 		if len(depTypes) > 0 {
 			*r.pendingHandlers = append(*r.pendingHandlers, pendingHandler{
 				service:  service,
@@ -270,7 +282,7 @@ func (r *Router) NotFound(service string, handler any) {
 	case func(http.ResponseWriter, *http.Request):
 		httpHandler = h
 	default:
-		httpHandler, _ = adaptHandler(handler, func() ErrorHandler { return r.errorHandler })
+		httpHandler, _ = adaptHandler(handler, func() ErrorHandler { return r.errorHandler }, r.validator, r.formDecoder)
 	}
 
 	r.mux.NotFound(httpHandler)

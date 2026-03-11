@@ -7,6 +7,9 @@ import (
 	"os"
 	"reflect"
 	"runtime/debug"
+
+	"github.com/go-playground/validator/v10"
+	"github.com/gorilla/schema"
 )
 
 // ErrorHandler converts a handler error into an HTTP response.
@@ -35,7 +38,7 @@ type handlerMeta struct {
 //	func(gas.Context, Dep1, Dep2, ...) error
 //
 // Panics if the signature is invalid.
-func adaptHandler(handler any, getErrorHandler func() ErrorHandler) (http.HandlerFunc, []reflect.Type) {
+func adaptHandler(handler any, getErrorHandler func() ErrorHandler, validate *validator.Validate, formDecoder *schema.Decoder) (http.HandlerFunc, []reflect.Type) {
 	handlerVal := reflect.ValueOf(handler)
 	handlerType := handlerVal.Type()
 
@@ -66,7 +69,7 @@ func adaptHandler(handler any, getErrorHandler func() ErrorHandler) (http.Handle
 
 	adapted := func(w http.ResponseWriter, r *http.Request) {
 		// don't recover context initialization panics
-		ctx := NewContext(r.Context(), w, r)
+		ctx := NewContext(r.Context(), w, r, WithValidate(validate), WithFormDecoder(formDecoder))
 
 		defer func() {
 			if rec := recover(); rec != nil {

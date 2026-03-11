@@ -9,6 +9,8 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-playground/validator/v10"
+	"github.com/gorilla/schema"
 )
 
 // Context is the first parameter of every DI-aware handler. It wraps the
@@ -42,21 +44,44 @@ type Context interface {
 	Header(key string) string
 	// SetHeader sets a response header.
 	SetHeader(key, value string)
-	// BindJSON decodes the request body as JSON into dest.
+	// BindJSON decodes the request body as JSON into dest and performs automatic validation
+	// using the configured validator.
 	BindJSON(dest any) error
+	// BindForm binds form data from the HTTP request to the provided destination object
+	// and performs automatic validation using the configured validator.
+	BindForm(dest any) error
+	// Validator returns a pointer to the validator.Validate instance used for request validation.
+	Validator() *validator.Validate
+	// FormDecoder returns a preconfigured *schema.Decoder instance for decoding form data into structs.
+	FormDecoder() *schema.Decoder
 }
 
 type reqContext struct {
 	context.Context
 
-	w http.ResponseWriter
-	r *http.Request
+	w           http.ResponseWriter
+	r           *http.Request
+	validate    *validator.Validate
+	formDecoder *schema.Decoder
 }
 
 var _ Context = (*reqContext)(nil)
 
+// ContextOption is a functional option used to modify or extend the behavior of a reqContext at creation time.
+type ContextOption func(*reqContext)
+
+// WithValidate returns a ContextOption that sets the provided *validator.Validate instance to the reqContext.
+func WithValidate(v *validator.Validate) ContextOption {
+	return func(c *reqContext) { c.validate = v }
+}
+
+// WithFormDecoder sets a custom form decoder for the reqContext using the provided *schema.Decoder instance.
+func WithFormDecoder(d *schema.Decoder) ContextOption {
+	return func(c *reqContext) { c.formDecoder = d }
+}
+
 // NewContext creates a Context from the standard HTTP pair.
-func NewContext(parent context.Context, w http.ResponseWriter, r *http.Request) Context {
+func NewContext(parent context.Context, w http.ResponseWriter, r *http.Request, opts ...ContextOption) Context {
 	if parent == nil {
 		panic("cannot create context from nil parent")
 	}
@@ -66,9 +91,16 @@ func NewContext(parent context.Context, w http.ResponseWriter, r *http.Request) 
 	if r == nil {
 		panic("cannot create context from nil http.Request")
 	}
+
 	ctx := &reqContext{Context: parent, w: w, r: r}
+
+	for _, opt := range opts {
+		opt(ctx)
+	}
+
 	//nolint:contextcheck // intentionally non-inherited
 	ctx.r = ctx.r.WithContext(ctx)
+
 	return ctx
 }
 
@@ -151,6 +183,49 @@ func (c *reqContext) SetHeader(key, value string) {
 	c.w.Header().Set(key, value)
 }
 
+// BindJSON decodes the request body as JSON into dest and performs automatic validation
+// using the validator instance. Returns an error if decoding or validation fails.
 func (c *reqContext) BindJSON(dest any) error {
-	return json.NewDecoder(c.r.Body).Decode(dest)
+	if err := json.NewDecoder(c.r.Body).Decode(dest); err != nil {
+		return fmt.Errorf("failed to decode JSON: %w", err)
+	}
+
+	if err := c.Validator().Struct(dest); err != nil {
+		return fmt.Errorf("validation failed: %w", err)
+	}
+
+	return nil
+}
+
+// BindForm binds form data from the HTTP request to the provided destination object
+// and performs automatic validation using the validator instance.
+// Returns an error if form parsing, decoding, or validation fails.
+func (c *reqContext) BindForm(dest any) error {
+	if err := c.r.ParseForm(); err != nil {
+		return fmt.Errorf("failed to parse form: %w", err)
+	}
+
+	if err := c.FormDecoder().Decode(dest, c.r.PostForm); err != nil {
+		return fmt.Errorf("failed to decode form: %w", err)
+	}
+
+	if err := c.Validator().Struct(dest); err != nil {
+		return fmt.Errorf("validation failed: %w", err)
+	}
+
+	return nil
+}
+
+func (c *reqContext) Validator() *validator.Validate {
+	if c.validate == nil {
+		c.validate = validator.New()
+	}
+	return c.validate
+}
+
+func (c *reqContext) FormDecoder() *schema.Decoder {
+	if c.formDecoder == nil {
+		c.formDecoder = schema.NewDecoder()
+	}
+	return c.formDecoder
 }

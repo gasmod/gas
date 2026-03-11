@@ -437,6 +437,65 @@ func TestContext_JSON(t *testing.T) {
 	}
 }
 
+func TestContext_XML(t *testing.T) {
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	ctx := gas.NewContext(req.Context(), rr, req)
+
+	type data struct {
+		Name string `xml:"name"`
+	}
+	if err := ctx.XML(http.StatusOK, data{Name: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "application/rss+xml; charset=utf-8" {
+		t.Fatalf("expected application/rss+xml; charset=utf-8, got %q", ct)
+	}
+	expected := `<?xml version="1.0" encoding="UTF-8"?>` + "\n" + `<data><name>alice</name></data>`
+	if rr.Body.String() != expected {
+		t.Fatalf("expected %q, got %q", expected, rr.Body.String())
+	}
+}
+
+func TestContext_HTML(t *testing.T) {
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	ctx := gas.NewContext(req.Context(), rr, req)
+
+	if err := ctx.HTML(http.StatusOK, "<h1>hello</h1>"); err != nil {
+		t.Fatal(err)
+	}
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "text/html; charset=utf-8" {
+		t.Fatalf("expected text/html; charset=utf-8, got %q", ct)
+	}
+	if rr.Body.String() != "<h1>hello</h1>" {
+		t.Fatalf("expected '<h1>hello</h1>', got %q", rr.Body.String())
+	}
+}
+
+func TestContext_Redirect(t *testing.T) {
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	ctx := gas.NewContext(req.Context(), rr, req)
+
+	ctx.Redirect(http.StatusFound, "/new-url")
+
+	if rr.Code != http.StatusFound {
+		t.Fatalf("expected 302, got %d", rr.Code)
+	}
+	if loc := rr.Header().Get("Location"); loc != "/new-url" {
+		t.Fatalf("expected /new-url, got %q", loc)
+	}
+}
+
 func TestContext_Text(t *testing.T) {
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/", nil)
@@ -471,22 +530,84 @@ func TestContext_NoContent(t *testing.T) {
 	}
 }
 
-func TestContext_Bind(t *testing.T) {
-	body := `{"name":"alice"}`
-	req := httptest.NewRequest("POST", "/", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rr := httptest.NewRecorder()
-	ctx := gas.NewContext(req.Context(), rr, req)
+func TestContext_BindJSON(t *testing.T) {
+	t.Run("Success", func(t *testing.T) {
+		body := `{"name":"alice"}`
+		req := httptest.NewRequest("POST", "/", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		ctx := gas.NewContext(req.Context(), rr, req)
 
-	var dest struct {
-		Name string `json:"name"`
-	}
-	if err := ctx.BindJSON(&dest); err != nil {
-		t.Fatal(err)
-	}
-	if dest.Name != "alice" {
-		t.Fatalf("expected 'alice', got %q", dest.Name)
-	}
+		var dest struct {
+			Name string `json:"name"`
+		}
+		if err := ctx.BindJSON(&dest); err != nil {
+			t.Fatal(err)
+		}
+		if dest.Name != "alice" {
+			t.Fatalf("expected 'alice', got %q", dest.Name)
+		}
+	})
+
+	t.Run("ValidationFailure", func(t *testing.T) {
+		body := `{"name":""}`
+		req := httptest.NewRequest("POST", "/", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		ctx := gas.NewContext(req.Context(), rr, req)
+
+		var dest struct {
+			Name string `json:"name" validate:"required"`
+		}
+		err := ctx.BindJSON(&dest)
+		if err == nil {
+			t.Fatal("expected validation error, got nil")
+		}
+		if !strings.Contains(err.Error(), "validation failed") {
+			t.Fatalf("expected validation error message, got: %v", err)
+		}
+	})
+}
+
+func TestContext_BindForm(t *testing.T) {
+	t.Run("Success", func(t *testing.T) {
+		form := "name=alice&age=30"
+		req := httptest.NewRequest("POST", "/", strings.NewReader(form))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rr := httptest.NewRecorder()
+		ctx := gas.NewContext(req.Context(), rr, req)
+
+		var dest struct {
+			Name string `schema:"name"`
+			Age  int    `schema:"age"`
+		}
+		if err := ctx.BindForm(&dest); err != nil {
+			t.Fatal(err)
+		}
+		if dest.Name != "alice" || dest.Age != 30 {
+			t.Fatalf("expected alice/30, got %q/%d", dest.Name, dest.Age)
+		}
+	})
+
+	t.Run("ValidationFailure", func(t *testing.T) {
+		form := "name=&age=30"
+		req := httptest.NewRequest("POST", "/", strings.NewReader(form))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rr := httptest.NewRecorder()
+		ctx := gas.NewContext(req.Context(), rr, req)
+
+		var dest struct {
+			Name string `schema:"name" validate:"required"`
+			Age  int    `schema:"age"`
+		}
+		err := ctx.BindForm(&dest)
+		if err == nil {
+			t.Fatal("expected validation error, got nil")
+		}
+		if !strings.Contains(err.Error(), "validation failed") {
+			t.Fatalf("expected validation error message, got: %v", err)
+		}
+	})
 }
 
 func TestContext_Query(t *testing.T) {

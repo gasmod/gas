@@ -530,28 +530,6 @@ func TestRouter_Route(t *testing.T) {
 // App tests
 // ---------------------------------------------------------------------------
 
-// testService is a minimal Service implementation for testing App lifecycle.
-type testService struct {
-	initErr   error
-	closeErr  error
-	name      string
-	initCount atomic.Int32
-	closed    atomic.Bool
-}
-
-func (s *testService) Name() string { return s.name }
-
-func (s *testService) Init() error {
-	s.initCount.Add(1)
-	s.closed.Store(false)
-	return s.initErr
-}
-
-func (s *testService) Close() error {
-	s.closed.Store(true)
-	return s.closeErr
-}
-
 func TestApp_CloseService(t *testing.T) {
 	svc := &testService{name: "test-svc"}
 
