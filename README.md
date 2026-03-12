@@ -459,15 +459,15 @@ ctx := gas.WithRequestScope(context.Background(), scope)
 
 Services depend on interfaces, not implementations. Gas defines common providers that any service can accept:
 
-| Interface          | Methods                                                                                  |
-|--------------------|------------------------------------------------------------------------------------------|
-| `DatabaseProvider` | `DB`, `Driver`, `Ping`, `Query`, `Exec`, `BeginTx`, `WithTx`                             |
-| `CacheProvider`    | `Get`, `Set`, `Delete`                                                                   |
-| `EmailProvider`    | `Send`, `SendFromTemplate`                                                               |
-| `StorageProvider`  | `Upload`, `Download`, `Delete`                                                           |
-| `ConfigProvider`   | `SetDefault`, `SetDefaults`, `Set`, `Bind`, `Get`, `Find`, `Values`                      |
-| `UIProvider`       | `Render`, `RenderWithStatus`, `RegisterTemplate`, `RegisterTemplatesFS`, `RegisterFuncs` |
-| `Logger`           | `Trace`, `Debug`, `Info`, `Warn`, `Error`, `With`, `SetBaseFields`, `Flush`              |
+| Interface          | Methods                                                                                                    |
+|--------------------|------------------------------------------------------------------------------------------------------------|
+| `DatabaseProvider` | `DB`, `Driver`, `Ping`, `Query`, `Exec`, `BeginTx`, `WithTx`                                               |
+| `CacheProvider`    | `Get`, `Set`, `Delete`                                                                                     |
+| `EmailProvider`    | `Send`, `SendFromTemplate`                                                                                 |
+| `StorageProvider`  | `Upload`, `Download`, `Delete`                                                                             |
+| `ConfigProvider`   | `SetDefault`, `SetDefaults`, `Set`, `Bind`, `Get`, `Find`, `Values`                                        |
+| `UIProvider`       | `Render`, `RenderWithStatus`, `RenderFragment`, `RegisterTemplate`, `RegisterTemplatesFS`, `RegisterFuncs` |
+| `Logger`           | `Trace`, `Debug`, `Info`, `Warn`, `Error`, `With`, `SetBaseFields`, `Flush`                                |
 
 Logger context helpers:
 

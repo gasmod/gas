@@ -54,31 +54,27 @@ type EmailProvider interface {
 }
 
 // Email represents an email message.
-//
-//nolint:govet // intentional field order
 type Email struct {
-	To       []string
-	Cc       []string
-	Bcc      []string
 	From     string
 	ReplyTo  string
 	Subject  string
 	TextBody string
 	HTMLBody string
-	Headers  map[string]string
+
+	Headers map[string]string
+
+	To  []string
+	Cc  []string
+	Bcc []string
 }
 
 // TemplatedEmail represents an email message where templates and data define subject, text, and HTML bodies.
-//
-//nolint:govet // intentional field order
 type TemplatedEmail struct {
-	Email
-
 	SubjectTemplate string
 	TextTemplate    string
 	HTMLTemplate    string
-
-	Data any
+	Data            any
+	Email
 }
 
 // StorageProvider abstracts file storage (S3, DO Spaces, local filesystem, etc.).
