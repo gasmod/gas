@@ -89,6 +89,7 @@ type StorageProvider interface {
 // UIProvider through their functional options.
 type UIProvider interface {
 	Render(w http.ResponseWriter, name string, data any) error
+	RenderFragment(w http.ResponseWriter, name string, data any) error // renders without layout wrapper, useful for HTMX
 	RenderWithStatus(w http.ResponseWriter, status int, name string, data any) error
 	RegisterTemplate(name string, content []byte)
 	RegisterTemplatesFS(fsys fs.FS) error
