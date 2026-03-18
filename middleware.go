@@ -104,7 +104,7 @@ func RequestLogger[T Logger](opt ...RequestLoggerOption) func(next http.Handler)
 						Str("path", r.URL.Path).
 						Int("status", status).
 						Int("bytes", ww.BytesWritten()).
-						Duration("duration", time.Since(start)).
+						Str("duration", time.Since(start).String()).
 						Str("remote", r.RemoteAddr).
 						Logger()
 
