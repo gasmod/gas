@@ -10,20 +10,6 @@ import (
 )
 
 const (
-	minPort = 1
-	maxPort = 65535
-
-	minReadTimeout  = 1 * time.Second
-	maxReadTimeout  = 5 * time.Minute
-	minWriteTimeout = 1 * time.Second
-	maxWriteTimeout = 10 * time.Minute
-
-	minIdleTimeout = 1 * time.Second
-	maxIdleTimeout = 10 * time.Minute
-
-	minShutdownTimeout = 1 * time.Second
-	maxShutdownTimeout = 2 * time.Minute
-
 	defaultHost            = "0.0.0.0"
 	defaultPort            = 8080
 	defaultReadTimeout     = 5 * time.Second
@@ -81,21 +67,6 @@ func DefaultConfig() *Config {
 func (c *Config) Validate() error {
 	if err := validateHost(c.Server.Host); err != nil {
 		return fmt.Errorf("Server.Host: %w", err)
-	}
-	if c.Server.Port < minPort || c.Server.Port > maxPort {
-		return fmt.Errorf("Server.Port must be between %d and %d, got %d", minPort, maxPort, c.Server.Port)
-	}
-	if c.Server.ReadTimeout < minReadTimeout || c.Server.ReadTimeout > maxReadTimeout {
-		return fmt.Errorf("Server.ReadTimeout must be between %s and %s, got %s", minReadTimeout, maxReadTimeout, c.Server.ReadTimeout)
-	}
-	if c.Server.WriteTimeout < minWriteTimeout || c.Server.WriteTimeout > maxWriteTimeout {
-		return fmt.Errorf("Server.WriteTimeout must be between %s and %s, got %s", minWriteTimeout, maxWriteTimeout, c.Server.WriteTimeout)
-	}
-	if c.Server.IdleTimeout < minIdleTimeout || c.Server.IdleTimeout > maxIdleTimeout {
-		return fmt.Errorf("Server.IdleTimeout must be between %s and %s, got %s", minIdleTimeout, maxIdleTimeout, c.Server.IdleTimeout)
-	}
-	if c.Server.ShutdownTimeout < minShutdownTimeout || c.Server.ShutdownTimeout > maxShutdownTimeout {
-		return fmt.Errorf("Server.ShutdownTimeout must be between %s and %s, got %s", minShutdownTimeout, maxShutdownTimeout, c.Server.ShutdownTimeout)
 	}
 	return nil
 }
