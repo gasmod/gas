@@ -52,8 +52,8 @@ func requestScopeMiddleware(container *ServiceContainer) func(next http.Handler)
 
 // RequestLoggerOptions configures the behavior of the RequestLogger middleware.
 type RequestLoggerOptions struct {
-	appendRequestID bool
 	builder         func(Logger, *http.Request) Logger
+	appendRequestID bool
 }
 
 // RequestLoggerOption is a functional option for configuring RequestLogger.
