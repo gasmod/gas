@@ -452,6 +452,30 @@ func TestContext_XML(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
+	if ct := rr.Header().Get("Content-Type"); ct != "application/xml; charset=utf-8" {
+		t.Fatalf("expected application/xml; charset=utf-8, got %q", ct)
+	}
+	expected := `<?xml version="1.0" encoding="UTF-8"?>` + "\n" + `<data><name>alice</name></data>`
+	if rr.Body.String() != expected {
+		t.Fatalf("expected %q, got %q", expected, rr.Body.String())
+	}
+}
+
+func TestContext_RSS(t *testing.T) {
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	ctx := gas.NewContext(req.Context(), rr, req)
+
+	type data struct {
+		Name string `xml:"name"`
+	}
+	if err := ctx.RSS(http.StatusOK, data{Name: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
 	if ct := rr.Header().Get("Content-Type"); ct != "application/rss+xml; charset=utf-8" {
 		t.Fatalf("expected application/rss+xml; charset=utf-8, got %q", ct)
 	}

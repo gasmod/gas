@@ -7,18 +7,28 @@ description: >
   extends the gas core package. Covers the App lifecycle, DI container, service
   registration and lifetimes, Router with ownership tracking, DI-aware handlers,
   Context, ErrorHandler, EventBus, middleware, migrations, request scopes,
-  logging, provider interfaces, and system events.
+  logging, provider interfaces, and system events. Make sure to use this skill
+  whenever working with gas service constructors, route handlers, event
+  subscriptions, middleware registration, or any code under a gasmod/gas import
+  path, even if the user doesn't explicitly mention "gas".
 ---
 
 # Gas Core Package Reference
 
 Gas is a modular ecosystem for building micro-SaaS applications in Go. The core
-package provides shared infrastructure — dependency injection, routing,
-middleware, events, migrations, and service lifecycle management.
+package provides dependency injection, routing, middleware, events, migrations,
+and service lifecycle management.
 
 ```
 import "github.com/gasmod/gas"
 ```
+
+For full provider interface signatures (Logger, DatabaseProvider, etc.),
+supporting types (Email, Migration, etc.), and logging builder APIs, see
+`references/providers.md`.
+
+For built-in middleware option signatures (RequestLogger, SecurityHeaders,
+CacheControl), see `references/middleware.md`.
 
 ## Architecture Principles
 
@@ -50,10 +60,18 @@ type Service interface {
 ```go
 const (
 	ServiceLifetimeSingleton  ServiceLifetime = iota // created once, shared everywhere
-	ServiceLifetimeScoped                            // created once per Scope
+	ServiceLifetimeScoped                            // created once per Scope (i.e. per HTTP request)
 	ServiceLifetimeTransient                         // fresh on every resolution, CANNOT implement Service
 )
 ```
+
+**Choosing a lifetime:**
+- **Singleton** — stateless services, routers, event subscriptions, anything
+  that survives the full app lifetime. Most services are singletons.
+- **Scoped** — per-request state like loggers with request-level fields, or
+  database connections with request-scoped transactions.
+- **Transient** — lightweight value objects that need fresh state on every
+  injection. Cannot implement `Service` (no Init/Close lifecycle).
 
 ## App
 
@@ -65,63 +83,57 @@ const (
 app := gas.NewApp(opts ...AppOption) *App
 ```
 
-`NewApp` creates a `Router` and `EventBus` internally and registers them in the
-container. Services receive them via constructor injection. CSRF protection
-(`net/http.CrossOriginProtection`) is enabled by default — non-safe cross-origin
-browser requests are rejected unless the origin is explicitly trusted.
+`NewApp` creates a `Router` and `EventBus` internally and registers them in
+the container — services receive them via constructor injection. CSRF
+protection (`net/http.CrossOriginProtection`) is enabled by default.
 
 ### AppOption functions
 
 ```go
+// Service registration — pick the shorthand that matches the lifetime:
+gas.WithSingletonService[T any](ctor any) AppOption
+gas.WithScopedService[T any](ctor any) AppOption
+gas.WithTransientService[T any](ctor any) AppOption
+
+// Or specify the lifetime explicitly:
 gas.WithService[T any](ctor any, lifetime ServiceLifetime) AppOption
-gas.WithAppModule[T any](ctor any) AppOption  // shorthand: WithService(ctor, ServiceLifetimeSingleton)
-gas.WithServiceInstance[T any](val T) AppOption
+gas.WithAppModule[T any](ctor any) AppOption     // alias for WithSingletonService
+gas.WithServiceInstance[T any](val T) AppOption   // pre-built singleton instance
+
+// Hooks and handlers
 gas.WithErrorHandler(h ErrorHandler) AppOption
 gas.WithReadyFunc(fn func(*ServiceContainer) error) AppOption
 
-// CSRF protection (enabled by default via net/http.CrossOriginProtection)
-gas.WithTrustedOrigin(origin string) AppOption          // allow cross-origin requests from the given absolute URL; panics if invalid
-gas.WithCSRFInsecureBypassPattern(pattern string) AppOption // bypass CSRF check for paths matching pattern (use for webhooks with their own validation)
-gas.WithCSRFDenyHandler(h http.Handler) AppOption       // custom handler for rejected cross-origin requests (default: 403 Forbidden)
+// CSRF protection (enabled by default)
+gas.WithTrustedOrigin(origin string) AppOption               // panics if invalid URL
+gas.WithCSRFInsecureBypassPattern(pattern string) AppOption  // for webhooks with own validation
+gas.WithCSRFDenyHandler(h http.Handler) AppOption            // default: 403 Forbidden
 ```
 
-`WithReadyFunc` registers a hook that runs after all services are initialized
-and migrations have run, but before the HTTP server starts accepting traffic.
-Multiple hooks are called in registration order; any error aborts startup.
-Intended for data seeding and other pre-traffic startup tasks.
-
-```go
-app := gas.NewApp(
-    gas.WithSingletonService[*DB](NewDB),
-    gas.WithReadyFunc(func(sc *gas.ServiceContainer) error {
-        db := gas.MustResolve[*DB](sc)
-        return seed.Run(db)
-    }),
-)
-```
+`WithReadyFunc` runs after services init + migrations, before HTTP server
+starts. Use for data seeding. Multiple hooks run in registration order; any
+error aborts startup.
 
 ### App.Run()
 
-`Run()` initializes all services (via DI container), runs pending migrations,
-executes ready hooks, starts the HTTP server, and blocks until a shutdown signal
-is received. On shutdown, services are closed in reverse init order.
+**Startup sequence:** `InitServices` → `bindConfig` → migrations → ready hooks → route map log → HTTP server.
 
-**Startup sequence:** `InitServices` → `bindConfig` → migrations → ready hooks → HTTP server.
+On shutdown (SIGINT/SIGTERM), services are closed in reverse init order.
 
 ### App methods
 
-| Method               | Signature                                          | Description                                        |
-|----------------------|----------------------------------------------------|----------------------------------------------------|
-| `Run`                | `() error`                                         | Full lifecycle: init → migrate → serve → shutdown  |
-| `Config`             | `() *Config`                                       | Application configuration                          |
-| `ConfigProvider`     | `() ConfigProvider`                                | Resolved from DI, nil if unregistered              |
-| `Router`             | `() *Router`                                       | The app's router                                   |
-| `EventBus`           | `() *EventBus`                                     | The app's event bus                                |
-| `MigrationManager`   | `() MigrationManager`                              | Resolved from DI, nil if unregistered              |
-| `ServiceContainer`   | `() *ServiceContainer`                             | The application's DI container                     |
-| `ActiveServices`     | `() []string`                                      | Names of currently active services                 |
-| `CloseService`       | `(name string) error`                              | Kill-switch: 503 routes, remove subs, call Close() |
-| `RestartService`     | `(name string) error`                              | Re-initialize a previously closed service          |
+| Method             | Signature              | Description                                        |
+|--------------------|------------------------|----------------------------------------------------|
+| `Run`              | `() error`             | Full lifecycle: init → migrate → serve → shutdown  |
+| `Config`           | `() *Config`           | Application configuration                          |
+| `ConfigProvider`   | `() ConfigProvider`    | Resolved from DI, nil if unregistered              |
+| `Router`           | `() *Router`           | The app's router                                   |
+| `EventBus`         | `() *EventBus`         | The app's event bus                                |
+| `MigrationManager` | `() MigrationManager`  | Resolved from DI, nil if unregistered              |
+| `ServiceContainer` | `() *ServiceContainer` | The DI container                                   |
+| `ActiveServices`   | `() []string`          | Names of currently active services                 |
+| `CloseService`     | `(name string) error`  | Kill-switch: 503 routes, remove subs, call Close() |
+| `RestartService`   | `(name string) error`  | Re-initialize a previously closed service          |
 
 ## DI Container
 
@@ -145,12 +157,17 @@ gas.MustResolve[T any](r Resolver) T // panics on failure
 
 ### Container methods
 
-| Method                                 | Description                                        |
-|----------------------------------------|----------------------------------------------------|
-| `NewServiceContainer()`                | Create new container                               |
-| `BuildAll() error`                     | Eagerly resolve all singletons in dependency order |
-| `NewScope() *Scope`                    | Create a scoped resolution context                 |
-| `EachInstance(fn func(reflect.Value))` | Iterate all built singleton instances              |
+| Method                                 | Description                                                   |
+|----------------------------------------|---------------------------------------------------------------|
+| `NewServiceContainer()`                | Create new container                                          |
+| `BuildAll() error`                     | Validate lifetimes, topo-sort, eagerly resolve all singletons |
+| `NewScope() *Scope`                    | Create a scoped resolution context                            |
+| `EachInstance(fn func(reflect.Value))` | Iterate all built singleton instances                         |
+| `CanResolve(t reflect.Type) bool`      | Check if a type can be resolved                               |
+
+**Captive dependency validation:** `BuildAll()` rejects singletons that depend
+on scoped or transient services — this would "capture" a short-lived instance
+inside a long-lived one. Error: `captive dependency: singleton X depends on scoped Y`.
 
 ## Request Scopes
 
@@ -159,40 +176,20 @@ services get a fresh instance per request — `Init()` on first resolution,
 `Close()` when the request completes.
 
 DI-aware handlers resolve scoped services automatically via their parameter
-list. For classic `http.HandlerFunc` handlers, use the request-scope
-convenience helpers:
+list. For classic `http.HandlerFunc` handlers:
 
 ```go
-// Returns (T, error) — safe, no panic on missing registration.
 gas.ResolveFromRequestScope[T any](r *http.Request) (T, error)
-
-// Panics if T cannot be resolved.
 gas.MustResolveFromRequestScope[T any](r *http.Request) T
 ```
 
-Both are thin wrappers around `gas.RequestScope(r)` + `gas.Resolve`/
-`gas.MustResolve`. For full scope access (resolving multiple services),
-use `gas.RequestScope` directly:
+For resolving multiple services, access the scope directly:
 
 ```go
-scope := gas.RequestScope(r) // *Scope — panics outside scope middleware
-svc := gas.MustResolve[*MyScopedService](scope)
+scope := gas.RequestScope(r) // panics outside scope middleware
 ```
 
 For non-HTTP contexts (background jobs, tests):
-
-```go
-scope := container.NewScope()
-defer scope.Close()
-svc, err := gas.Resolve[*MyScopedService](scope)
-```
-
-To inject a scope into a `context.Context` (useful in tests or background jobs
-that call code expecting a request scope):
-
-```go
-gas.WithRequestScope(ctx context.Context, scope *Scope) context.Context
-```
 
 ```go
 scope := container.NewScope()
@@ -202,526 +199,199 @@ ctx := gas.WithRequestScope(context.Background(), scope)
 
 ## Router
 
-`Router` wraps Chi and tracks route/middleware ownership by service. During
-kill-switch, `RemoveByModule` replaces closed service routes with 503 handlers.
+`Router` wraps Chi and tracks route/middleware ownership by service.
 
 ### Registering routes
 
 ```go
 router.Handle(service, method, path string, handler any, middleware ...Middleware)
-```
-
-```go
 router.NotFound(service string, handler any)
 ```
 
-The `handler` parameter accepts:
-
-- `http.HandlerFunc` or `func(http.ResponseWriter, *http.Request)` — passed
-  through directly to Chi with no wrapping.
-- A DI-aware function — validated and wrapped via reflection. See
-  [DI-Aware Handlers](#di-aware-handlers) below.
+The `handler` parameter accepts either `http.HandlerFunc` /
+`func(http.ResponseWriter, *http.Request)` (passed through directly), or a
+DI-aware function (see below).
 
 ### DI-Aware Handlers
 
-Handlers can declare dependencies as typed function parameters. The router
-resolves each dependency from the per-request DI scope automatically.
-
-**Handler contract:** `gas.Context` first, dependencies in between, `error` return.
+Handlers declare dependencies as typed parameters. The router resolves each
+from the per-request DI scope automatically.
 
 ```go
 func(ctx gas.Context) error
 func(ctx gas.Context, dep1 Dep1, dep2 Dep2, ...) error
 ```
 
-**Signature validation** (panics at `Handle()` call time):
+Signature rules (panics at `Handle()` call time if violated):
 - Must be a function
 - First parameter must be `gas.Context`
 - Must return exactly one value of type `error`
 
-**Boot-time validation:** `InitServices()` verifies (after `Seal()`) that every
-handler dependency type is registered in the container. Returns an error on the
-first unresolvable type — the app fails fast at startup.
+Boot-time validation ensures every handler dependency is registered in the
+container — the app fails fast at startup, not at request time.
 
-**Runtime flow:** For each request, the adapter constructs a `Context` via
-`NewContext(r.Context(), w, r)` **before** the panic recovery defer, resolves
-each dependency from the request-scoped container via `Scope.resolveType()`,
-calls the handler via reflection, and passes any returned error to the
-`ErrorHandler`. Context initialization panics (nil args) are intentionally
-not recovered — they indicate framework bugs.
-
-**Panic recovery:** The adapter installs a `defer`/`recover` guard around every
-DI-aware handler invocation (after context creation). On panic:
-1. `http.ErrAbortHandler` is re-panicked (preserves `net/http` connection teardown).
-2. The stack trace is written to stderr unconditionally.
-3. If a `Logger` can be resolved from the request scope, the panic and stack are logged at error level.
-4. The panic is converted to `fmt.Errorf("gas: handler panic: %v", rec)` and passed to the `ErrorHandler`.
-
-This means custom `ErrorHandler` implementations should be prepared to receive
-panic-originated errors in addition to errors returned by handlers.
+The adapter installs panic recovery around every DI-aware handler.
+`http.ErrAbortHandler` is re-panicked; all other panics are logged and passed
+to the `ErrorHandler` as `fmt.Errorf("gas: handler panic: %v", rec)`.
 
 ### Middleware
 
 ```go
-// Named (resolved from registry at apply time)
-gas.MiddlewareByName(name string) Middleware
+gas.MiddlewareByName(name string) Middleware                                  // resolved from registry
+gas.MiddlewareFunc(fn func(http.Handler) http.Handler) Middleware             // anonymous inline
+gas.MiddlewareFuncWithName(name string, fn func(http.Handler) http.Handler) Middleware // named inline (appears in route map)
 
-// Inline
-gas.MiddlewareFunc(fn func (http.Handler) http.Handler) Middleware
-
-// Register named middleware
-router.Register(service, name string, mw func (http.Handler) http.Handler)
-
-// Apply globally (panics if named middleware not registered)
-router.Use(middleware ...Middleware)
+router.Register(service, name string, mw func(http.Handler) http.Handler)    // register named middleware
+router.Use(middleware ...Middleware)                                           // apply globally
 router.UseMiddlewareByName(name string)
-router.UseMiddlewareFunc(fn func (http.Handler) http.Handler)
+router.UseMiddlewareFunc(fn func(http.Handler) http.Handler)
 ```
 
 ### Built-in Middleware
 
-Gas provides three built-in middleware constructors. Each uses the functional
-options pattern with a dedicated option type.
+Gas provides three middleware constructors (see `references/middleware.md` for
+full option signatures):
 
-#### RequestLogger
-
-Logs HTTP requests/responses using a scoped `Logger` resolved from the
-request's DI scope. Logs method, path, status, bytes, duration, and remote
-address. Status >= 400 logs at error level; otherwise info. If the logger
-cannot be resolved, the middleware passes through silently.
-
-When `appendRequestId` is enabled (default), expects chi's `RequestID`
-middleware upstream so `middleware.GetReqID` returns a value.
-
-```go
-gas.RequestLogger[T Logger](opt ...RequestLoggerOption) func(next http.Handler) http.Handler
-```
-
-Options:
-
-```go
-// Controls whether the request ID is added to the logger's base fields. Default: true.
-gas.WithRequestLoggerAppendRequestID(val bool) RequestLoggerOption
-```
-
-#### SecurityHeaders
-
-Sets common security response headers with secure defaults. Pass an empty
-string to any option to disable that specific header.
-
-```go
-gas.SecurityHeaders(opt ...SecurityHeadersOption) func(next http.Handler) http.Handler
-```
-
-Defaults:
-- `X-Content-Type-Options: nosniff`
-- `X-Frame-Options: DENY`
-- `X-XSS-Protection: 1; mode=block`
-- `Referrer-Policy: strict-origin-when-cross-origin`
-- `Permissions-Policy: camera=(), microphone=(), geolocation=()`
-
-Options:
-
-```go
-gas.WithSecurityHeadersContentTypeOptions(val string) SecurityHeadersOption
-gas.WithSecurityHeadersFrameOptions(val string) SecurityHeadersOption
-gas.WithSecurityHeadersXSSProtection(val string) SecurityHeadersOption
-gas.WithSecurityHeadersReferrerPolicy(val string) SecurityHeadersOption
-gas.WithSecurityHeadersPermissionsPolicy(val string) SecurityHeadersOption
-```
-
-#### CacheControl
-
-Sets the `Cache-Control` response header based on path matching and configured
-directives. If no path filters are specified, the header applies to all
-requests. If no directives are specified, the middleware passes through without
-setting any header.
-
-```go
-gas.CacheControl(opt ...CacheControlOption) func(next http.Handler) http.Handler
-```
-
-Path matching options:
-
-```go
-gas.WithCacheControlPath(val string) CacheControlOption
-gas.WithCacheControlPaths(val []string) CacheControlOption
-gas.WithCacheControlPathPrefix(val string) CacheControlOption
-gas.WithCacheControlPathPrefixes(val []string) CacheControlOption
-gas.WithCacheControlPathSuffix(val string) CacheControlOption
-gas.WithCacheControlPathSuffixes(val []string) CacheControlOption
-```
-
-Directive options:
-
-```go
-gas.WithCacheControlMaxAge(val time.Duration) CacheControlOption
-gas.WithCacheControlSMaxAge(val time.Duration) CacheControlOption
-gas.WithCacheControlNoCache() CacheControlOption
-gas.WithCacheControlNoStore() CacheControlOption
-gas.WithCacheControlNoTransform() CacheControlOption
-gas.WithCacheControlMustRevalidate() CacheControlOption
-gas.WithCacheControlProxyRevalidate() CacheControlOption
-gas.WithCacheControlMustUnderstand() CacheControlOption
-gas.WithCacheControlPrivate() CacheControlOption
-gas.WithCacheControlPublic() CacheControlOption
-gas.WithCacheControlImmutable() CacheControlOption
-gas.WithCacheControlStaleWhileRevalidate(val time.Duration) CacheControlOption
-gas.WithCacheControlStaleIfError(val time.Duration) CacheControlOption
-```
+- **`RequestLogger[T Logger]`** — logs method, path, status, bytes, duration
+  per request. Resolves a scoped Logger from DI. Status >= 400 → error level.
+- **`SecurityHeaders`** — sets X-Content-Type-Options, X-Frame-Options, etc.
+  with secure defaults.
+- **`CacheControl`** — sets Cache-Control header based on path matching rules.
 
 ### Route grouping
 
 ```go
-// Inline group (shares parent registry + tracking)
-router.Group(fn func (sub *Router))
-
-// Pattern-scoped group
-router.Route(pattern string, fn func (sub *Router))
+router.Group(fn func(sub *Router))              // inline group
+router.Route(pattern string, fn func(sub *Router)) // pattern-scoped group
 ```
 
 ### Deferred registration
 
-Top-level routers (created via `NewRouter()`) start **unsealed**: `Use`, `Handle`,
-`Group`, and `Route` calls are deferred until `Seal()` is called. This lets
-services register middleware and routes in any order during `Init()`. `Seal()`
-flushes all pending middleware first, then replays route operations —
-guaranteeing the middleware-before-routes ordering that Chi requires.
-
-Sub-routers (created inside `Group`/`Route` callbacks) are always sealed.
-
-The `App` calls `Seal()` automatically after all services are initialized.
+Top-level routers start **unsealed** — `Use`, `Handle`, `Group`, and `Route`
+calls are deferred until `Seal()`. This lets services register in any order
+during `Init()`. The App calls `Seal()` automatically after all services init.
 
 ### Other Router methods
 
-| Method                            | Description                                               |
-|-----------------------------------|-----------------------------------------------------------|
-| `Mux() chi.Router`                | Underlying Chi router for global middleware / http.Server |
-| `Seal()`                          | Flush deferred middleware then routes; idempotent         |
-| `RemoveByModule(service string)`  | Replace service routes with 503, remove middleware        |
-| `SetErrorHandler(h ErrorHandler)` | Set the error handler for DI-aware handlers               |
-| `ServeHTTP(w, req)`               | Implements http.Handler                                   |
+| Method                                           | Description                                    |
+|--------------------------------------------------|------------------------------------------------|
+| `Mux() chi.Router`                               | Underlying Chi router                          |
+| `Seal()`                                         | Flush deferred middleware then routes           |
+| `RemoveByModule(service string)`                 | Replace routes with 503, remove middleware      |
+| `SetErrorHandler(h ErrorHandler)`                | Set error handler for DI-aware handlers         |
+| `Routes() map[string][]RegisteredRoute`          | Snapshot of registered routes by service        |
+| `NamedMiddleware() map[string]string`             | Named middleware registry (name → service)      |
+| `ServeHTTP(w, req)`                              | Implements http.Handler                         |
 
 ## Context
 
 `Context` is an **interface** that embeds `context.Context`. It is the first
-parameter of every DI-aware handler. It wraps `http.ResponseWriter` and
-`*http.Request` with convenience methods.
-
-Because `Context` satisfies `context.Context`, it can be passed directly to any
-function that accepts a `context.Context` (database calls, gRPC, tracing, etc.)
-without unwrapping.
-
-The concrete implementation (`reqContext`) is unexported. Create instances via
-`NewContext`:
+parameter of every DI-aware handler. Because it satisfies `context.Context`, it
+can be passed directly to database calls, gRPC, tracing, etc.
 
 ```go
-type Context interface {
-	context.Context
-	ResponseWriter() http.ResponseWriter
-	Request() *http.Request
-	JSON(status int, v any) error
-	XML(status int, v any) error
-	HTML(status int, v any) error
-	Text(status int, s string) error
-	NoContent() error
-	Redirect(status int, url string)
-	Param(key string) string
-	Query(key string) string
-	Header(key string) string
-	SetHeader(key, value string)
-	BindJSON(dest any) error
-	BindForm(dest any) error
-	Validator() *validator.Validate
-	FormDecoder() *schema.Decoder
-}
-
-gas.NewContext(parent context.Context, w http.ResponseWriter, r *http.Request) Context
+gas.NewContext(parent context.Context, w http.ResponseWriter, r *http.Request, opts ...ContextOption) Context
 ```
 
-`NewContext` panics if any argument is nil. Internally it calls
-`r.WithContext(ctx)` so that `ctx.Request().Context()` returns the `Context`
-itself — middleware reading from `r.Context()` sees values stored on the
-`gas.Context`.
+Panics if any of parent, w, or r is nil. Options: `gas.WithValidate(v)`,
+`gas.WithFormDecoder(d)`.
 
 ### Context methods
 
-| Method                                 | Description                                |
-|----------------------------------------|--------------------------------------------|
-| `ResponseWriter() http.ResponseWriter` | Underlying response writer                 |
-| `Request() *http.Request`              | Underlying request                         |
-| `JSON(status int, v any) error`        | Write JSON response                        |
-| `XML(status int, v any) error`         | Write XML response                         |
-| `HTML(status int, s string) error`     | Write HTML response                        |
-| `Text(status int, s string) error`     | Write plain-text response                  |
-| `NoContent() error`                    | Write 204 No Content                       |
-| `Redirect(status int, url string)`     | Send HTTP redirect                         |
-| `Param(key string) string`             | URL path parameter (chi.URLParam)          |
-| `Query(key string) string`             | Query string parameter                     |
-| `Header(key string) string`            | Request header value                       |
-| `SetHeader(key, value string)`         | Set response header                        |
-| `BindJSON(dest any) error`             | Decode JSON request body and auto-validate |
-| `BindForm(dest any) error`             | Decode Form request body and auto-validate |
-| `Validator() *validator.Validate`      | Get the validator instance                 |
-| `FormDecoder() *schema.Decoder`        | Get the form decoder instance              |
+| Method                  | Signature                          | Notes                               |
+|-------------------------|------------------------------------|-------------------------------------|
+| `ResponseWriter`        | `() http.ResponseWriter`           |                                     |
+| `Request`               | `() *http.Request`                 |                                     |
+| `JSON`                  | `(status int, v any) error`        | application/json                    |
+| `XML`                   | `(status int, v any) error`        | application/xml                     |
+| `RSS`                   | `(status int, v any) error`        | application/rss+xml                 |
+| `HTML`                  | `(status int, s string) error`     | text/html                           |
+| `Text`                  | `(status int, s string) error`     | text/plain                          |
+| `NoContent`             | `() error`                         | 204                                 |
+| `Redirect`              | `(status int, url string)`         |                                     |
+| `Param`                 | `(key string) string`              | chi.URLParam                        |
+| `Query`                 | `(key string) string`              |                                     |
+| `Header`                | `(key string) string`              | request header                      |
+| `SetHeader`             | `(key, value string)`              | response header                     |
+| `BindJSON`              | `(dest any) error`                 | decode + validate                   |
+| `BindForm`              | `(dest any) error`                 | decode + validate                   |
+| `Validator`             | `() *validator.Validate`           | go-playground/validator             |
+| `FormDecoder`           | `() *schema.Decoder`              | gorilla/schema                      |
 
-### Mocking Context in tests
+`BindJSON` and `BindForm` both decode and then run struct validation via
+`go-playground/validator`. The form decoder uses alias tag `"form"` and has
+`IgnoreUnknownKeys(true)` enabled.
 
-Because `Context` is an interface, tests can mock it without an HTTP server:
-
+Because `Context` is an interface, tests can mock it via embedding:
 ```go
-type mockContext struct {
-	gas.Context
-}
+type mockContext struct { gas.Context }
 ```
 
 ## ErrorHandler
 
-`ErrorHandler` converts a handler error into an HTTP response. The default writes a
-500 Internal Server Error with the default `http.StatusText(http.StatusInternalServerError)` body,
-and logs the error if a logger is registered in the service container.
+Converts a handler error into an HTTP response. The default logs the error
+(if a Logger is in the container) and returns 500 with the standard status text.
 
 ```go
 type ErrorHandler func(ctx Context, err error)
 ```
 
-Override at the App level:
+Custom error handlers should handle both normal errors and panic-originated
+errors (which arrive as `fmt.Errorf("gas: handler panic: %v", rec)`).
 
-```go
-gas.WithErrorHandler(func(ctx gas.Context, err error) {
-	ctx.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-})
-```
-
-Or on the Router directly:
-
-```go
-router.SetErrorHandler(h ErrorHandler)
-```
+Override via `gas.WithErrorHandler(h)` or `router.SetErrorHandler(h)`.
 
 ## EventBus
 
-Typed publish/subscribe messaging between modules using `Event[T]` definitions.
-
-### Defining events
+Typed publish/subscribe messaging between modules. Always prefer the generic
+functions over the low-level string-based methods.
 
 ```go
+// Define a typed event
 var UserCreated = gas.Event[UserCreatedPayload]{Name: "user:created"}
 
-type UserCreatedPayload struct {
-	Email string
-}
-```
-
-### Top-level generic functions
-
-```go
-// Emit dispatches a typed event concurrently; returns *sync.WaitGroup.
+// Emit (concurrent dispatch, returns *sync.WaitGroup)
 gas.Emit[T](bus *EventBus, event Event[T], data T) *sync.WaitGroup
 
-// Subscribe registers a typed handler without service ownership.
+// Subscribe — always use SubscribeWithOwner from a service so that
+// CloseService can clean up subscriptions. Bare Subscribe has no ownership
+// tracking and should only be used outside of services.
 gas.Subscribe[T](bus *EventBus, event Event[T], handler func(T))
-
-// SubscribeWithOwner registers a typed handler with service ownership tracking.
 gas.SubscribeWithOwner[T](bus *EventBus, service string, event Event[T], handler func(T))
 ```
 
-### Low-level EventBus methods
+### System Events
+
+| Event                              | Payload                               | Fired When                        |
+|------------------------------------|---------------------------------------|-----------------------------------|
+| `gas.SystemServiceClosed`          | `{ServiceName string}`                | Service killed via `CloseService` |
+| `gas.SystemServiceInitialized`     | `{ServiceName string}`                | Service finishes `Init`           |
+| `gas.SystemAllServicesInitialized` | `struct{}`                            | All services initialized          |
+| `gas.SystemServerShuttingDown`     | `struct{}`                            | Graceful shutdown begins          |
+| `gas.AppConfigUpdated`             | `{Config Config}`                     | Config bound after init           |
+
+## Provider Interfaces (summary)
+
+Gas defines provider interfaces in the core package; implementations live in
+separate modules. See `references/providers.md` for full signatures.
+
+| Interface            | Purpose                    | Implementing module |
+|----------------------|----------------------------|---------------------|
+| `DatabaseProvider`   | SQL database access        | gas-database        |
+| `CacheProvider`      | Key-value caching          | (custom)            |
+| `EmailProvider`      | Email sending              | (custom)            |
+| `StorageProvider`    | File storage (S3, etc.)    | (custom)            |
+| `ConfigProvider`     | Configuration management   | gas-config          |
+| `UIProvider`         | Template rendering         | gas-ui              |
+| `Logger`             | Structured logging         | gas-log             |
+| `MigrationManager`   | Database migrations        | gas-migrate         |
+
+### NopLogger
+
+Built-in no-op logger for tests or when logging isn't needed:
 
 ```go
-bus := gas.NewEventBus()
-
-bus.Emit(event string, data any) *sync.WaitGroup
-bus.Subscribe(event string, handler func(any))
-bus.SubscribeWithOwner(service, event string, handler func(any))
-bus.RemoveByModule(service string)
-```
-
-## System Events
-
-| Event                              | Payload Type                          | Fired When                                  |
-|------------------------------------|---------------------------------------|---------------------------------------------|
-| `gas.SystemServiceClosed`          | `SystemServiceClosedPayload`          | Service killed via `CloseService`           |
-| `gas.SystemServiceInitialized`     | `SystemServiceInitializedPayload`     | Service finishes `Init` (including restart) |
-| `gas.SystemAllServicesInitialized` | `SystemAllServicesInitializedPayload` | All services initialized                    |
-| `gas.SystemServerShuttingDown`     | `SystemServerShuttingDownPayload`     | Server begins graceful shutdown             |
-| `gas.AppConfigUpdated`             | `AppConfigUpdatedPayload`             | App config updated after binding            |
-
-Payload structs with fields:
-- `SystemServiceClosedPayload{ServiceName string}`
-- `SystemServiceInitializedPayload{ServiceName string}`
-- `AppConfigUpdatedPayload{Config Config}`
-
-## Provider Interfaces
-
-Services depend on interfaces, not implementations. Gas defines these in the
-core package; implementations live in separate modules.
-
-```go
-type DatabaseProvider interface {
-	DB() *sql.DB
-	Driver() string
-	Ping(ctx context.Context) error
-	Query(ctx context.Context, query string, args ...any) (Rows, error)
-	Exec(ctx context.Context, query string, args ...any) (Result, error)
-	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
-	WithTx(ctx context.Context, opts *sql.TxOptions, fn func(*sql.Tx) error) (err error)
-}
-
-type CacheProvider interface {
-	Get(ctx context.Context, key string) ([]byte, error)
-	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
-	Delete(ctx context.Context, key string) error
-}
-
-type EmailProvider interface {
-	Send(ctx context.Context, msg *Email) error
-	SendFromTemplate(ctx context.Context, msg *TemplatedEmail) error
-}
-
-type StorageProvider interface {
-	Upload(ctx context.Context, key string, data io.Reader) error
-	Download(ctx context.Context, key string) (io.ReadCloser, error)
-	Delete(ctx context.Context, key string) error
-	PresignURL(ctx context.Context, key string, expires time.Duration) (string, error)
-}
-
-type ConfigProvider interface {
-	SetDefault(key string, value any)
-	SetDefaults(values any) error
-	Set(key string, value any)
-	Bind(dest any, options ...config.BindOption) error
-	Get(key string) any
-	Find(key string) (value any, exist bool)
-	Values() map[string]any
-}
-
-type UIProvider interface {
-	Render(w http.ResponseWriter, name string, data any) error
-	RenderWithStatus(w http.ResponseWriter, status int, name string, data any) error
-	RenderFragment(w http.ResponseWriter, name string, data any) error // renders without layout wrapper, useful for HTMX
-	RegisterTemplate(name string, content []byte)
-	RegisterTemplatesFS(fsys fs.FS) error
-	RegisterFuncs(funcs template.FuncMap)
-}
-
-// Context helpers — store / retrieve a Logger in context.Context.
-gas.WithLogger(ctx context.Context, l Logger) context.Context
-gas.LoggerFromContext(ctx context.Context) Logger // returns nil if absent
-
-// With() vs SetBaseFields()
-// With() always branches — it returns a LoggerContext whose Logger() produces a NEW Logger instance.
-// SetBaseFields() mutates the receiver in place via Apply(). Use it in request-scoped middleware
-// where one Logger instance is shared across the whole request and you want every subsequent log
-// call (in other middleware and in the handler) to carry fields like request_id, user_id, trace_id
-// automatically — without threading a new Logger reference around.
-//
-// Typical middleware pattern:
-//   logger := gas.MustResolveFromRequestScope[gas.Logger](r)
-//   logger.SetBaseFields().Str("request_id", reqID).Str("user_id", userID).Apply()
-//   // All log calls for the rest of this request carry request_id and user_id.
-
-type Logger interface {
-	Trace(msg string) LogEvent
-	Debug(msg string) LogEvent
-	Info(msg string) LogEvent
-	Warn(msg string) LogEvent
-	Error(msg string) LogEvent
-	With() LoggerContext
-	SetBaseFields() MutableLoggerContext
-	Flush()
-}
-
-type LoggerContext interface {
-	Str(key, val string) LoggerContext
-	Int(key string, val int) LoggerContext
-	Int64(key string, val int64) LoggerContext
-	Float64(key string, val float64) LoggerContext
-	Bool(key string, val bool) LoggerContext
-	Err(key string, val error) LoggerContext
-	Duration(key string, val time.Duration) LoggerContext
-	Any(key string, val any) LoggerContext
-	Logger() Logger // returns a new branched Logger
-}
-
-// MutableLoggerContext mutates the originating Logger in place.
-// Use SetBaseFields() (not With()) when you need a shared Logger instance
-// to carry persistent fields for the rest of the request without threading
-// a new Logger reference through every caller.
-type MutableLoggerContext interface {
-	Str(key, val string) MutableLoggerContext
-	Int(key string, val int) MutableLoggerContext
-	Int64(key string, val int64) MutableLoggerContext
-	Float64(key string, val float64) MutableLoggerContext
-	Bool(key string, val bool) MutableLoggerContext
-	Err(key string, val error) MutableLoggerContext
-	Duration(key string, val time.Duration) MutableLoggerContext
-	Any(key string, val any) MutableLoggerContext
-	Apply() // mutates the originating Logger in place
-}
-
-type LogEvent interface {
-	Str(key, val string) LogEvent
-	Int(key string, val int) LogEvent
-	Int64(key string, val int64) LogEvent
-	Float64(key string, val float64) LogEvent
-	Bool(key string, val bool) LogEvent
-	Err(key string, val error) LogEvent
-	Duration(key string, val time.Duration) LogEvent
-	Any(key string, val any) LogEvent
-	Send()
-}
-
-type MigrationManager interface {
-	Service
-	Register(service string, m Migration)
-	RegisterSlice(service string, migrations []Migration)
-	RegisterFS(service string, fsys fs.FS) error
-	RunPending() error
-	Down(n int) error
-}
-```
-
-### Supporting types
-
-```go
-type Email struct {
-	To       []string
-	Cc       []string
-	Bcc      []string
-	From     string
-	ReplyTo  string
-	Subject  string
-	TextBody string
-	HTMLBody string
-	Headers  map[string]string
-}
-
-type TemplatedEmail struct {
-	Email
-
-	SubjectTemplate string
-	TextTemplate    string
-	HTMLTemplate    string
-
-	Data any
-}
-
-type Migration struct {
-	Version, Service, Description, Up, Down string
-}
-
-type Rows interface {
-	Next() bool
-	Scan(dest ...any) error
-	Close() error
-	Err() error
-}
-
-type Result interface {
-	RowsAffected() (int64, error)
-	LastInsertId() (int64, error)
-}
+gas.WithScopedService[gas.Logger](gas.NewNopLogger())
 ```
 
 ## Config
@@ -733,12 +403,12 @@ type Config struct {
 }
 
 type ServerSettings struct {
-	Host            string
-	Port            int
-	ReadTimeout     time.Duration
-	WriteTimeout    time.Duration
-	IdleTimeout     time.Duration
-	ShutdownTimeout time.Duration
+	Host            string        // default: "0.0.0.0"
+	Port            int           // default: 8080
+	ReadTimeout     time.Duration // default: 5s
+	WriteTimeout    time.Duration // default: 10s
+	IdleTimeout     time.Duration // default: 2m
+	ShutdownTimeout time.Duration // default: 30s
 }
 
 gas.DefaultConfig() *Config
@@ -771,12 +441,18 @@ func (s *Service) Init() error {
 	// DI-aware handler — db is resolved per-request from the scoped container.
 	s.router.Handle(s.Name(), "GET", "/hello", s.handleHello)
 
-	// Classic http.HandlerFunc still works.
+	// Classic http.HandlerFunc works too.
 	s.router.Handle(s.Name(), "GET", "/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	gas.SubscribeWithOwner(s.bus, s.Name(), gas.SystemServiceClosed, s.onServiceClosed)
+	// Always use SubscribeWithOwner from a service (not bare Subscribe)
+	// so CloseService can clean up this subscription.
+	gas.SubscribeWithOwner(s.bus, s.Name(), gas.SystemServiceClosed,
+		func(payload gas.SystemServiceClosedPayload) {
+			// handle another service being closed
+		})
+
 	return nil
 }
 
@@ -789,6 +465,6 @@ func (s *Service) Close() error { return nil }
 
 ```go
 app := gas.NewApp(
-	gas.WithService[*myservice.Service](myservice.New, gas.ServiceLifetimeSingleton),
+	gas.WithSingletonService[*myservice.Service](myservice.New),
 )
 ```

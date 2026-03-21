@@ -49,8 +49,8 @@ import "github.com/gasmod/gas"
 
 func main() {
 	app := gas.NewApp(
-		gas.WithService[*auth.Service](auth.New, gas.ServiceLifetimeSingleton),
-		gas.WithService[*billing.Service](billing.New, gas.ServiceLifetimeSingleton),
+		gas.WithSingletonService[*auth.Service](auth.New),
+		gas.WithSingletonService[*billing.Service](billing.New),
 	)
 
 	if err := app.Run(); err != nil {
@@ -146,17 +146,18 @@ tracing libraries, and any other API that accepts a `context.Context` — no unw
 Create one with `NewContext`:
 
 ```go
-ctx := gas.NewContext(parent, w, r) // parent is a context.Context
+ctx := gas.NewContext(parent, w, r, opts ...gas.ContextOption) // parent is a context.Context
 ```
 
 | Method                                 | Description                                          |
 |----------------------------------------|------------------------------------------------------|
 | `ResponseWriter() http.ResponseWriter` | Underlying response writer                           |
 | `Request() *http.Request`              | Underlying request                                   |
-| `JSON(status int, v any) error`        | Write JSON response                                  |
-| `XML(status int, v any) error`         | Write XML response                                   |
-| `HTML(status int, s string) error`     | Write HTML response                                  |
-| `Text(status int, s string) error`     | Write plain-text response                            |
+| `JSON(status int, v any) error`        | Write JSON response (`application/json`)             |
+| `XML(status int, v any) error`         | Write XML response (`application/xml`)               |
+| `RSS(status int, v any) error`         | Write RSS XML response (`application/rss+xml`)       |
+| `HTML(status int, s string) error`     | Write HTML response (`text/html`)                    |
+| `Text(status int, s string) error`     | Write plain-text response (`text/plain`)             |
 | `NoContent() error`                    | Write 204 No Content                                 |
 | `Redirect(status int, url string)`     | Send HTTP redirect                                   |
 | `Param(key string) string`             | URL path parameter (chi.URLParam)                    |
@@ -164,7 +165,13 @@ ctx := gas.NewContext(parent, w, r) // parent is a context.Context
 | `Header(key string) string`            | Request header value                                 |
 | `SetHeader(key, value string)`         | Set response header                                  |
 | `BindJSON(dest any) error`             | Decode JSON request body into dest and auto-validate |
-| `BindForm(dest any) error`             | Decode Form request body into dest and auto-validate |
+| `BindForm(dest any) error`             | Decode form body into dest and auto-validate         |
+| `Validator() *validator.Validate`      | Access the validator instance                        |
+| `FormDecoder() *schema.Decoder`        | Access the form decoder instance                     |
+
+`BindForm` uses the `"form"` struct tag for field mapping and has `IgnoreUnknownKeys` enabled.
+Both `BindJSON` and `BindForm` automatically validate the decoded struct using
+[go-playground/validator](https://github.com/go-playground/validator).
 
 Since `gas.Context` is an interface, you can mock it in tests without an HTTP server:
 
@@ -467,9 +474,10 @@ Services depend on interfaces, not implementations. Gas defines common providers
 | `StorageProvider`  | `Upload`, `Download`, `Delete`, `PresignURL`                                                               |
 | `ConfigProvider`   | `SetDefault`, `SetDefaults`, `Set`, `Bind`, `Get`, `Find`, `Values`                                        |
 | `UIProvider`       | `Render`, `RenderWithStatus`, `RenderFragment`, `RegisterTemplate`, `RegisterTemplatesFS`, `RegisterFuncs` |
-| `Logger`           | `Trace`, `Debug`, `Info`, `Warn`, `Error`, `With`, `SetBaseFields`, `Flush`                                |
+| `Logger`             | `Trace`, `Debug`, `Info`, `Warn`, `Error`, `With`, `SetBaseFields`, `Flush`                              |
+| `MigrationManager`   | `Register`, `RegisterSlice`, `RegisterFS`, `RunPending`, `Down`                                          |
 
-Logger context helpers:
+#### Logger context helpers
 
 ```go
 // Store a logger in a context (e.g. in middleware)
@@ -493,8 +501,6 @@ func authMiddleware(next http.Handler) http.Handler {
     })
 }
 ```
-
-| `MigrationManager` | `Register`, `RegisterSlice`, `RegisterFS`, `RunPending`, `Down` |
 
 ### Writing a Service
 
@@ -528,7 +534,11 @@ func (s *Service) Init() error {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	gas.SubscribeWithOwner(s.bus, s.Name(), gas.SystemServiceClosed, s.onServiceClosed)
+	gas.SubscribeWithOwner(s.bus, s.Name(), gas.SystemServiceClosed,
+		func(payload gas.SystemServiceClosedPayload) {
+			// react to another service being closed, e.g. enter degraded mode
+		})
+
 	return nil
 }
 
@@ -543,7 +553,7 @@ Register it in the App:
 
 ```go
 app := gas.NewApp(
-	gas.WithService[*myservice.Service](myservice.New, gas.ServiceLifetimeSingleton),
+	gas.WithSingletonService[*myservice.Service](myservice.New),
 )
 ```
 
@@ -574,16 +584,16 @@ app := gas.NewApp(
 
 `Config` embeds `env.WithGasEnv` (from gas-env) for environment detection, and holds a `Server ServerSettings` sub-struct.
 
-| Field                    | Default    | Valid range           | Description                                              |
-|--------------------------|------------|-----------------------|----------------------------------------------------------|
-| `Server.Host`            | `0.0.0.0`  | non-empty, resolvable | Hostname or IP address to bind                           |
-| `Server.Port`            | `8080`     | 1 – 65535             | TCP port to listen on                                    |
-| `Server.ReadTimeout`     | `5s`       | 1s – 5m               | Maximum duration for reading the entire request          |
-| `Server.WriteTimeout`    | `10s`      | 1s – 10m              | Maximum duration before timing out response writes       |
-| `Server.IdleTimeout`     | `2m`       | 1s – 10m              | Maximum idle time between keep-alive requests            |
-| `Server.ShutdownTimeout` | `30s`      | 1s – 2m               | How long to wait for in-flight requests during shutdown  |
+| Field                    | Default    | Description                                              |
+|--------------------------|------------|----------------------------------------------------------|
+| `Server.Host`            | `0.0.0.0`  | Hostname or IP address to bind                           |
+| `Server.Port`            | `8080`     | TCP port to listen on                                    |
+| `Server.ReadTimeout`     | `5s`       | Maximum duration for reading the entire request          |
+| `Server.WriteTimeout`    | `10s`      | Maximum duration before timing out response writes       |
+| `Server.IdleTimeout`     | `2m`       | Maximum idle time between keep-alive requests            |
+| `Server.ShutdownTimeout` | `30s`      | How long to wait for in-flight requests during shutdown  |
 
-`Config.Validate()` checks all fields and returns a descriptive error on the first violation.
+`Config.Validate()` checks that `Server.Host` is a valid IP or resolvable hostname.
 
 ## App Accessors
 

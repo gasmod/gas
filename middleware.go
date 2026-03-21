@@ -53,6 +53,7 @@ func requestScopeMiddleware(container *ServiceContainer) func(next http.Handler)
 // RequestLoggerOptions configures the behavior of the RequestLogger middleware.
 type RequestLoggerOptions struct {
 	appendRequestID bool
+	builder         func(Logger, *http.Request) Logger
 }
 
 // RequestLoggerOption is a functional option for configuring RequestLogger.
@@ -62,6 +63,15 @@ type RequestLoggerOption func(*RequestLoggerOptions)
 // RequestID middleware) is added to the logger's base fields. Defaults to true.
 func WithRequestLoggerAppendRequestID(val bool) RequestLoggerOption {
 	return func(opt *RequestLoggerOptions) { opt.appendRequestID = val }
+}
+
+// WithRequestLoggerBuilder sets a function that customizes the logger used for each
+// request. The builder receives the resolved Logger and the current request, and returns
+// a (possibly wrapped or enriched) Logger. It is called after the request ID field is
+// appended (if enabled). This can be used to add extra fields, swap the logger, or
+// adjust log levels per request.
+func WithRequestLoggerBuilder(fn func(Logger, *http.Request) Logger) RequestLoggerOption {
+	return func(opt *RequestLoggerOptions) { opt.builder = fn }
 }
 
 // RequestLogger is middleware that logs HTTP requests and responses using a scoped Logger
@@ -85,14 +95,20 @@ func RequestLogger[T Logger](opt ...RequestLoggerOption) func(next http.Handler)
 			ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 			start := time.Now()
 
-			logger, err := ResolveFromRequestScope[T](r)
+			resolved, err := ResolveFromRequestScope[T](r)
 			hasLogger := err == nil
+
+			var logger Logger = resolved
 
 			if hasLogger && options.appendRequestID {
 				// Append the request ID to the logger's base fields.
 				logger.SetBaseFields().
 					Str("request_id", middleware.GetReqID(r.Context())).
 					Apply()
+			}
+
+			if hasLogger && options.builder != nil {
+				logger = options.builder(logger, r)
 			}
 
 			defer func() {

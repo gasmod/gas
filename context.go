@@ -27,7 +27,10 @@ type Context interface {
 	// JSON serializes v as JSON and writes it with the given status code.
 	JSON(status int, v any) error
 	// XML serializes v as XML and writes it with the given status code.
+	// Uses content type "application/xml; charset=utf-8".
 	XML(status int, v any) error
+	// RSS serializes v as XML with content type "application/rss+xml; charset=utf-8".
+	RSS(status int, v any) error
 	// HTML writes an HTML response with the given status code and content string.
 	HTML(status int, s string) error
 	// Text writes a plain-text response with the given status code.
@@ -114,8 +117,8 @@ func (c *reqContext) JSON(status int, v any) error {
 	return json.NewEncoder(c.w).Encode(v)
 }
 
-func (c *reqContext) XML(status int, v any) error {
-	c.w.Header().Set("Content-Type", "application/rss+xml; charset=utf-8")
+func (c *reqContext) xmlWithContentType(status int, v any, contentType string) error {
+	c.w.Header().Set("Content-Type", contentType)
 	c.w.WriteHeader(status)
 
 	if _, err := c.w.Write([]byte(xml.Header)); err != nil {
@@ -136,6 +139,14 @@ func (c *reqContext) XML(status int, v any) error {
 	}
 
 	return nil
+}
+
+func (c *reqContext) XML(status int, v any) error {
+	return c.xmlWithContentType(status, v, "application/xml; charset=utf-8")
+}
+
+func (c *reqContext) RSS(status int, v any) error {
+	return c.xmlWithContentType(status, v, "application/rss+xml; charset=utf-8")
 }
 
 func (c *reqContext) HTML(status int, s string) error {
