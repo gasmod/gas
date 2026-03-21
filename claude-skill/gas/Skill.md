@@ -583,6 +583,7 @@ type StorageProvider interface {
 	Upload(ctx context.Context, key string, data io.Reader) error
 	Download(ctx context.Context, key string) (io.ReadCloser, error)
 	Delete(ctx context.Context, key string) error
+	PresignURL(ctx context.Context, key string, expires time.Duration) (string, error)
 }
 
 type ConfigProvider interface {

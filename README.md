@@ -464,7 +464,7 @@ Services depend on interfaces, not implementations. Gas defines common providers
 | `DatabaseProvider` | `DB`, `Driver`, `Ping`, `Query`, `Exec`, `BeginTx`, `WithTx`                                               |
 | `CacheProvider`    | `Get`, `Set`, `Delete`                                                                                     |
 | `EmailProvider`    | `Send`, `SendFromTemplate`                                                                                 |
-| `StorageProvider`  | `Upload`, `Download`, `Delete`                                                                             |
+| `StorageProvider`  | `Upload`, `Download`, `Delete`, `PresignURL`                                                               |
 | `ConfigProvider`   | `SetDefault`, `SetDefaults`, `Set`, `Bind`, `Get`, `Find`, `Values`                                        |
 | `UIProvider`       | `Render`, `RenderWithStatus`, `RenderFragment`, `RegisterTemplate`, `RegisterTemplatesFS`, `RegisterFuncs` |
 | `Logger`           | `Trace`, `Debug`, `Info`, `Warn`, `Error`, `With`, `SetBaseFields`, `Flush`                                |
