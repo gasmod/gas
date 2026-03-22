@@ -466,17 +466,18 @@ ctx := gas.WithRequestScope(context.Background(), scope)
 
 Services depend on interfaces, not implementations. Gas defines common providers that any service can accept:
 
-| Interface          | Methods                                                                                                    |
-|--------------------|------------------------------------------------------------------------------------------------------------|
-| `DatabaseProvider` | `DB`, `Driver`, `Ping`, `Query`, `Exec`, `BeginTx`, `WithTx`                                               |
-| `CacheProvider`    | `Get`, `Set`, `Delete`, `Exists`                                                                           |
-| `JobQueueProvider` | `Enqueue`, `Dequeue`, `Ack`, `Nack`                                                                        |
-| `EmailProvider`    | `Send`, `SendFromTemplate`                                                                                 |
-| `StorageProvider`  | `Upload`, `Download`, `Delete`, `PresignURL`                                                               |
-| `ConfigProvider`   | `SetDefault`, `SetDefaults`, `Set`, `Bind`, `Get`, `Find`, `Values`                                        |
-| `UIProvider`       | `Render`, `RenderWithStatus`, `RenderFragment`, `RegisterTemplate`, `RegisterTemplatesFS`, `RegisterFuncs` |
-| `Logger`           | `Trace`, `Debug`, `Info`, `Warn`, `Error`, `With`, `SetBaseFields`, `Flush`                                |
-| `MigrationManager` | `Register`, `RegisterSlice`, `RegisterFS`, `RunPending`, `Down`                                            |
+| Interface          | Methods                                                                     |
+|--------------------|-----------------------------------------------------------------------------|
+| `DatabaseProvider` | `DB`, `Driver`, `Ping`, `Query`, `Exec`, `BeginTx`, `WithTx`                |
+| `CacheProvider`    | `Get`, `Set`, `Delete`, `Exists`                                            |
+| `JobQueueProvider` | `Enqueue`, `Dequeue`, `Ack`, `Nack`                                         |
+| `EmailProvider`    | `Send`, `SendFromTemplate`                                                  |
+| `StorageProvider`  | `Upload`, `Download`, `Delete`, `PresignURL`                                |
+| `ConfigProvider`   | `SetDefault`, `SetDefaults`, `Set`, `Bind`, `Get`, `Find`, `Values`         |
+| `TemplateProvider` | `Get`, `List`, `Register`, `RegisterFS`                                     |
+| `UIProvider`       | `Render`, `RenderWithStatus`, `RenderFragment`, `RegisterFuncs`             |
+| `Logger`           | `Trace`, `Debug`, `Info`, `Warn`, `Error`, `With`, `SetBaseFields`, `Flush` |
+| `MigrationManager` | `Register`, `RegisterSlice`, `RegisterFS`, `RunPending`, `Down`             |
 
 #### Logger context helpers
 

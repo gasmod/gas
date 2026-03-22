@@ -383,6 +383,7 @@ separate modules. See `references/providers.md` for full signatures.
 | `EmailProvider`      | Email sending              | (custom)            |
 | `StorageProvider`    | File storage (S3, etc.)    | (custom)            |
 | `ConfigProvider`     | Configuration management   | gas-config          |
+| `TemplateProvider`   | Template storage/retrieval | gas-ui              |
 | `UIProvider`         | Template rendering         | gas-ui              |
 | `Logger`             | Structured logging         | gas-log             |
 | `MigrationManager`   | Database migrations        | gas-migrate         |

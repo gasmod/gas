@@ -146,15 +146,31 @@ type StorageProvider interface {
 	PresignURL(ctx context.Context, key string, expires time.Duration) (string, error)
 }
 
+// TemplateProvider abstracts template storage and retrieval. Implementations
+// may be backed by a filesystem, database, memory, or any combination.
+// Consumers such as UIProvider (HTML rendering) and EmailProvider (email
+// templating) resolve raw template content through this interface.
+type TemplateProvider interface {
+	// Get returns the raw template content by name.
+	Get(name string) ([]byte, error)
+
+	// List returns all available template names.
+	List() ([]string, error)
+
+	// Register adds or replaces a template by name and raw content.
+	Register(name string, content []byte)
+
+	// RegisterFS walks an fs.FS and registers every template file found.
+	RegisterFS(fsys fs.FS) error
+}
+
 // UIProvider abstracts template rendering. Implemented by gas-ui or any
-// other UI service. Modules that need to render HTML pages accept a
-// UIProvider through their functional options.
+// other UI service. Template storage and retrieval is handled by
+// TemplateProvider; UIProvider focuses on compilation and rendering.
 type UIProvider interface {
 	Render(w http.ResponseWriter, name string, data any) error
 	RenderFragment(w http.ResponseWriter, name string, data any) error // renders without layout wrapper, useful for HTMX
 	RenderWithStatus(w http.ResponseWriter, status int, name string, data any) error
-	RegisterTemplate(name string, content []byte)
-	RegisterTemplatesFS(fsys fs.FS) error
 	RegisterFuncs(funcs template.FuncMap)
 }
 

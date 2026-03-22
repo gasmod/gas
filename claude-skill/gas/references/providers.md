@@ -11,6 +11,7 @@ logging types, or supporting structs like Email and Migration.
 - [EmailProvider](#emailprovider)
 - [StorageProvider](#storageprovider)
 - [ConfigProvider](#configprovider)
+- [TemplateProvider](#templateprovider)
 - [UIProvider](#uiprovider)
 - [Logger](#logger)
 - [LoggerContext & MutableLoggerContext](#loggercontext--mutableloggercontext)
@@ -117,15 +118,33 @@ type ConfigProvider interface {
 }
 ```
 
+## TemplateProvider
+
+Abstracts template storage and retrieval. Implementations may be backed by a
+filesystem, database, memory, or any combination. Consumers such as
+`UIProvider` (HTML rendering) and `EmailProvider` (email templating) resolve
+raw template content through this interface.
+
+```go
+type TemplateProvider interface {
+	Get(name string) ([]byte, error)          // raw template content by name
+	List() ([]string, error)                  // all available template names
+	Register(name string, content []byte)     // add or replace a template
+	RegisterFS(fsys fs.FS) error              // walk an fs.FS and register all templates found
+}
+```
+
 ## UIProvider
+
+Abstracts template compilation and rendering. Template storage and retrieval
+is handled by `TemplateProvider`; `UIProvider` focuses on compilation and
+rendering.
 
 ```go
 type UIProvider interface {
 	Render(w http.ResponseWriter, name string, data any) error
-	RenderWithStatus(w http.ResponseWriter, status int, name string, data any) error
 	RenderFragment(w http.ResponseWriter, name string, data any) error // renders without layout wrapper, useful for HTMX
-	RegisterTemplate(name string, content []byte)
-	RegisterTemplatesFS(fsys fs.FS) error
+	RenderWithStatus(w http.ResponseWriter, status int, name string, data any) error
 	RegisterFuncs(funcs template.FuncMap)
 }
 ```
