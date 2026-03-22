@@ -7,6 +7,7 @@ logging types, or supporting structs like Email and Migration.
 
 - [DatabaseProvider](#databaseprovider)
 - [CacheProvider](#cacheprovider)
+- [JobQueueProvider](#jobqueueprovider)
 - [EmailProvider](#emailprovider)
 - [StorageProvider](#storageprovider)
 - [ConfigProvider](#configprovider)
@@ -40,6 +41,45 @@ type CacheProvider interface {
 	Get(ctx context.Context, key string) ([]byte, error)
 	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
 	Delete(ctx context.Context, key string) error
+	Exists(ctx context.Context, key string) (bool, error)
+}
+```
+
+## JobQueueProvider
+
+Pull-based async job/message queue abstraction. Consumers call `Dequeue` in
+their own worker loop and acknowledge results with `Ack`/`Nack`.
+
+```go
+type JobQueueProvider interface {
+	Enqueue(ctx context.Context, queue string, payload []byte, opts ...EnqueueOption) error
+	Dequeue(ctx context.Context, queue string, maxMessages int, wait time.Duration) ([]Job, error)
+	Ack(ctx context.Context, queue string, job Job) error
+	Nack(ctx context.Context, queue string, job Job) error
+}
+```
+
+### EnqueueOption
+
+Functional options for `Enqueue`:
+
+```go
+gas.WithDelay(d time.Duration)              // initial visibility delay
+gas.WithGroupID(id string)                  // FIFO ordering (SQS: MessageGroupId)
+gas.WithDedupeID(id string)                 // deduplication (SQS: MessageDeduplicationId)
+gas.WithJobAttributes(attrs map[string]string) // provider-specific metadata
+```
+
+Implementations unpack options via `gas.ApplyEnqueueOptions(opts)`.
+
+### Job
+
+```go
+type Job struct {
+	ID            string
+	Body          []byte
+	ReceiptHandle string            // opaque token used by Ack/Nack
+	Attributes    map[string]string // provider-specific metadata
 }
 ```
 
@@ -224,6 +264,15 @@ type Result interface {
 	RowsAffected() (int64, error)
 	LastInsertId() (int64, error)
 }
+
+type Job struct {
+	ID            string
+	Body          []byte
+	ReceiptHandle string            // opaque token used by Ack/Nack
+	Attributes    map[string]string // provider-specific metadata
+}
+
+type EnqueueOption func(*enqueueOptions) // see WithDelay, WithGroupID, WithDedupeID, WithJobAttributes
 
 type RegisteredRoute struct {
 	Method     string

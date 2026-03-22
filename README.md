@@ -469,13 +469,14 @@ Services depend on interfaces, not implementations. Gas defines common providers
 | Interface          | Methods                                                                                                    |
 |--------------------|------------------------------------------------------------------------------------------------------------|
 | `DatabaseProvider` | `DB`, `Driver`, `Ping`, `Query`, `Exec`, `BeginTx`, `WithTx`                                               |
-| `CacheProvider`    | `Get`, `Set`, `Delete`                                                                                     |
+| `CacheProvider`    | `Get`, `Set`, `Delete`, `Exists`                                                                           |
+| `JobQueueProvider` | `Enqueue`, `Dequeue`, `Ack`, `Nack`                                                                        |
 | `EmailProvider`    | `Send`, `SendFromTemplate`                                                                                 |
 | `StorageProvider`  | `Upload`, `Download`, `Delete`, `PresignURL`                                                               |
 | `ConfigProvider`   | `SetDefault`, `SetDefaults`, `Set`, `Bind`, `Get`, `Find`, `Values`                                        |
 | `UIProvider`       | `Render`, `RenderWithStatus`, `RenderFragment`, `RegisterTemplate`, `RegisterTemplatesFS`, `RegisterFuncs` |
-| `Logger`             | `Trace`, `Debug`, `Info`, `Warn`, `Error`, `With`, `SetBaseFields`, `Flush`                              |
-| `MigrationManager`   | `Register`, `RegisterSlice`, `RegisterFS`, `RunPending`, `Down`                                          |
+| `Logger`           | `Trace`, `Debug`, `Info`, `Warn`, `Error`, `With`, `SetBaseFields`, `Flush`                                |
+| `MigrationManager` | `Register`, `RegisterSlice`, `RegisterFS`, `RunPending`, `Down`                                            |
 
 #### Logger context helpers
 

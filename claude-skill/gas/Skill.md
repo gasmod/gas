@@ -273,15 +273,15 @@ during `Init()`. The App calls `Seal()` automatically after all services init.
 
 ### Other Router methods
 
-| Method                                           | Description                                    |
-|--------------------------------------------------|------------------------------------------------|
-| `Mux() chi.Router`                               | Underlying Chi router                          |
-| `Seal()`                                         | Flush deferred middleware then routes           |
-| `RemoveByModule(service string)`                 | Replace routes with 503, remove middleware      |
-| `SetErrorHandler(h ErrorHandler)`                | Set error handler for DI-aware handlers         |
-| `Routes() map[string][]RegisteredRoute`          | Snapshot of registered routes by service        |
-| `NamedMiddleware() map[string]string`             | Named middleware registry (name → service)      |
-| `ServeHTTP(w, req)`                              | Implements http.Handler                         |
+| Method                                  | Description                                |
+|-----------------------------------------|--------------------------------------------|
+| `Mux() chi.Router`                      | Underlying Chi router                      |
+| `Seal()`                                | Flush deferred middleware then routes      |
+| `RemoveByModule(service string)`        | Replace routes with 503, remove middleware |
+| `SetErrorHandler(h ErrorHandler)`       | Set error handler for DI-aware handlers    |
+| `Routes() map[string][]RegisteredRoute` | Snapshot of registered routes by service   |
+| `NamedMiddleware() map[string]string`   | Named middleware registry (name → service) |
+| `ServeHTTP(w, req)`                     | Implements http.Handler                    |
 
 ## Context
 
@@ -298,25 +298,25 @@ Panics if any of parent, w, or r is nil. Options: `gas.WithValidate(v)`,
 
 ### Context methods
 
-| Method                  | Signature                          | Notes                               |
-|-------------------------|------------------------------------|-------------------------------------|
-| `ResponseWriter`        | `() http.ResponseWriter`           |                                     |
-| `Request`               | `() *http.Request`                 |                                     |
-| `JSON`                  | `(status int, v any) error`        | application/json                    |
-| `XML`                   | `(status int, v any) error`        | application/xml                     |
-| `RSS`                   | `(status int, v any) error`        | application/rss+xml                 |
-| `HTML`                  | `(status int, s string) error`     | text/html                           |
-| `Text`                  | `(status int, s string) error`     | text/plain                          |
-| `NoContent`             | `() error`                         | 204                                 |
-| `Redirect`              | `(status int, url string)`         |                                     |
-| `Param`                 | `(key string) string`              | chi.URLParam                        |
-| `Query`                 | `(key string) string`              |                                     |
-| `Header`                | `(key string) string`              | request header                      |
-| `SetHeader`             | `(key, value string)`              | response header                     |
-| `BindJSON`              | `(dest any) error`                 | decode + validate                   |
-| `BindForm`              | `(dest any) error`                 | decode + validate                   |
-| `Validator`             | `() *validator.Validate`           | go-playground/validator             |
-| `FormDecoder`           | `() *schema.Decoder`              | gorilla/schema                      |
+| Method           | Signature                      | Notes                   |
+|------------------|--------------------------------|-------------------------|
+| `ResponseWriter` | `() http.ResponseWriter`       |                         |
+| `Request`        | `() *http.Request`             |                         |
+| `JSON`           | `(status int, v any) error`    | application/json        |
+| `XML`            | `(status int, v any) error`    | application/xml         |
+| `RSS`            | `(status int, v any) error`    | application/rss+xml     |
+| `HTML`           | `(status int, s string) error` | text/html               |
+| `Text`           | `(status int, s string) error` | text/plain              |
+| `NoContent`      | `() error`                     | 204                     |
+| `Redirect`       | `(status int, url string)`     |                         |
+| `Param`          | `(key string) string`          | chi.URLParam            |
+| `Query`          | `(key string) string`          |                         |
+| `Header`         | `(key string) string`          | request header          |
+| `SetHeader`      | `(key, value string)`          | response header         |
+| `BindJSON`       | `(dest any) error`             | decode + validate       |
+| `BindForm`       | `(dest any) error`             | decode + validate       |
+| `Validator`      | `() *validator.Validate`       | go-playground/validator |
+| `FormDecoder`    | `() *schema.Decoder`           | gorilla/schema          |
 
 `BindJSON` and `BindForm` both decode and then run struct validation via
 `go-playground/validator`. The form decoder uses alias tag `"form"` and has
@@ -379,6 +379,7 @@ separate modules. See `references/providers.md` for full signatures.
 |----------------------|----------------------------|---------------------|
 | `DatabaseProvider`   | SQL database access        | gas-database        |
 | `CacheProvider`      | Key-value caching          | (custom)            |
+| `JobQueueProvider`   | Async job/message queues   | (custom)            |
 | `EmailProvider`      | Email sending              | (custom)            |
 | `StorageProvider`    | File storage (S3, etc.)    | (custom)            |
 | `ConfigProvider`     | Configuration management   | gas-config          |

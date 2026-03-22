@@ -40,11 +40,72 @@ type Result interface {
 	LastInsertId() (int64, error)
 }
 
-// CacheProvider abstracts key-value caching.
+// CacheProvider abstracts key-value caching. Implemented by in-memory,
+// Redis, Valkey, or any other cache service.
 type CacheProvider interface {
 	Get(ctx context.Context, key string) ([]byte, error)
 	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
 	Delete(ctx context.Context, key string) error
+	Exists(ctx context.Context, key string) (bool, error)
+}
+
+// JobQueueProvider abstracts async job/message queue processing.
+// Implemented by gas-queue-sqs or any other queue service. The interface
+// is pull-based: consumers call Dequeue in their own worker loop and
+// acknowledge results with Ack/Nack.
+type JobQueueProvider interface {
+	Enqueue(ctx context.Context, queue string, payload []byte, opts ...EnqueueOption) error
+	Dequeue(ctx context.Context, queue string, maxMessages int, wait time.Duration) ([]Job, error)
+	Ack(ctx context.Context, queue string, job Job) error
+	Nack(ctx context.Context, queue string, job Job) error
+}
+
+// Job represents a message received from a queue.
+type Job struct {
+	ID            string
+	ReceiptHandle string            // opaque token used by Ack/Nack
+	Attributes    map[string]string // provider-specific metadata
+	Body          []byte
+}
+
+// EnqueueOption configures an Enqueue call.
+type EnqueueOption func(*enqueueOptions)
+
+type enqueueOptions struct {
+	Attributes map[string]string
+	GroupID    string // FIFO ordering (SQS: MessageGroupId)
+	DedupeID   string // deduplication (SQS: MessageDeduplicationId)
+	Delay      time.Duration
+}
+
+// WithDelay sets an initial delay before the job becomes visible to consumers.
+func WithDelay(d time.Duration) EnqueueOption {
+	return func(o *enqueueOptions) { o.Delay = d }
+}
+
+// WithGroupID sets the message group for FIFO queue ordering.
+func WithGroupID(id string) EnqueueOption {
+	return func(o *enqueueOptions) { o.GroupID = id }
+}
+
+// WithDedupeID sets a deduplication identifier.
+func WithDedupeID(id string) EnqueueOption {
+	return func(o *enqueueOptions) { o.DedupeID = id }
+}
+
+// WithJobAttributes attaches provider-specific key-value metadata to the job.
+func WithJobAttributes(attrs map[string]string) EnqueueOption {
+	return func(o *enqueueOptions) { o.Attributes = attrs }
+}
+
+// ApplyEnqueueOptions resolves variadic EnqueueOption values into a concrete
+// enqueueOptions struct. Implementations call this inside their Enqueue method.
+func ApplyEnqueueOptions(opts []EnqueueOption) (delay time.Duration, groupID, dedupeID string, attrs map[string]string) {
+	o := &enqueueOptions{}
+	for _, fn := range opts {
+		fn(o)
+	}
+	return o.Delay, o.GroupID, o.DedupeID, o.Attributes
 }
 
 // EmailProvider abstracts email sending.
