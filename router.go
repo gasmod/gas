@@ -15,6 +15,7 @@ type registeredRoute struct {
 	method     string
 	path       string
 	middleware []string
+	autoHEAD   bool // true for HEAD routes implicitly registered alongside GET
 }
 
 // RegisteredRoute is an exported snapshot of a registered route.
@@ -246,7 +247,11 @@ func (r *Router) Handle(service, method, path string, handler any, middleware ..
 	}
 
 	op := func() {
-		r.mux.With(middlewareFuncs...).Method(method, path, httpHandler)
+		chained := r.mux.With(middlewareFuncs...)
+		chained.Method(method, path, httpHandler)
+		if method == http.MethodGet {
+			chained.Method(http.MethodHead, path, httpHandler)
+		}
 	}
 
 	if r.sealed {
@@ -259,11 +264,20 @@ func (r *Router) Handle(service, method, path string, handler any, middleware ..
 	allMiddlewareNames = append(allMiddlewareNames, r.scopeMiddleware...)
 	allMiddlewareNames = append(allMiddlewareNames, middlewareNames...)
 
+	fullPath := r.prefix + path
 	r.routes[service] = append(r.routes[service], registeredRoute{
 		method:     method,
-		path:       r.prefix + path,
+		path:       fullPath,
 		middleware: allMiddlewareNames,
 	})
+	if method == http.MethodGet {
+		r.routes[service] = append(r.routes[service], registeredRoute{
+			method:     http.MethodHead,
+			path:       fullPath,
+			middleware: allMiddlewareNames,
+			autoHEAD:   true,
+		})
+	}
 }
 
 // NotFound registers a custom not-found handler for the router, associated with the specified service.
@@ -311,19 +325,25 @@ func (r *Router) RemoveByModule(service string) {
 	}
 }
 
-// Routes returns a snapshot of all registered routes grouped by service.
+// Routes returns a snapshot of all explicitly registered routes grouped by
+// service. Implicit HEAD routes (auto-registered alongside GET) are excluded.
 func (r *Router) Routes() map[string][]RegisteredRoute {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	out := make(map[string][]RegisteredRoute, len(r.routes))
 	for svc, routes := range r.routes {
-		exported := make([]RegisteredRoute, len(routes))
-		for i, rt := range routes {
+		exported := make([]RegisteredRoute, 0, len(routes))
+		for _, rt := range routes {
+			if rt.autoHEAD {
+				continue
+			}
 			mw := make([]string, len(rt.middleware))
 			copy(mw, rt.middleware)
-			exported[i] = RegisteredRoute{Method: rt.method, Path: rt.path, Middleware: mw}
+			exported = append(exported, RegisteredRoute{Method: rt.method, Path: rt.path, Middleware: mw})
 		}
-		out[svc] = exported
+		if len(exported) > 0 {
+			out[svc] = exported
+		}
 	}
 	return out
 }

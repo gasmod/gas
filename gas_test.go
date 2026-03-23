@@ -527,6 +527,201 @@ func TestRouter_Route(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Router HEAD auto-registration tests
+// ---------------------------------------------------------------------------
+
+func TestRouter_HeadAutoRegistered(t *testing.T) {
+	router := gas.NewRouter()
+
+	router.Handle("test", "GET", "/data", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	})
+
+	router.Seal()
+
+	// GET should return body.
+	req := httptest.NewRequest("GET", "/data", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET: expected 200, got %d", rr.Code)
+	}
+	if rr.Body.String() != `{"ok":true}` {
+		t.Fatalf("GET: expected body, got %q", rr.Body.String())
+	}
+
+	// HEAD should return 200 with headers but no body.
+	req = httptest.NewRequest("HEAD", "/data", nil)
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("HEAD: expected 200, got %d", rr.Code)
+	}
+	if rr.Header().Get("Content-Type") != "application/json" {
+		t.Fatal("HEAD: expected Content-Type header to be preserved")
+	}
+}
+
+func TestRouter_HeadMiddlewareSeesCorrectMethod(t *testing.T) {
+	router := gas.NewRouter()
+
+	router.Register("test", "capture-method", func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Captured-Method", r.Method)
+			next.ServeHTTP(w, r)
+		})
+	})
+
+	router.Handle("test", "GET", "/check", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}, gas.MiddlewareByName("capture-method"))
+
+	router.Seal()
+
+	req := httptest.NewRequest("HEAD", "/check", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if got := rr.Header().Get("X-Captured-Method"); got != "HEAD" {
+		t.Fatalf("expected middleware to see HEAD, got %q", got)
+	}
+}
+
+func TestRouter_HeadRemoveByModule(t *testing.T) {
+	router := gas.NewRouter()
+
+	router.Handle("auth", "GET", "/auth/me", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	router.Seal()
+
+	// HEAD should work before removal.
+	req := httptest.NewRequest("HEAD", "/auth/me", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 before removal, got %d", rr.Code)
+	}
+
+	router.RemoveByModule("auth")
+
+	// HEAD should return 503 after removal.
+	req = httptest.NewRequest("HEAD", "/auth/me", nil)
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 after removal, got %d", rr.Code)
+	}
+}
+
+func TestRouter_HeadAutoExcludedFromRoutes(t *testing.T) {
+	router := gas.NewRouter()
+
+	router.Handle("test", "GET", "/items", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	router.Seal()
+
+	routes := router.Routes()
+	for _, rt := range routes["test"] {
+		if rt.Method == "HEAD" {
+			t.Fatal("auto-registered HEAD should not appear in Routes()")
+		}
+	}
+}
+
+func TestRouter_HeadExplicitAppearsInRoutes(t *testing.T) {
+	router := gas.NewRouter()
+
+	router.Handle("test", "HEAD", "/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	router.Seal()
+
+	var found bool
+	for _, rt := range router.Routes()["test"] {
+		if rt.Method == "HEAD" && rt.Path == "/health" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("explicitly registered HEAD should appear in Routes()")
+	}
+}
+
+func TestRouter_HeadNotRegisteredForNonGetMethods(t *testing.T) {
+	router := gas.NewRouter()
+
+	router.Handle("test", "POST", "/submit", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	router.Seal()
+
+	req := httptest.NewRequest("HEAD", "/submit", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code == http.StatusOK {
+		t.Fatal("HEAD should not be auto-registered for POST routes")
+	}
+}
+
+func TestRouter_HeadExplicitOverride(t *testing.T) {
+	router := gas.NewRouter()
+
+	router.Handle("test", "GET", "/resource", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Handler", "get")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("full body"))
+	})
+
+	// Explicit HEAD registered after GET should override the auto-registered one.
+	router.Handle("test", "HEAD", "/resource", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Handler", "head")
+		w.WriteHeader(http.StatusOK)
+	})
+
+	router.Seal()
+
+	req := httptest.NewRequest("HEAD", "/resource", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if got := rr.Header().Get("X-Handler"); got != "head" {
+		t.Fatalf("expected explicit HEAD handler to win, got X-Handler=%q", got)
+	}
+}
+
+func TestRouter_HeadInSubRoute(t *testing.T) {
+	router := gas.NewRouter()
+
+	router.Route("/api", func(sub *gas.Router) {
+		sub.Handle("test", "GET", "/users", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+	})
+
+	router.Seal()
+
+	req := httptest.NewRequest("HEAD", "/api/users", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for HEAD on sub-route, got %d", rr.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // App tests
 // ---------------------------------------------------------------------------
 
