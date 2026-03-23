@@ -478,6 +478,46 @@ Services depend on interfaces, not implementations. Gas defines common providers
 | `UIProvider`       | `Render`, `RenderWithStatus`, `RenderFragment`, `RegisterFuncs`             |
 | `Logger`           | `Trace`, `Debug`, `Info`, `Warn`, `Error`, `With`, `SetBaseFields`, `Flush` |
 | `MigrationManager` | `Register`, `RegisterSlice`, `RegisterFS`, `RunPending`, `Down`             |
+| `Authenticator`    | `Authenticate`                                                              |
+| `Authorizer`       | `Authorize`                                                                 |
+| `PrincipalRevoker` | `Revoke`, `RevokeAll`, `RevokeAllByScheme`                                  |
+
+### Authentication & Authorization
+
+Gas defines three separate interfaces for auth concerns — each can be implemented independently:
+
+- **`Authenticator`** — extracts a `Principal` from an `*http.Request` (JWT, session, API key, etc.)
+- **`Authorizer`** — checks whether a `Principal` can perform an action on a resource
+- **`PrincipalRevoker`** — invalidates credentials (single, all for a subject, or all by scheme)
+
+A `Principal` represents an authenticated identity:
+
+```go
+type Principal interface {
+	Subject() string        // stable user identifier
+	Scheme() string         // auth method: "jwt", "session", "apikey", etc.
+	CredentialID() string   // specific credential: session ID, JWT jti, API key ID
+	Metadata() PrincipalMetadata
+}
+```
+
+Store and retrieve a `Principal` in context:
+
+```go
+ctx = gas.WithPrincipal(ctx, principal)
+p := gas.PrincipalFromContext(ctx)    // returns nil if absent
+p := gas.MustPrincipalFromContext(ctx) // panics if absent
+```
+
+Use `MetadataValue` for type-safe metadata access:
+
+```go
+if role, ok := gas.MetadataValue[string](p.Metadata(), "role"); ok {
+	// ...
+}
+```
+
+`BasePrincipalMetadata` is a ready-to-use `map[string]any` implementation of `PrincipalMetadata`.
 
 #### Logger context helpers
 

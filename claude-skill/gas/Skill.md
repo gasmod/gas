@@ -7,10 +7,11 @@ description: >
   extends the gas core package. Covers the App lifecycle, DI container, service
   registration and lifetimes, Router with ownership tracking, DI-aware handlers,
   Context, ErrorHandler, EventBus, middleware, migrations, request scopes,
-  logging, provider interfaces, and system events. Make sure to use this skill
-  whenever working with gas service constructors, route handlers, event
-  subscriptions, middleware registration, or any code under a gasmod/gas import
-  path, even if the user doesn't explicitly mention "gas".
+  logging, provider interfaces, authentication/authorization interfaces, and
+  system events. Make sure to use this skill whenever working with gas service
+  constructors, route handlers, event subscriptions, middleware registration,
+  authentication, authorization, or any code under a gasmod/gas import path,
+  even if the user doesn't explicitly mention "gas".
 ---
 
 # Gas Core Package Reference
@@ -387,6 +388,9 @@ separate modules. See `references/providers.md` for full signatures.
 | `UIProvider`         | Template rendering         | gas-ui              |
 | `Logger`             | Structured logging         | gas-log             |
 | `MigrationManager`   | Database migrations        | gas-migrate         |
+| `Authenticator`      | Request authentication     | gas-auth            |
+| `Authorizer`         | Action authorization       | gas-auth            |
+| `PrincipalRevoker`   | Credential revocation      | gas-auth            |
 
 ### NopLogger
 

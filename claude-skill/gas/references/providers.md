@@ -17,6 +17,10 @@ logging types, or supporting structs like Email and Migration.
 - [LoggerContext & MutableLoggerContext](#loggercontext--mutableloggercontext)
 - [LogEvent](#logevent)
 - [MigrationManager](#migrationmanager)
+- [Authenticator](#authenticator)
+- [Authorizer](#authorizer)
+- [PrincipalRevoker](#principalrevoker)
+- [Principal & Metadata](#principal--metadata)
 - [Supporting Types](#supporting-types)
 
 ---
@@ -243,6 +247,80 @@ type MigrationManager interface {
 	RunPending() error
 	Down(n int) error
 }
+```
+
+## Authenticator
+
+Extracts a Principal from an HTTP request. Implementations may use JWTs,
+server-side sessions, API keys, or any other credential scheme.
+
+```go
+type Authenticator interface {
+	Authenticate(ctx context.Context, r *http.Request) (Principal, error)
+}
+```
+
+## Authorizer
+
+Decides whether a Principal is allowed to perform an action on a resource.
+Separate concern from authentication.
+
+```go
+type Authorizer interface {
+	Authorize(ctx context.Context, principal Principal, action, resource string) error
+}
+```
+
+## PrincipalRevoker
+
+Invalidates credentials associated with a Principal. Revoke targets a single
+credential, RevokeAll targets all credentials for a subject, and
+RevokeAllByScheme targets all credentials of a specific scheme for a subject.
+
+```go
+type PrincipalRevoker interface {
+	Revoke(ctx context.Context, principal Principal) error
+	RevokeAll(ctx context.Context, subject string) error
+	RevokeAllByScheme(ctx context.Context, subject, scheme string) error
+}
+```
+
+## Principal & Metadata
+
+Principal represents an authenticated identity. PrincipalMetadata provides
+read-only access to arbitrary key-value metadata attached at construction time.
+
+```go
+type Principal interface {
+	Subject() string        // stable user identifier
+	Scheme() string         // auth method: "jwt", "session", "apikey"
+	CredentialID() string   // specific credential: session ID, JWT jti, API key ID
+	Metadata() PrincipalMetadata
+}
+
+type PrincipalMetadata interface {
+	Value(key string) any
+}
+```
+
+`BasePrincipalMetadata` is a map-based implementation of `PrincipalMetadata`:
+
+```go
+type BasePrincipalMetadata map[string]any
+```
+
+Context helpers:
+
+```go
+gas.WithPrincipal(ctx context.Context, p Principal) context.Context
+gas.PrincipalFromContext(ctx context.Context) Principal      // nil if absent
+gas.MustPrincipalFromContext(ctx context.Context) Principal  // panics if absent
+```
+
+Type-safe metadata access:
+
+```go
+gas.MetadataValue[T any](m PrincipalMetadata, key string) (T, bool)
 ```
 
 ## Supporting Types
