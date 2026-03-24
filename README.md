@@ -507,7 +507,7 @@ Services depend on interfaces, not implementations. Gas defines common providers
 | `CacheProvider`    | `Get`, `Set`, `Delete`, `Exists`                                            |
 | `JobQueueProvider` | `Enqueue`, `Dequeue`, `Ack`, `Nack`                                         |
 | `EmailProvider`    | `Send`, `SendFromTemplate`                                                  |
-| `StorageProvider`  | `Upload`, `Download`, `Delete`, `PresignURL`                                |
+| `StorageProvider`  | `Upload`, `Download`, `Delete`, `PresignURL` (all accept `...StorageOption`)|
 | `ConfigProvider`   | `SetDefault`, `SetDefaults`, `Set`, `Bind`, `Get`, `Find`, `Values`         |
 | `TemplateProvider` | `Get`, `List`, `Register`, `RegisterFS`                                     |
 | `UIProvider`       | `Render`, `RenderWithStatus`, `RenderFragment`, `RegisterFuncs`             |

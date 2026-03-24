@@ -101,12 +101,38 @@ type EmailProvider interface {
 
 ```go
 type StorageProvider interface {
-	Upload(ctx context.Context, key string, data io.Reader) error
-	Download(ctx context.Context, key string) (io.ReadCloser, error)
-	Delete(ctx context.Context, key string) error
-	PresignURL(ctx context.Context, key string, expires time.Duration) (string, error)
+	Upload(ctx context.Context, key string, data io.Reader, opts ...StorageOption) error
+	Download(ctx context.Context, key string, opts ...StorageOption) (*StorageObject, error)
+	Delete(ctx context.Context, key string, opts ...StorageOption) error
+	PresignURL(ctx context.Context, key string, expires time.Duration, opts ...StorageOption) (string, error)
 }
 ```
+
+### StorageObject
+
+Returned by `Download`. Carries the response body alongside metadata the
+backend provides.
+
+```go
+type StorageObject struct {
+	Body        io.ReadCloser
+	ContentType string
+	Size        int64
+	Metadata    map[string]string // provider-specific extras
+}
+```
+
+### StorageOption
+
+Functional options for all `StorageProvider` methods:
+
+```go
+gas.InBucket(name string)                    // override the default bucket for this operation
+gas.WithContentType(ct string)               // set content type on Upload
+gas.WithMetadata(m map[string]string)        // attach arbitrary key-value metadata on Upload
+```
+
+Implementations unpack options via `gas.ApplyStorageOptions(opts)`.
 
 ## ConfigProvider
 
@@ -370,6 +396,15 @@ type Job struct {
 }
 
 type EnqueueOption func(*enqueueOptions) // see WithDelay, WithGroupID, WithDedupeID, WithJobAttributes
+
+type StorageObject struct {
+	Body        io.ReadCloser
+	ContentType string
+	Size        int64
+	Metadata    map[string]string
+}
+
+type StorageOption func(*storageOptions) // see InBucket, WithContentType, WithMetadata
 
 type RegisteredRoute struct {
 	Method     string
