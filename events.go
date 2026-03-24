@@ -22,7 +22,16 @@ var SystemAllServicesInitialized = Event[SystemAllServicesInitializedPayload]{Na
 // SystemAllServicesInitializedPayload is an empty payload for the all-services-initialized event.
 type SystemAllServicesInitializedPayload struct{}
 
-// SystemServerShuttingDown is emitted when the server is shutting down.
+// SystemShuttingDown is emitted when a Worker or App begins its shutdown
+// sequence. It fires for both HTTP (App) and non-HTTP (Worker) workloads.
+var SystemShuttingDown = Event[SystemShuttingDownPayload]{Name: "gas:shutting-down"}
+
+// SystemShuttingDownPayload is an empty payload for the shutting-down event.
+type SystemShuttingDownPayload struct{}
+
+// SystemServerShuttingDown is emitted when the HTTP server is shutting down.
+// For code that should run on any shutdown (not just HTTP), subscribe to
+// SystemShuttingDown instead.
 var SystemServerShuttingDown = Event[SystemServerShuttingDownPayload]{Name: "gas:server-shutting-down"}
 
 // SystemServerShuttingDownPayload is an empty payload for the server-shutting-down event.

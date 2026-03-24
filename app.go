@@ -4,14 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
-	"reflect"
-	"sync"
 	"syscall"
-	"time"
 )
 
 type requestScopeKey struct{}
@@ -34,64 +30,17 @@ func WithRequestScope(ctx context.Context, scope *Scope) context.Context {
 }
 
 // App manages service lifecycle, the HTTP server, and graceful shutdown.
+// It embeds a Worker for DI, events, migrations, and service management,
+// and adds routing, CSRF protection, and an HTTP listener on top.
 type App struct {
-	serviceContainer *ServiceContainer
-	router           *Router
-	eventBus         *EventBus
-	cfg              *Config
-	csrfProtection   *http.CrossOriginProtection
-	logger           Logger
+	*Worker
 
-	activeServices map[string]Service // runtime kill-switch tracking
-	serviceOrder   []Service          // init order for reverse-close at shutdown
-
-	readyFuncs           []func(*ServiceContainer) error
-	customConfigProvided bool
-	mu                   sync.Mutex
-	initOnce             sync.Once
+	router         *Router
+	cfg            *Config
+	csrfProtection *http.CrossOriginProtection
 }
 
-// AppOption configures an App.
-type AppOption func(*App)
-
-// WithService registers a constructor-based service with the given lifetime.
-func WithService[T any](ctor any, lifetime ServiceLifetime) AppOption {
-	return func(a *App) { RegisterCtor[T](a.serviceContainer, ctor, lifetime) }
-}
-
-// WithAppModule registers a constructor-based app module as a singleton.
-// This is the equivalent to WithService(ctor, ServiceLifetimeSingleton).
-func WithAppModule[T any](ctor any) AppOption {
-	return func(a *App) { RegisterCtor[T](a.serviceContainer, ctor, ServiceLifetimeSingleton) }
-}
-
-// WithServiceInstance registers a pre-built service instance (singleton).
-func WithServiceInstance[T any](val T) AppOption {
-	return func(a *App) { RegisterInstance[T](a.serviceContainer, val) }
-}
-
-// WithTransientService registers a transient service constructor for a specified type in the application's service container.
-func WithTransientService[T any](ctor any) AppOption {
-	return func(a *App) { RegisterCtor[T](a.serviceContainer, ctor, ServiceLifetimeTransient) }
-}
-
-// WithScopedService registers a service constructor with a scoped lifetime for the application.
-func WithScopedService[T any](ctor any) AppOption {
-	return func(a *App) { RegisterCtor[T](a.serviceContainer, ctor, ServiceLifetimeScoped) }
-}
-
-// WithSingletonService registers a singleton service constructor with the App, ensuring a single instance is shared.
-func WithSingletonService[T any](ctor any) AppOption {
-	return func(a *App) { RegisterCtor[T](a.serviceContainer, ctor, ServiceLifetimeSingleton) }
-}
-
-// WithReadyFunc registers a function that runs after all services are
-// initialized but before the HTTP server starts. Use it for data seeding
-// or other startup tasks that require a live DI container.
-// Multiple funcs are called in registration order and any error aborts startup.
-func WithReadyFunc(fn func(*ServiceContainer) error) AppOption {
-	return func(a *App) { a.readyFuncs = append(a.readyFuncs, fn) }
-}
+// --- AppOption functions (HTTP-specific) ---
 
 // WithErrorHandler configures the function that converts DI-aware handler
 // errors into HTTP responses.
@@ -127,26 +76,57 @@ func WithCSRFDenyHandler(h http.Handler) AppOption {
 
 // NewApp creates an App with the given options.
 // Router and EventBus are created internally and registered in the container.
-func NewApp(opts ...AppOption) *App {
-	a := &App{
-		cfg:              DefaultConfig(),
+func NewApp(opts ...Option) *App {
+	w := &Worker{
 		serviceContainer: NewServiceContainer(),
-		router:           NewRouter(),
 		eventBus:         NewEventBus(),
-		csrfProtection:   http.NewCrossOriginProtection(),
 		activeServices:   make(map[string]Service),
 	}
 
-	// Register infra as instances in the container.
-	RegisterInstance[*Router](a.serviceContainer, a.router)
-	RegisterInstance[*EventBus](a.serviceContainer, a.eventBus)
-
-	for _, opt := range opts {
-		opt(a)
+	a := &App{
+		Worker:         w,
+		cfg:            DefaultConfig(),
+		router:         NewRouter(),
+		csrfProtection: http.NewCrossOriginProtection(),
 	}
 
-	// Install per-request scope middleware on the router at app initialization time, before services are registered.
-	a.router.Use(MiddlewareFunc(requestScopeMiddleware(a.serviceContainer)))
+	// Register infra as instances in the container.
+	RegisterInstance[*Router](w.serviceContainer, a.router)
+	RegisterInstance[*EventBus](w.serviceContainer, w.eventBus)
+
+	// Set hooks so Worker delegates HTTP-specific work back to App.
+	w.postBuildHook = func() error {
+		// Seal the router: flush all pending middleware first, then routes.
+		a.router.Seal()
+
+		// Validate all DI-aware handler dependencies.
+		for _, ph := range *a.router.pendingHandlers {
+			for _, depType := range ph.depTypes {
+				if !w.serviceContainer.CanResolve(depType) {
+					return fmt.Errorf(
+						"gas: handler %s %s (service %q): dependency %v is not registered in the container",
+						ph.method, ph.path, ph.service, depType,
+					)
+				}
+			}
+		}
+		return nil
+	}
+	w.onServiceClose = func(name string) {
+		a.router.RemoveByModule(name)
+	}
+
+	for _, opt := range opts {
+		switch o := opt.(type) {
+		case WorkerOption:
+			o(w)
+		case AppOption:
+			o(a)
+		}
+	}
+
+	// Install per-request scope middleware on the router at app initialization time.
+	a.router.Use(MiddlewareFunc(requestScopeMiddleware(w.serviceContainer)))
 
 	return a
 }
@@ -159,121 +139,15 @@ func (a *App) Config() *Config {
 // Router returns the App's router.
 func (a *App) Router() *Router { return a.router }
 
-// EventBus returns the App's event bus.
-func (a *App) EventBus() *EventBus { return a.eventBus }
-
-// ServiceContainer returns the application's dependency injection container.
-func (a *App) ServiceContainer() *ServiceContainer {
-	return a.serviceContainer
-}
-
-// MigrationManager resolves the MigrationManager from the DI container.
-// Returns nil if no MigrationManager is registered.
-func (a *App) MigrationManager() MigrationManager {
-	mgr, err := Resolve[MigrationManager](a.serviceContainer)
-	if err != nil {
-		return nil
-	}
-	return mgr
-}
-
-// ConfigProvider resolves the ConfigProvider from the DI container.
-// Returns nil if no ConfigProvider is registered.
-func (a *App) ConfigProvider() ConfigProvider {
-	cfg, err := Resolve[ConfigProvider](a.serviceContainer)
-	if err != nil {
-		return nil
-	}
-	return cfg
-}
-
-// InitServices builds all singletons via the DI container (which calls
-// Init() on each Service automatically), then collects Service instances
-// for runtime management.
-// DO NOT CALL THIS METHOD DIRECTLY. Use Run() instead.
-func (a *App) InitServices() (err error) {
-	a.initOnce.Do(func() {
-		if err = a.serviceContainer.BuildAll(); err != nil {
-			return
-		}
-
-		// Collect all singleton Service instances for tracking.
-		a.serviceContainer.EachInstance(func(v reflect.Value) {
-			if svc, ok := v.Interface().(Service); ok {
-				a.mu.Lock()
-				a.activeServices[svc.Name()] = svc
-				a.serviceOrder = append(a.serviceOrder, svc)
-				a.mu.Unlock()
-			}
-		})
-
-		// Seal the router: flush all pending middleware first, then routes.
-		// This ensures middleware registered during Init() is applied before
-		// any routes, regardless of service initialization order.
-		a.router.Seal()
-
-		// Validate all DI-aware handler dependencies. This runs after Seal()
-		// so handlers registered inside Group/Route callbacks are included.
-		for _, ph := range *a.router.pendingHandlers {
-			for _, depType := range ph.depTypes {
-				if !a.serviceContainer.CanResolve(depType) {
-					err = fmt.Errorf(
-						"gas: handler %s %s (service %q): dependency %v is not registered in the container",
-						ph.method, ph.path, ph.service, depType,
-					)
-					return
-				}
-			}
-		}
-
-		Emit(a.eventBus, SystemAllServicesInitialized, SystemAllServicesInitializedPayload{}).Wait()
-	})
-	return
-}
-
-func (a *App) bindConfig() error {
-	if !a.customConfigProvided {
-		if cfgProvider := a.ConfigProvider(); cfgProvider != nil {
-			if err := cfgProvider.Bind(a.cfg); err != nil {
-				return fmt.Errorf("gas: config binding: %w", err)
-			}
-		}
-	}
-
-	if err := a.cfg.Validate(); err != nil {
-		return fmt.Errorf("gas: config validation: %w", err)
-	}
-
-	Emit(a.eventBus, AppConfigUpdated, AppConfigUpdatedPayload{Config: *a.cfg}).Wait()
-
-	return nil
-}
-
 // Run initializes all services, runs pending migrations, starts the HTTP
 // server, and blocks until a shutdown signal is received.
 func (a *App) Run() error {
-	if err := a.InitServices(); err != nil {
+	if err := a.Start(); err != nil {
 		return err
 	}
 
 	if err := a.bindConfig(); err != nil {
 		return err
-	}
-
-	// Run pending migrations.
-	if migrationMgr := a.MigrationManager(); migrationMgr != nil {
-		a.getLogger().Info("applying pending migrations").Send()
-		if mErr := migrationMgr.RunPending(); mErr != nil {
-			return fmt.Errorf("gas: migrations: %w", mErr)
-		}
-	}
-
-	// Run ready hooks (e.g. data seeding) after migrations but before the server accepts traffic.
-	for _, fn := range a.readyFuncs {
-		if fnErr := fn(a.serviceContainer); fnErr != nil {
-			a.getLogger().Error("ready hook failed").Err("error", fnErr).Send()
-			return fmt.Errorf("gas: ready hook: %w", fnErr)
-		}
 	}
 
 	// log route map
@@ -313,41 +187,29 @@ func (a *App) Run() error {
 		}
 	}
 
-	Emit(a.eventBus, SystemServerShuttingDown, SystemServerShuttingDownPayload{}).Wait()
+	Emit(a.Worker.eventBus, SystemServerShuttingDown, SystemServerShuttingDownPayload{}).Wait()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), a.cfg.Server.ShutdownTimeout)
 	defer cancel()
 	if srvErr := srv.Shutdown(ctx); srvErr != nil {
 		a.getLogger().Error("server shutdown error").Err("error", srvErr).Send()
 	}
 
-	// Close all services in reverse init order.
-	for i := len(a.serviceOrder) - 1; i >= 0; i-- {
-		svc := a.serviceOrder[i]
-		a.getLogger().Info("closing service").Str("service", svc.Name()).Send()
-		if svcErr := svc.Close(); svcErr != nil {
-			a.getLogger().Error("service close error").
-				Str("service", svc.Name()).
-				Err("error", svcErr).
-				Send()
-		}
-	}
-
-	a.getLogger().Info("shutdown complete").Send()
-	return nil
+	return a.Shutdown()
 }
 
-func (a *App) getLogger() Logger {
-	if a.logger == nil {
-		// See if we have a logger registered
-		logger, err := Resolve[Logger](a.serviceContainer)
-		if err != nil {
-			// fallback to slog
-			logger = newSlogLogger(slog.Default())
-			RegisterInstance[Logger](a.serviceContainer, logger)
-			logger.Warn("no logger registered").Err("reason", err).Send()
+func (a *App) bindConfig() error {
+	if cfgProvider := a.ConfigProvider(); cfgProvider != nil {
+		if err := cfgProvider.Bind(a.cfg); err != nil {
+			return fmt.Errorf("gas: config binding: %w", err)
 		}
-		a.logger = logger
 	}
-	return a.logger
+
+	if err := a.cfg.Validate(); err != nil {
+		return fmt.Errorf("gas: config validation: %w", err)
+	}
+
+	Emit(a.Worker.eventBus, AppConfigUpdated, AppConfigUpdatedPayload{Config: *a.cfg}).Wait()
+
+	return nil
 }

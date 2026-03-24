@@ -38,7 +38,8 @@ CacheControl), see `references/middleware.md`.
   constructor injection and communicate via events and provider interfaces.
 - **Ownership tracking.** Every route, middleware, and event subscription is
   tagged with its owning service, enabling surgical teardown at runtime.
-- **Functional options** for App configuration (`AppOption`).
+- **Functional options** — `WorkerOption` for DI/lifecycle, `AppOption` for
+  HTTP-specific concerns. Both satisfy a shared `Option` interface.
 - **Interfaces defined where consumed**, not where implemented.
 
 ## Service Interface
@@ -74,67 +75,116 @@ const (
 - **Transient** — lightweight value objects that need fresh state on every
   injection. Cannot implement `Service` (no Init/Close lifecycle).
 
-## App
+## Option Types
 
-`App` manages service lifecycle, the HTTP server, and graceful shutdown.
+Both `NewWorker` and `NewApp` accept `...Option`. The `Option` interface is
+satisfied by two concrete types:
+
+```go
+type Option interface{ applyOption() }
+
+type WorkerOption func(*Worker)   // DI registration, ready hooks, etc.
+type AppOption    func(*App)      // HTTP-specific: error handler, CSRF, trusted origins
+```
+
+### WorkerOption functions (work with both NewWorker and NewApp)
+
+```go
+gas.WithSingletonService[T any](ctor any) WorkerOption
+gas.WithScopedService[T any](ctor any) WorkerOption
+gas.WithTransientService[T any](ctor any) WorkerOption
+gas.WithService[T any](ctor any, lifetime ServiceLifetime) WorkerOption
+gas.WithServiceInstance[T any](val T) WorkerOption
+gas.WithReadyFunc(fn func(*ServiceContainer) error) WorkerOption
+```
+
+### AppOption functions (only work with NewApp)
+
+```go
+gas.WithErrorHandler(h ErrorHandler) AppOption
+gas.WithTrustedOrigin(origin string) AppOption               // panics if invalid URL
+gas.WithCSRFInsecureBypassPattern(pattern string) AppOption  // for webhooks with own validation
+gas.WithCSRFDenyHandler(h http.Handler) AppOption            // default: 403 Forbidden
+```
+
+## Worker
+
+`Worker` manages service lifecycle, DI, events, and migrations without an
+HTTP server. Use it for AWS Lambda, background workers, or CLI tools.
 
 ### Construction
 
 ```go
-app := gas.NewApp(opts ...AppOption) *App
+w := gas.NewWorker(opts ...Option) *Worker
+```
+
+`NewWorker` creates an `EventBus` and registers it in the container. Only
+`WorkerOption` values are applied; passing an `AppOption` panics.
+
+### Worker methods
+
+| Method             | Signature              | Description                                              |
+|--------------------|------------------------|----------------------------------------------------------|
+| `Start`            | `() error`             | InitServices → migrations → ready hooks (non-blocking)   |
+| `Shutdown`         | `() error`             | Emit SystemShuttingDown, close services in reverse order  |
+| `Run`              | `() error`             | Start → block on SIGINT/SIGTERM → Shutdown               |
+| `InitServices`     | `() error`             | Build singletons, collect services, emit init event       |
+| `EventBus`         | `() *EventBus`         | The worker's event bus                                   |
+| `ServiceContainer` | `() *ServiceContainer` | The DI container                                         |
+| `MigrationManager` | `() MigrationManager`  | Resolved from DI, nil if unregistered                    |
+| `ConfigProvider`   | `() ConfigProvider`    | Resolved from DI, nil if unregistered                    |
+| `ActiveServices`   | `() []string`          | Names of currently active services                       |
+| `CloseService`     | `(name string) error`  | Remove subs, call Close(), emit event                    |
+| `RestartService`   | `(name string) error`  | Re-initialize a previously closed service                |
+
+### Worker usage (Lambda example)
+
+```go
+w := gas.NewWorker(
+    gas.WithSingletonService[*database.Service](database.New()),
+    gas.WithSingletonService[*myservice.Service](myservice.New),
+)
+if err := w.Start(); err != nil { log.Fatal(err) }
+defer w.Shutdown()
+
+lambda.Start(func(ctx context.Context, event MyEvent) error {
+    scope := w.ServiceContainer().NewScope()
+    defer scope.Close()
+    svc := gas.MustResolve[*myservice.Service](scope)
+    return svc.Handle(ctx, event)
+})
+```
+
+## App
+
+`App` embeds `*Worker` and adds routing, CSRF protection, and an HTTP server.
+All Worker methods are available on App.
+
+### Construction
+
+```go
+app := gas.NewApp(opts ...Option) *App
 ```
 
 `NewApp` creates a `Router` and `EventBus` internally and registers them in
 the container — services receive them via constructor injection. CSRF
 protection (`net/http.CrossOriginProtection`) is enabled by default.
 
-### AppOption functions
-
-```go
-// Service registration — pick the shorthand that matches the lifetime:
-gas.WithSingletonService[T any](ctor any) AppOption
-gas.WithScopedService[T any](ctor any) AppOption
-gas.WithTransientService[T any](ctor any) AppOption
-
-// Or specify the lifetime explicitly:
-gas.WithService[T any](ctor any, lifetime ServiceLifetime) AppOption
-gas.WithAppModule[T any](ctor any) AppOption     // alias for WithSingletonService
-gas.WithServiceInstance[T any](val T) AppOption   // pre-built singleton instance
-
-// Hooks and handlers
-gas.WithErrorHandler(h ErrorHandler) AppOption
-gas.WithReadyFunc(fn func(*ServiceContainer) error) AppOption
-
-// CSRF protection (enabled by default)
-gas.WithTrustedOrigin(origin string) AppOption               // panics if invalid URL
-gas.WithCSRFInsecureBypassPattern(pattern string) AppOption  // for webhooks with own validation
-gas.WithCSRFDenyHandler(h http.Handler) AppOption            // default: 403 Forbidden
-```
-
-`WithReadyFunc` runs after services init + migrations, before HTTP server
-starts. Use for data seeding. Multiple hooks run in registration order; any
-error aborts startup.
-
 ### App.Run()
 
-**Startup sequence:** `InitServices` → `bindConfig` → migrations → ready hooks → route map log → HTTP server.
+**Startup sequence:** `Worker.Start` (init → migrations → ready hooks) → `bindConfig` → route map log → HTTP server.
 
-On shutdown (SIGINT/SIGTERM), services are closed in reverse init order.
+On shutdown (SIGINT/SIGTERM): emit `SystemServerShuttingDown` → graceful
+HTTP shutdown → `Worker.Shutdown` (emit `SystemShuttingDown`, close services
+in reverse init order).
 
-### App methods
+### App-specific methods
 
 | Method             | Signature              | Description                                        |
 |--------------------|------------------------|----------------------------------------------------|
 | `Run`              | `() error`             | Full lifecycle: init → migrate → serve → shutdown  |
-| `Config`           | `() *Config`           | Application configuration                          |
-| `ConfigProvider`   | `() ConfigProvider`    | Resolved from DI, nil if unregistered              |
+| `Config`           | `() *Config`           | Application configuration (with ServerSettings)    |
 | `Router`           | `() *Router`           | The app's router                                   |
-| `EventBus`         | `() *EventBus`         | The app's event bus                                |
-| `MigrationManager` | `() MigrationManager`  | Resolved from DI, nil if unregistered              |
-| `ServiceContainer` | `() *ServiceContainer` | The DI container                                   |
-| `ActiveServices`   | `() []string`          | Names of currently active services                 |
-| `CloseService`     | `(name string) error`  | Kill-switch: 503 routes, remove subs, call Close() |
-| `RestartService`   | `(name string) error`  | Re-initialize a previously closed service          |
 
 ## DI Container
 
@@ -363,13 +413,14 @@ gas.SubscribeWithOwner[T](bus *EventBus, service string, event Event[T], handler
 
 ### System Events
 
-| Event                              | Payload                               | Fired When                        |
-|------------------------------------|---------------------------------------|-----------------------------------|
-| `gas.SystemServiceClosed`          | `{ServiceName string}`                | Service killed via `CloseService` |
-| `gas.SystemServiceInitialized`     | `{ServiceName string}`                | Service finishes `Init`           |
-| `gas.SystemAllServicesInitialized` | `struct{}`                            | All services initialized          |
-| `gas.SystemServerShuttingDown`     | `struct{}`                            | Graceful shutdown begins          |
-| `gas.AppConfigUpdated`             | `{Config Config}`                     | Config bound after init           |
+| Event                              | Payload                               | Fired When                                      |
+|------------------------------------|---------------------------------------|-------------------------------------------------|
+| `gas.SystemServiceClosed`          | `{ServiceName string}`                | Service killed via `CloseService`               |
+| `gas.SystemServiceInitialized`     | `{ServiceName string}`                | Service finishes `Init`                         |
+| `gas.SystemAllServicesInitialized` | `struct{}`                            | All services initialized                        |
+| `gas.SystemShuttingDown`           | `struct{}`                            | Worker or App begins shutdown (always fires)    |
+| `gas.SystemServerShuttingDown`     | `struct{}`                            | HTTP server shutting down (App only)            |
+| `gas.AppConfigUpdated`             | `{Config Config}`                     | Config bound after init (App only)              |
 
 ## Provider Interfaces (summary)
 
@@ -400,7 +451,7 @@ Built-in no-op logger for tests or when logging isn't needed:
 gas.WithScopedService[gas.Logger](gas.NewNopLogger())
 ```
 
-## Config
+## Config (App only)
 
 ```go
 type Config struct {
@@ -420,6 +471,9 @@ type ServerSettings struct {
 gas.DefaultConfig() *Config
 config.Validate() error
 ```
+
+Worker does not have a `Config` struct. Individual services bind their own
+configuration from `gas.ConfigProvider` during `Init()`.
 
 ## Writing a Service (Complete Example)
 

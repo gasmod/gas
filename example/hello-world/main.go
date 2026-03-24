@@ -32,8 +32,8 @@ func main() {
 		gas.WithTransientService[*RequestID](NewRequestID),
 
 		// Register app modules.
-		gas.WithAppModule[*GreetModule](NewGreetModule()),
-		gas.WithAppModule[*NotesModule](NewNotesModule()),
+		gas.WithSingletonService[*GreetModule](NewGreetModule()),
+		gas.WithSingletonService[*NotesModule](NewNotesModule()),
 
 		// Custom error handler.
 		gas.WithErrorHandler(func(ctx gas.Context, err error) {

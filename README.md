@@ -40,7 +40,7 @@ surgical teardown of a single service at runtime.
 
 ## Usage
 
-### App Lifecycle
+### App Lifecycle (HTTP)
 
 ```go
 package main
@@ -71,18 +71,53 @@ func New(router *gas.Router, bus *gas.EventBus) *Service {
 `Run()` initializes all services (via the DI container), runs pending migrations, executes any registered ready hooks,
 starts the HTTP server, and waits for a shutdown signal. On shutdown, services are closed in reverse init order.
 
+### Worker Lifecycle (non-HTTP)
+
+For non-HTTP environments (AWS Lambda, background workers, CLI tools), use `Worker` instead of `App`. It provides
+the same DI container, service lifecycle, events, and migration support without routing or an HTTP server.
+
+```go
+w := gas.NewWorker(
+	gas.WithSingletonService[*database.Service](database.New()),
+	gas.WithSingletonService[*myservice.Service](myservice.New),
+)
+
+// Start initializes services, runs migrations, and executes ready hooks.
+if err := w.Start(); err != nil {
+	log.Fatal(err)
+}
+defer w.Shutdown()
+
+// Use the DI container directly — e.g. in a Lambda handler.
+lambda.Start(func(ctx context.Context, event MyEvent) error {
+	scope := w.ServiceContainer().NewScope()
+	defer scope.Close()
+	svc := gas.MustResolve[*myservice.Service](scope)
+	return svc.Handle(ctx, event)
+})
+```
+
+For long-running worker processes that should block until a shutdown signal:
+
+```go
+w := gas.NewWorker(
+	gas.WithSingletonService[*myservice.Service](myservice.New),
+)
+if err := w.Run(); err != nil { // Start + block on SIGINT/SIGTERM + Shutdown
+	log.Fatal(err)
+}
+```
+
+`App` embeds `Worker` — all DI registration options (`WithSingletonService`, `WithService`, `WithReadyFunc`, etc.)
+work with both `NewApp` and `NewWorker`. HTTP-specific options (`WithErrorHandler`, `WithTrustedOrigin`, etc.) only
+work with `NewApp`.
+
 ### Registering Services
 
 Register constructor-based services with a lifetime:
 
 ```go
 gas.WithService[*auth.Service](auth.New, gas.ServiceLifetimeSingleton)
-```
-
-Shorthand for singleton registration (`WithService` with `ServiceLifetimeSingleton`):
-
-```go
-gas.WithAppModule[*auth.Service](auth.New)
 ```
 
 Register pre-built instances (treated as singletons):
@@ -353,8 +388,8 @@ gas.SubscribeWithOwner(bus, s.Name(), gas.SystemServiceClosed, func(data gas.Sys
 ### Ready Hooks
 
 Register functions that run after all services are initialized and migrations have completed, but before the HTTP
-server starts accepting traffic. Use this for data seeding or any other pre-traffic startup work that requires a live
-DI container:
+server starts accepting traffic (App) or before `Start` returns (Worker). Use this for data seeding or any other
+startup work that requires a live DI container:
 
 ```go
 app := gas.NewApp(
@@ -601,13 +636,14 @@ app := gas.NewApp(
 
 ## System Events
 
-| Event                              | Payload Type                             | Fired When                                      |
-|------------------------------------|------------------------------------------|-------------------------------------------------|
-| `gas.SystemServiceClosed`          | `SystemServiceClosedPayload`             | A service is killed via `CloseService`          |
-| `gas.SystemServiceInitialized`     | `SystemServiceInitializedPayload`        | A service finishes `Init` (including restart)   |
-| `gas.SystemAllServicesInitialized` | `SystemAllServicesInitializedPayload`    | All services have been successfully initialized |
-| `gas.SystemServerShuttingDown`     | `SystemServerShuttingDownPayload`        | Server begins graceful shutdown                 |
-| `gas.AppConfigUpdated`             | `AppConfigUpdatedPayload`                | App config is updated after binding             |
+| Event                              | Payload Type                             | Fired When                                          |
+|------------------------------------|------------------------------------------|-----------------------------------------------------|
+| `gas.SystemServiceClosed`          | `SystemServiceClosedPayload`             | A service is killed via `CloseService`              |
+| `gas.SystemServiceInitialized`     | `SystemServiceInitializedPayload`        | A service finishes `Init` (including restart)       |
+| `gas.SystemAllServicesInitialized` | `SystemAllServicesInitializedPayload`    | All services have been successfully initialized     |
+| `gas.SystemShuttingDown`           | `SystemShuttingDownPayload`              | Worker or App begins shutdown (always fires)        |
+| `gas.SystemServerShuttingDown`     | `SystemServerShuttingDownPayload`        | HTTP server begins graceful shutdown (App only)     |
+| `gas.AppConfigUpdated`             | `AppConfigUpdatedPayload`                | App config is updated after binding (App only)      |
 
 ## Configuration
 
@@ -637,14 +673,26 @@ app := gas.NewApp(
 
 `Config.Validate()` checks that `Server.Host` is a valid IP or resolvable hostname.
 
-## App Accessors
+## Worker Methods
+
+| Method                             | Returns                     | Description                                           |
+|------------------------------------|-----------------------------|-------------------------------------------------------|
+| `w.Start()`                        | `error`                     | InitServices → migrations → ready hooks (non-blocking)|
+| `w.Shutdown()`                     | `error`                     | Emit shutdown event, close services in reverse order   |
+| `w.Run()`                          | `error`                     | Start + block on signal + Shutdown                    |
+| `w.EventBus()`                     | `*EventBus`                 |                                                       |
+| `w.ServiceContainer()`             | `*ServiceContainer`         |                                                       |
+| `w.MigrationManager()`             | `MigrationManager` (or nil) |                                                       |
+| `w.ConfigProvider()`               | `ConfigProvider` (or nil)   |                                                       |
+| `w.ActiveServices()`               | `[]string`                  |                                                       |
+| `w.CloseService(name)`             | `error`                     | Kill-switch for a single service                      |
+| `w.RestartService(name)`           | `error`                     | Re-initialize a previously closed service             |
+
+## App Methods
+
+`App` embeds `Worker`, so all Worker methods are available. Additionally:
 
 | Method                       | Returns                     |
 |------------------------------|-----------------------------|
 | `app.Router()`               | `*Router`                   |
-| `app.EventBus()`             | `*EventBus`                 |
 | `app.Config()`               | `*Config`                   |
-| `app.ServiceContainer()`     | `*ServiceContainer`         |
-| `app.MigrationManager()`     | `MigrationManager` (or nil) |
-| `app.ConfigProvider()`       | `ConfigProvider` (or nil)   |
-| `app.ActiveServices()`       | `[]string`                  |
