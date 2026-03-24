@@ -150,18 +150,18 @@ type StorageProvider interface {
 // and any metadata the backend provides (content type, size, etc.).
 type StorageObject struct {
 	Body        io.ReadCloser
+	Metadata    map[string]string
 	ContentType string
 	Size        int64
-	Metadata    map[string]string
 }
 
 // StorageOption configures a storage operation.
 type StorageOption func(*storageOptions)
 
 type storageOptions struct {
+	Metadata    map[string]string
 	Bucket      string
 	ContentType string
-	Metadata    map[string]string
 }
 
 // InBucket overrides the default bucket for a single operation.
