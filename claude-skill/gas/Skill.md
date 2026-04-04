@@ -430,10 +430,10 @@ separate modules. See `references/providers.md` for full signatures.
 | Interface            | Purpose                    | Implementing module |
 |----------------------|----------------------------|---------------------|
 | `DatabaseProvider`   | SQL database access        | gas-database        |
-| `CacheProvider`      | Key-value caching          | (custom)            |
-| `JobQueueProvider`   | Async job/message queues   | (custom)            |
-| `EmailProvider`      | Email sending              | (custom)            |
-| `StorageProvider`    | File storage (S3, etc.)    | (custom)            |
+| `CacheProvider`      | Key-value caching          | gas-cache           |
+| `JobQueueProvider`   | Async job/message queues   | gas-queue           |
+| `EmailProvider`      | Email sending              | gas-email           |
+| `StorageProvider`    | File storage (S3, etc.)    | gas-storage         |
 | `ConfigProvider`     | Configuration management   | gas-config          |
 | `TemplateProvider`   | Template storage/retrieval | gas-ui              |
 | `UIProvider`         | Template rendering         | gas-ui              |

@@ -104,7 +104,9 @@ type StorageProvider interface {
 	Upload(ctx context.Context, key string, data io.Reader, opts ...StorageOption) error
 	Download(ctx context.Context, key string, opts ...StorageOption) (*StorageObject, error)
 	Delete(ctx context.Context, key string, opts ...StorageOption) error
-	PresignURL(ctx context.Context, key string, expires time.Duration, opts ...StorageOption) (string, error)
+	Head(ctx context.Context, key string, opts ...StorageOption) (*ObjectInfo, error)
+	PresignDownloadURL(ctx context.Context, key string, expires time.Duration, opts ...StorageOption) (string, error)
+	PresignUploadURL(ctx context.Context, key string, expires time.Duration, opts ...StorageOption) (string, error)
 }
 ```
 
@@ -119,6 +121,19 @@ type StorageObject struct {
 	ContentType string
 	Size        int64
 	Metadata    map[string]string // provider-specific extras
+}
+```
+
+### ObjectInfo
+
+Returned by `Head`. Carries object metadata without the body.
+
+```go
+type ObjectInfo struct {
+	ContentType  string
+	Size         int64
+	Metadata     map[string]string
+	LastModified time.Time
 }
 ```
 
@@ -402,6 +417,13 @@ type StorageObject struct {
 	ContentType string
 	Size        int64
 	Metadata    map[string]string
+}
+
+type ObjectInfo struct {
+	ContentType  string
+	Size         int64
+	Metadata     map[string]string
+	LastModified time.Time
 }
 
 type StorageOption func(*storageOptions) // see InBucket, WithContentType, WithMetadata

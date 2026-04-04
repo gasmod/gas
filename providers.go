@@ -143,7 +143,9 @@ type StorageProvider interface {
 	Upload(ctx context.Context, key string, data io.Reader, opts ...StorageOption) error
 	Download(ctx context.Context, key string, opts ...StorageOption) (*StorageObject, error)
 	Delete(ctx context.Context, key string, opts ...StorageOption) error
-	PresignURL(ctx context.Context, key string, expires time.Duration, opts ...StorageOption) (string, error)
+	Head(ctx context.Context, key string, opts ...StorageOption) (*ObjectInfo, error)
+	PresignDownloadURL(ctx context.Context, key string, expires time.Duration, opts ...StorageOption) (string, error)
+	PresignUploadURL(ctx context.Context, key string, expires time.Duration, opts ...StorageOption) (string, error)
 }
 
 // StorageObject holds the response from a Download call, including the body
@@ -153,6 +155,14 @@ type StorageObject struct {
 	Metadata    map[string]string
 	ContentType string
 	Size        int64
+}
+
+// ObjectInfo holds metadata about an object without its body, returned by Head.
+type ObjectInfo struct {
+	ContentType  string
+	Size         int64
+	Metadata     map[string]string
+	LastModified time.Time
 }
 
 // StorageOption configures a storage operation.
