@@ -159,10 +159,10 @@ type StorageObject struct {
 
 // ObjectInfo holds metadata about an object without its body, returned by Head.
 type ObjectInfo struct {
+	LastModified time.Time
+	Metadata     map[string]string
 	ContentType  string
 	Size         int64
-	Metadata     map[string]string
-	LastModified time.Time
 }
 
 // StorageOption configures a storage operation.
