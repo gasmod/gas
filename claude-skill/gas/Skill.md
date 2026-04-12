@@ -178,13 +178,22 @@ On shutdown (SIGINT/SIGTERM): emit `SystemServerShuttingDown` → graceful
 HTTP shutdown → `Worker.Shutdown` (emit `SystemShuttingDown`, close services
 in reverse init order).
 
+`Run` is the convenience path. For embedding scenarios (tests, custom
+listeners, Lambda with HTTP, etc.), compose `Start` → `Serve` → `Stop`
+yourself, or grab the `*http.Server` / `http.Handler` directly.
+
 ### App-specific methods
 
-| Method             | Signature              | Description                                        |
-|--------------------|------------------------|----------------------------------------------------|
-| `Run`              | `() error`             | Full lifecycle: init → migrate → serve → shutdown  |
-| `Config`           | `() *Config`           | Application configuration (with ServerSettings)    |
-| `Router`           | `() *Router`           | The app's router                                   |
+| Method     | Signature        | Description                                                            |
+|------------|------------------|------------------------------------------------------------------------|
+| `Run`      | `() error`       | Full lifecycle: Start → Serve → block on signal → Stop                 |
+| `Start`    | `() error`       | `Worker.Start` + `bindConfig`. Does not start the HTTP server          |
+| `Serve`    | `() error`       | Starts the HTTP server and blocks until it stops (blocking)            |
+| `Stop`     | `() error`       | Emit shutdown event → graceful HTTP shutdown → `Worker.Shutdown`       |
+| `Server`   | `() *http.Server`| Lazily-built `*http.Server` from current Config (cached, thread-safe)  |
+| `Handler`  | `() http.Handler`| Router wrapped in CSRF protection — useful for `httptest.NewServer`    |
+| `Config`   | `() *Config`     | Application configuration (with ServerSettings)                        |
+| `Router`   | `() *Router`     | The app's router                                                       |
 
 ## DI Container
 

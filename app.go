@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 )
 
@@ -35,9 +36,11 @@ func WithRequestScope(ctx context.Context, scope *Scope) context.Context {
 type App struct {
 	*Worker
 
+	srv            *http.Server
 	router         *Router
 	cfg            *Config
 	csrfProtection *http.CrossOriginProtection
+	srvOnce        sync.Once
 }
 
 // --- AppOption functions (HTTP-specific) ---
@@ -55,7 +58,7 @@ func WithErrorHandler(h ErrorHandler) AppOption {
 func WithTrustedOrigin(origin string) AppOption {
 	return func(a *App) {
 		if err := a.csrfProtection.AddTrustedOrigin(origin); err != nil {
-			panic(fmt.Errorf("failed to add trusted origin: %w", err))
+			panic(fmt.Errorf("gas: failed to add trusted origin: %w", err))
 		}
 	}
 }
@@ -139,53 +142,64 @@ func (a *App) Config() *Config {
 // Router returns the App's router.
 func (a *App) Router() *Router { return a.router }
 
-// Run initializes all services, runs pending migrations, starts the HTTP
-// server, and blocks until a shutdown signal is received.
-func (a *App) Run() error {
-	if err := a.Start(); err != nil {
+// Start initializes the underlying Worker (services, migrations, hooks) and
+// binds configuration. It does not start the HTTP server; call Serve for that,
+// or use Run to do both and block until shutdown.
+func (a *App) Start() error {
+	if err := a.Worker.Start(); err != nil {
 		return err
 	}
 
 	if err := a.bindConfig(); err != nil {
-		return err
+		return fmt.Errorf("gas: failed to bind config: %w", err)
 	}
 
-	// log route map
-	a.logRouteMap(a.cfg.GasEnv.IsDevelopment())
+	return nil
+}
 
-	addr := fmt.Sprintf("%s:%d", a.cfg.Server.Host, a.cfg.Server.Port)
-
-	srv := &http.Server{
-		Addr:         addr,
-		Handler:      a.csrfProtection.Handler(a.router),
-		ReadTimeout:  a.cfg.Server.ReadTimeout,
-		WriteTimeout: a.cfg.Server.WriteTimeout,
-		IdleTimeout:  a.cfg.Server.IdleTimeout,
-	}
-
-	errCh := make(chan error, 1)
-	go func() {
-		a.getLogger().Info("server started").
-			Str("environment", a.cfg.GasEnv.String()).
-			Str("addr", addr).
-			Send()
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
+// Server returns the App's *http.Server, constructing it on first call from
+// the current Config. The instance is cached and safe to call concurrently.
+func (a *App) Server() *http.Server {
+	a.srvOnce.Do(func() {
+		a.srv = &http.Server{
+			Addr:         fmt.Sprintf("%s:%d", a.cfg.Server.Host, a.cfg.Server.Port),
+			Handler:      a.csrfProtection.Handler(a.router),
+			ReadTimeout:  a.cfg.Server.ReadTimeout,
+			WriteTimeout: a.cfg.Server.WriteTimeout,
+			IdleTimeout:  a.cfg.Server.IdleTimeout,
 		}
-		close(errCh)
-	}()
+	})
+	return a.srv
+}
 
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+// Handler returns the fully wrapped http.Handler used by the App's server
+// (router behind CSRF protection). Useful for embedding the App in tests or
+// in an externally managed listener.
+func (a *App) Handler() http.Handler {
+	return a.Server().Handler
+}
 
-	select {
-	case sig := <-quit:
-		a.getLogger().Info("shutdown signal received").Str("signal", sig.String()).Send()
-	case chnErr := <-errCh:
-		if chnErr != nil {
-			return fmt.Errorf("gas: server error: %w", chnErr)
-		}
+// Serve starts the HTTP server and blocks until it stops. A clean shutdown
+// (http.ErrServerClosed) returns nil; any other listener error is returned.
+func (a *App) Serve() error {
+	srv := a.Server()
+
+	a.getLogger().Info("server started").
+		Str("environment", a.cfg.GasEnv.String()).
+		Str("addr", srv.Addr).
+		Send()
+
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("gas: server error: %w", err)
 	}
+
+	return nil
+}
+
+// Stop emits the server-shutting-down event, gracefully shuts down the HTTP
+// server within ShutdownTimeout, and then shuts down the underlying Worker.
+func (a *App) Stop() error {
+	srv := a.Server()
 
 	Emit(a.Worker.eventBus, SystemServerShuttingDown, SystemServerShuttingDownPayload{}).Wait()
 
@@ -196,6 +210,39 @@ func (a *App) Run() error {
 	}
 
 	return a.Shutdown()
+}
+
+// Run initializes all services, runs pending migrations, starts the HTTP
+// server, and blocks until a shutdown signal is received.
+func (a *App) Run() error {
+	if err := a.Start(); err != nil {
+		return err
+	}
+
+	// log route map
+	a.logRouteMap(a.cfg.GasEnv.IsDevelopment())
+
+	srvErr := make(chan error, 1)
+	go func() {
+		if err := a.Serve(); err != nil {
+			srvErr <- err
+		}
+		close(srvErr)
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case sig := <-quit:
+		a.getLogger().Info("shutdown signal received").Str("signal", sig.String()).Send()
+	case chnErr := <-srvErr:
+		if chnErr != nil {
+			return fmt.Errorf("gas: server error: %w", chnErr)
+		}
+	}
+
+	return a.Stop()
 }
 
 func (a *App) bindConfig() error {
