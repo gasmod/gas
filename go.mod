@@ -1,6 +1,6 @@
 module github.com/gasmod/gas
 
-go 1.25.6
+go 1.26.1
 
 require (
 	github.com/gasmod/gas-config v0.2.1
