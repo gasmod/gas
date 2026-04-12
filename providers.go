@@ -205,16 +205,16 @@ func ApplyStorageOptions(opts []StorageOption) (bucket, contentType string, meta
 // templating) resolve raw template content through this interface.
 type TemplateProvider interface {
 	// Get returns the raw template content by name.
-	Get(name string) ([]byte, error)
+	Get(ctx context.Context, name string) ([]byte, error)
 
 	// List returns all available template names.
-	List() ([]string, error)
+	List(ctx context.Context) ([]string, error)
 
 	// Register adds or replaces a template by name and raw content.
-	Register(name string, content []byte)
+	Register(ctx context.Context, name string, content []byte) error
 
 	// RegisterFS walks an fs.FS and registers every template file found.
-	RegisterFS(fsys fs.FS) error
+	RegisterFS(ctx context.Context, fsys fs.FS) error
 }
 
 // UIProvider abstracts template rendering. Implemented by gas-ui or any

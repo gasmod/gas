@@ -172,10 +172,10 @@ raw template content through this interface.
 
 ```go
 type TemplateProvider interface {
-	Get(name string) ([]byte, error)          // raw template content by name
-	List() ([]string, error)                  // all available template names
-	Register(name string, content []byte)     // add or replace a template
-	RegisterFS(fsys fs.FS) error              // walk an fs.FS and register all templates found
+	Get(ctx context.Context, name string) ([]byte, error)              // raw template content by name
+	List(ctx context.Context) ([]string, error)                        // all available template names
+	Register(ctx context.Context, name string, content []byte) error   // add or replace a template
+	RegisterFS(ctx context.Context, fsys fs.FS) error                  // walk an fs.FS and register all templates found
 }
 ```
 
