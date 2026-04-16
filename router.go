@@ -11,6 +11,16 @@ import (
 	"github.com/gorilla/schema"
 )
 
+// subrouteEntry records a chi sub-mux mounted at a given pattern, along with
+// its own nested-subroutes map. The nested map is shared across all
+// sub-router *Router instances that route into this sub-mux, so repeat
+// Route() calls with the same pattern — including nested ones inside
+// sibling callback blocks — reuse the existing mount.
+type subrouteEntry struct {
+	mux    chi.Router
+	nested map[string]*subrouteEntry
+}
+
 type registeredRoute struct {
 	method     string
 	path       string
@@ -59,6 +69,13 @@ type Router struct {
 	prefix          string   // accumulated path prefix from Route() nesting
 	scopeMiddleware []string // middleware names applied via Use() on this router and its ancestors
 
+	// subroutes tracks chi sub-muxes mounted under this router's routing tree
+	// so repeat Route(pattern) calls can attach to the existing mount instead
+	// of panicking. The map is shared across sub-routers that share the same
+	// tree (siblings from repeat Route calls, and sub-routers produced by
+	// Group()), so nested Route() dedup works too.
+	subroutes map[string]*subrouteEntry
+
 	errorHandler    ErrorHandler      // converts handler errors into HTTP responses
 	pendingHandlers *[]pendingHandler // DI handler deps for boot-time validation (shared across sub-routers)
 
@@ -86,6 +103,7 @@ func NewRouter() *Router {
 		mux:             chi.NewRouter(),
 		routes:          make(map[string][]registeredRoute),
 		registry:        make(map[string]namedMiddleware),
+		subroutes:       make(map[string]*subrouteEntry),
 		errorHandler:    defaultErrorHandler,
 		pendingHandlers: &ph,
 		validator:       validator.New(),
@@ -104,6 +122,7 @@ func newSubRouter(mux chi.Router, parent *Router, prefix string) *Router {
 		mux:             mux,
 		routes:          parent.routes,
 		registry:        parent.registry,
+		subroutes:       make(map[string]*subrouteEntry),
 		prefix:          parent.prefix + prefix,
 		scopeMiddleware: inherited,
 		errorHandler:    parent.errorHandler,
@@ -175,7 +194,12 @@ func (r *Router) UseMiddlewareByName(middleware string) {
 func (r *Router) Group(fn func(sub *Router)) {
 	op := func() {
 		r.mux.Group(func(cr chi.Router) {
-			fn(newSubRouter(cr, r, ""))
+			sub := newSubRouter(cr, r, "")
+			// A chi.Group routes into the same underlying tree as its parent,
+			// so any Route() calls inside the group must dedup against the
+			// parent's subroutes — share the map.
+			sub.subroutes = r.subroutes
+			fn(sub)
 		})
 	}
 	if r.sealed {
@@ -188,10 +212,25 @@ func (r *Router) Group(fn func(sub *Router)) {
 // Route creates a pattern-scoped route group. The callback receives a
 // sub-Router that shares the parent's middleware registry and route tracking.
 // When the router is unsealed, the route is deferred until Seal().
+//
+// Calling Route with the same pattern more than once on the same parent is
+// allowed: subsequent calls attach to the sub-mux created by the first call
+// instead of panicking. Each call's body runs inside its own chi.Group, so
+// middleware added via Use() inside a given block only applies to handlers
+// registered in that block.
 func (r *Router) Route(pattern string, fn func(sub *Router)) {
 	op := func() {
-		r.mux.Route(pattern, func(cr chi.Router) {
-			fn(newSubRouter(cr, r, pattern))
+		entry, ok := r.subroutes[pattern]
+		if !ok {
+			r.mux.Route(pattern, func(cr chi.Router) {
+				entry = &subrouteEntry{mux: cr, nested: make(map[string]*subrouteEntry)}
+				r.subroutes[pattern] = entry
+			})
+		}
+		entry.mux.Group(func(grp chi.Router) {
+			sub := newSubRouter(grp, r, pattern)
+			sub.subroutes = entry.nested
+			fn(sub)
 		})
 	}
 	if r.sealed {

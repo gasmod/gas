@@ -526,6 +526,153 @@ func TestRouter_Route(t *testing.T) {
 	}
 }
 
+func TestRouter_Route_DuplicatePattern_Idempotent(t *testing.T) {
+	router := gas.NewRouter()
+
+	router.Route("/documents", func(sub *gas.Router) {
+		sub.Handle("test", "GET", "/", func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte("list"))
+		})
+	})
+	router.Route("/documents", func(sub *gas.Router) {
+		sub.Handle("test", "POST", "/upload", func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte("upload"))
+		})
+	})
+
+	router.Seal()
+
+	req := httptest.NewRequest("GET", "/documents/", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || rr.Body.String() != "list" {
+		t.Fatalf("expected 200 'list', got %d %q", rr.Code, rr.Body.String())
+	}
+
+	req = httptest.NewRequest("POST", "/documents/upload", nil)
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || rr.Body.String() != "upload" {
+		t.Fatalf("expected 200 'upload', got %d %q", rr.Code, rr.Body.String())
+	}
+}
+
+func TestRouter_Route_DuplicatePattern_MiddlewareIsolated(t *testing.T) {
+	router := gas.NewRouter()
+
+	router.Route("/documents", func(sub *gas.Router) {
+		sub.UseMiddlewareFunc(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("X-A", "1")
+				next.ServeHTTP(w, r)
+			})
+		})
+		sub.Handle("test", "GET", "/a", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+	})
+	router.Route("/documents", func(sub *gas.Router) {
+		sub.UseMiddlewareFunc(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("X-B", "1")
+				next.ServeHTTP(w, r)
+			})
+		})
+		sub.Handle("test", "GET", "/b", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+	})
+
+	router.Seal()
+
+	req := httptest.NewRequest("GET", "/documents/a", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Header().Get("X-A") != "1" {
+		t.Fatalf("block A middleware missing on /documents/a: %v", rr.Header())
+	}
+	if rr.Header().Get("X-B") != "" {
+		t.Fatalf("block B middleware leaked onto /documents/a: %v", rr.Header())
+	}
+
+	req = httptest.NewRequest("GET", "/documents/b", nil)
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Header().Get("X-B") != "1" {
+		t.Fatalf("block B middleware missing on /documents/b: %v", rr.Header())
+	}
+	if rr.Header().Get("X-A") != "" {
+		t.Fatalf("block A middleware leaked onto /documents/b: %v", rr.Header())
+	}
+}
+
+func TestRouter_Route_DuplicatePattern_ParentMiddlewareApplies(t *testing.T) {
+	router := gas.NewRouter()
+
+	router.UseMiddlewareFunc(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Global", "1")
+			next.ServeHTTP(w, r)
+		})
+	})
+	router.Route("/documents", func(sub *gas.Router) {
+		sub.Handle("test", "GET", "/a", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+	})
+	router.Route("/documents", func(sub *gas.Router) {
+		sub.Handle("test", "GET", "/b", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+	})
+
+	router.Seal()
+
+	for _, path := range []string{"/documents/a", "/documents/b"} {
+		req := httptest.NewRequest("GET", path, nil)
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+		if rr.Header().Get("X-Global") != "1" {
+			t.Fatalf("global middleware missing on %s: %v", path, rr.Header())
+		}
+	}
+}
+
+func TestRouter_Route_DuplicatePattern_NestedRoute(t *testing.T) {
+	router := gas.NewRouter()
+
+	router.Route("/api", func(sub *gas.Router) {
+		sub.Route("/v1", func(inner *gas.Router) {
+			inner.Handle("test", "GET", "/users", func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte("users"))
+			})
+		})
+	})
+	router.Route("/api", func(sub *gas.Router) {
+		sub.Route("/v1", func(inner *gas.Router) {
+			inner.Handle("test", "GET", "/items", func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte("items"))
+			})
+		})
+	})
+
+	router.Seal()
+
+	for _, tc := range []struct {
+		path, want string
+	}{
+		{"/api/v1/users", "users"},
+		{"/api/v1/items", "items"},
+	} {
+		req := httptest.NewRequest("GET", tc.path, nil)
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK || rr.Body.String() != tc.want {
+			t.Fatalf("%s: expected 200 %q, got %d %q", tc.path, tc.want, rr.Code, rr.Body.String())
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Router HEAD auto-registration tests
 // ---------------------------------------------------------------------------
