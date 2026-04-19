@@ -139,11 +139,15 @@ func RequestLogger[T Logger](opt ...RequestLoggerOption) func(next http.Handler)
 
 // SecurityHeadersOptions configures which security headers are set by the SecurityHeaders middleware.
 type SecurityHeadersOptions struct {
-	contentTypeOptions string
-	frameOptions       string
-	xssProtection      string
-	referrerPolicy     string
-	permissionsPolicy  string
+	contentTypeOptions        string
+	frameOptions              string
+	xssProtection             string
+	referrerPolicy            string
+	permissionsPolicy         string
+	contentSecurityPolicy     string
+	strictTransportSecurity   string
+	crossOriginOpenerPolicy   string
+	crossOriginResourcePolicy string
 }
 
 // SecurityHeadersOption is a functional option for configuring SecurityHeaders.
@@ -177,6 +181,32 @@ func WithSecurityHeadersReferrerPolicy(val string) SecurityHeadersOption {
 // Pass an empty string to disable this header. Default: "camera=(), microphone=(), geolocation=()".
 func WithSecurityHeadersPermissionsPolicy(val string) SecurityHeadersOption {
 	return func(opt *SecurityHeadersOptions) { opt.permissionsPolicy = val }
+}
+
+// WithSecurityHeadersContentSecurityPolicy sets the Content-Security-Policy header value.
+// Pass an empty string to disable this header. No default is applied, since CSP values
+// are highly application-specific.
+func WithSecurityHeadersContentSecurityPolicy(val string) SecurityHeadersOption {
+	return func(opt *SecurityHeadersOptions) { opt.contentSecurityPolicy = val }
+}
+
+// WithSecurityHeadersStrictTransportSecurity sets the Strict-Transport-Security (HSTS) header value.
+// Pass an empty string to disable this header. No default is applied, since HSTS should
+// only be enabled once the site is fully served over HTTPS.
+func WithSecurityHeadersStrictTransportSecurity(val string) SecurityHeadersOption {
+	return func(opt *SecurityHeadersOptions) { opt.strictTransportSecurity = val }
+}
+
+// WithSecurityHeadersCrossOriginOpenerPolicy sets the Cross-Origin-Opener-Policy header value.
+// Pass an empty string to disable this header. No default is applied.
+func WithSecurityHeadersCrossOriginOpenerPolicy(val string) SecurityHeadersOption {
+	return func(opt *SecurityHeadersOptions) { opt.crossOriginOpenerPolicy = val }
+}
+
+// WithSecurityHeadersCrossOriginResourcePolicy sets the Cross-Origin-Resource-Policy header value.
+// Pass an empty string to disable this header. No default is applied.
+func WithSecurityHeadersCrossOriginResourcePolicy(val string) SecurityHeadersOption {
+	return func(opt *SecurityHeadersOptions) { opt.crossOriginResourcePolicy = val }
 }
 
 // SecurityHeaders is middleware that sets common security-related HTTP response headers.
@@ -224,7 +254,18 @@ func SecurityHeaders(opt ...SecurityHeadersOption) func(next http.Handler) http.
 			if options.permissionsPolicy != "" {
 				w.Header().Set("Permissions-Policy", options.permissionsPolicy)
 			}
-
+			if options.contentSecurityPolicy != "" {
+				w.Header().Set("Content-Security-Policy", options.contentSecurityPolicy)
+			}
+			if options.strictTransportSecurity != "" {
+				w.Header().Set("Strict-Transport-Security", options.strictTransportSecurity)
+			}
+			if options.crossOriginOpenerPolicy != "" {
+				w.Header().Set("Cross-Origin-Opener-Policy", options.crossOriginOpenerPolicy)
+			}
+			if options.crossOriginResourcePolicy != "" {
+				w.Header().Set("Cross-Origin-Resource-Policy", options.crossOriginResourcePolicy)
+			}
 			next.ServeHTTP(w, r)
 		})
 	}

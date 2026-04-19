@@ -286,15 +286,19 @@ router.UseMiddlewareFunc(gas.RequestLogger[*mylogger.Logger](
 ```
 
 **SecurityHeaders** — sets common security response headers with secure defaults. Each header can be overridden or
-disabled (by passing an empty string):
+disabled (by passing an empty string). Headers with no default are only emitted when explicitly configured:
 
-| Header                 | Default                                    |
-|------------------------|--------------------------------------------|
-| X-Content-Type-Options | `nosniff`                                  |
-| X-Frame-Options        | `DENY`                                     |
-| X-XSS-Protection       | `1; mode=block`                            |
-| Referrer-Policy        | `strict-origin-when-cross-origin`          |
-| Permissions-Policy     | `camera=(), microphone=(), geolocation=()` |
+| Header                       | Default                                    |
+|------------------------------|--------------------------------------------|
+| X-Content-Type-Options       | `nosniff`                                  |
+| X-Frame-Options              | `DENY`                                     |
+| X-XSS-Protection             | `1; mode=block`                            |
+| Referrer-Policy              | `strict-origin-when-cross-origin`          |
+| Permissions-Policy           | `camera=(), microphone=(), geolocation=()` |
+| Content-Security-Policy      | _(none — application-specific)_            |
+| Strict-Transport-Security    | _(none — enable once fully on HTTPS)_      |
+| Cross-Origin-Opener-Policy   | _(none)_                                   |
+| Cross-Origin-Resource-Policy | _(none)_                                   |
 
 ```go
 // Secure defaults — no options needed:

@@ -48,6 +48,12 @@ gas.WithSecurityHeadersFrameOptions(val string) SecurityHeadersOption
 gas.WithSecurityHeadersXSSProtection(val string) SecurityHeadersOption
 gas.WithSecurityHeadersReferrerPolicy(val string) SecurityHeadersOption
 gas.WithSecurityHeadersPermissionsPolicy(val string) SecurityHeadersOption
+
+/ No defaults — only emitted when explicitly set:
+gas.WithSecurityHeadersContentSecurityPolicy(val string) SecurityHeadersOption
+gas.WithSecurityHeadersStrictTransportSecurity(val string) SecurityHeadersOption
+gas.WithSecurityHeadersCrossOriginOpenerPolicy(val string) SecurityHeadersOption
+gas.WithSecurityHeadersCrossOriginResourcePolicy(val string) SecurityHeadersOption
 ```
 
 ## CacheControl
