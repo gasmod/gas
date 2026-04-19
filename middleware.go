@@ -141,7 +141,6 @@ func RequestLogger[T Logger](opt ...RequestLoggerOption) func(next http.Handler)
 type SecurityHeadersOptions struct {
 	contentTypeOptions        string
 	frameOptions              string
-	xssProtection             string
 	referrerPolicy            string
 	permissionsPolicy         string
 	contentSecurityPolicy     string
@@ -163,12 +162,6 @@ func WithSecurityHeadersContentTypeOptions(val string) SecurityHeadersOption {
 // Pass an empty string to disable this header. Default: "DENY".
 func WithSecurityHeadersFrameOptions(val string) SecurityHeadersOption {
 	return func(opt *SecurityHeadersOptions) { opt.frameOptions = val }
-}
-
-// WithSecurityHeadersXSSProtection sets the X-XSS-Protection header value.
-// Pass an empty string to disable this header. Default: "1; mode=block".
-func WithSecurityHeadersXSSProtection(val string) SecurityHeadersOption {
-	return func(opt *SecurityHeadersOptions) { opt.xssProtection = val }
 }
 
 // WithSecurityHeadersReferrerPolicy sets the Referrer-Policy header value.
@@ -210,7 +203,7 @@ func WithSecurityHeadersCrossOriginResourcePolicy(val string) SecurityHeadersOpt
 }
 
 // SecurityHeaders is middleware that sets common security-related HTTP response headers.
-// It applies secure defaults out of the box (nosniff, DENY framing, XSS filtering,
+// It applies secure defaults out of the box (nosniff, DENY framing,
 // strict referrer policy, and restrictive permissions policy). Use the functional options
 // to override individual header values, or pass an empty string to disable a specific header.
 func SecurityHeaders(opt ...SecurityHeadersOption) func(next http.Handler) http.Handler {
@@ -221,10 +214,6 @@ func SecurityHeaders(opt ...SecurityHeadersOption) func(next http.Handler) http.
 
 		// Blocks the page from being embedded in an iframe, protecting against clickjacking attacks
 		frameOptions: "DENY",
-
-		// Enables the browser's built-in XSS filter; if an attack is detected, the page is sanitized
-		// Note: largely obsolete in modern browsers that use CSP instead, but harmless to keep
-		xssProtection: "1; mode=block",
 
 		// Controls how much referrer information is sent with requests:
 		// full URL on same-origin, only the origin (scheme+host) on cross-origin, nothing on downgrade to HTTP
@@ -244,9 +233,6 @@ func SecurityHeaders(opt ...SecurityHeadersOption) func(next http.Handler) http.
 			}
 			if options.frameOptions != "" {
 				w.Header().Set("X-Frame-Options", options.frameOptions)
-			}
-			if options.xssProtection != "" {
-				w.Header().Set("X-XSS-Protection", options.xssProtection)
 			}
 			if options.referrerPolicy != "" {
 				w.Header().Set("Referrer-Policy", options.referrerPolicy)

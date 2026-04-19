@@ -36,7 +36,6 @@ gas.SecurityHeaders(opt ...SecurityHeadersOption) func(next http.Handler) http.H
 Defaults:
 - `X-Content-Type-Options: nosniff`
 - `X-Frame-Options: DENY`
-- `X-XSS-Protection: 1; mode=block`
 - `Referrer-Policy: strict-origin-when-cross-origin`
 - `Permissions-Policy: camera=(), microphone=(), geolocation=()`
 
@@ -45,7 +44,6 @@ Options:
 ```go
 gas.WithSecurityHeadersContentTypeOptions(val string) SecurityHeadersOption
 gas.WithSecurityHeadersFrameOptions(val string) SecurityHeadersOption
-gas.WithSecurityHeadersXSSProtection(val string) SecurityHeadersOption
 gas.WithSecurityHeadersReferrerPolicy(val string) SecurityHeadersOption
 gas.WithSecurityHeadersPermissionsPolicy(val string) SecurityHeadersOption
 
