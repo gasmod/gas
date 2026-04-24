@@ -96,6 +96,8 @@ func NewApp(opts ...Option) *App {
 	// Register infra as instances in the container.
 	RegisterInstance[*Router](w.serviceContainer, a.router)
 	RegisterInstance[*EventBus](w.serviceContainer, w.eventBus)
+	RegisterInstance[HealthProvider](w.serviceContainer, w)
+	RegisterInstance[ReadyProvider](w.serviceContainer, w)
 
 	// Set hooks so Worker delegates HTTP-specific work back to App.
 	w.postBuildHook = func() error {

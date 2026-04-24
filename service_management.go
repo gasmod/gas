@@ -1,7 +1,9 @@
 package gas
 
 import (
+	"context"
 	"fmt"
+	"sync"
 )
 
 // ActiveServices returns the names of all currently active services.
@@ -13,6 +15,73 @@ func (w *Worker) ActiveServices() []string {
 		names = append(names, name)
 	}
 	return names
+}
+
+// CheckHealth runs CheckHealth concurrently on every active service that
+// implements HealthReporter and returns a map of service name to result
+// (nil if healthy). Services that do not implement HealthReporter are omitted.
+func (w *Worker) CheckHealth(ctx context.Context) map[string]error {
+	return w.runReporters(ctx, func(svc Service) (func(context.Context) error, bool) {
+		r, ok := svc.(HealthReporter)
+		if !ok {
+			return nil, false
+		}
+		return r.CheckHealth, true
+	})
+}
+
+// CheckReady runs CheckReady concurrently on every active service that
+// implements ReadyReporter and returns a map of service name to result
+// (nil if ready). Services that do not implement ReadyReporter are omitted.
+func (w *Worker) CheckReady(ctx context.Context) map[string]error {
+	return w.runReporters(ctx, func(svc Service) (func(context.Context) error, bool) {
+		r, ok := svc.(ReadyReporter)
+		if !ok {
+			return nil, false
+		}
+		return r.CheckReady, true
+	})
+}
+
+func (w *Worker) runReporters(
+	ctx context.Context,
+	pick func(Service) (func(context.Context) error, bool),
+) map[string]error {
+	w.mu.Lock()
+	targets := make(map[string]func(context.Context) error, len(w.activeServices))
+	for name, svc := range w.activeServices {
+		if fn, ok := pick(svc); ok {
+			targets[name] = fn
+		}
+	}
+	w.mu.Unlock()
+
+	results := make(map[string]error, len(targets))
+	var (
+		wg sync.WaitGroup
+		mu sync.Mutex
+	)
+	for name, fn := range targets {
+		wg.Go(func() {
+			err := safeCall(ctx, fn)
+			mu.Lock()
+			results[name] = err
+			mu.Unlock()
+		})
+	}
+	wg.Wait()
+	return results
+}
+
+// safeCall runs fn with panic recovery so a misbehaving reporter cannot
+// crash the health/ready aggregation.
+func safeCall(ctx context.Context, fn func(context.Context) error) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic: %v", r)
+		}
+	}()
+	return fn(ctx)
 }
 
 // CloseService performs the kill-switch sequence for a single service at

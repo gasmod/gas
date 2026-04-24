@@ -136,6 +136,8 @@ w := gas.NewWorker(opts ...Option) *Worker
 | `ActiveServices`   | `() []string`          | Names of currently active services                       |
 | `CloseService`     | `(name string) error`  | Remove subs, call Close(), emit event                    |
 | `RestartService`   | `(name string) error`  | Re-initialize a previously closed service                |
+| `CheckHealth`      | `(ctx) map[string]error` | Concurrently polls all active `HealthReporter`s; also satisfies `HealthProvider` |
+| `CheckReady`       | `(ctx) map[string]error` | Concurrently polls all active `ReadyReporter`s; also satisfies `ReadyProvider` |
 
 ### Worker usage (Lambda example)
 
@@ -446,6 +448,14 @@ separate modules. See `references/providers.md` for full signatures.
 | `ConfigProvider`     | Configuration management   | gas-config          |
 | `TemplateProvider`   | Template storage/retrieval | gas-ui              |
 | `UIProvider`         | Template rendering         | gas-ui              |
+| `HealthProvider`     | Aggregate health of active services | core (Worker satisfies)  |
+| `ReadyProvider`      | Aggregate readiness of active services | core (Worker satisfies) |
+
+Services opt into health/readiness reporting by implementing `HealthReporter`
+(`CheckHealth(ctx) error`) and/or `ReadyReporter` (`CheckReady(ctx) error`).
+The `Worker` aggregates them concurrently with panic recovery; resolve
+`HealthProvider` / `ReadyProvider` from the container to expose a `/healthz`
+or `/readyz` endpoint without coupling handlers to `*Worker`.
 | `Logger`             | Structured logging         | gas-log             |
 | `MigrationManager`   | Database migrations        | gas-migrate         |
 | `Authenticator`      | Request authentication     | gas-auth            |

@@ -514,6 +514,10 @@ Services depend on interfaces, not implementations. Gas defines common providers
 | `ConfigProvider`   | `SetDefault`, `SetDefaults`, `Set`, `Bind`, `Get`, `Find`, `Values`         |
 | `TemplateProvider` | `Get`, `List`, `Register`, `RegisterFS`                                     |
 | `UIProvider`       | `Render`, `RenderWithStatus`, `RenderFragment`, `RegisterFuncs`             |
+| `HealthProvider`   | `CheckHealth(ctx) map[string]error` — Worker satisfies it                   |
+| `ReadyProvider`    | `CheckReady(ctx) map[string]error` — Worker satisfies it                    |
+| `HealthReporter`   | `CheckHealth(ctx) error` — opt-in per service                               |
+| `ReadyReporter`    | `CheckReady(ctx) error` — opt-in per service                                |
 | `Logger`           | `Trace`, `Debug`, `Info`, `Warn`, `Error`, `With`, `SetBaseFields`, `Flush` |
 | `MigrationManager` | `Register`, `RegisterSlice`, `RegisterFS`, `RunPending`, `Down`             |
 | `Authenticator`    | `Authenticate`                                                              |
@@ -690,6 +694,8 @@ app := gas.NewApp(
 | `w.ActiveServices()`               | `[]string`                  |                                                       |
 | `w.CloseService(name)`             | `error`                     | Kill-switch for a single service                      |
 | `w.RestartService(name)`           | `error`                     | Re-initialize a previously closed service             |
+| `w.CheckHealth(ctx)`               | `map[string]error`          | Concurrently polls all active `HealthReporter` services; satisfies `HealthProvider` |
+| `w.CheckReady(ctx)`                | `map[string]error`          | Concurrently polls all active `ReadyReporter` services; satisfies `ReadyProvider` |
 
 ## App Methods
 

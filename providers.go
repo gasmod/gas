@@ -227,6 +227,34 @@ type UIProvider interface {
 	RegisterFuncs(funcs template.FuncMap)
 }
 
+// HealthReporter is implemented by services that can report their own health.
+// A nil return means healthy; a non-nil error describes the failure.
+type HealthReporter interface {
+	CheckHealth(ctx context.Context) error
+}
+
+// ReadyReporter is implemented by services that can report whether they are
+// ready to accept traffic. Distinct from health: a service can be healthy
+// but not yet ready (warming caches, pending migrations, etc.). A nil return
+// means ready; a non-nil error describes why the service is not ready.
+type ReadyReporter interface {
+	CheckReady(ctx context.Context) error
+}
+
+// HealthProvider aggregates health signals across all active services that
+// implement HealthReporter. The returned map keys are service names; a nil
+// value indicates a healthy service.
+type HealthProvider interface {
+	CheckHealth(ctx context.Context) map[string]error
+}
+
+// ReadyProvider aggregates readiness signals across all active services that
+// implement ReadyReporter. The returned map keys are service names; a nil
+// value indicates a ready service.
+type ReadyProvider interface {
+	CheckReady(ctx context.Context) map[string]error
+}
+
 // ConfigProvider defines the config struct API, used by other modules that needs access to the config provider.
 type ConfigProvider interface {
 	SetDefault(key string, value any)

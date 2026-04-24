@@ -13,6 +13,8 @@ logging types, or supporting structs like Email and Migration.
 - [ConfigProvider](#configprovider)
 - [TemplateProvider](#templateprovider)
 - [UIProvider](#uiprovider)
+- [HealthProvider & HealthReporter](#healthprovider--healthreporter)
+- [ReadyProvider & ReadyReporter](#readyprovider--readyreporter)
 - [Logger](#logger)
 - [LoggerContext & MutableLoggerContext](#loggercontext--mutableloggercontext)
 - [LogEvent](#logevent)
@@ -191,6 +193,45 @@ type UIProvider interface {
 	RenderFragment(w http.ResponseWriter, name string, data any) error // renders without layout wrapper, useful for HTMX
 	RenderWithStatus(w http.ResponseWriter, status int, name string, data any) error
 	RegisterFuncs(funcs template.FuncMap)
+}
+```
+
+## HealthProvider & HealthReporter
+
+Services opt into health reporting by implementing `HealthReporter`. The
+`Worker` satisfies `HealthProvider`: it walks all active services and
+concurrently invokes `CheckHealth` on any that implement `HealthReporter`,
+returning a map of service name to result (nil = healthy). Panics inside a
+reporter are recovered and surfaced as errors. `HealthProvider` and
+`ReadyProvider` are pre-registered in the DI container — resolve the narrow
+interface instead of depending on `*Worker`.
+
+```go
+// Implemented by services that can report their own health.
+// Nil means healthy; non-nil describes the failure.
+type HealthReporter interface {
+	CheckHealth(ctx context.Context) error
+}
+
+// Aggregator across all active HealthReporters. Worker satisfies this.
+// Keys are service names; non-reporter services are omitted.
+type HealthProvider interface {
+	CheckHealth(ctx context.Context) map[string]error
+}
+```
+
+## ReadyProvider & ReadyReporter
+
+Same shape as health, but for readiness (a service can be healthy yet not
+ready — warming caches, pending migrations, etc.).
+
+```go
+type ReadyReporter interface {
+	CheckReady(ctx context.Context) error
+}
+
+type ReadyProvider interface {
+	CheckReady(ctx context.Context) map[string]error
 }
 ```
 

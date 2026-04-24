@@ -48,6 +48,8 @@ func NewWorker(opts ...Option) *Worker {
 	}
 
 	RegisterInstance[*EventBus](w.serviceContainer, w.eventBus)
+	RegisterInstance[HealthProvider](w.serviceContainer, w)
+	RegisterInstance[ReadyProvider](w.serviceContainer, w)
 
 	for _, opt := range opts {
 		switch o := opt.(type) {
