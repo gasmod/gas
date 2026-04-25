@@ -228,15 +228,21 @@ type UIProvider interface {
 }
 
 // HealthReporter is implemented by services that can report their own health.
-// A nil return means healthy; a non-nil error describes the failure.
+// Answers the question "am I alive?" — a failure here signals that the process
+// is in a broken state that a restart would resolve (lost connection that
+// won't recover, corrupt internal state, deadlock). Maps to a Kubernetes
+// livenessProbe. A nil return means healthy; a non-nil error describes the
+// failure.
 type HealthReporter interface {
 	CheckHealth(ctx context.Context) error
 }
 
 // ReadyReporter is implemented by services that can report whether they are
-// ready to accept traffic. Distinct from health: a service can be healthy
-// but not yet ready (warming caches, pending migrations, etc.). A nil return
-// means ready; a non-nil error describes why the service is not ready.
+// ready to accept traffic. Answers the question "should traffic be routed to
+// me?" — distinct from health, since a service can be alive but not yet ready
+// (warming caches, pending migrations, dependency briefly unavailable,
+// draining during shutdown). Maps to a Kubernetes readinessProbe. A nil
+// return means ready; a non-nil error describes why the service is not ready.
 type ReadyReporter interface {
 	CheckReady(ctx context.Context) error
 }
