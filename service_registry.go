@@ -67,7 +67,7 @@ func RegisterCtor[T any](c *ServiceContainer, ctor any, lifetime ServiceLifetime
 	t := reflect.TypeFor[T]()
 	if lifetime == ServiceLifetimeTransient {
 		svcType := reflect.TypeFor[Service]()
-		if t.Implements(svcType) || (t.Kind() == reflect.Ptr && t.Implements(svcType)) {
+		if t.Implements(svcType) || (t.Kind() == reflect.Pointer && t.Implements(svcType)) {
 			panic(fmt.Sprintf("gas: transient service %v implements Service; use Singleton or Scoped lifetime instead", t))
 		}
 	}
