@@ -1,5 +1,7 @@
 # Gas
 
+[![Test](https://github.com/gasmod/gas/actions/workflows/test.yml/badge.svg)](https://github.com/gasmod/gas/actions/workflows/test.yml) [![Go Reference](https://pkg.go.dev/badge/github.com/gasmod/gas.svg)](https://pkg.go.dev/github.com/gasmod/gas) [![Go Report Card](https://goreportcard.com/badge/github.com/gasmod/gas)](https://goreportcard.com/report/github.com/gasmod/gas) ![Go Version](https://img.shields.io/github/go-mod/go-version/gasmod/gas) [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
 Gas is the core of a modular Gas ecosystem for building micro-SaaS applications. It provides shared
 infrastructure — dependency injection, routing, middleware, events, migrations, and service lifecycle management — so you
 can focus on business logic instead of rebuilding the same plumbing for every project.
