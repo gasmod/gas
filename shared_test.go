@@ -77,13 +77,13 @@ func (s *readyOnlyService[K]) CheckReady(_ context.Context) error { return s.err
 // that CheckHealth runs reporters concurrently.
 type slowReporter[K any] struct {
 	started chan struct{}
-	delay   time.Duration
 	name    string
+	delay   time.Duration
 }
 
-func (s *slowReporter[K]) Name() string  { return s.name }
-func (s *slowReporter[K]) Init() error   { return nil }
-func (s *slowReporter[K]) Close() error  { return nil }
+func (s *slowReporter[K]) Name() string { return s.name }
+func (s *slowReporter[K]) Init() error  { return nil }
+func (s *slowReporter[K]) Close() error { return nil }
 func (s *slowReporter[K]) CheckHealth(ctx context.Context) error {
 	if s.started != nil {
 		select {
@@ -117,9 +117,9 @@ type ctxObservingReporter[K any] struct {
 	name string
 }
 
-func (s *ctxObservingReporter[K]) Name() string  { return s.name }
-func (s *ctxObservingReporter[K]) Init() error   { return nil }
-func (s *ctxObservingReporter[K]) Close() error  { return nil }
+func (s *ctxObservingReporter[K]) Name() string { return s.name }
+func (s *ctxObservingReporter[K]) Init() error  { return nil }
+func (s *ctxObservingReporter[K]) Close() error { return nil }
 func (s *ctxObservingReporter[K]) CheckHealth(ctx context.Context) error {
 	s.seen <- ctx
 	return nil
