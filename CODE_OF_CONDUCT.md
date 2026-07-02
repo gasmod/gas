@@ -1,37 +1,32 @@
-# Contributor Covenant Code of Conduct
+# Code of Conduct
 
-## Our Pledge
+## Scope
 
-We as members, contributors, and leaders pledge to make participation in our
-community a harassment-free experience for everyone.
+This project has one maintainer today. This document sets the conduct expected in project spaces (the repository, issues, pull requests, discussions, and any project channel) and states what happens when that conduct isn't met. It applies to everyone who participates, maintainer included.
 
-## Our Standards
+## Standards
 
-Examples of behavior that contributes to a positive environment include:
+The work here is technical. Direct criticism of code, design, and decisions is expected and welcome; that is the point of an open repository. Being wrong is not a violation. Changing your mind is not a violation. Disagreeing with the maintainer is not a violation.
 
-- Demonstrating empathy and kindness toward other people.
-- Being respectful of differing opinions, viewpoints, and experiences.
-- Giving and gracefully accepting constructive feedback.
-- Accepting responsibility and apologizing to those affected by our mistakes,
-  and learning from the experience.
+The line is conduct toward people, not positions. The following are out of bounds:
 
-Unacceptable behavior includes:
+- Personal attacks, insults, or demeaning comments aimed at a person rather than their argument.
+- Harassment of any kind, public or private, including sustained disruption after being asked to stop.
+- Sexualized language, imagery, or advances.
+- Publishing someone's private information without their consent.
+- Deliberate bad-faith participation: knowingly false reports, sabotage, or trolling.
 
-- Use of sexualized language or imagery, and sexual attention or advances.
-- Trolling, insulting or derogatory comments, and personal or political attacks.
-- Public or private harassment.
-- Publishing others' private information without explicit permission.
-- Other conduct which could reasonably be considered inappropriate in a
-  professional setting.
+If you are unsure whether something crosses the line, the test is whether it is aimed at the work or at the person.
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the project maintainers at **mail@ahmedkamal.io**. All complaints
-will be reviewed and investigated promptly and fairly.
+Reports go to **contact@ahmedkamal.io**. Include what happened, where, and links if they exist. There is no committee and no response-time guarantee, but every report is read and reviewed.
 
-## Attribution
+Because this is a solo project, enforcement is at the maintainer's discretion. There is no appeals board and no pretense of one. What is committed here is that action is proportionate to what happened, and applied to conduct rather than to whose side of a technical argument someone was on. In rough order of severity:
 
-This Code of Conduct is adapted from the
-[Contributor Covenant](https://www.contributor-covenant.org), version 2.1,
-available at https://www.contributor-covenant.org/version/2/1/code_of_conduct.html.
+1. A private note that the conduct is not acceptable, stating what needs to change.
+2. A public correction on the thread, with edits or removal of the offending content.
+3. A temporary block from project spaces.
+4. A permanent block.
+
+Severity, repetition, and whether the behavior stops determine which applies. A single serious violation can go straight to a block without the earlier steps.
