@@ -2,5 +2,5 @@
 //
 // See the module README for usage examples and design rationale.
 //
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 package gas

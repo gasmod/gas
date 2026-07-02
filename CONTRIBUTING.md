@@ -25,7 +25,6 @@ Thanks for your interest in contributing!
 ## Code style
 
 - Follow the existing patterns in the package you're touching.
-- Run `gofmt` / `goimports`. CI checks formatting.
 - Document exported APIs. Doc comments should start with the symbol name.
 
 ## Reporting security issues
