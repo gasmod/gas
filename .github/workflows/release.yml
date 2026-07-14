@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  lint:
+  release:
     runs-on: ubuntu-latest
     steps:
       - name: Check out code
@@ -23,7 +23,7 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.11
+          version: v2.12
           args: --timeout=5m
           working-directory: .
 
