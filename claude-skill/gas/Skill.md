@@ -123,21 +123,21 @@ w := gas.NewWorker(opts ...Option) *Worker
 
 ### Worker methods
 
-| Method             | Signature              | Description                                              |
-|--------------------|------------------------|----------------------------------------------------------|
-| `Start`            | `() error`             | InitServices → migrations → ready hooks (non-blocking)   |
-| `Shutdown`         | `() error`             | Emit SystemShuttingDown, close services in reverse order  |
-| `Run`              | `() error`             | Start → block on SIGINT/SIGTERM → Shutdown               |
-| `InitServices`     | `() error`             | Build singletons, collect services, emit init event       |
-| `EventBus`         | `() *EventBus`         | The worker's event bus                                   |
-| `ServiceContainer` | `() *ServiceContainer` | The DI container                                         |
-| `MigrationManager` | `() MigrationManager`  | Resolved from DI, nil if unregistered                    |
-| `ConfigProvider`   | `() ConfigProvider`    | Resolved from DI, nil if unregistered                    |
-| `ActiveServices`   | `() []string`          | Names of currently active services                       |
-| `CloseService`     | `(name string) error`  | Remove subs, call Close(), emit event                    |
-| `RestartService`   | `(name string) error`  | Re-initialize a previously closed service                |
+| Method             | Signature                | Description                                                                      |
+|--------------------|--------------------------|----------------------------------------------------------------------------------|
+| `Start`            | `() error`               | InitServices → migrations → ready hooks (non-blocking)                           |
+| `Shutdown`         | `() error`               | Emit SystemShuttingDown, close services in reverse order                         |
+| `Run`              | `() error`               | Start → block on SIGINT/SIGTERM → Shutdown                                       |
+| `InitServices`     | `() error`               | Build singletons, collect services, emit init event                              |
+| `EventBus`         | `() *EventBus`           | The worker's event bus                                                           |
+| `ServiceContainer` | `() *ServiceContainer`   | The DI container                                                                 |
+| `MigrationManager` | `() MigrationManager`    | Resolved from DI, nil if unregistered                                            |
+| `ConfigProvider`   | `() ConfigProvider`      | Resolved from DI, nil if unregistered                                            |
+| `ActiveServices`   | `() []string`            | Names of currently active services                                               |
+| `CloseService`     | `(name string) error`    | Remove subs, call Close(), emit event                                            |
+| `RestartService`   | `(name string) error`    | Re-initialize a previously closed service                                        |
 | `CheckHealth`      | `(ctx) map[string]error` | Concurrently polls all active `HealthReporter`s; also satisfies `HealthProvider` |
-| `CheckReady`       | `(ctx) map[string]error` | Concurrently polls all active `ReadyReporter`s; also satisfies `ReadyProvider` |
+| `CheckReady`       | `(ctx) map[string]error` | Concurrently polls all active `ReadyReporter`s; also satisfies `ReadyProvider`   |
 
 ### Worker usage (Lambda example)
 
@@ -186,16 +186,16 @@ yourself, or grab the `*http.Server` / `http.Handler` directly.
 
 ### App-specific methods
 
-| Method     | Signature        | Description                                                            |
-|------------|------------------|------------------------------------------------------------------------|
-| `Run`      | `() error`       | Full lifecycle: Start → Serve → block on signal → Stop                 |
-| `Start`    | `() error`       | `Worker.Start` + `bindConfig`. Does not start the HTTP server          |
-| `Serve`    | `() error`       | Starts the HTTP server and blocks until it stops (blocking)            |
-| `Stop`     | `() error`       | Emit shutdown event → graceful HTTP shutdown → `Worker.Shutdown`       |
-| `Server`   | `() *http.Server`| Lazily-built `*http.Server` from current Config (cached, thread-safe)  |
-| `Handler`  | `() http.Handler`| Router wrapped in CSRF protection — useful for `httptest.NewServer`    |
-| `Config`   | `() *Config`     | Application configuration (with ServerSettings)                        |
-| `Router`   | `() *Router`     | The app's router                                                       |
+| Method    | Signature         | Description                                                           |
+|-----------|-------------------|-----------------------------------------------------------------------|
+| `Run`     | `() error`        | Full lifecycle: Start → Serve → block on signal → Stop                |
+| `Start`   | `() error`        | `Worker.Start` + `bindConfig`. Does not start the HTTP server         |
+| `Serve`   | `() error`        | Starts the HTTP server and blocks until it stops (blocking)           |
+| `Stop`    | `() error`        | Emit shutdown event → graceful HTTP shutdown → `Worker.Shutdown`      |
+| `Server`  | `() *http.Server` | Lazily-built `*http.Server` from current Config (cached, thread-safe) |
+| `Handler` | `() http.Handler` | Router wrapped in CSRF protection — useful for `httptest.NewServer`   |
+| `Config`  | `() *Config`      | Application configuration (with ServerSettings)                       |
+| `Router`  | `() *Router`      | The app's router                                                      |
 
 ## DI Container
 
@@ -360,28 +360,33 @@ Panics if any of parent, w, or r is nil. Options: `gas.WithValidate(v)`,
 
 ### Context methods
 
-| Method           | Signature                      | Notes                   |
-|------------------|--------------------------------|-------------------------|
-| `ResponseWriter` | `() http.ResponseWriter`       |                         |
-| `Request`        | `() *http.Request`             |                         |
-| `JSON`           | `(status int, v any) error`    | application/json        |
-| `XML`            | `(status int, v any) error`    | application/xml         |
-| `RSS`            | `(status int, v any) error`    | application/rss+xml     |
-| `HTML`           | `(status int, s string) error` | text/html               |
-| `Text`           | `(status int, s string) error` | text/plain              |
-| `NoContent`      | `() error`                     | 204                     |
-| `Redirect`       | `(status int, url string)`     |                         |
-| `Param`          | `(key string) string`          | chi.URLParam            |
-| `Query`          | `(key string) string`          |                         |
-| `Header`         | `(key string) string`          | request header          |
-| `SetHeader`      | `(key, value string)`          | response header         |
-| `BindJSON`       | `(dest any) error`             | decode + validate       |
-| `BindForm`       | `(dest any) error`             | decode + validate       |
-| `Validator`      | `() *validator.Validate`       | go-playground/validator |
-| `FormDecoder`    | `() *schema.Decoder`           | gorilla/schema          |
+| Method           | Signature                      | Notes                    |
+|------------------|--------------------------------|--------------------------|
+| `ResponseWriter` | `() http.ResponseWriter`       |                          |
+| `Request`        | `() *http.Request`             |                          |
+| `JSON`           | `(status int, v any) error`    | application/json         |
+| `XML`            | `(status int, v any) error`    | application/xml          |
+| `RSS`            | `(status int, v any) error`    | application/rss+xml      |
+| `HTML`           | `(status int, s string) error` | text/html                |
+| `Text`           | `(status int, s string) error` | text/plain               |
+| `NoContent`      | `() error`                     | 204                      |
+| `Error`          | `(err error) error`            | unified error response   |
+| `ErrorJSON`      | `(err error) error`            | forces the JSON envelope |
+| `Redirect`       | `(status int, url string)`     |                          |
+| `Param`          | `(key string) string`          | chi.URLParam             |
+| `Query`          | `(key string) string`          |                          |
+| `Header`         | `(key string) string`          | request header           |
+| `SetHeader`      | `(key, value string)`          | response header          |
+| `BindJSON`       | `(dest any) error`             | decode + validate        |
+| `BindForm`       | `(dest any) error`             | decode + validate        |
+| `Validator`      | `() *validator.Validate`       | go-playground/validator  |
+| `FormDecoder`    | `() *schema.Decoder`           | gorilla/schema           |
 
 `BindJSON` and `BindForm` both decode and then run struct validation via
-`go-playground/validator`. The form decoder uses alias tag `"form"` and has
+`go-playground/validator`, returning a `*gas.Error`: 400 (`invalid_json` /
+`invalid_form`) for a malformed body, 422 (`validation_failed`) with one
+`FieldError` per violation, named by json tag. The underlying error stays
+reachable through `errors.As`. The form decoder uses alias tag `"form"` and has
 `IgnoreUnknownKeys(true)` enabled.
 
 Because `Context` is an interface, tests can mock it via embedding:
@@ -389,19 +394,89 @@ Because `Context` is an interface, tests can mock it via embedding:
 type mockContext struct { gas.Context }
 ```
 
-## ErrorHandler
+## Errors and ErrorHandler
 
-Converts a handler error into an HTTP response. The default logs the error
-(if a Logger is in the container) and returns 500 with the standard status text.
+`gas.Error` is the unified error shape handlers return. Applications should not
+define their own error struct.
 
 ```go
-type ErrorHandler func(ctx Context, err error)
+type Error struct {
+	Status  int            `json:"-"`
+	Code    string         `json:"code"`
+	Message string         `json:"message"`
+	Fields  []FieldError   `json:"fields,omitempty"`
+	Details map[string]any `json:"details,omitempty"`
+	// unexported cause: logged, never serialized
+}
+
+type FieldError struct {
+	Field   string `json:"field"`
+	Rule    string `json:"rule"`
+	Message string `json:"message"`
+}
 ```
 
-Custom error handlers should handle both normal errors and panic-originated
-errors (which arrive as `fmt.Errorf("gas: handler panic: %v", rec)`).
+Constructors, each setting the matching status and code:
 
-Override via `gas.WithErrorHandler(h)` or `router.SetErrorHandler(h)`.
+| Constructor                   | Status | Code                  |
+|-------------------------------|--------|-----------------------|
+| `BadRequest(msg)`             | 400    | `bad_request`         |
+| `Unauthorized(msg)`           | 401    | `unauthorized`        |
+| `Forbidden(msg)`              | 403    | `forbidden`           |
+| `NotFound(msg)`               | 404    | `not_found`           |
+| `Conflict(msg)`               | 409    | `conflict`            |
+| `Unprocessable(msg)`          | 422    | `validation_failed`   |
+| `TooManyRequests(msg)`        | 429    | `rate_limited`        |
+| `Internal(msg)`               | 500    | `internal_error`      |
+| `ServiceUnavailable(msg)`     | 503    | `service_unavailable` |
+| `NewError(status, code, msg)` | custom | custom                |
+
+Codes are also exported as constants (`gas.CodeNotFound`, `gas.CodeInternal`,
+`gas.CodeValidationFailed`, `gas.CodeInvalidJSON`, `gas.CodeInvalidForm`, and
+the rest). Builders: `WithCause(err)`, `WithField(field, rule, message)`,
+`WithDetail(key, val)`. Classify with `gas.AsError(err) (*Error, bool)`.
+
+These are functions, not sentinel vars — the builders mutate the receiver, so a
+shared `var` would be corruptible.
+
+```go
+return gas.NotFound("user not found").WithCause(sql.ErrNoRows)
+```
+
+Wire format is `gas.ErrorResponse`, the `{"error": {...}}` envelope:
+
+```json
+{"error":{"code":"not_found","message":"user not found"}}
+```
+
+`ErrorHandler` keeps its signature, `func(ctx Context, err error)`. The default
+renders a `*Error` at its own status, collapses everything else (raw errors,
+handler panics arriving as `gas: handler panic: %v`, DI resolution failures)
+into a generic 500 with the original logged only, and logs status >= 500 at
+error level and the rest at warn.
+
+Rendering is one exported function, safe to call from middleware because it
+neither logs nor touches the request scope:
+
+```go
+gas.WriteError(w http.ResponseWriter, r *http.Request, err error) error
+gas.WantsJSON(r *http.Request) bool
+```
+
+Clients that do not explicitly prefer `text/html` get JSON. Inside a handler,
+`ctx.Error(err)` writes the negotiated response and `ctx.ErrorJSON(err)` forces
+the envelope.
+
+Override the handler via `gas.WithErrorHandler(h)` or `router.SetErrorHandler(h)`.
+
+Other Gas modules (gas-auth, gas-database, and so on) keep their own sentinel
+errors; map them at the application boundary:
+
+```go
+if errors.Is(err, session.ErrExpired) {
+	return gas.Unauthorized("session expired").WithCause(err)
+}
+```
 
 ## EventBus
 
@@ -438,29 +513,29 @@ gas.SubscribeWithOwner[T](bus *EventBus, service string, event Event[T], handler
 Gas defines provider interfaces in the core package; implementations live in
 separate modules. See `references/providers.md` for full signatures.
 
-| Interface            | Purpose                    | Implementing module |
-|----------------------|----------------------------|---------------------|
-| `DatabaseProvider`   | SQL database access        | gas-database        |
-| `CacheProvider`      | Key-value caching          | gas-cache           |
-| `JobQueueProvider`   | Async job/message queues   | gas-queue           |
-| `EmailProvider`      | Email sending              | gas-email           |
-| `StorageProvider`    | File storage (S3, etc.)    | gas-storage         |
-| `ConfigProvider`     | Configuration management   | gas-config          |
-| `TemplateProvider`   | Template storage/retrieval | gas-ui              |
-| `UIProvider`         | Template rendering         | gas-ui              |
-| `HealthProvider`     | Aggregate health of active services | core (Worker satisfies)  |
-| `ReadyProvider`      | Aggregate readiness of active services | core (Worker satisfies) |
+| Interface          | Purpose                                | Implementing module     |
+|--------------------|----------------------------------------|-------------------------|
+| `DatabaseProvider` | SQL database access                    | gas-database            |
+| `CacheProvider`    | Key-value caching                      | gas-cache               |
+| `JobQueueProvider` | Async job/message queues               | gas-queue               |
+| `EmailProvider`    | Email sending                          | gas-email               |
+| `StorageProvider`  | File storage (S3, etc.)                | gas-storage             |
+| `ConfigProvider`   | Configuration management               | gas-config              |
+| `TemplateProvider` | Template storage/retrieval             | gas-ui                  |
+| `UIProvider`       | Template rendering                     | gas-ui                  |
+| `Logger`           | Structured logging                     | gas-log                 |
+| `MigrationManager` | Database migrations                    | gas-migrate             |
+| `Authenticator`    | Request authentication                 | gas-auth                |
+| `Authorizer`       | Action authorization                   | gas-auth                |
+| `PrincipalRevoker` | Credential revocation                  | gas-auth                |
+| `HealthProvider`   | Aggregate health of active services    | core (Worker satisfies) |
+| `ReadyProvider`    | Aggregate readiness of active services | core (Worker satisfies) |
 
 Services opt into health/readiness reporting by implementing `HealthReporter`
 (`CheckHealth(ctx) error`) and/or `ReadyReporter` (`CheckReady(ctx) error`).
 The `Worker` aggregates them concurrently with panic recovery; resolve
 `HealthProvider` / `ReadyProvider` from the container to expose a `/healthz`
 or `/readyz` endpoint without coupling handlers to `*Worker`.
-| `Logger`             | Structured logging         | gas-log             |
-| `MigrationManager`   | Database migrations        | gas-migrate         |
-| `Authenticator`      | Request authentication     | gas-auth            |
-| `Authorizer`         | Action authorization       | gas-auth            |
-| `PrincipalRevoker`   | Credential revocation      | gas-auth            |
 
 ### NopLogger
 

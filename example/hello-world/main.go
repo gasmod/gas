@@ -35,7 +35,10 @@ func main() {
 		gas.WithSingletonService[*GreetModule](NewGreetModule()),
 		gas.WithSingletonService[*NotesModule](NewNotesModule()),
 
-		// Custom error handler.
+		// Custom error handler. A custom handler owns the whole response, so
+		// this one flattens every error to 500; swap the body for
+		// gas.WriteError(ctx.ResponseWriter(), ctx.Request(), err) to get the
+		// unified shape at the error's own status instead.
 		gas.WithErrorHandler(func(ctx gas.Context, err error) {
 			logger := gas.MustResolveFromRequestScope[RequestLogger](ctx.Request())
 			logger.Error("request failed").Err("error", err).Send()

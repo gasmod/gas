@@ -343,8 +343,19 @@ func TestDIHandler_ErrorHandling_Default(t *testing.T) {
 	if rr.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d", rr.Code)
 	}
-	if !strings.Contains(rr.Body.String(), http.StatusText(http.StatusInternalServerError)) {
-		t.Fatalf("expected default error message in body, got %q", rr.Body.String())
+
+	// Read the body once: decoding drains the recorder's buffer.
+	raw := rr.Body.String()
+
+	var body gas.ErrorResponse
+	if err := json.Unmarshal([]byte(raw), &body); err != nil {
+		t.Fatalf("expected a JSON error envelope, got %q: %v", raw, err)
+	}
+	if body.Error.Code != gas.CodeInternal {
+		t.Fatalf("expected code %q, got %q", gas.CodeInternal, body.Error.Code)
+	}
+	if strings.Contains(raw, "something went wrong") {
+		t.Fatalf("handler error text leaked to client: %q", raw)
 	}
 }
 
@@ -587,8 +598,15 @@ func TestContext_BindJSON(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected validation error, got nil")
 		}
-		if !strings.Contains(err.Error(), "validation failed") {
-			t.Fatalf("expected validation error message, got: %v", err)
+		e, ok := gas.AsError(err)
+		if !ok {
+			t.Fatalf("expected *gas.Error, got %T: %v", err, err)
+		}
+		if e.Status != http.StatusUnprocessableEntity {
+			t.Fatalf("expected 422, got %d", e.Status)
+		}
+		if len(e.Fields) != 1 || e.Fields[0].Rule != "required" {
+			t.Fatalf("expected one required-rule field error, got %+v", e.Fields)
 		}
 	})
 }
@@ -628,8 +646,15 @@ func TestContext_BindForm(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected validation error, got nil")
 		}
-		if !strings.Contains(err.Error(), "validation failed") {
-			t.Fatalf("expected validation error message, got: %v", err)
+		e, ok := gas.AsError(err)
+		if !ok {
+			t.Fatalf("expected *gas.Error, got %T: %v", err, err)
+		}
+		if e.Status != http.StatusUnprocessableEntity {
+			t.Fatalf("expected 422, got %d", e.Status)
+		}
+		if len(e.Fields) != 1 || e.Fields[0].Rule != "required" {
+			t.Fatalf("expected one required-rule field error, got %+v", e.Fields)
 		}
 	})
 }
