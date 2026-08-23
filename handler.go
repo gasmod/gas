@@ -16,10 +16,24 @@ import (
 type ErrorHandler func(ctx Context, err error)
 
 func defaultErrorHandler(ctx Context, err error) {
-	if logger, resErr := ResolveFromRequestScope[Logger](ctx.Request()); resErr == nil {
-		logger.Error("unhandled request error").Err("error", err).Send()
+	e := coerceError(err)
+
+	logger, resErr := ResolveFromRequestScope[Logger](ctx.Request())
+	hasLogger := resErr == nil
+	if hasLogger {
+		// A 4xx is the client's mistake, not a server fault; logging every
+		// deliberate 404 at error level would drown the real failures.
+		if normalizeStatus(e.Status) >= http.StatusInternalServerError {
+			logger.Error("unhandled request error").Err("error", err).Send()
+		} else {
+			logger.Warn("request error").Err("error", err).Send()
+		}
 	}
-	http.Error(ctx.ResponseWriter(), http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+
+	wErr := WriteError(ctx.ResponseWriter(), ctx.Request(), e)
+	if wErr != nil && hasLogger {
+		logger.Error("failed to write error response").Err("error", wErr).Send()
+	}
 }
 
 // handlerMeta holds pre-computed reflection data for a DI-aware handler.

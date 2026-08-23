@@ -97,9 +97,9 @@ func (m *GreetModule) handleJSON(ctx gas.Context, reqID *RequestID) error {
 	})
 }
 
-// handleError — demonstrates error propagation to the custom ErrorHandler.
+// handleError — demonstrates the unified error shape reaching the ErrorHandler.
 func (m *GreetModule) handleError(gas.Context) error {
-	return errExample
+	return gas.NotFound("greeting not found").WithCause(errExample)
 }
 
 func (m *GreetModule) handlePanic(gas.Context) error {

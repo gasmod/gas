@@ -10,7 +10,7 @@ request's DI scope. Logs method, path, status, bytes, duration, and remote
 address. Status >= 400 logs at error level; otherwise info. If the logger
 cannot be resolved, the middleware passes through silently.
 
-When `appendRequestId` is enabled (default), expects chi's `RequestID`
+When `appendRequestID` is enabled (default), expects chi's `RequestID`
 middleware upstream so `middleware.GetReqID` returns a value.
 
 ```go
@@ -22,6 +22,12 @@ Options:
 ```go
 // Controls whether the request ID is added to the logger's base fields. Default: true.
 gas.WithRequestLoggerAppendRequestID(val bool) RequestLoggerOption
+
+// Customizes the logger used for each request. Receives the resolved Logger
+// and the current request, returns a (possibly wrapped or enriched) Logger.
+// Called after the request ID field is appended, so it can add extra fields,
+// swap the logger, or adjust levels per request. Default: nil (no wrapping).
+gas.WithRequestLoggerBuilder(fn func(Logger, *http.Request) Logger) RequestLoggerOption
 ```
 
 ## SecurityHeaders
@@ -47,7 +53,7 @@ gas.WithSecurityHeadersFrameOptions(val string) SecurityHeadersOption
 gas.WithSecurityHeadersReferrerPolicy(val string) SecurityHeadersOption
 gas.WithSecurityHeadersPermissionsPolicy(val string) SecurityHeadersOption
 
-/ No defaults — only emitted when explicitly set:
+// No defaults — only emitted when explicitly set:
 gas.WithSecurityHeadersContentSecurityPolicy(val string) SecurityHeadersOption
 gas.WithSecurityHeadersStrictTransportSecurity(val string) SecurityHeadersOption
 gas.WithSecurityHeadersCrossOriginOpenerPolicy(val string) SecurityHeadersOption
