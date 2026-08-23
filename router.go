@@ -153,7 +153,7 @@ func NewRouter() *Router {
 		errorHandler:    defaultErrorHandler,
 		pendingHandlers: &ph,
 		rebuilding:      &rebuilding,
-		validator:       validator.New(),
+		validator:       newValidator(),
 		formDecoder:     dec,
 	}
 	// Publish an empty tree so ServeHTTP never sees a nil snapshot before Seal.
@@ -571,8 +571,12 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	r.mux.ServeHTTP(w, req)
 }
 
-func (r *Router) handleUnavailable(w http.ResponseWriter, _ *http.Request) {
-	http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+// handleUnavailable serves routes whose owning service has been torn down. It
+// renders the unified error shape so a killed service is indistinguishable from
+// any other error as far as the client's parser is concerned. The owning
+// service name is deliberately left out of the body.
+func (r *Router) handleUnavailable(w http.ResponseWriter, req *http.Request) {
+	_ = WriteError(w, req, ServiceUnavailable("service unavailable"))
 }
 
 // resolveMiddleware returns the handler function for a Middleware. Must be

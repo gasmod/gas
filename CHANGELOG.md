@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Unified error shape** — `gas.Error` with `Status`, `Code`, `Message`,
+  `Fields`, and `Details`, plus constructors (`gas.NotFound`,
+  `gas.BadRequest`, `gas.Unprocessable`, and the rest), builder methods
+  (`WithCause`, `WithField`, `WithDetail`), and `gas.AsError`. Handlers
+  return it and core renders it, replacing the per-application error struct.
+- **`gas.WriteError`** — the single rendering entry point, usable from
+  handlers, custom `ErrorHandler`s, and custom middleware. It never logs and
+  never touches the request scope, so it is safe before the scope middleware
+  runs. `gas.WantsJSON` exposes the same Accept negotiation.
+- **`Context.Error` and `Context.ErrorJSON`** — write the unified response
+  directly from a handler.
+- **`gas.ErrorResponse`** — the `{"error": {...}}` envelope, exported so Go
+  clients and tests can decode it.
+
+### Changed
+
+- The default `ErrorHandler` now renders a `gas.Error` at its own status
+  instead of collapsing everything to a plain-text 500. Clients that do not
+  explicitly prefer `text/html` receive the JSON envelope.
+- Handler errors below status 500 log at warn level instead of error.
+- Routes belonging to a service torn down via `CloseService` now return
+  the unified error shape (503, `service_unavailable`) instead of a
+  plain-text body. The status is unchanged.
+- `Context.BindJSON` and `Context.BindForm` return `*gas.Error`: 400 for a
+  malformed body, 422 with per-field detail for a validation failure. The
+  underlying error remains reachable through `errors.As`.
+- Validation field names now follow the `json` tag the client sent rather than
+  the Go struct field name.
+
+### Security
+
+- Errors that are not a `gas.Error`, including handler panics and DI
+  resolution failures, collapse to a generic 500. The original reaches the
+  logger only and is never serialized into a response body.
+
 ## [0.3.0] - 2026-07-02
 
 First open source release. Versions prior to 0.3.0 were developed in a private

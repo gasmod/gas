@@ -37,6 +37,14 @@ type Context interface {
 	Text(status int, s string) error
 	// NoContent writes a 204 No Content response.
 	NoContent() error
+	// Error writes err as the unified error response, negotiating JSON or
+	// plain text the same way the default ErrorHandler does. Values that are
+	// not, and do not wrap, an *Error render as a canonical 500.
+	Error(err error) error
+	// ErrorJSON writes the JSON error envelope regardless of the Accept
+	// header. Use it for JSON API routes in an app whose ErrorHandler renders
+	// HTML.
+	ErrorJSON(err error) error
 	// Redirect sends an HTTP redirect to the given URL with the given status code.
 	Redirect(status int, url string)
 	// Param returns the URL parameter value by name (chi.URLParam).
@@ -174,6 +182,18 @@ func (c *reqContext) NoContent() error {
 	return nil
 }
 
+// Error writes err as the unified error response, negotiating JSON or plain
+// text via the Accept header. It returns only a genuine encode or write
+// failure, matching JSON.
+func (c *reqContext) Error(err error) error {
+	return WriteError(c.w, c.r, err)
+}
+
+// ErrorJSON writes the JSON error envelope regardless of the Accept header.
+func (c *reqContext) ErrorJSON(err error) error {
+	return writeErrorResponse(c.w, coerceError(err), true)
+}
+
 func (c *reqContext) Redirect(status int, url string) {
 	http.Redirect(c.w, c.r, url, status)
 }
@@ -194,42 +214,55 @@ func (c *reqContext) SetHeader(key, value string) {
 	c.w.Header().Set(key, value)
 }
 
-// BindJSON decodes the request body as JSON into dest and performs automatic validation
-// using the validator instance. Returns an error if decoding or validation fails.
+// BindJSON decodes the request body as JSON into dest and validates it.
+// A malformed body yields a 400 *Error; a validation failure yields a 422
+// *Error whose Fields describe each violation. The underlying decode or
+// validation error remains reachable through errors.As.
 func (c *reqContext) BindJSON(dest any) error {
 	if err := json.NewDecoder(c.r.Body).Decode(dest); err != nil {
-		return fmt.Errorf("failed to decode JSON: %w", err)
+		return NewError(http.StatusBadRequest, CodeInvalidJSON,
+			"request body is not valid JSON").WithCause(err)
 	}
 
-	if err := c.Validator().Struct(dest); err != nil {
-		return fmt.Errorf("validation failed: %w", err)
-	}
-
-	return nil
+	return c.validateStruct(dest)
 }
 
-// BindForm binds form data from the HTTP request to the provided destination object
-// and performs automatic validation using the validator instance.
-// Returns an error if form parsing, decoding, or validation fails.
+// BindForm binds form data from the request into dest and validates it.
+// A parse or decode failure yields a 400 *Error; a validation failure yields a
+// 422 *Error whose Fields describe each violation.
 func (c *reqContext) BindForm(dest any) error {
 	if err := c.r.ParseForm(); err != nil {
-		return fmt.Errorf("failed to parse form: %w", err)
+		return NewError(http.StatusBadRequest, CodeInvalidForm,
+			"request form data could not be parsed").WithCause(err)
 	}
 
 	if err := c.FormDecoder().Decode(dest, c.r.PostForm); err != nil {
-		return fmt.Errorf("failed to decode form: %w", err)
+		return NewError(http.StatusBadRequest, CodeInvalidForm,
+			"request form data could not be decoded").WithCause(err)
 	}
 
-	if err := c.Validator().Struct(dest); err != nil {
-		return fmt.Errorf("validation failed: %w", err)
+	return c.validateStruct(dest)
+}
+
+// validateStruct runs struct validation and shapes any failure into a 422
+// *Error. The method is not named validate because reqContext already has a
+// field by that name.
+func (c *reqContext) validateStruct(dest any) error {
+	err := c.Validator().Struct(dest)
+	if err == nil {
+		return nil
 	}
 
-	return nil
+	e := Unprocessable("request validation failed").WithCause(err)
+	if fields, ok := validationFieldErrors(err); ok {
+		e.Fields = fields
+	}
+	return e
 }
 
 func (c *reqContext) Validator() *validator.Validate {
 	if c.validate == nil {
-		c.validate = validator.New()
+		c.validate = newValidator()
 	}
 	return c.validate
 }

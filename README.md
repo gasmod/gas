@@ -196,6 +196,8 @@ ctx := gas.NewContext(parent, w, r, opts ...gas.ContextOption) // parent is a co
 | `HTML(status int, s string) error`     | Write HTML response (`text/html`)                    |
 | `Text(status int, s string) error`     | Write plain-text response (`text/plain`)             |
 | `NoContent() error`                    | Write 204 No Content                                 |
+| `Error(err error) error`               | Write the unified error response (negotiated)        |
+| `ErrorJSON(err error) error`           | Write the unified error response, always JSON        |
 | `Redirect(status int, url string)`     | Send HTTP redirect                                   |
 | `Param(key string) string`             | URL path parameter (chi.URLParam)                    |
 | `Query(key string) string`             | Query string parameter                               |
@@ -221,21 +223,77 @@ type mockContext struct {
 
 ### Error Handling
 
-When a DI-aware handler returns a non-nil error, it is passed to the `ErrorHandler`. The default writes a
-500 Internal Server Error with the default `http.StatusText(http.StatusInternalServerError)` body,
-and logs the error if a logger is registered in the service container.
+Handlers return `error`. Return a `gas.Error` and core renders it at the right status with a stable JSON shape,
+so applications do not each define their own error struct:
+
+```go
+func (s *Service) handleGetUser(ctx gas.Context) error {
+	user, err := s.repo.Find(ctx, ctx.Param("id"))
+	if errors.Is(err, sql.ErrNoRows) {
+		return gas.NotFound("user not found").WithCause(err)
+	}
+	if err != nil {
+		return err // renders as a generic 500; the real error goes to the log
+	}
+	return ctx.JSON(http.StatusOK, user)
+}
+```
+
+```json
+{"error":{"code":"not_found","message":"user not found"}}
+```
+
+| Constructor                       | Status | Code                |
+|-----------------------------------|--------|---------------------|
+| `gas.BadRequest(msg)`             | 400    | `bad_request`       |
+| `gas.Unauthorized(msg)`           | 401    | `unauthorized`      |
+| `gas.Forbidden(msg)`              | 403    | `forbidden`         |
+| `gas.NotFound(msg)`               | 404    | `not_found`         |
+| `gas.Conflict(msg)`               | 409    | `conflict`          |
+| `gas.Unprocessable(msg)`          | 422    | `validation_failed` |
+| `gas.TooManyRequests(msg)`        | 429    | `rate_limited`      |
+| `gas.Internal(msg)`               | 500    | `internal_error`    |
+| `gas.ServiceUnavailable(msg)`     | 503    | `service_unavailable` |
+| `gas.NewError(status, code, msg)` | custom | custom              |
+
+Enrich with `WithCause(err)`, `WithField(field, rule, message)`, and `WithDetail(key, val)`. Classify an
+incoming error with `gas.AsError(err) (*gas.Error, bool)`. A wrapped cause is logged and stays reachable
+through `errors.Is` and `errors.As`, but is **never** serialized into a response.
+
+Binding produces the same shape for free — `return err` straight out of `ctx.BindJSON` yields a 422 with
+per-field detail, named by the JSON tag the client sent:
+
+```json
+{"error":{"code":"validation_failed","message":"request validation failed",
+  "fields":[{"field":"email","rule":"email","message":"must be a valid email address"}]}}
+```
+
+Anything that is not a `gas.Error` — a raw error, a handler panic, a DI resolution failure — collapses to a
+generic 500 with the original logged only. Errors at status 500 and above log at error level; the rest log at warn.
+
+Requests that explicitly prefer `text/html` without also accepting JSON get a plain-text body instead, so
+server-rendered apps stay readable without configuring anything.
+
+**From middleware:** `gas.WriteError(w, r, err)` writes the same response from any `http.Handler`. It does not
+log and does not touch the request scope, so it is safe in middleware that runs before the scope exists (a
+`WithCSRFDenyHandler`, for example). `gas.WantsJSON(r)` exposes the same negotiation.
 
 **Panic recovery:** DI-aware handlers automatically recover from panics. When a handler panics, the stack trace is
 written to stderr, the error is logged via the request-scoped `Logger` (if available), and the panic is routed
 through the `ErrorHandler` as a `gas: handler panic: <value>` error. `http.ErrAbortHandler` is re-panicked to
 preserve `net/http`'s connection-teardown behavior.
 
-Override it with `WithErrorHandler`:
+Override the handler with `WithErrorHandler` — for example, to render HTML for browsers and the envelope for
+API clients:
 
 ```go
 app := gas.NewApp(
 	gas.WithErrorHandler(func(ctx gas.Context, err error) {
-		ctx.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		if gas.WantsJSON(ctx.Request()) {
+			_ = ctx.Error(err)
+			return
+		}
+		_ = ctx.HTML(http.StatusInternalServerError, renderErrorPage(err))
 	}),
 )
 ```
@@ -687,6 +745,7 @@ app := gas.NewApp(
 | Method                             | Returns                     | Description                                           |
 |------------------------------------|-----------------------------|-------------------------------------------------------|
 | `w.Start()`                        | `error`                     | InitServices → migrations → ready hooks (non-blocking)|
+| `w.InitServices()`                 | `error`                     | Build singletons, collect services, emit init event   |
 | `w.Shutdown()`                     | `error`                     | Emit shutdown event, close services in reverse order   |
 | `w.Run()`                          | `error`                     | Start + block on signal + Shutdown                    |
 | `w.EventBus()`                     | `*EventBus`                 |                                                       |
