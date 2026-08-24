@@ -103,7 +103,7 @@ func (w *Worker) CloseService(name string) error {
 
 	// 2. Remove event subscriptions.
 	if w.eventBus != nil {
-		w.eventBus.RemoveByModule(name)
+		w.eventBus.RemoveByService(name)
 	}
 
 	// 3. Close the service (internal cleanup).

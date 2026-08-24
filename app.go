@@ -118,7 +118,7 @@ func NewApp(opts ...Option) *App {
 		return nil
 	}
 	w.onServiceClose = func(name string) {
-		a.router.RemoveByModule(name)
+		a.router.RemoveByService(name)
 	}
 
 	for _, opt := range opts {

@@ -36,7 +36,7 @@ func (bus *EventBus) Emit(event string, data any) *sync.WaitGroup {
 
 // Subscribe registers a handler for an event without service ownership.
 // Use SubscribeWithOwner when subscribing from a service so that
-// RemoveByModule can clean up subscriptions.
+// RemoveByService can clean up subscriptions.
 func (bus *EventBus) Subscribe(event string, handler func(any)) {
 	bus.mu.Lock()
 	defer bus.mu.Unlock()
@@ -57,8 +57,8 @@ func (bus *EventBus) SubscribeWithOwner(service, event string, handler func(any)
 	})
 }
 
-// RemoveByModule removes all subscriptions registered by the given service.
-func (bus *EventBus) RemoveByModule(service string) {
+// RemoveByService removes all subscriptions registered by the given service.
+func (bus *EventBus) RemoveByService(service string) {
 	bus.mu.Lock()
 	defer bus.mu.Unlock()
 	for event, subs := range bus.subscribers {

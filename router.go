@@ -46,10 +46,11 @@ type pendingHandler struct {
 }
 
 // Router is a smart router that wraps Chi and tracks route and middleware
-// ownership by service. MiddlewareByName middleware is resolved from an internal registry
-// at registration time. The base server uses RemoveByModule during
-// kill-switch to replace a closed service's routes with 503 handlers and
-// remove its middleware.
+// ownership by service. MiddlewareByName middleware is validated against an
+// internal registry at registration time and resolved on every build of the
+// routing tree, so ownership changes reach chains registered earlier. The base
+// server uses RemoveByService during kill-switch to replace everything a closed
+// service registered — its routes and its named middleware — with 503.
 //
 // Top-level routers created via NewRouter() start unsealed: Use, Handle,
 // Group, and Route calls are deferred until Seal() is called. This lets
@@ -63,7 +64,7 @@ type pendingHandler struct {
 //
 // Concurrency model: once sealed, the live chi tree is immutable. ServeHTTP
 // reads it lock-free via an atomic pointer (served). Runtime mutators
-// (RemoveByModule, and Handle/Route/Group/Use via RestartService) never touch
+// (RemoveByService, and Handle/Route/Group/Use via RestartService) never touch
 // the tree in flight — they rebuild a fresh chi tree under r.mu by replaying
 // the recorded registrations and atomically swap it in. In-flight requests
 // keep serving the previous tree, which is never written after publication.
@@ -78,6 +79,12 @@ type Router struct {
 
 	routes   map[string][]registeredRoute
 	registry map[string]namedMiddleware
+	// retired holds named middleware whose owning service was torn down by
+	// RemoveByService. Killing a service disables every middleware it
+	// registered wherever it is referenced, so a retired name resolves to a
+	// short-circuit 503 rather than the func it used to name. Re-registering
+	// the name (RestartService -> Init -> Register) reclaims it.
+	retired map[string]namedMiddleware
 
 	// subroutes tracks chi sub-muxes mounted under this router's routing tree
 	// so repeat Route(pattern) calls can attach to the existing mount instead
@@ -94,7 +101,7 @@ type Router struct {
 
 	// notFoundHandler is re-applied on every rebuild (top-level only).
 	notFoundHandler http.HandlerFunc
-	// removed records, per service, the routes torn down by RemoveByModule so
+	// removed records, per service, the routes torn down by RemoveByService so
 	// each rebuild can overlay them with 503 handlers (top-level only).
 	removed map[string][]registeredRoute
 	// rebuilding is shared with sub-routers (like pendingHandlers). It is true
@@ -110,8 +117,8 @@ type Router struct {
 	prefix                 string   // accumulated path prefix from Route() nesting
 	scopeMiddleware        []string // middleware names applied via Use() on this router and its ancestors
 
-	pendingMW  []func(http.Handler) http.Handler // recorded Use() calls, replayed on every (re)build
-	pendingOps []func()                          // recorded Handle/Group/Route calls, replayed on every (re)build
+	pendingMW  []Middleware // recorded Use() calls, re-resolved on every (re)build
+	pendingOps []func()     // recorded Handle/Group/Route calls, replayed on every (re)build
 
 	// bookedOps is the number of leading pendingOps already built once. On a
 	// rebuild, ops before this index are replays (bookkeeping suppressed); ops
@@ -148,6 +155,7 @@ func NewRouter() *Router {
 		mux:             mux,
 		routes:          make(map[string][]registeredRoute),
 		registry:        make(map[string]namedMiddleware),
+		retired:         make(map[string]namedMiddleware),
 		subroutes:       make(map[string]*subrouteEntry),
 		removed:         make(map[string][]registeredRoute),
 		errorHandler:    defaultErrorHandler,
@@ -172,6 +180,7 @@ func newSubRouter(mux chi.Router, parent *Router, prefix string) *Router {
 		mux:             mux,
 		routes:          parent.routes,
 		registry:        parent.registry,
+		retired:         parent.retired,
 		subroutes:       make(map[string]*subrouteEntry),
 		prefix:          parent.prefix + prefix,
 		scopeMiddleware: inherited,
@@ -209,7 +218,14 @@ func (r *Router) SetErrorHandler(h ErrorHandler) {
 func (r *Router) Register(service, name string, mw func(http.Handler) http.Handler) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	// A restarted service re-registering its name reclaims it from the 503
+	// short-circuit RemoveByService installed.
+	_, wasRetired := r.retired[name]
+	delete(r.retired, name)
 	r.registry[name] = namedMiddleware{service: service, fn: mw}
+	if wasRetired && r.sealed && !r.isSub {
+		r.publish()
+	}
 }
 
 // Use applies middleware to the router. Each Middleware is resolved (by name
@@ -221,15 +237,22 @@ func (r *Router) Use(middleware ...Middleware) {
 	defer r.mu.Unlock()
 
 	for _, m := range middleware {
-		fn, err := r.resolveMiddleware(m)
-		if err != nil {
-			panic(err)
-		}
 		if r.isSub {
-			// Sub-routers build straight into their (fresh) sub-mux.
+			// Sub-routers run inside a replayed op, so this call *is* the
+			// build: resolve now, honoring any retirement.
+			fn, err := r.buildMiddleware(m)
+			if err != nil {
+				panic(err)
+			}
 			r.mux.Use(fn)
 		} else {
-			r.pendingMW = append(r.pendingMW, fn)
+			// Validate the name now so a typo panics at the call site, but
+			// keep the spec unresolved: every rebuild re-resolves it so a
+			// later RemoveByService can retire it.
+			if err := r.validateMiddleware(m); err != nil {
+				panic(err)
+			}
+			r.pendingMW = append(r.pendingMW, m)
 		}
 
 		if m.name != "" {
@@ -316,14 +339,19 @@ func (r *Router) Handle(service, method, path string, handler any, middleware ..
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	middlewareFuncs := make([]func(http.Handler) http.Handler, 0, len(middleware))
+	// Specs are resolved inside the op, on every rebuild, so a middleware
+	// retired by RemoveByService stops applying to routes that were registered
+	// before the teardown. Top-level calls still validate the name here so an
+	// unregistered one panics at the call site rather than at Seal.
+	middlewareSpecs := make([]Middleware, len(middleware))
+	copy(middlewareSpecs, middleware)
 	middlewareNames := make([]string, 0, len(middleware))
 	for _, m := range middleware {
-		fn, err := r.resolveMiddleware(m)
-		if err != nil {
-			panic(fmt.Errorf("gas: route %s %s: %w", method, path, err))
+		if !r.isSub {
+			if err := r.validateMiddleware(m); err != nil {
+				panic(fmt.Errorf("gas: route %s %s: %w", method, path, err))
+			}
 		}
-		middlewareFuncs = append(middlewareFuncs, fn)
 		if m.name != "" {
 			middlewareNames = append(middlewareNames, m.name)
 		}
@@ -350,6 +378,14 @@ func (r *Router) Handle(service, method, path string, handler any, middleware ..
 	}
 
 	op := func() {
+		middlewareFuncs := make([]func(http.Handler) http.Handler, 0, len(middlewareSpecs))
+		for _, m := range middlewareSpecs {
+			fn, err := r.buildMiddleware(m)
+			if err != nil {
+				panic(fmt.Errorf("gas: route %s %s: %w", method, path, err))
+			}
+			middlewareFuncs = append(middlewareFuncs, fn)
+		}
 		chained := r.mux.With(middlewareFuncs...)
 		chained.Method(method, path, httpHandler)
 		if method == http.MethodGet {
@@ -359,7 +395,7 @@ func (r *Router) Handle(service, method, path string, handler any, middleware ..
 
 	// Record bookkeeping once (skipped while replaying ops on a rebuild).
 	// Registering a service's route also clears any pending 503 overlay from a
-	// prior RemoveByModule, so RestartService brings the routes back to life.
+	// prior RemoveByService, so RestartService brings the routes back to life.
 	if !*r.rebuilding {
 		allMiddlewareNames := make([]string, 0, len(r.scopeMiddleware)+len(middlewareNames))
 		allMiddlewareNames = append(allMiddlewareNames, r.scopeMiddleware...)
@@ -419,12 +455,20 @@ func (r *Router) NotFound(service string, handler any) {
 	}
 }
 
-// RemoveByModule removes all routes and middleware registered by the given
-// service. Routes are replaced with 503 Service Unavailable handlers.
+// RemoveByService tears down everything the given service registered. Its
+// routes are replaced with 503 Service Unavailable handlers, and every named
+// middleware it registered is replaced with a 503 short-circuit wherever it is
+// referenced — including on routes owned by services that are still running,
+// and including references nested inside Group/Route blocks. A route guarded
+// by a killed service's middleware therefore stops serving: the middleware is
+// disabled, never skipped, so a teardown can never drop an authorization check
+// and leave the route open.
+//
+// Register-ing the name again (the RestartService -> Init path) re-arms it.
 //
 // The teardown is applied by rebuilding a fresh routing tree and swapping it
 // in atomically, so requests in flight on the old tree are never disrupted.
-func (r *Router) RemoveByModule(service string) {
+func (r *Router) RemoveByService(service string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -435,11 +479,14 @@ func (r *Router) RemoveByModule(service string) {
 		delete(r.routes, service)
 	}
 
-	// Remove middleware owned by this service. Routes built before this point
-	// already captured their middleware chain, so this only affects future
-	// resolution — matching the in-place behavior this replaced.
+	// Retire middleware owned by this service. Every reference to it, in any
+	// service's routes and however deeply nested, resolves to a 503
+	// short-circuit on the rebuild below: killing a service disables the
+	// middleware it registered wherever that middleware is used, not just the
+	// routes it owns.
 	for name, nm := range r.registry {
 		if nm.service == service {
+			r.retired[name] = nm
 			delete(r.registry, name)
 		}
 	}
@@ -532,7 +579,11 @@ func (r *Router) buildMux() chi.Router {
 	// mounts against the fresh tree.
 	r.subroutes = make(map[string]*subrouteEntry)
 
-	for _, fn := range r.pendingMW {
+	for _, spec := range r.pendingMW {
+		fn, err := r.buildMiddleware(spec)
+		if err != nil {
+			panic(err)
+		}
 		m.Use(fn)
 	}
 	for i, op := range r.pendingOps {
@@ -579,15 +630,38 @@ func (r *Router) handleUnavailable(w http.ResponseWriter, req *http.Request) {
 	_ = WriteError(w, req, ServiceUnavailable("service unavailable"))
 }
 
-// resolveMiddleware returns the handler function for a Middleware. Must be
-// called with r.mu held.
-func (r *Router) resolveMiddleware(m Middleware) (func(http.Handler) http.Handler, error) {
+// validateMiddleware checks that a Middleware can be resolved against the live
+// registry, without resolving it. Registration defers the real lookup to
+// buildMiddleware so every rebuild re-resolves; this is only here so an
+// unknown name panics at its call site instead of at Seal. A retired name is
+// deliberately not accepted: re-registering against a torn-down service is a
+// programming error, not a teardown. Must be called with r.mu held.
+func (r *Router) validateMiddleware(m Middleware) error {
+	if m.fn != nil {
+		return nil
+	}
+	if _, ok := r.registry[m.name]; !ok {
+		return fmt.Errorf("gas: middleware %q not registered", m.name)
+	}
+	return nil
+}
+
+// buildMiddleware resolves a Middleware while constructing the routing tree. A
+// name whose owning service has been torn down resolves to a short-circuit
+// 503 instead of its original func, so the middleware is disabled everywhere
+// it is referenced. A name that was never registered is still a programming
+// error. Must be called with r.mu held.
+func (r *Router) buildMiddleware(m Middleware) (func(http.Handler) http.Handler, error) {
 	if m.fn != nil {
 		return m.fn, nil
 	}
-	nm, ok := r.registry[m.name]
-	if !ok {
-		return nil, fmt.Errorf("gas: middleware %q not registered", m.name)
+	if nm, ok := r.registry[m.name]; ok {
+		return nm.fn, nil
 	}
-	return nm.fn, nil
+	if _, ok := r.retired[m.name]; ok {
+		return func(http.Handler) http.Handler {
+			return http.HandlerFunc(r.handleUnavailable)
+		}, nil
+	}
+	return nil, fmt.Errorf("gas: middleware %q not registered", m.name)
 }

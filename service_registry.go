@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"strings"
 )
 
 // ServiceLifetime controls how a service instance is created and cached.
@@ -48,13 +49,28 @@ type Resolver interface {
 type ServiceContainer struct {
 	registrations map[reflect.Type]registration
 	instances     map[reflect.Type]reflect.Value // singletons + pre-registered instances
+
+	// initedInstances tracks pre-registered instances whose Init has run, so a
+	// repeated BuildAll does not initialize them twice. Constructed singletons
+	// need no equivalent: they are initialized inside invoke, which runs once
+	// per type because the result is cached.
+	initedInstances map[reflect.Type]struct{}
+
+	// instanceOrder records the order instances became available: registered
+	// values first, then singletons in construction order. Ranging over the
+	// instances map instead would be randomized by Go, which is what made
+	// Worker.Shutdown close services in an arbitrary order rather than the
+	// documented reverse-initialization order. Kept last: it carries inline
+	// len/cap, which govet fieldalignment wants after the pure-pointer fields.
+	instanceOrder []reflect.Type
 }
 
 // NewServiceContainer creates a new ServiceContainer.
 func NewServiceContainer() *ServiceContainer {
 	return &ServiceContainer{
-		registrations: make(map[reflect.Type]registration),
-		instances:     make(map[reflect.Type]reflect.Value),
+		registrations:   make(map[reflect.Type]registration),
+		instances:       make(map[reflect.Type]reflect.Value),
+		initedInstances: make(map[reflect.Type]struct{}),
 	}
 }
 
@@ -63,6 +79,9 @@ func NewServiceContainer() *ServiceContainer {
 //
 // Panics if lifetime is Transient and T implements Service — transient
 // services cannot have managed lifecycles. Use Singleton or Scoped instead.
+//
+// A type that declares Init or Close but does not fully implement Service is
+// rejected by BuildAll; see validateServiceShape.
 func RegisterCtor[T any](c *ServiceContainer, ctor any, lifetime ServiceLifetime) {
 	t := reflect.TypeFor[T]()
 	if lifetime == ServiceLifetimeTransient {
@@ -76,13 +95,37 @@ func RegisterCtor[T any](c *ServiceContainer, ctor any, lifetime ServiceLifetime
 
 // RegisterInstance registers a pre-built value. Treated as a singleton.
 func RegisterInstance[T any](c *ServiceContainer, val T) {
-	c.instances[reflect.TypeFor[T]()] = reflect.ValueOf(val)
+	c.setInstance(reflect.TypeFor[T](), reflect.ValueOf(val))
 }
 
-// BuildAll eagerly resolves all singleton services in dependency order.
-// Transient and scoped services are validated but not constructed.
+// setInstance caches an instance and records its position. Re-registering a
+// type keeps its original position: it was already available from that point
+// on, so anything built afterwards may depend on it.
+func (c *ServiceContainer) setInstance(t reflect.Type, v reflect.Value) {
+	if _, exists := c.instances[t]; !exists {
+		c.instanceOrder = append(c.instanceOrder, t)
+	}
+	c.instances[t] = v
+}
+
+// BuildAll initializes pre-registered Service instances, then eagerly resolves
+// all singleton services in dependency order. Transient and scoped services are
+// validated but not constructed.
+//
+// Implementing Service means the container manages the lifecycle, so a
+// pre-built instance is initialized like any other service. It is initialized
+// before anything the container constructs, matching the order it became
+// available, so reversing that order at shutdown stays correct.
 func (c *ServiceContainer) BuildAll() error {
+	if err := c.validateServiceShapes(); err != nil {
+		return err
+	}
+
 	if err := c.validateLifetimes(); err != nil {
+		return err
+	}
+
+	if err := c.initInstances(); err != nil {
 		return err
 	}
 
@@ -103,7 +146,32 @@ func (c *ServiceContainer) BuildAll() error {
 		if err != nil {
 			return fmt.Errorf("building %v: %w", t, err)
 		}
-		c.instances[t] = val
+		c.setInstance(t, val)
+	}
+	return nil
+}
+
+// initInstances calls Init on every pre-registered Service instance that has
+// not been initialized yet, in registration order. Instances bypass invoke —
+// BuildAll skips types already present in the instance map — so this is the
+// only place their Init can run.
+func (c *ServiceContainer) initInstances() error {
+	for _, t := range c.instanceOrder {
+		if _, done := c.initedInstances[t]; done {
+			continue
+		}
+		v, ok := c.instances[t]
+		if !ok {
+			continue
+		}
+		svc, ok := v.Interface().(Service)
+		if !ok {
+			continue
+		}
+		c.initedInstances[t] = struct{}{}
+		if err := svc.Init(); err != nil {
+			return fmt.Errorf("init %v: %w", t, err)
+		}
 	}
 	return nil
 }
@@ -169,7 +237,7 @@ func (c *ServiceContainer) resolveType(t reflect.Type) (reflect.Value, error) {
 		if err != nil {
 			return reflect.Value{}, err
 		}
-		c.instances[t] = val
+		c.setInstance(t, val)
 		return val, nil
 
 	case ServiceLifetimeTransient:
@@ -190,10 +258,15 @@ func (c *ServiceContainer) lookupInstance(t reflect.Type) (reflect.Value, bool) 
 	return reflect.Value{}, false
 }
 
-// EachInstance iterates all built singleton instances (including pre-registered ones).
+// EachInstance iterates all built singleton instances (including pre-registered
+// ones) in the order they became available. A dependency is always constructed
+// and cached before the constructor that consumes it returns, so this order is
+// a valid initialization order: reversing it is safe for shutdown.
 func (c *ServiceContainer) EachInstance(fn func(reflect.Value)) {
-	for _, v := range c.instances {
-		fn(v)
+	for _, t := range c.instanceOrder {
+		if v, ok := c.instances[t]; ok {
+			fn(v)
+		}
 	}
 }
 
@@ -203,6 +276,10 @@ func (c *ServiceContainer) EachInstance(fn func(reflect.Value)) {
 type Scope struct {
 	container *ServiceContainer
 	resolved  map[reflect.Type]reflect.Value
+
+	// order records resolution order so Close can tear scoped services down in
+	// reverse, for the same reason the container tracks instanceOrder.
+	order []reflect.Type
 }
 
 func (s *Scope) resolveType(t reflect.Type) (reflect.Value, error) {
@@ -233,6 +310,7 @@ func (s *Scope) resolveType(t reflect.Type) (reflect.Value, error) {
 			return reflect.Value{}, err
 		}
 		s.resolved[t] = val
+		s.order = append(s.order, t)
 		return val, nil
 
 	case ServiceLifetimeTransient:
@@ -242,10 +320,16 @@ func (s *Scope) resolveType(t reflect.Type) (reflect.Value, error) {
 	return reflect.Value{}, fmt.Errorf("unknown lifetime for %v", t)
 }
 
-// Close calls Close() on all scoped Service instances resolved in this scope.
+// Close calls Close() on all scoped Service instances resolved in this scope,
+// in reverse resolution order, so a scoped service can still use the scoped
+// dependencies it was built from.
 func (s *Scope) Close() error {
 	var errs []error
-	for _, v := range s.resolved {
+	for i := len(s.order) - 1; i >= 0; i-- {
+		v, ok := s.resolved[s.order[i]]
+		if !ok {
+			continue
+		}
 		if svc, ok := v.Interface().(Service); ok {
 			if err := svc.Close(); err != nil {
 				errs = append(errs, err)
@@ -295,6 +379,14 @@ func (c *ServiceContainer) invoke(t reflect.Type, r Resolver) (reflect.Value, er
 	}
 
 	result := results[0]
+
+	// The registered type may be an interface, so the concrete type is only
+	// knowable here. Reject a half-written service before it silently skips
+	// its own Init.
+	if err := validateServiceShape(concreteType(result)); err != nil {
+		return reflect.Value{}, err
+	}
+
 	if t.Kind() == reflect.Interface && result.Type().Implements(t) {
 		result = result.Convert(t)
 	}
@@ -422,4 +514,138 @@ func (c *ServiceContainer) topoSort() ([]reflect.Type, error) {
 		return nil, fmt.Errorf("circular dependency detected")
 	}
 	return order, nil
+}
+
+// --- internal: Service shape enforcement ---
+
+var serviceType = reflect.TypeFor[Service]()
+
+// lifecycleMethodNames are the Service methods that constitute the managed
+// lifecycle. Declaring either one is a statement of intent to be lifecycle
+// managed, so it is what marks a type as attempting to be a Service.
+//
+// Name is deliberately not among them: it is an identity method that ordinary
+// dependencies carry (six types in gas-config alone declare a bare Name()
+// string), so triggering on it would reject them. Dropping Name from a service
+// is also the harmless mistake of the three — the type still initializes and
+// closes — whereas dropping Init or Close silently skips a lifecycle hook.
+var lifecycleMethodNames = [...]string{"Init", "Close"}
+
+// declaredLifecycleMethods returns the lifecycle method names t declares,
+// regardless of their signatures.
+func declaredLifecycleMethods(t reflect.Type) []string {
+	found := make([]string, 0, len(lifecycleMethodNames))
+	for _, name := range lifecycleMethodNames {
+		if _, ok := t.MethodByName(name); ok {
+			found = append(found, name)
+		}
+	}
+	return found
+}
+
+// serviceMethodProblem describes how t fails to supply one Service method.
+// Returns "" when the method is present with the right signature.
+func serviceMethodProblem(t reflect.Type, name string, out reflect.Type) string {
+	m, ok := t.MethodByName(name)
+	if !ok {
+		return fmt.Sprintf("missing %s() %v", name, out)
+	}
+	// A method on a concrete type carries its receiver as In(0); an interface
+	// method does not.
+	in := m.Type.NumIn()
+	if t.Kind() != reflect.Interface {
+		in--
+	}
+	if in != 0 || m.Type.NumOut() != 1 || m.Type.Out(0) != out {
+		return fmt.Sprintf("%s has signature %v, want %s() %v", name, m.Type, name, out)
+	}
+	return ""
+}
+
+// validateServiceShape rejects a type that declares Init or Close but does not
+// fully implement Service. Such a type is silently inert in the container: the
+// auto-Init in invoke never fires, Close is never called at shutdown or scope
+// end, and the kill switch cannot see it. Writing one lifecycle hook and
+// forgetting the rest is the common way to land here, so the error names
+// exactly what is missing rather than letting the service quietly do nothing.
+//
+// A type declaring neither Init nor Close is not a service and is left alone —
+// the same registration options carry plain dependencies (loggers, config,
+// per-request values), which must keep working. A type from another package
+// that declares Close (an io.Closer such as *sql.DB) cannot be given the
+// remaining methods, so wrap it in a service of your own rather than
+// registering it directly.
+func validateServiceShape(t reflect.Type) error {
+	if t == nil || t.Implements(serviceType) {
+		return nil
+	}
+
+	// Methods declared on *T are invisible on T. Catch the registration that
+	// asks for the value type when the service is written against the pointer.
+	if t.Kind() != reflect.Pointer && t.Kind() != reflect.Interface {
+		if ptr := reflect.PointerTo(t); ptr.Implements(serviceType) {
+			return fmt.Errorf(
+				"gas: %v does not implement gas.Service because its methods are declared on *%v; register it as *%v",
+				t, t, t,
+			)
+		}
+	}
+
+	declared := declaredLifecycleMethods(t)
+	if len(declared) == 0 {
+		return nil
+	}
+
+	problems := make([]string, 0, 3)
+	for _, m := range []struct {
+		out  reflect.Type
+		name string
+	}{
+		{reflect.TypeFor[string](), "Name"},
+		{reflect.TypeFor[error](), "Init"},
+		{reflect.TypeFor[error](), "Close"},
+	} {
+		if p := serviceMethodProblem(t, m.name, m.out); p != "" {
+			problems = append(problems, p)
+		}
+	}
+
+	return fmt.Errorf(
+		"gas: %v declares %s but does not implement gas.Service (%s); "+
+			"Init and Close are the managed lifecycle, so a type declaring either must "+
+			"implement all of gas.Service — otherwise it is never initialized, never "+
+			"closed, and invisible to the kill switch",
+		t, strings.Join(declared, " and "), strings.Join(problems, "; "),
+	)
+}
+
+// validateServiceShapes checks every registered type and pre-built instance.
+func (c *ServiceContainer) validateServiceShapes() error {
+	for t := range c.registrations {
+		if err := validateServiceShape(t); err != nil {
+			return err
+		}
+	}
+	for _, v := range c.instances {
+		if err := validateServiceShape(concreteType(v)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// concreteType unwraps an interface-typed reflect.Value to the dynamic type
+// behind it, so the check sees the real implementation rather than the
+// interface it was registered under.
+func concreteType(v reflect.Value) reflect.Type {
+	if !v.IsValid() {
+		return nil
+	}
+	if v.Kind() == reflect.Interface {
+		if v.IsNil() {
+			return nil
+		}
+		return v.Elem().Type()
+	}
+	return v.Type()
 }

@@ -25,9 +25,15 @@ type Service interface {
 }
 ```
 
+`Init` and `Close` are the managed lifecycle, so a registered type that declares either one must implement all three.
+Anything short of that is rejected at startup with an error naming the missing or mis-typed methods, rather than
+registering cleanly and then never being initialized or closed. A type declaring none of them (or only `Name()`) is an
+ordinary dependency and is unaffected.
+
 **Dependency injection.** Services are registered with the DI container via constructors. The container resolves
 dependencies automatically, performs topological sorting, validates lifetime rules, and calls `Init()` on every
-`Service` after construction.
+`Service` it holds — including pre-built instances passed to `WithServiceInstance`, which are initialized before
+anything the container constructs.
 
 **Three lifetimes:**
 - **Singleton** — created once, shared everywhere. `Init()` is called during `BuildAll()`.
@@ -38,7 +44,9 @@ dependencies automatically, performs topological sorting, validates lifetime rul
 providers) through constructor injection and communicate via events and provider interfaces.
 
 **Ownership tracking.** Every route, middleware, and event subscription is tagged with its owning service, enabling
-surgical teardown of a single service at runtime.
+teardown of a single service at runtime. Teardown follows ownership rather than route boundaries: killing a service
+also disables the named middleware it registered wherever that middleware is used, so routes owned by other services
+can be affected. See [Kill-Switch](#kill-switch).
 
 ## Usage
 
@@ -127,6 +135,10 @@ Register pre-built instances (treated as singletons):
 ```go
 gas.WithServiceInstance[*MyService](myInstance)
 ```
+
+Pre-built means pre-constructed, not pre-initialized. If the value implements
+`gas.Service` the container still calls `Init()` on it at startup and `Close()`
+at shutdown, so don't call `Init()` yourself before registering.
 
 Convenience shorthands that infer the lifetime from the function name:
 
@@ -260,7 +272,8 @@ Enrich with `WithCause(err)`, `WithField(field, rule, message)`, and `WithDetail
 incoming error with `gas.AsError(err) (*gas.Error, bool)`. A wrapped cause is logged and stays reachable
 through `errors.Is` and `errors.As`, but is **never** serialized into a response.
 
-Binding produces the same shape for free — `return err` straight out of `ctx.BindJSON` yields a 422 with
+Binding produces the same shape for free — `return err` straight out of `ctx.BindJSON` or `ctx.BindForm` yields a
+400 (`invalid_json` / `invalid_form`) when the body itself is malformed, or a 422 (`validation_failed`) with
 per-field detail, named by the JSON tag the client sent:
 
 ```json
@@ -410,6 +423,23 @@ router.Route("/api", func(sub *gas.Router) {
 })
 ```
 
+Several services can call `Route()` with the same pattern; the later calls attach to the mount created by the first
+instead of panicking. Each call's body runs in its own group, so middleware added with `Use()` inside one block
+applies only to the handlers registered in that block:
+
+```go
+// in auth.Service.Init()
+router.Route("/api", func(sub *gas.Router) {
+	sub.Use(gas.MiddlewareByName("require-auth"))
+	sub.Handle("auth", "GET", "/me", s.me) // guarded
+})
+
+// in billing.Service.Init() — same "/api" mount, unaffected by auth's Use()
+router.Route("/api", func(sub *gas.Router) {
+	sub.Handle("billing", "GET", "/plans", s.plans) // not guarded
+})
+```
+
 ### Events
 
 Events use typed `Event[T]` definitions for compile-time safety:
@@ -436,9 +466,31 @@ gas.Emit(bus, UserCreated, UserCreatedPayload{Email: "user@example.com"}).Wait()
 Disable a service at runtime without restarting the server:
 
 ```go
-app.CloseService("auth") // routes return 503, middleware + subscriptions removed, Close() called
-app.RestartService("auth") // re-initializes the service
+app.CloseService("auth")   // everything "auth" registered returns 503; subscriptions removed; Close() called
+app.RestartService("auth") // re-initializes the service and re-arms what it registered
 ```
+
+Everything the service registered is replaced with a static 503 `service_unavailable` response in the unified error
+shape. That means its routes, and also **every named middleware it registered, wherever that middleware is
+referenced** — including on routes owned by services that are still running, and including references nested inside
+`Group`/`Route` blocks:
+
+```go
+router.Register("auth", "require-auth", requireAuth) // owned by "auth"
+
+router.Route("/api", func(sub *gas.Router) {
+	sub.Use(gas.MiddlewareByName("require-auth"))
+	sub.Handle("billing", "GET", "/invoices", handler) // owned by "billing"
+})
+
+app.CloseService("auth")
+// GET /api/invoices -> 503, even though "billing" is still running.
+```
+
+The middleware is disabled, never skipped, so a teardown can never drop an authorization check and leave the route
+open. Design middleware ownership with that blast radius in mind: registering a widely used middleware under a service
+that gets killed takes every consumer down with it. Ownership is only tracked for names passed to `Register` — an
+inline `gas.MiddlewareFunc` has no owner and survives any teardown.
 
 Other services can react to closures:
 
