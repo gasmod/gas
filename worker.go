@@ -91,7 +91,9 @@ func (w *Worker) ConfigProvider() ConfigProvider {
 
 // InitServices builds all singletons via the DI container (which calls
 // Init() on each Service automatically), then collects Service instances
-// for runtime management.
+// for runtime management. Collection follows the container's instance order,
+// so serviceOrder is a genuine initialization order and Shutdown can reverse
+// it safely.
 func (w *Worker) InitServices() (err error) {
 	w.initOnce.Do(func() {
 		if err = w.serviceContainer.BuildAll(); err != nil {
@@ -211,6 +213,12 @@ func WithService[T any](ctor any, lifetime ServiceLifetime) WorkerOption {
 }
 
 // WithServiceInstance registers a pre-built service instance (singleton).
+//
+// Pre-built means pre-constructed, not pre-initialized: if the value
+// implements Service, the container calls Init() on it during InitServices
+// like any other service, and Close() at shutdown. Implementing Service is
+// what hands the lifecycle to the container, however the value got there. Do
+// not call Init() yourself before registering, or it runs twice.
 func WithServiceInstance[T any](val T) WorkerOption {
 	return func(w *Worker) { RegisterInstance[T](w.serviceContainer, val) }
 }

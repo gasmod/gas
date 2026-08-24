@@ -298,8 +298,10 @@ func TestWorker_RestartService(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if svc.initCount.Load() != 1 {
-		t.Fatalf("expected Init called once (from restart), got %d", svc.initCount.Load())
+	// The container initializes a pre-registered instance like any other
+	// service, so Init has run once at boot and once more on restart.
+	if svc.initCount.Load() != 2 {
+		t.Fatalf("expected Init called twice (boot + restart), got %d", svc.initCount.Load())
 	}
 	if svc.closed.Load() {
 		t.Fatal("service should not be closed after restart")

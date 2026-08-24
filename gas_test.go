@@ -954,15 +954,10 @@ func TestApp_RestartService(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Init count: 1 from InitServices (registered as instance, Init not called by container)
-	// but actually for WithServiceInstance, Init is NOT called by the container (it's pre-built).
-	// So initCount is 0 from InitServices + 1 from RestartService = 1... unless we need to
-	// account for the fact that testService implements Service and is collected.
-	// Actually, WithServiceInstance registers a pre-built value. The container doesn't call Init on it.
-	// But EachInstance will discover it and add to activeServices.
-	// RestartService calls Init() once. So total = 1.
-	if svc.initCount.Load() != 1 {
-		t.Fatalf("expected Init called once (from restart), got %d", svc.initCount.Load())
+	// The container initializes a pre-registered instance like any other
+	// service, so Init has run once at boot and once more on restart.
+	if svc.initCount.Load() != 2 {
+		t.Fatalf("expected Init called twice (boot + restart), got %d", svc.initCount.Load())
 	}
 	if svc.closed.Load() {
 		t.Fatal("service should not be closed after restart")
