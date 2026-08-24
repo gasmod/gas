@@ -339,7 +339,7 @@ during `Init()`. The App calls `Seal()` automatically after all services init.
 |-----------------------------------------|--------------------------------------------|
 | `Mux() chi.Router`                      | Underlying Chi router                      |
 | `Seal()`                                | Flush deferred middleware then routes      |
-| `RemoveByModule(service string)`        | Replace routes with 503, remove middleware |
+| `RemoveByService(service string)`        | Replace routes with 503, remove middleware |
 | `SetErrorHandler(h ErrorHandler)`       | Set error handler for DI-aware handlers    |
 | `Routes() map[string][]RegisteredRoute` | Snapshot of registered routes by service   |
 | `NamedMiddleware() map[string]string`   | Named middleware registry (name → service) |

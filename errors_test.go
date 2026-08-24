@@ -717,7 +717,7 @@ func TestTornDownRoute_UsesUnifiedShape(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		})
 		router.Seal()
-		router.RemoveByModule("auth")
+		router.RemoveByService("auth")
 		return router
 	}
 

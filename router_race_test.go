@@ -11,18 +11,18 @@ import (
 )
 
 // TestRouterServeHTTPRacesKillSwitch demonstrates a data race between
-// Router.ServeHTTP and the runtime kill-switch (RemoveByModule).
+// Router.ServeHTTP and the runtime kill-switch (RemoveByService).
 //
 // Router.mu (an RWMutex) guards only the router's own bookkeeping maps
 // (routes/registry). ServeHTTP (router.go) calls r.mux.ServeHTTP WITHOUT
-// taking r.mu, while RemoveByModule mutates the very same chi radix tree via
+// taking r.mu, while RemoveByService mutates the very same chi radix tree via
 // r.mux.Method(...) — chi does no internal locking of its own. So concurrent
 // request serving and a kill-switch invocation read and write chi's tree at
 // the same time with zero synchronization between them.
 //
 // This is not theoretical: Worker.CloseService and Worker.RestartService call
 // this exact path at RUNTIME, while the server is live and handling traffic
-// (CloseService -> onServiceClose -> Router.RemoveByModule;
+// (CloseService -> onServiceClose -> Router.RemoveByService;
 // RestartService -> svc.Init() -> Router.Handle). A data race on the routing
 // tree is undefined behavior: torn reads, a "concurrent map writes" fatal
 // panic that takes down the whole process (DoS), or a request dispatched to a
@@ -34,7 +34,7 @@ import (
 //
 // Under -race this test fails with a DATA RACE report (read in chi
 // node.findRoute from ServeHTTP vs write in chi node.setEndpoint from
-// RemoveByModule). Once ServeHTTP and the mutators are properly synchronized,
+// RemoveByService). Once ServeHTTP and the mutators are properly synchronized,
 // the test passes. Without -race the bug is silent (which is exactly why it
 // shipped), so the race detector is the point of this test.
 func TestRouterServeHTTPRacesKillSwitch(t *testing.T) {
@@ -94,7 +94,7 @@ func TestRouterServeHTTPRacesKillSwitch(t *testing.T) {
 		// The runtime kill-switch: rip out the service's routes (one chi tree
 		// write per route) while requests are in flight. This is exactly what
 		// Worker.CloseService does to a live router.
-		router.RemoveByModule("victim")
+		router.RemoveByService("victim")
 
 		close(stop)
 		done.Wait()
@@ -162,7 +162,7 @@ func TestRouterServeHTTPRacesRuntimeHandle(t *testing.T) {
 }
 
 // TestRouterRemoveThenReRegisterServes verifies the copy-on-write rebuild's
-// teardown/restore cycle: RemoveByModule overlays a service's routes with 503,
+// teardown/restore cycle: RemoveByService overlays a service's routes with 503,
 // and re-registering the service (as RestartService does via Init) brings the
 // routes back to a live 200. This guards the removed-overlay bookkeeping that
 // the rebuild applies on every swap.
@@ -183,7 +183,7 @@ func TestRouterRemoveThenReRegisterServes(t *testing.T) {
 		t.Fatalf("before removal: expected 200, got %d", got)
 	}
 
-	router.RemoveByModule("victim")
+	router.RemoveByService("victim")
 	if got := serve(); got != http.StatusServiceUnavailable {
 		t.Fatalf("after removal: expected 503, got %d", got)
 	}
@@ -198,7 +198,7 @@ func TestRouterRemoveThenReRegisterServes(t *testing.T) {
 // TestRouterPostSealGroupedRouteTracked covers a service registering grouped
 // routes after Seal (the RestartService -> Init path for services that use
 // Route/Group). The rebuild must serve the route, track it in Routes() so it
-// owns the path, and still be able to tear it down via RemoveByModule.
+// owns the path, and still be able to tear it down via RemoveByService.
 func TestRouterPostSealGroupedRouteTracked(t *testing.T) {
 	ok := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }
 
@@ -223,8 +223,8 @@ func TestRouterPostSealGroupedRouteTracked(t *testing.T) {
 		t.Fatal("post-seal sub-route not tracked in Routes()")
 	}
 
-	router.RemoveByModule("svc")
+	router.RemoveByService("svc")
 	if got := serve(); got != http.StatusServiceUnavailable {
-		t.Fatalf("after RemoveByModule: expected 503, got %d", got)
+		t.Fatalf("after RemoveByService: expected 503, got %d", got)
 	}
 }

@@ -71,13 +71,13 @@ func TestRouter_HandleUnknownNamedMiddleware(t *testing.T) {
 	})
 }
 
-func TestRouter_RemoveByModule_RemovesMiddleware(t *testing.T) {
+func TestRouter_RemoveByService_RemovesMiddleware(t *testing.T) {
 	router := gas.NewRouter()
 	router.Register("auth", "require-auth", func(next http.Handler) http.Handler { return next })
 	router.Register("auth", "rate-limit", func(next http.Handler) http.Handler { return next })
 	router.Register("billing", "billing-mw", func(next http.Handler) http.Handler { return next })
 
-	router.RemoveByModule("auth")
+	router.RemoveByService("auth")
 
 	// Auth middleware should be gone — Handle should panic.
 	assertPanics(t, "require-auth", func() {
@@ -133,7 +133,7 @@ func TestEventBus_SubscribeWithOwner(t *testing.T) {
 	}
 }
 
-func TestEventBus_RemoveByModule(t *testing.T) {
+func TestEventBus_RemoveByService(t *testing.T) {
 	bus := gas.NewEventBus()
 
 	var mu sync.Mutex
@@ -151,7 +151,7 @@ func TestEventBus_RemoveByModule(t *testing.T) {
 		mu.Unlock()
 	})
 
-	bus.RemoveByModule("auth")
+	bus.RemoveByService("auth")
 	gas.Emit(bus, testEvent, struct{}{}).Wait()
 
 	if authCalled {
@@ -268,7 +268,7 @@ func TestRouter_HandleUnknownMiddleware(t *testing.T) {
 	})
 }
 
-func TestRouter_RemoveByModule(t *testing.T) {
+func TestRouter_RemoveByService(t *testing.T) {
 	router := gas.NewRouter()
 
 	router.Handle("auth", "GET", "/auth/me", func(w http.ResponseWriter, r *http.Request) {
@@ -285,7 +285,7 @@ func TestRouter_RemoveByModule(t *testing.T) {
 	}
 
 	// Remove service routes.
-	router.RemoveByModule("auth")
+	router.RemoveByService("auth")
 
 	// Route should now return 503.
 	req = httptest.NewRequest("GET", "/auth/me", nil)
@@ -318,7 +318,7 @@ func TestRouter_MultipleModules(t *testing.T) {
 
 	router.Seal()
 	// Remove only auth.
-	router.RemoveByModule("auth")
+	router.RemoveByService("auth")
 
 	// Auth should be 503.
 	req := httptest.NewRequest("GET", "/auth/me", nil)
@@ -736,7 +736,7 @@ func TestRouter_HeadMiddlewareSeesCorrectMethod(t *testing.T) {
 	}
 }
 
-func TestRouter_HeadRemoveByModule(t *testing.T) {
+func TestRouter_HeadRemoveByService(t *testing.T) {
 	router := gas.NewRouter()
 
 	router.Handle("auth", "GET", "/auth/me", func(w http.ResponseWriter, r *http.Request) {
@@ -753,7 +753,7 @@ func TestRouter_HeadRemoveByModule(t *testing.T) {
 		t.Fatalf("expected 200 before removal, got %d", rr.Code)
 	}
 
-	router.RemoveByModule("auth")
+	router.RemoveByService("auth")
 
 	// HEAD should return 503 after removal.
 	req = httptest.NewRequest("HEAD", "/auth/me", nil)

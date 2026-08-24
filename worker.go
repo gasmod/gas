@@ -26,7 +26,7 @@ type Worker struct {
 
 	// onServiceClose is called by CloseService before removing event
 	// subscriptions and closing the service. App sets this to call
-	// router.RemoveByModule.
+	// router.RemoveByService.
 	onServiceClose func(name string)
 
 	activeServices map[string]Service // runtime kill-switch tracking

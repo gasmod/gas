@@ -47,7 +47,7 @@ type pendingHandler struct {
 
 // Router is a smart router that wraps Chi and tracks route and middleware
 // ownership by service. MiddlewareByName middleware is resolved from an internal registry
-// at registration time. The base server uses RemoveByModule during
+// at registration time. The base server uses RemoveByService during
 // kill-switch to replace a closed service's routes with 503 handlers and
 // remove its middleware.
 //
@@ -63,7 +63,7 @@ type pendingHandler struct {
 //
 // Concurrency model: once sealed, the live chi tree is immutable. ServeHTTP
 // reads it lock-free via an atomic pointer (served). Runtime mutators
-// (RemoveByModule, and Handle/Route/Group/Use via RestartService) never touch
+// (RemoveByService, and Handle/Route/Group/Use via RestartService) never touch
 // the tree in flight — they rebuild a fresh chi tree under r.mu by replaying
 // the recorded registrations and atomically swap it in. In-flight requests
 // keep serving the previous tree, which is never written after publication.
@@ -94,7 +94,7 @@ type Router struct {
 
 	// notFoundHandler is re-applied on every rebuild (top-level only).
 	notFoundHandler http.HandlerFunc
-	// removed records, per service, the routes torn down by RemoveByModule so
+	// removed records, per service, the routes torn down by RemoveByService so
 	// each rebuild can overlay them with 503 handlers (top-level only).
 	removed map[string][]registeredRoute
 	// rebuilding is shared with sub-routers (like pendingHandlers). It is true
@@ -359,7 +359,7 @@ func (r *Router) Handle(service, method, path string, handler any, middleware ..
 
 	// Record bookkeeping once (skipped while replaying ops on a rebuild).
 	// Registering a service's route also clears any pending 503 overlay from a
-	// prior RemoveByModule, so RestartService brings the routes back to life.
+	// prior RemoveByService, so RestartService brings the routes back to life.
 	if !*r.rebuilding {
 		allMiddlewareNames := make([]string, 0, len(r.scopeMiddleware)+len(middlewareNames))
 		allMiddlewareNames = append(allMiddlewareNames, r.scopeMiddleware...)
@@ -419,12 +419,12 @@ func (r *Router) NotFound(service string, handler any) {
 	}
 }
 
-// RemoveByModule removes all routes and middleware registered by the given
+// RemoveByService removes all routes and middleware registered by the given
 // service. Routes are replaced with 503 Service Unavailable handlers.
 //
 // The teardown is applied by rebuilding a fresh routing tree and swapping it
 // in atomically, so requests in flight on the old tree are never disrupted.
-func (r *Router) RemoveByModule(service string) {
+func (r *Router) RemoveByService(service string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
