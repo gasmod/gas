@@ -7,8 +7,10 @@ description: >
   extends the gas core package. Covers the App lifecycle, DI container, service
   registration and lifetimes, Router with ownership tracking, DI-aware handlers,
   Context, ErrorHandler, EventBus, middleware, migrations, request scopes,
-  logging, provider interfaces, authentication/authorization interfaces, and
-  system events. Make sure to use this skill whenever working with gas service
+  logging, provider interfaces, authentication/authorization interfaces,
+  system events, and the runtime kill switch (CloseService / RestartService /
+  RemoveByService) that 503s a torn-down service's routes and its named
+  middleware wherever that middleware is used. Make sure to use this skill whenever working with gas service
   constructors, route handlers, event subscriptions, middleware registration,
   authentication, authorization, or any code under a gasmod/gas import path,
   even if the user doesn't explicitly mention "gas".
@@ -57,6 +59,33 @@ type Service interface {
 }
 ```
 
+**Declare `Init` or `Close` and you owe all three.** They are the managed
+lifecycle, so a registered type declaring either one must implement the full
+interface with the exact signatures above. Anything short of that is rejected
+at startup — `BuildAll` returns an error naming what is missing or mis-typed:
+
+```
+gas: *app.Foo declares Close but does not implement gas.Service
+(missing Name() string; missing Init() error); Init and Close are the
+managed lifecycle, so a type declaring either must implement all of
+gas.Service — otherwise it is never initialized, never closed, and
+invisible to the kill switch
+```
+
+Watch for these, all of which are rejected:
+- `func (s *Foo) Init()` — no `error` return, so it is not the interface method
+- any two of the three, or just one: `Init` alone, `Close` alone, `Name`+`Close`
+- registering the value type (`WithSingletonService[Foo]`) when the methods are
+  declared on `*Foo` — register `*Foo`
+- a third-party `io.Closer` such as `*sql.DB` — you cannot add the remaining
+  methods to another package's type, so wrap it in a service of your own
+
+`Name` alone is **not** a trigger. A type declaring only `Name() string` is an
+ordinary dependency and is unaffected, as is one declaring none of the three.
+The same registration options carry both kinds: `gas.Logger`, `ConfigProvider`,
+a scoped `RequestLogger`, a transient `*RequestID` are all registered with
+`With*Service` and none of them implement `Service`.
+
 ## Service Lifetimes
 
 ```go
@@ -98,6 +127,12 @@ gas.WithServiceInstance[T any](val T) WorkerOption
 gas.WithReadyFunc(fn func(*ServiceContainer) error) WorkerOption
 ```
 
+`WithServiceInstance` means pre-**constructed**, not pre-**initialized**. If the
+value implements `Service`, the container calls `Init()` on it during
+`InitServices` (before anything it constructs, so reverse-order shutdown stays
+correct) and `Close()` at shutdown, exactly as for a constructor-registered
+service. Do not call `Init()` yourself before registering, or it runs twice.
+
 ### AppOption functions (only work with NewApp)
 
 ```go
@@ -134,8 +169,8 @@ w := gas.NewWorker(opts ...Option) *Worker
 | `MigrationManager` | `() MigrationManager`    | Resolved from DI, nil if unregistered                                            |
 | `ConfigProvider`   | `() ConfigProvider`      | Resolved from DI, nil if unregistered                                            |
 | `ActiveServices`   | `() []string`            | Names of currently active services                                               |
-| `CloseService`     | `(name string) error`    | Remove subs, call Close(), emit event                                            |
-| `RestartService`   | `(name string) error`    | Re-initialize a previously closed service                                        |
+| `CloseService`     | `(name string) error`    | Kill switch: 503 the service's routes and middleware, remove subs, `Close()`, emit event |
+| `RestartService`   | `(name string) error`    | Re-initialize a previously closed service, re-arming its routes and middleware   |
 | `CheckHealth`      | `(ctx) map[string]error` | Concurrently polls all active `HealthReporter`s; also satisfies `HealthProvider` |
 | `CheckReady`       | `(ctx) map[string]error` | Concurrently polls all active `ReadyReporter`s; also satisfies `ReadyProvider`   |
 
@@ -261,7 +296,10 @@ ctx := gas.WithRequestScope(context.Background(), scope)
 
 ## Router
 
-`Router` wraps Chi and tracks route/middleware ownership by service.
+`Router` wraps Chi and tracks route/middleware ownership by service. Named
+middleware is validated when it is registered and resolved on every build of
+the routing tree, so a later ownership change reaches chains that were
+registered earlier (see **Kill switch**).
 
 ### Registering routes
 
@@ -327,6 +365,50 @@ router.Group(fn func(sub *Router))              // inline group
 router.Route(pattern string, fn func(sub *Router)) // pattern-scoped group
 ```
 
+`Route()` may be called with the **same pattern more than once** — later calls
+attach to the mount the first one created rather than panicking, which is what
+lets several services share a prefix like `/api`. Each call's body runs in its
+own `chi.Group`, so `Use()` inside one block applies only to handlers
+registered in that block, not to sibling blocks on the same pattern.
+
+### Kill switch
+
+`Worker.CloseService(name)` tears a service down at runtime; the App wires it
+to `Router.RemoveByService(name)`. **Everything the service registered is
+replaced with a static 503 `service_unavailable` response** in the unified
+error shape:
+
+- Its **routes** are replaced with 503 handlers.
+- Its **named middleware** is replaced with a 503 short-circuit *wherever it is
+  referenced* — including on routes owned by services that are still running,
+  and including references nested inside `Group`/`Route` blocks.
+
+So a route guarded by a killed service's middleware stops serving:
+
+```go
+router.Register("auth", "require-auth", requireAuth)   // owned by "auth"
+
+router.Route("/api", func(sub *gas.Router) {
+    sub.Use(gas.MiddlewareByName("require-auth"))
+    sub.Handle("billing", "GET", "/invoices", handler) // owned by "billing"
+})
+
+worker.CloseService("auth")
+// GET /api/invoices -> 503, even though "billing" is still running.
+```
+
+The middleware is **disabled, never skipped**: a teardown can never drop an
+authorization check and leave the route open. Design middleware ownership with
+that blast radius in mind — registering a widely used middleware under a
+service that gets killed takes every consumer down with it.
+
+Ownership is only tracked for names passed to `Register`. An inline
+`MiddlewareFunc` (and `MiddlewareFuncWithName`, which carries its own func) has
+no owner and survives any teardown.
+
+`RestartService(name)` reverses it: re-registering the name re-arms the
+middleware everywhere, and re-registering the routes brings them back.
+
 ### Deferred registration
 
 Top-level routers start **unsealed** — `Use`, `Handle`, `Group`, and `Route`
@@ -335,15 +417,15 @@ during `Init()`. The App calls `Seal()` automatically after all services init.
 
 ### Other Router methods
 
-| Method                                  | Description                                |
-|-----------------------------------------|--------------------------------------------|
-| `Mux() chi.Router`                      | Underlying Chi router                      |
-| `Seal()`                                | Flush deferred middleware then routes      |
-| `RemoveByService(service string)`        | Replace routes with 503, remove middleware |
-| `SetErrorHandler(h ErrorHandler)`       | Set error handler for DI-aware handlers    |
-| `Routes() map[string][]RegisteredRoute` | Snapshot of registered routes by service   |
-| `NamedMiddleware() map[string]string`   | Named middleware registry (name → service) |
-| `ServeHTTP(w, req)`                     | Implements http.Handler                    |
+| Method                                  | Description                                                        |
+|-----------------------------------------|--------------------------------------------------------------------|
+| `Mux() chi.Router`                      | Underlying Chi router                                              |
+| `Seal()`                                | Flush deferred middleware then routes                              |
+| `RemoveByService(service string)`       | Kill switch: 503 for the service's routes **and for its named middleware everywhere it is used** |
+| `SetErrorHandler(h ErrorHandler)`       | Set error handler for DI-aware handlers                            |
+| `Routes() map[string][]RegisteredRoute` | Snapshot of registered routes by service                           |
+| `NamedMiddleware() map[string]string`   | Named middleware registry (name → service)                         |
+| `ServeHTTP(w, req)`                     | Implements http.Handler                                            |
 
 ## Context
 
@@ -480,7 +562,7 @@ if errors.Is(err, session.ErrExpired) {
 
 ## EventBus
 
-Typed publish/subscribe messaging between modules. Always prefer the generic
+Typed publish/subscribe messaging between services. Always prefer the generic
 functions over the low-level string-based methods.
 
 ```go
@@ -491,8 +573,9 @@ var UserCreated = gas.Event[UserCreatedPayload]{Name: "user:created"}
 gas.Emit[T](bus *EventBus, event Event[T], data T) *sync.WaitGroup
 
 // Subscribe — always use SubscribeWithOwner from a service so that
-// CloseService can clean up subscriptions. Bare Subscribe has no ownership
-// tracking and should only be used outside of services.
+// CloseService can clean up subscriptions (via EventBus.RemoveByService).
+// Bare Subscribe has no ownership tracking and should only be used outside
+// of services.
 gas.Subscribe[T](bus *EventBus, event Event[T], handler func(T))
 gas.SubscribeWithOwner[T](bus *EventBus, service string, event Event[T], handler func(T))
 ```

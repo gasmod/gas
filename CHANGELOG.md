@@ -37,6 +37,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   underlying error remains reachable through `errors.As`.
 - Validation field names now follow the `json` tag the client sent rather than
   the Go struct field name.
+### Fixed
+
+- **Shutdown closed services in a random order.** `Worker.Shutdown` documents
+  "reverse initialization order", but `InitServices` derived `serviceOrder` by
+  ranging over the container's instance map, and Go randomizes map iteration.
+  A service could be closed after a dependency it uses inside `Close()`, which
+  surfaced as an intermittent, per-process shutdown failure. The container now
+  records the order instances become available and `EachInstance` walks it.
+- `Scope.Close` had the same defect on the per-request path and now tears
+  scoped services down in reverse resolution order.
+
+- **Breaking:** a `Service` registered with `WithServiceInstance` is now
+  initialized by the container. It previously was not: `Init` never ran, yet
+  the container still closed it at shutdown and still called `Init` if it was
+  restarted through the kill switch, so a pre-built service was closed without
+  ever having been initialized. Implementing `gas.Service` hands the lifecycle
+  to the container regardless of how the value was registered. Callers that
+  called `Init()` themselves before registering should stop, or it runs twice.
+
+- **Breaking:** a registered type that declares `Init` or `Close` but does not
+  fully implement `gas.Service` is now rejected at startup with an error naming
+  the missing or mis-typed methods, instead of being silently skipped. Writing
+  one lifecycle hook and forgetting the rest used to produce a service that
+  registered cleanly and then did nothing: `Init` never ran, `Close` never ran
+  (leaking whatever it held), and the kill switch could not see it. `Init` and
+  `Close` are the managed lifecycle, so declaring either commits to the whole
+  interface. Declaring only `Name()` does not trigger it — such types stay
+  ordinary dependencies. A third-party `io.Closer` (`*sql.DB` and the like) can
+  no longer be registered directly; wrap it in a service of your own.
+- **Breaking:** `Router.RemoveByModule` and `EventBus.RemoveByModule` are
+  renamed to `RemoveByService`. Both always took a service name; "module" was
+  vestigial vocabulary from before services were named services.
+- Killing a service now disables every named middleware it registered wherever
+  that middleware is referenced, not just the routes the service owns. A route
+  guarded by a killed service's middleware returns 503 instead of continuing to
+  run the torn-down middleware, so a teardown can never drop an authorization
+  check and leave the route open. Named middleware is now resolved on each
+  build of the routing tree rather than captured at registration; re-registering
+  the name (the `RestartService` path) re-arms it.
 
 ### Security
 
