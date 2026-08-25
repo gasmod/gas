@@ -119,6 +119,10 @@ linters:
         - .WithMessage(
         - .WithMessagef(
         - .WithStack(
+        - .JSON(
+        - .Text(
+        - .Render(
+        - .RenderWithStatus(
       ignore-package-globs:
         - encoding/*
         - github.com/go-chi/*

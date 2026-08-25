@@ -8,30 +8,112 @@ on:
 permissions:
   contents: write
 
+env:
+  GO_VERSION: 1.26
+  GOLANGCI_LINT_VERSION: v2.12
+
 jobs:
-  release:
+  verify-versions:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out code
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+      - name: Internal module versions must match ${{ github.ref_name }}
+        run: ./scripts/verify-versions.sh "${{ github.ref_name }}"
 
-      - name: Set up Go
-        uses: actions/setup-go@v7
+  detect-modules:
+    needs: verify-versions
+    runs-on: ubuntu-latest
+    outputs:
+      modules: ${{ steps.set-modules.outputs.modules }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version: ${{ env.GO_VERSION }}
+      - id: set-modules
+        run: echo "modules=$(go list -m -json | jq -sc '[.[].Dir] | map(select(contains("example") | not))')" >> $GITHUB_OUTPUT
 
-      - name: Run golangci-lint
+  golangci-lint:
+    needs: detect-modules
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        modules: ${{ fromJSON(needs.detect-modules.outputs.modules) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: golangci-lint ${{ matrix.modules }}
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.12
-          args: --timeout=5m
-          working-directory: .
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          working-directory: ${{ matrix.modules }}
 
-      - name: Test
+  go-test:
+    needs: detect-modules
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        modules: ${{ fromJSON(needs.detect-modules.outputs.modules) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: go test ${{ matrix.modules }}
         run: go test -v -race ./...
+        working-directory: ${{ matrix.modules }}
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v3
+  go-vet:
+    needs: detect-modules
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        modules: ${{ fromJSON(needs.detect-modules.outputs.modules) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: go vet ${{ matrix.modules }}
+        run: go vet ./...
+        working-directory: ${{ matrix.modules }}
+
+  tag:
+    needs: [ detect-modules, golangci-lint, go-test, go-vet ]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        modules: ${{ fromJSON(needs.detect-modules.outputs.modules) }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: mod
+        env:
+          MODULE: ${{ matrix.modules }}
+        run: |
+          # A module's tag is prefixed with its path relative to the repo root.
+          # The root module takes a bare tag, which the triggering push already created.
+          rel="${MODULE#"$GITHUB_WORKSPACE"}"
+          rel="${rel#/}"
+          if [ -z "$rel" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "name=$rel" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.mod.outputs.skip == 'false'
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          custom_tag: ${{ steps.mod.outputs.name }}/${{ github.ref_name }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+  release:
+    needs: tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: softprops/action-gh-release@v3
         with:
           name: Release ${{ github.ref_name }}
           draft: false

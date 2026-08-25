@@ -54,7 +54,7 @@ func (s *nameAndClose) Close() error { return nil }
 
 // plainDep declares neither Init nor Close and is not a service. The same
 // registration options carry these, so they must keep working untouched.
-// Name alone is deliberately allowed: gas-config registers several such types.
+// Name alone is deliberately allowed: gas/config registers several such types.
 type plainDep struct{ id string }
 
 func (d *plainDep) ID() string   { return d.id }
@@ -172,7 +172,7 @@ func TestRegisterRejectsServiceMissingInit(t *testing.T) {
 	}
 }
 
-// Name alone must stay legal. Six types in gas-config declare a bare
+// Name alone must stay legal. Six types in gas/config declare a bare
 // Name() string and are registered as ordinary dependencies.
 func TestBareNameMethodIsNotAService(t *testing.T) {
 	w := gas.NewWorker(gas.WithServiceInstance[*plainDep](&plainDep{id: "config-provider"}))

@@ -1,0 +1,106 @@
+version: "2"
+sql:
+  # --- Session ---
+  - engine: "postgresql"
+    schema: "session/db/postgres/*.up.sql"
+    queries: "session/db/postgres/queries.sql"
+    gen:
+      go:
+        package: "pgdb"
+        out: "session/db/postgres"
+        sql_package: "database/sql"
+        emit_result_struct_pointers: true
+        emit_params_struct_pointers: true
+
+  - engine: "mysql"
+    schema: "session/db/mysql/*.up.sql"
+    queries: "session/db/mysql/queries.sql"
+    gen:
+      go:
+        package: "mydb"
+        out: "session/db/mysql"
+        sql_package: "database/sql"
+        emit_result_struct_pointers: true
+        emit_params_struct_pointers: true
+
+  - engine: "sqlite"
+    schema: "session/db/sqlite/*.up.sql"
+    queries: "session/db/sqlite/queries.sql"
+    gen:
+      go:
+        package: "litedb"
+        out: "session/db/sqlite"
+        sql_package: "database/sql"
+        emit_result_struct_pointers: true
+        emit_params_struct_pointers: true
+        emit_pointers_for_null_types: true
+
+  # --- API Key ---
+  - engine: "postgresql"
+    schema: "apikey/db/postgres/*.up.sql"
+    queries: "apikey/db/postgres/queries.sql"
+    gen:
+      go:
+        package: "pgdb"
+        out: "apikey/db/postgres"
+        sql_package: "database/sql"
+        emit_result_struct_pointers: true
+        emit_params_struct_pointers: true
+
+  - engine: "mysql"
+    schema: "apikey/db/mysql/*.up.sql"
+    queries: "apikey/db/mysql/queries.sql"
+    gen:
+      go:
+        package: "mydb"
+        out: "apikey/db/mysql"
+        sql_package: "database/sql"
+        emit_result_struct_pointers: true
+        emit_params_struct_pointers: true
+
+  - engine: "sqlite"
+    schema: "apikey/db/sqlite/*.up.sql"
+    queries: "apikey/db/sqlite/queries.sql"
+    gen:
+      go:
+        package: "litedb"
+        out: "apikey/db/sqlite"
+        sql_package: "database/sql"
+        emit_result_struct_pointers: true
+        emit_params_struct_pointers: true
+        emit_pointers_for_null_types: true
+
+  # --- Token ---
+  - engine: "postgresql"
+    schema: "token/db/postgres/*.up.sql"
+    queries: "token/db/postgres/queries.sql"
+    gen:
+      go:
+        package: "pgdb"
+        out: "token/db/postgres"
+        sql_package: "database/sql"
+        emit_result_struct_pointers: true
+        emit_params_struct_pointers: true
+
+  - engine: "mysql"
+    schema: "token/db/mysql/*.up.sql"
+    queries: "token/db/mysql/queries.sql"
+    gen:
+      go:
+        package: "mydb"
+        out: "token/db/mysql"
+        sql_package: "database/sql"
+        emit_result_struct_pointers: true
+        emit_params_struct_pointers: true
+
+  - engine: "sqlite"
+    schema: "token/db/sqlite/*.up.sql"
+    queries: "token/db/sqlite/queries.sql"
+    gen:
+      go:
+        package: "litedb"
+        out: "token/db/sqlite"
+        sql_package: "database/sql"
+        emit_result_struct_pointers: true
+        emit_params_struct_pointers: true
+        emit_pointers_for_null_types: true

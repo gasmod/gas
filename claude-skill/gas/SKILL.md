@@ -1,0 +1,746 @@
+---
+name: gas
+description: >
+  Reference documentation for the Gas core Go package (github.com/gasmod/gas) —
+  the foundational layer of the Gas ecosystem for rapid SaaS development. Use
+  this skill when writing, reviewing, or debugging Go code that imports or
+  extends the gas core package. Covers the App lifecycle, DI container, service
+  registration and lifetimes, Router with ownership tracking, DI-aware handlers,
+  Context, ErrorHandler, EventBus, middleware, migrations, request scopes,
+  logging, provider interfaces, authentication/authorization interfaces,
+  system events, and the runtime kill switch (CloseService / RestartService /
+  RemoveByService) that 503s a torn-down service's routes and its named
+  middleware wherever that middleware is used. Make sure to use this skill whenever working with gas service
+  constructors, route handlers, event subscriptions, middleware registration,
+  authentication, authorization, or any code under a gasmod/gas import path,
+  even if the user doesn't explicitly mention "gas".
+---
+
+# Gas Core Package Reference
+
+Gas is a modular ecosystem for building micro-SaaS applications in Go. The core
+package provides dependency injection, routing, middleware, events, migrations,
+and service lifecycle management.
+
+```
+import "github.com/gasmod/gas"
+```
+
+For full provider interface signatures (Logger, DatabaseProvider, etc.),
+supporting types (Email, Migration, etc.), and logging builder APIs, see
+`references/providers.md`.
+
+For built-in middleware option signatures (RequestLogger, SecurityHeaders,
+CacheControl), see `references/middleware.md`.
+
+## Architecture Principles
+
+- **Infrastructure flows inward.** Services never import each other. They
+  receive shared infrastructure (router, event bus, providers) through
+  constructor injection and communicate via events and provider interfaces.
+- **Ownership tracking.** Every route, middleware, and event subscription is
+  tagged with its owning service, enabling surgical teardown at runtime.
+- **Functional options** — `WorkerOption` for DI/lifecycle, `AppOption` for
+  HTTP-specific concerns. Both satisfy a shared `Option` interface.
+- **Interfaces defined where consumed**, not where implemented.
+
+## Service Interface
+
+Any type registered with the DI container that implements `Service` gets
+automatic lifecycle management: `Init()` after construction, `Close()` at
+shutdown (singletons) or scope end (scoped). Transient services **cannot**
+implement `Service` — registration panics.
+
+```go
+type Service interface {
+	Name() string // unique identifier, e.g. "gas/auth"
+	Init() error  // register routes, middleware, subscriptions
+	Close() error // cleanup internal resources
+}
+```
+
+**Declare `Init` or `Close` and you owe all three.** They are the managed
+lifecycle, so a registered type declaring either one must implement the full
+interface with the exact signatures above. Anything short of that is rejected
+at startup — `BuildAll` returns an error naming what is missing or mis-typed:
+
+```
+gas: *app.Foo declares Close but does not implement gas.Service
+(missing Name() string; missing Init() error); Init and Close are the
+managed lifecycle, so a type declaring either must implement all of
+gas.Service — otherwise it is never initialized, never closed, and
+invisible to the kill switch
+```
+
+Watch for these, all of which are rejected:
+- `func (s *Foo) Init()` — no `error` return, so it is not the interface method
+- any two of the three, or just one: `Init` alone, `Close` alone, `Name`+`Close`
+- registering the value type (`WithSingletonService[Foo]`) when the methods are
+  declared on `*Foo` — register `*Foo`
+- a third-party `io.Closer` such as `*sql.DB` — you cannot add the remaining
+  methods to another package's type, so wrap it in a service of your own
+
+`Name` alone is **not** a trigger. A type declaring only `Name() string` is an
+ordinary dependency and is unaffected, as is one declaring none of the three.
+The same registration options carry both kinds: `gas.Logger`, `ConfigProvider`,
+a scoped `RequestLogger`, a transient `*RequestID` are all registered with
+`With*Service` and none of them implement `Service`.
+
+## Service Lifetimes
+
+```go
+const (
+	ServiceLifetimeSingleton  ServiceLifetime = iota // created once, shared everywhere
+	ServiceLifetimeScoped                            // created once per Scope (i.e. per HTTP request)
+	ServiceLifetimeTransient                         // fresh on every resolution, CANNOT implement Service
+)
+```
+
+**Choosing a lifetime:**
+- **Singleton** — stateless services, routers, event subscriptions, anything
+  that survives the full app lifetime. Most services are singletons.
+- **Scoped** — per-request state like loggers with request-level fields, or
+  database connections with request-scoped transactions.
+- **Transient** — lightweight value objects that need fresh state on every
+  injection. Cannot implement `Service` (no Init/Close lifecycle).
+
+## Option Types
+
+Both `NewWorker` and `NewApp` accept `...Option`. The `Option` interface is
+satisfied by two concrete types:
+
+```go
+type Option interface{ applyOption() }
+
+type WorkerOption func(*Worker)   // DI registration, ready hooks, etc.
+type AppOption    func(*App)      // HTTP-specific: error handler, CSRF, trusted origins
+```
+
+### WorkerOption functions (work with both NewWorker and NewApp)
+
+```go
+gas.WithSingletonService[T any](ctor any) WorkerOption
+gas.WithScopedService[T any](ctor any) WorkerOption
+gas.WithTransientService[T any](ctor any) WorkerOption
+gas.WithService[T any](ctor any, lifetime ServiceLifetime) WorkerOption
+gas.WithServiceInstance[T any](val T) WorkerOption
+gas.WithReadyFunc(fn func(*ServiceContainer) error) WorkerOption
+```
+
+`WithServiceInstance` means pre-**constructed**, not pre-**initialized**. If the
+value implements `Service`, the container calls `Init()` on it during
+`InitServices` (before anything it constructs, so reverse-order shutdown stays
+correct) and `Close()` at shutdown, exactly as for a constructor-registered
+service. Do not call `Init()` yourself before registering, or it runs twice.
+
+### AppOption functions (only work with NewApp)
+
+```go
+gas.WithErrorHandler(h ErrorHandler) AppOption
+gas.WithTrustedOrigin(origin string) AppOption               // panics if invalid URL
+gas.WithCSRFInsecureBypassPattern(pattern string) AppOption  // for webhooks with own validation
+gas.WithCSRFDenyHandler(h http.Handler) AppOption            // default: 403 Forbidden
+```
+
+## Worker
+
+`Worker` manages service lifecycle, DI, events, and migrations without an
+HTTP server. Use it for AWS Lambda, background workers, or CLI tools.
+
+### Construction
+
+```go
+w := gas.NewWorker(opts ...Option) *Worker
+```
+
+`NewWorker` creates an `EventBus` and registers it in the container. Only
+`WorkerOption` values are applied; passing an `AppOption` panics.
+
+### Worker methods
+
+| Method             | Signature                | Description                                                                      |
+|--------------------|--------------------------|----------------------------------------------------------------------------------|
+| `Start`            | `() error`               | InitServices → migrations → ready hooks (non-blocking)                           |
+| `Shutdown`         | `() error`               | Emit SystemShuttingDown, close services in reverse order                         |
+| `Run`              | `() error`               | Start → block on SIGINT/SIGTERM → Shutdown                                       |
+| `InitServices`     | `() error`               | Build singletons, collect services, emit init event                              |
+| `EventBus`         | `() *EventBus`           | The worker's event bus                                                           |
+| `ServiceContainer` | `() *ServiceContainer`   | The DI container                                                                 |
+| `MigrationManager` | `() MigrationManager`    | Resolved from DI, nil if unregistered                                            |
+| `ConfigProvider`   | `() ConfigProvider`      | Resolved from DI, nil if unregistered                                            |
+| `RegisterService`  | `(i, ctor any, lifetime ServiceLifetime)` | Forwards to the container's reflection-based registration        |
+| `RegisterTransientService` / `RegisterScopedService` / `RegisterSingletonService` | `(i, ctor any)` | Same, with the lifetime fixed |
+| `RegisterServiceInstance` | `(val any)`       | Registers a pre-built value under its dynamic type                               |
+| `ActiveServices`   | `() []string`            | Names of currently active services                                               |
+| `CloseService`     | `(name string) error`    | Kill switch: 503 the service's routes and middleware, remove subs, `Close()`, emit event |
+| `RestartService`   | `(name string) error`    | Re-initialize a previously closed service, re-arming its routes and middleware   |
+| `CheckHealth`      | `(ctx) map[string]error` | Concurrently polls all active `HealthReporter`s; also satisfies `HealthProvider` |
+| `CheckReady`       | `(ctx) map[string]error` | Concurrently polls all active `ReadyReporter`s; also satisfies `ReadyProvider`   |
+
+### Worker usage (Lambda example)
+
+```go
+w := gas.NewWorker(
+    gas.WithSingletonService[*database.Service](database.New()),
+    gas.WithSingletonService[*myservice.Service](myservice.New),
+)
+if err := w.Start(); err != nil { log.Fatal(err) }
+defer w.Shutdown()
+
+lambda.Start(func(ctx context.Context, event MyEvent) error {
+    scope := w.ServiceContainer().NewScope()
+    defer scope.Close()
+    svc := gas.MustResolve[*myservice.Service](scope)
+    return svc.Handle(ctx, event)
+})
+```
+
+## App
+
+`App` embeds `*Worker` and adds routing, CSRF protection, and an HTTP server.
+All Worker methods are available on App.
+
+### Construction
+
+```go
+app := gas.NewApp(opts ...Option) *App
+```
+
+`NewApp` creates a `Router` and `EventBus` internally and registers them in
+the container — services receive them via constructor injection. CSRF
+protection (`net/http.CrossOriginProtection`) is enabled by default.
+
+### App.Run()
+
+**Startup sequence:** `Worker.Start` (init → migrations → ready hooks) → `bindConfig` → route map log → HTTP server.
+
+On shutdown (SIGINT/SIGTERM): emit `SystemServerShuttingDown` → graceful
+HTTP shutdown → `Worker.Shutdown` (emit `SystemShuttingDown`, close services
+in reverse init order).
+
+`Run` is the convenience path. For embedding scenarios (tests, custom
+listeners, Lambda with HTTP, etc.), compose `Start` → `Serve` → `Stop`
+yourself, or grab the `*http.Server` / `http.Handler` directly.
+
+### App-specific methods
+
+| Method    | Signature         | Description                                                           |
+|-----------|-------------------|-----------------------------------------------------------------------|
+| `Run`     | `() error`        | Full lifecycle: Start → Serve → block on signal → Stop                |
+| `Start`   | `() error`        | `Worker.Start` + `bindConfig`. Does not start the HTTP server         |
+| `Serve`   | `() error`        | Starts the HTTP server and blocks until it stops (blocking)           |
+| `Stop`    | `() error`        | Emit shutdown event → graceful HTTP shutdown → `Worker.Shutdown`      |
+| `Server`  | `() *http.Server` | Lazily-built `*http.Server` from current Config (cached, thread-safe) |
+| `Handler` | `() http.Handler` | Router wrapped in CSRF protection — useful for `httptest.NewServer`   |
+| `Config`  | `() *Config`      | Application configuration (with ServerSettings)                       |
+| `Router`  | `() *Router`      | The app's router                                                      |
+
+## DI Container
+
+### Registration
+
+```go
+gas.RegisterCtor[T any](c *ServiceContainer, ctor any, lifetime ServiceLifetime)
+gas.RegisterInstance[T any](c *ServiceContainer, val T)
+```
+
+Constructor signature: `func(DepA, DepB, ...) T` or `func(DepA, DepB, ...) (T, error)`
+
+### Reflection-based registration
+
+Every generic registration helper has a reflection-based twin on
+`*ServiceContainer` (and, forwarded, on `*Worker`). These take the type as a
+*value* rather than a type parameter, which is what you need when the type is
+only known at runtime. `TypePtr[T]()` builds the type token:
+
+```go
+gas.TypePtr[T any]() *T // typed nil pointer used as a type token
+
+c.RegisterService(i, ctor any, lifetime ServiceLifetime)
+c.RegisterTransientService(i, ctor any)
+c.RegisterScopedService(i, ctor any)
+c.RegisterSingletonService(i, ctor any)
+c.RegisterServiceInstance(val any) // registered under val's dynamic type
+```
+
+```go
+c.RegisterSingletonService(gas.TypePtr[*myservice.Service](), myservice.New)
+```
+
+The `i` argument is dereferenced once, so `TypePtr[*T]()` registers under `*T`.
+`RegisterServiceInstance` is the exception: it uses the value's dynamic type
+directly, so pass the value itself (`c.RegisterServiceInstance(&myThing{})`).
+
+### Resolution
+
+```go
+gas.Resolve[T any](r Resolver) (T, error)
+gas.MustResolve[T any](r Resolver) T // panics on failure
+```
+
+`Resolver` is implemented by `*ServiceContainer` and `*Scope`.
+
+The reflection-based twins live on `*ServiceContainer` and return `any`:
+
+```go
+c.Resolve(i any) (any, error)
+c.MustResolve(i any) any // panics on failure
+
+svc := c.MustResolve(gas.TypePtr[*myservice.Service]()).(*myservice.Service)
+```
+
+Both forms hit the same registrations and return the same instances.
+
+### Container methods
+
+| Method                                 | Description                                                   |
+|----------------------------------------|---------------------------------------------------------------|
+| `NewServiceContainer()`                | Create new container                                          |
+| `BuildAll() error`                     | Validate lifetimes, topo-sort, eagerly resolve all singletons |
+| `NewScope() *Scope`                    | Create a scoped resolution context                            |
+| `EachInstance(fn func(reflect.Value))` | Iterate all built singleton instances                         |
+| `CanResolve(t reflect.Type) bool`      | Check if a type can be resolved                               |
+
+**Captive dependency validation:** `BuildAll()` rejects singletons that depend
+on scoped or transient services — this would "capture" a short-lived instance
+inside a long-lived one. Error: `captive dependency: singleton X depends on scoped Y`.
+
+## Request Scopes
+
+The App installs middleware that creates a DI `Scope` per HTTP request. Scoped
+services get a fresh instance per request — `Init()` on first resolution,
+`Close()` when the request completes.
+
+DI-aware handlers resolve scoped services automatically via their parameter
+list. For classic `http.HandlerFunc` handlers:
+
+```go
+gas.ResolveFromRequestScope[T any](r *http.Request) (T, error)
+gas.MustResolveFromRequestScope[T any](r *http.Request) T
+```
+
+For resolving multiple services, access the scope directly:
+
+```go
+scope := gas.RequestScope(r) // panics outside scope middleware
+```
+
+For non-HTTP contexts (background jobs, tests):
+
+```go
+scope := container.NewScope()
+defer scope.Close()
+ctx := gas.WithRequestScope(context.Background(), scope)
+```
+
+## Router
+
+`Router` wraps Chi and tracks route/middleware ownership by service. Named
+middleware is validated when it is registered and resolved on every build of
+the routing tree, so a later ownership change reaches chains that were
+registered earlier (see **Kill switch**).
+
+### Registering routes
+
+```go
+router.Handle(service, method, path string, handler any, middleware ...Middleware)
+router.NotFound(service string, handler any)
+```
+
+The `handler` parameter accepts either `http.HandlerFunc` /
+`func(http.ResponseWriter, *http.Request)` (passed through directly), or a
+DI-aware function (see below).
+
+### DI-Aware Handlers
+
+Handlers declare dependencies as typed parameters. The router resolves each
+from the per-request DI scope automatically.
+
+```go
+func(ctx gas.Context) error
+func(ctx gas.Context, dep1 Dep1, dep2 Dep2, ...) error
+```
+
+Signature rules (panics at `Handle()` call time if violated):
+- Must be a function
+- First parameter must be `gas.Context`
+- Must return exactly one value of type `error`
+
+Boot-time validation ensures every handler dependency is registered in the
+container — the app fails fast at startup, not at request time.
+
+The adapter installs panic recovery around every DI-aware handler.
+`http.ErrAbortHandler` is re-panicked; all other panics are logged and passed
+to the `ErrorHandler` as `fmt.Errorf("gas: handler panic: %v", rec)`.
+
+### Middleware
+
+```go
+gas.MiddlewareByName(name string) Middleware                                  // resolved from registry
+gas.MiddlewareFunc(fn func(http.Handler) http.Handler) Middleware             // anonymous inline
+gas.MiddlewareFuncWithName(name string, fn func(http.Handler) http.Handler) Middleware // named inline (appears in route map)
+
+router.Register(service, name string, mw func(http.Handler) http.Handler)    // register named middleware
+router.Use(middleware ...Middleware)                                           // apply globally
+router.UseMiddlewareByName(name string)
+router.UseMiddlewareFunc(fn func(http.Handler) http.Handler)
+```
+
+### Built-in Middleware
+
+Gas provides three middleware constructors (see `references/middleware.md` for
+full option signatures):
+
+- **`RequestLogger[T Logger]`** — logs method, path, status, bytes, duration
+  per request. Resolves a scoped Logger from DI. Status >= 400 → error level.
+- **`SecurityHeaders`** — sets X-Content-Type-Options, X-Frame-Options, etc.
+  with secure defaults.
+- **`CacheControl`** — sets Cache-Control header based on path matching rules.
+
+### Route grouping
+
+```go
+router.Group(fn func(sub *Router))              // inline group
+router.Route(pattern string, fn func(sub *Router)) // pattern-scoped group
+```
+
+`Route()` may be called with the **same pattern more than once** — later calls
+attach to the mount the first one created rather than panicking, which is what
+lets several services share a prefix like `/api`. Each call's body runs in its
+own `chi.Group`, so `Use()` inside one block applies only to handlers
+registered in that block, not to sibling blocks on the same pattern.
+
+### Kill switch
+
+`Worker.CloseService(name)` tears a service down at runtime; the App wires it
+to `Router.RemoveByService(name)`. **Everything the service registered is
+replaced with a static 503 `service_unavailable` response** in the unified
+error shape:
+
+- Its **routes** are replaced with 503 handlers.
+- Its **named middleware** is replaced with a 503 short-circuit *wherever it is
+  referenced* — including on routes owned by services that are still running,
+  and including references nested inside `Group`/`Route` blocks.
+
+So a route guarded by a killed service's middleware stops serving:
+
+```go
+router.Register("auth", "require-auth", requireAuth)   // owned by "auth"
+
+router.Route("/api", func(sub *gas.Router) {
+    sub.Use(gas.MiddlewareByName("require-auth"))
+    sub.Handle("billing", "GET", "/invoices", handler) // owned by "billing"
+})
+
+worker.CloseService("auth")
+// GET /api/invoices -> 503, even though "billing" is still running.
+```
+
+The middleware is **disabled, never skipped**: a teardown can never drop an
+authorization check and leave the route open. Design middleware ownership with
+that blast radius in mind — registering a widely used middleware under a
+service that gets killed takes every consumer down with it.
+
+Ownership is only tracked for names passed to `Register`. An inline
+`MiddlewareFunc` (and `MiddlewareFuncWithName`, which carries its own func) has
+no owner and survives any teardown.
+
+`RestartService(name)` reverses it: re-registering the name re-arms the
+middleware everywhere, and re-registering the routes brings them back.
+
+### Deferred registration
+
+Top-level routers start **unsealed** — `Use`, `Handle`, `Group`, and `Route`
+calls are deferred until `Seal()`. This lets services register in any order
+during `Init()`. The App calls `Seal()` automatically after all services init.
+
+### Other Router methods
+
+| Method                                  | Description                                                        |
+|-----------------------------------------|--------------------------------------------------------------------|
+| `Mux() chi.Router`                      | Underlying Chi router                                              |
+| `Seal()`                                | Flush deferred middleware then routes                              |
+| `RemoveByService(service string)`       | Kill switch: 503 for the service's routes **and for its named middleware everywhere it is used** |
+| `SetErrorHandler(h ErrorHandler)`       | Set error handler for DI-aware handlers                            |
+| `Routes() map[string][]RegisteredRoute` | Snapshot of registered routes by service                           |
+| `NamedMiddleware() map[string]string`   | Named middleware registry (name → service)                         |
+| `ServeHTTP(w, req)`                     | Implements http.Handler                                            |
+
+## Context
+
+`Context` is an **interface** that embeds `context.Context`. It is the first
+parameter of every DI-aware handler. Because it satisfies `context.Context`, it
+can be passed directly to database calls, gRPC, tracing, etc.
+
+```go
+gas.NewContext(parent context.Context, w http.ResponseWriter, r *http.Request, opts ...ContextOption) Context
+```
+
+Panics if any of parent, w, or r is nil. Options: `gas.WithValidate(v)`,
+`gas.WithFormDecoder(d)`.
+
+### Context methods
+
+| Method           | Signature                      | Notes                    |
+|------------------|--------------------------------|--------------------------|
+| `ResponseWriter` | `() http.ResponseWriter`       |                          |
+| `Request`        | `() *http.Request`             |                          |
+| `JSON`           | `(status int, v any) error`    | application/json         |
+| `XML`            | `(status int, v any) error`    | application/xml          |
+| `RSS`            | `(status int, v any) error`    | application/rss+xml      |
+| `HTML`           | `(status int, s string) error` | text/html                |
+| `Text`           | `(status int, s string) error` | text/plain               |
+| `NoContent`      | `() error`                     | 204                      |
+| `Error`          | `(err error) error`            | unified error response   |
+| `ErrorJSON`      | `(err error) error`            | forces the JSON envelope |
+| `Redirect`       | `(status int, url string)`     |                          |
+| `Param`          | `(key string) string`          | chi.URLParam             |
+| `Query`          | `(key string) string`          |                          |
+| `Header`         | `(key string) string`          | request header           |
+| `SetHeader`      | `(key, value string)`          | response header          |
+| `BindJSON`       | `(dest any) error`             | decode + validate        |
+| `BindForm`       | `(dest any) error`             | decode + validate        |
+| `Validator`      | `() *validator.Validate`       | go-playground/validator  |
+| `FormDecoder`    | `() *schema.Decoder`           | gorilla/schema           |
+
+`BindJSON` and `BindForm` both decode and then run struct validation via
+`go-playground/validator`, returning a `*gas.Error`: 400 (`invalid_json` /
+`invalid_form`) for a malformed body, 422 (`validation_failed`) with one
+`FieldError` per violation, named by json tag. The underlying error stays
+reachable through `errors.As`. The form decoder uses alias tag `"form"` and has
+`IgnoreUnknownKeys(true)` enabled.
+
+Because `Context` is an interface, tests can mock it via embedding:
+```go
+type mockContext struct { gas.Context }
+```
+
+## Errors and ErrorHandler
+
+`gas.Error` is the unified error shape handlers return. Applications should not
+define their own error struct.
+
+```go
+type Error struct {
+	Status  int            `json:"-"`
+	Code    string         `json:"code"`
+	Message string         `json:"message"`
+	Fields  []FieldError   `json:"fields,omitempty"`
+	Details map[string]any `json:"details,omitempty"`
+	// unexported cause: logged, never serialized
+}
+
+type FieldError struct {
+	Field   string `json:"field"`
+	Rule    string `json:"rule"`
+	Message string `json:"message"`
+}
+```
+
+Constructors, each setting the matching status and code:
+
+| Constructor                   | Status | Code                  |
+|-------------------------------|--------|-----------------------|
+| `BadRequest(msg)`             | 400    | `bad_request`         |
+| `Unauthorized(msg)`           | 401    | `unauthorized`        |
+| `Forbidden(msg)`              | 403    | `forbidden`           |
+| `NotFound(msg)`               | 404    | `not_found`           |
+| `Conflict(msg)`               | 409    | `conflict`            |
+| `Unprocessable(msg)`          | 422    | `validation_failed`   |
+| `TooManyRequests(msg)`        | 429    | `rate_limited`        |
+| `Internal(msg)`               | 500    | `internal_error`      |
+| `ServiceUnavailable(msg)`     | 503    | `service_unavailable` |
+| `NewError(status, code, msg)` | custom | custom                |
+
+Codes are also exported as constants (`gas.CodeNotFound`, `gas.CodeInternal`,
+`gas.CodeValidationFailed`, `gas.CodeInvalidJSON`, `gas.CodeInvalidForm`, and
+the rest). Builders: `WithCause(err)`, `WithField(field, rule, message)`,
+`WithDetail(key, val)`. Classify with `gas.AsError(err) (*Error, bool)`.
+
+These are functions, not sentinel vars — the builders mutate the receiver, so a
+shared `var` would be corruptible.
+
+```go
+return gas.NotFound("user not found").WithCause(sql.ErrNoRows)
+```
+
+Wire format is `gas.ErrorResponse`, the `{"error": {...}}` envelope:
+
+```json
+{"error":{"code":"not_found","message":"user not found"}}
+```
+
+`ErrorHandler` keeps its signature, `func(ctx Context, err error)`. The default
+renders a `*Error` at its own status, collapses everything else (raw errors,
+handler panics arriving as `gas: handler panic: %v`, DI resolution failures)
+into a generic 500 with the original logged only, and logs status >= 500 at
+error level and the rest at warn.
+
+Rendering is one exported function, safe to call from middleware because it
+neither logs nor touches the request scope:
+
+```go
+gas.WriteError(w http.ResponseWriter, r *http.Request, err error) error
+gas.WantsJSON(r *http.Request) bool
+```
+
+Clients that do not explicitly prefer `text/html` get JSON. Inside a handler,
+`ctx.Error(err)` writes the negotiated response and `ctx.ErrorJSON(err)` forces
+the envelope.
+
+Override the handler via `gas.WithErrorHandler(h)` or `router.SetErrorHandler(h)`.
+
+Other Gas modules (gas/auth, gas/database, and so on) keep their own sentinel
+errors; map them at the application boundary:
+
+```go
+if errors.Is(err, auth.ErrCredentialsExpired) {
+	return gas.Unauthorized("session expired").WithCause(err)
+}
+```
+
+## EventBus
+
+Typed publish/subscribe messaging between services. Always prefer the generic
+functions over the low-level string-based methods.
+
+```go
+// Define a typed event
+var UserCreated = gas.Event[UserCreatedPayload]{Name: "user:created"}
+
+// Emit (concurrent dispatch, returns *sync.WaitGroup)
+gas.Emit[T](bus *EventBus, event Event[T], data T) *sync.WaitGroup
+
+// Subscribe — always use SubscribeWithOwner from a service so that
+// CloseService can clean up subscriptions (via EventBus.RemoveByService).
+// Bare Subscribe has no ownership tracking and should only be used outside
+// of services.
+gas.Subscribe[T](bus *EventBus, event Event[T], handler func(T))
+gas.SubscribeWithOwner[T](bus *EventBus, service string, event Event[T], handler func(T))
+```
+
+### System Events
+
+| Event                              | Payload                               | Fired When                                      |
+|------------------------------------|---------------------------------------|-------------------------------------------------|
+| `gas.SystemServiceClosed`          | `{ServiceName string}`                | Service killed via `CloseService`               |
+| `gas.SystemServiceInitialized`     | `{ServiceName string}`                | Service finishes `Init`                         |
+| `gas.SystemAllServicesInitialized` | `struct{}`                            | All services initialized                        |
+| `gas.SystemShuttingDown`           | `struct{}`                            | Worker or App begins shutdown (always fires)    |
+| `gas.SystemServerShuttingDown`     | `struct{}`                            | HTTP server shutting down (App only)            |
+| `gas.AppConfigUpdated`             | `{Config Config}`                     | Config bound after init (App only)              |
+
+## Provider Interfaces (summary)
+
+Gas defines provider interfaces in the core package; implementations live in
+separate modules. See `references/providers.md` for full signatures.
+
+| Interface          | Purpose                                | Implementing module     |
+|--------------------|----------------------------------------|-------------------------|
+| `DatabaseProvider` | SQL database access                    | gas/database            |
+| `CacheProvider`    | Key-value caching                      | gas/cache               |
+| `JobQueueProvider` | Async job/message queues               | gas/queue               |
+| `EmailProvider`    | Email sending                          | gas/email               |
+| `StorageProvider`  | File storage (S3, etc.)                | gas/storage             |
+| `ConfigProvider`   | Configuration management               | gas/config              |
+| `TemplateProvider` | Template storage/retrieval             | gas/ui                  |
+| `UIProvider`       | Template rendering                     | gas/ui                  |
+| `Logger`           | Structured logging                     | gas/log                 |
+| `MigrationManager` | Database migrations                    | gas/migrate             |
+| `Authenticator`    | Request authentication                 | gas/auth                |
+| `Authorizer`       | Action authorization                   | gas/auth                |
+| `PrincipalRevoker` | Credential revocation                  | gas/auth                |
+| `HealthProvider`   | Aggregate health of active services    | core (Worker satisfies) |
+| `ReadyProvider`    | Aggregate readiness of active services | core (Worker satisfies) |
+
+Services opt into health/readiness reporting by implementing `HealthReporter`
+(`CheckHealth(ctx) error`) and/or `ReadyReporter` (`CheckReady(ctx) error`).
+The `Worker` aggregates them concurrently with panic recovery; resolve
+`HealthProvider` / `ReadyProvider` from the container to expose a `/healthz`
+or `/readyz` endpoint without coupling handlers to `*Worker`.
+
+### NopLogger
+
+Built-in no-op logger for tests or when logging isn't needed:
+
+```go
+gas.WithScopedService[gas.Logger](gas.NewNopLogger())
+```
+
+## Config (App only)
+
+```go
+type Config struct {
+	env.WithGasEnv
+	Server ServerSettings
+}
+
+type ServerSettings struct {
+	Host            string        // default: "0.0.0.0"
+	Port            int           // default: 8080
+	ReadTimeout     time.Duration // default: 5s
+	WriteTimeout    time.Duration // default: 10s
+	IdleTimeout     time.Duration // default: 2m
+	ShutdownTimeout time.Duration // default: 30s
+}
+
+gas.DefaultConfig() *Config
+config.Validate() error
+```
+
+Worker does not have a `Config` struct. Individual services bind their own
+configuration from `gas.ConfigProvider` during `Init()`.
+
+## Writing a Service (Complete Example)
+
+```go
+package myservice
+
+import (
+	"net/http"
+
+	"github.com/gasmod/gas"
+)
+
+type Service struct {
+	router *gas.Router
+	bus    *gas.EventBus
+}
+
+func New(router *gas.Router, bus *gas.EventBus) *Service {
+	return &Service{router: router, bus: bus}
+}
+
+func (s *Service) Name() string { return "myservice" }
+
+func (s *Service) Init() error {
+	// DI-aware handler — db is resolved per-request from the scoped container.
+	s.router.Handle(s.Name(), "GET", "/hello", s.handleHello)
+
+	// Classic http.HandlerFunc works too.
+	s.router.Handle(s.Name(), "GET", "/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// Always use SubscribeWithOwner from a service (not bare Subscribe)
+	// so CloseService can clean up this subscription.
+	gas.SubscribeWithOwner(s.bus, s.Name(), gas.SystemServiceClosed,
+		func(payload gas.SystemServiceClosedPayload) {
+			// handle another service being closed
+		})
+
+	return nil
+}
+
+func (s *Service) handleHello(ctx gas.Context, db gas.DatabaseProvider) error {
+	return ctx.JSON(http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Service) Close() error { return nil }
+```
+
+```go
+app := gas.NewApp(
+	gas.WithSingletonService[*myservice.Service](myservice.New),
+)
+```

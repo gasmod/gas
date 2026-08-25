@@ -83,7 +83,10 @@ func NewServiceContainer() *ServiceContainer {
 // A type that declares Init or Close but does not fully implement Service is
 // rejected by BuildAll; see validateServiceShape.
 func RegisterCtor[T any](c *ServiceContainer, ctor any, lifetime ServiceLifetime) {
-	t := reflect.TypeFor[T]()
+	registerCtor(c, reflect.TypeFor[T](), ctor, lifetime)
+}
+
+func registerCtor(c *ServiceContainer, t reflect.Type, ctor any, lifetime ServiceLifetime) {
 	if lifetime == ServiceLifetimeTransient {
 		svcType := reflect.TypeFor[Service]()
 		if t.Implements(svcType) || (t.Kind() == reflect.Pointer && t.Implements(svcType)) {
@@ -95,7 +98,60 @@ func RegisterCtor[T any](c *ServiceContainer, ctor any, lifetime ServiceLifetime
 
 // RegisterInstance registers a pre-built value. Treated as a singleton.
 func RegisterInstance[T any](c *ServiceContainer, val T) {
-	c.setInstance(reflect.TypeFor[T](), reflect.ValueOf(val))
+	registerInstance(c, reflect.TypeFor[T](), val)
+}
+
+func typeof(i any) reflect.Type {
+	t := reflect.TypeOf(i)
+	if t == nil {
+		panic("gas: type is nil")
+	}
+	if t.Kind() == reflect.Pointer {
+		return t.Elem()
+	}
+	return t
+}
+
+// TypePtr returns a typed nil pointer of type T for use as a type token with
+// the reflection-based Register*Service and Resolve methods, which take the
+// type as a value rather than a type parameter.
+func TypePtr[T any]() *T {
+	return (*T)(nil)
+}
+
+func registerInstance(c *ServiceContainer, t reflect.Type, val any) {
+	c.setInstance(t, reflect.ValueOf(val))
+}
+
+// RegisterService registers a constructor for the type of i with the given
+// lifetime. i is a type token, typically TypePtr[T](). See RegisterCtor for
+// the accepted constructor signatures and lifetime restrictions.
+func (c *ServiceContainer) RegisterService(i, ctor any, lifetime ServiceLifetime) {
+	registerCtor(c, typeof(i), ctor, lifetime)
+}
+
+// RegisterTransientService registers a constructor for the type of i with the
+// Transient lifetime. i is a type token, typically TypePtr[T]().
+func (c *ServiceContainer) RegisterTransientService(i, ctor any) {
+	registerCtor(c, typeof(i), ctor, ServiceLifetimeTransient)
+}
+
+// RegisterScopedService registers a constructor for the type of i with the
+// Scoped lifetime. i is a type token, typically TypePtr[T]().
+func (c *ServiceContainer) RegisterScopedService(i, ctor any) {
+	registerCtor(c, typeof(i), ctor, ServiceLifetimeScoped)
+}
+
+// RegisterSingletonService registers a constructor for the type of i with the
+// Singleton lifetime. i is a type token, typically TypePtr[T]().
+func (c *ServiceContainer) RegisterSingletonService(i, ctor any) {
+	registerCtor(c, typeof(i), ctor, ServiceLifetimeSingleton)
+}
+
+// RegisterServiceInstance registers a pre-built value under its dynamic type.
+// Treated as a singleton.
+func (c *ServiceContainer) RegisterServiceInstance(val any) {
+	registerInstance(c, reflect.TypeOf(val), val)
 }
 
 // setInstance caches an instance and records its position. Re-registering a
@@ -188,21 +244,43 @@ func (c *ServiceContainer) NewScope() *Scope {
 // Resolve retrieves or builds a service of type T from a Resolver
 // (either *ServiceContainer or *Scope).
 func Resolve[T any](r Resolver) (T, error) {
-	v, err := r.resolveType(reflect.TypeFor[T]())
+	v, err := resolve(reflect.TypeFor[T](), r)
 	if err != nil {
-		var zero T
-		return zero, err
+		return *new(T), err
 	}
-	return v.Interface().(T), nil
+	return v.(T), nil
 }
 
 // MustResolve is like Resolve but panics if the service cannot be resolved.
 func MustResolve[T any](r Resolver) T {
-	v, err := Resolve[T](r)
+	return mustResolve(reflect.TypeFor[T](), r).(T)
+}
+
+func resolve(t reflect.Type, r Resolver) (any, error) {
+	v, err := r.resolveType(t)
 	if err != nil {
-		panic(fmt.Sprintf("failed to resolve %v: %v", reflect.TypeFor[T](), err))
+		return nil, err
+	}
+	return v.Interface(), nil
+}
+
+func mustResolve(t reflect.Type, r Resolver) any {
+	v, err := resolve(t, r)
+	if err != nil {
+		panic(fmt.Sprintf("gas: failed to resolve %v: %v", t, err))
 	}
 	return v
+}
+
+// Resolve retrieves or builds the service registered for the type of i.
+// i is a type token, typically TypePtr[T]().
+func (c *ServiceContainer) Resolve(i any) (any, error) {
+	return resolve(typeof(i), c)
+}
+
+// MustResolve is like Resolve but panics if the service cannot be resolved.
+func (c *ServiceContainer) MustResolve(i any) any {
+	return mustResolve(typeof(i), c)
 }
 
 // ResolveFromRequestScope retrieves or builds a service of type T from the per-request scope in the provided *http.Request.
@@ -525,7 +603,7 @@ var serviceType = reflect.TypeFor[Service]()
 // managed, so it is what marks a type as attempting to be a Service.
 //
 // Name is deliberately not among them: it is an identity method that ordinary
-// dependencies carry (six types in gas-config alone declare a bare Name()
+// dependencies carry (six types in gas/config alone declare a bare Name()
 // string), so triggering on it would reject them. Dropping Name from a service
 // is also the harmless mistake of the three — the type still initializes and
 // closes — whereas dropping Init or Close silently skips a lifecycle hook.

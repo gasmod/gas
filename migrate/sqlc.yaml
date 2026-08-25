@@ -1,0 +1,31 @@
+version: "2"
+sql:
+  - engine: "postgresql"
+    schema: "db/postgres/schema.sql"
+    queries: "db/postgres/queries.sql"
+    gen:
+      go:
+        package: "pgdb"
+        out: "db/postgres"
+        sql_package: "database/sql"
+        emit_exact_table_names: true
+
+  - engine: "mysql"
+    schema: "db/mysql/schema.sql"
+    queries: "db/mysql/queries.sql"
+    gen:
+      go:
+        package: "mydb"
+        out: "db/mysql"
+        sql_package: "database/sql"
+        emit_exact_table_names: true
+
+  - engine: "sqlite"
+    schema: "db/sqlite/schema.sql"
+    queries: "db/sqlite/queries.sql"
+    gen:
+      go:
+        package: "litedb"
+        out: "db/sqlite"
+        sql_package: "database/sql"
+        emit_exact_table_names: true

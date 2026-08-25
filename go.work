@@ -1,0 +1,42 @@
+go 1.26.1
+
+use (
+	.
+	./auth
+	./cache
+	./config
+	./config/examples/basic
+	./config/examples/dotenv
+	./config/examples/env
+	./config/examples/json
+	./config/examples/json_fs
+	./config/examples/secretsmanager
+	./database
+	./email
+	./example/api-server
+	./example/hello-world
+	./example/hello-world-2
+	./example/lambda-worker
+	./example/templates-basic
+	./log
+	./migrate
+	./queue
+	./storage
+	./template
+	./ui
+)
+
+replace (
+	github.com/gasmod/gas v0.4.0 => .
+	github.com/gasmod/gas/auth v0.4.0 => ./auth
+	github.com/gasmod/gas/cache v0.4.0 => ./cache
+	github.com/gasmod/gas/config v0.4.0 => ./config
+	github.com/gasmod/gas/database v0.4.0 => ./database
+	github.com/gasmod/gas/email v0.4.0 => ./email
+	github.com/gasmod/gas/log v0.4.0 => ./log
+	github.com/gasmod/gas/migrate v0.4.0 => ./migrate
+	github.com/gasmod/gas/queue v0.4.0 => ./queue
+	github.com/gasmod/gas/storage v0.4.0 => ./storage
+	github.com/gasmod/gas/template v0.4.0 => ./template
+	github.com/gasmod/gas/ui v0.4.0 => ./ui
+)

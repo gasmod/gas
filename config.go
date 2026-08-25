@@ -6,7 +6,7 @@ import (
 	"net"
 	"time"
 
-	env "github.com/gasmod/gas-config/extensions/gas-env"
+	env "github.com/gasmod/gas/config/extensions/gasenv"
 )
 
 const (

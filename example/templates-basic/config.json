@@ -1,0 +1,8 @@
+{
+  "GasEnv": "development",
+  "UI": {
+    "StaticPath": "/static/*",
+    "StaticStripPrefix": "/static/",
+    "StaticDir": "static"
+  }
+}
