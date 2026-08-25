@@ -14,7 +14,7 @@ type Migration struct {
 // MigrationManager is the interface for registering and executing
 // database migrations. Services call Register during Init() to declare
 // their migrations. The implementation lives in a separate service
-// (gas-migrate) and is wired in by the App.
+// (gas/migrate) and is wired in by the App.
 type MigrationManager interface {
 	Service
 

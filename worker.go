@@ -205,6 +205,42 @@ func (w *Worker) getLogger() Logger {
 	return w.logger
 }
 
+// --- ServiceContainer helpers ---
+
+// RegisterService registers a constructor for the type of t with the given
+// lifetime on the worker's service container. t is a type token, typically
+// TypePtr[T]().
+func (w *Worker) RegisterService(t, ctor any, lifetime ServiceLifetime) {
+	w.serviceContainer.RegisterService(t, ctor, lifetime)
+}
+
+// RegisterTransientService registers a constructor for the type of t with the
+// Transient lifetime on the worker's service container. t is a type token,
+// typically TypePtr[T]().
+func (w *Worker) RegisterTransientService(t, ctor any) {
+	w.serviceContainer.RegisterTransientService(t, ctor)
+}
+
+// RegisterScopedService registers a constructor for the type of t with the
+// Scoped lifetime on the worker's service container. t is a type token,
+// typically TypePtr[T]().
+func (w *Worker) RegisterScopedService(t, ctor any) {
+	w.serviceContainer.RegisterScopedService(t, ctor)
+}
+
+// RegisterSingletonService registers a constructor for the type of t with the
+// Singleton lifetime on the worker's service container. t is a type token,
+// typically TypePtr[T]().
+func (w *Worker) RegisterSingletonService(t, ctor any) {
+	w.serviceContainer.RegisterSingletonService(t, ctor)
+}
+
+// RegisterServiceInstance registers a pre-built value on the worker's service
+// container under its dynamic type. Treated as a singleton.
+func (w *Worker) RegisterServiceInstance(val any) {
+	w.serviceContainer.RegisterServiceInstance(val)
+}
+
 // --- WorkerOption functions ---
 
 // WithService registers a constructor-based service with the given lifetime.

@@ -1,0 +1,21 @@
+{{define "content"}}
+<section class="hero">
+    <h1>Welcome to GAS Templates</h1>
+    <p>A simple demo showing layouts, partials, and page templates working together.</p>
+</section>
+
+<section class="features">
+    <div class="card">
+        <h2>Layouts</h2>
+        <p>Define a base HTML structure shared across all pages. This page uses the <code>base</code> layout.</p>
+    </div>
+    <div class="card">
+        <h2>Partials</h2>
+        <p>Reusable template fragments like the header and footer on this page.</p>
+    </div>
+    <div class="card">
+        <h2>Pages</h2>
+        <p>Each page defines a <code>content</code> block that gets injected into the layout.</p>
+    </div>
+</section>
+{{end}}

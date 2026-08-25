@@ -22,7 +22,7 @@ package gas
 // *sql.DB) cannot be given the remaining methods; wrap it in a service of your
 // own rather than registering it directly.
 type Service interface {
-	// Name returns the unique identifier for this service (e.g., "gas-auth").
+	// Name returns the unique identifier for this service (e.g., "gas/auth").
 	Name() string
 
 	// Init initializes the service. Called automatically by the DI container

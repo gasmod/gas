@@ -8,11 +8,19 @@
 # Test binary, built with `go test -c`
 *.test
 
+# Compiled example programs (each example's Makefile builds a binary named
+# after its directory)
+/config/examples/basic/basic
+/config/examples/dotenv/dotenv
+/config/examples/env/env
+/config/examples/json/json
+/config/examples/json_fs/json_fs
+/config/examples/secretsmanager/secretsmanager
+
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
 
 # Go workspace file
-go.work
 go.work.sum
 
 # Build directories

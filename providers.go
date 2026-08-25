@@ -9,10 +9,10 @@ import (
 	"net/http"
 	"time"
 
-	config "github.com/gasmod/gas-config"
+	config "github.com/gasmod/gas/config"
 )
 
-// DatabaseProvider abstracts database access. Implemented by gas-database
+// DatabaseProvider abstracts database access. Implemented by gas/database
 // or any other database service. DB() exposes the underlying *sql.DB so
 // that sqlc-generated code and transactions can use it directly.
 type DatabaseProvider interface {
@@ -50,7 +50,7 @@ type CacheProvider interface {
 }
 
 // JobQueueProvider abstracts async job/message queue processing.
-// Implemented by gas-queue-sqs or any other queue service. The interface
+// Implemented by gas/queue/sqs or any other queue service. The interface
 // is pull-based: consumers call Dequeue in their own worker loop and
 // acknowledge results with Ack/Nack.
 type JobQueueProvider interface {
@@ -217,7 +217,7 @@ type TemplateProvider interface {
 	RegisterFS(ctx context.Context, fsys fs.FS) error
 }
 
-// UIProvider abstracts template rendering. Implemented by gas-ui or any
+// UIProvider abstracts template rendering. Implemented by gas/ui or any
 // other UI service. Template storage and retrieval is handled by
 // TemplateProvider; UIProvider focuses on compilation and rendering.
 type UIProvider interface {

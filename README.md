@@ -19,7 +19,7 @@ interface:
 
 ```go
 type Service interface {
-	Name() string // Unique identifier, e.g. "gas-auth"
+	Name() string // Unique identifier, e.g. "gas/auth"
 	Init() error  // Register routes, middleware, subscriptions
 	Close() error // Cleanup internal resources
 }
@@ -147,6 +147,37 @@ gas.WithSingletonService[*auth.Service](auth.New)   // equivalent to WithService
 gas.WithScopedService[*RequestLog](NewRequestLog)    // equivalent to WithService(ctor, ServiceLifetimeScoped)
 gas.WithTransientService[*Nonce](NewNonce)           // equivalent to WithService(ctor, ServiceLifetimeTransient)
 ```
+
+#### Registering by type token
+
+When the type isn't known at compile time, register against the container (or
+the Worker, which forwards to it) using a type token built with `gas.TypePtr`:
+
+```go
+c := w.ServiceContainer()
+c.RegisterSingletonService(gas.TypePtr[*auth.Service](), auth.New)
+c.RegisterScopedService(gas.TypePtr[*RequestLog](), NewRequestLog)
+c.RegisterTransientService(gas.TypePtr[*Nonce](), NewNonce)
+c.RegisterService(gas.TypePtr[*auth.Service](), auth.New, gas.ServiceLifetimeSingleton)
+```
+
+The token is dereferenced once, so `TypePtr[*T]()` registers under `*T`.
+`RegisterServiceInstance` is the exception — it uses the value's dynamic type,
+so pass the value itself:
+
+```go
+c.RegisterServiceInstance(myInstance)
+```
+
+Resolve the same way, getting back an `any` you assert:
+
+```go
+svc := c.MustResolve(gas.TypePtr[*auth.Service]()).(*auth.Service)
+svc, err := c.Resolve(gas.TypePtr[*auth.Service]())
+```
+
+These share registrations with the generic `gas.Resolve[T]` / `gas.MustResolve[T]`
+helpers, so both forms return the same instances.
 
 ### Routing
 
@@ -779,7 +810,7 @@ app := gas.NewApp(
 
 ### Config fields
 
-`Config` embeds `env.WithGasEnv` (from gas-env) for environment detection, and holds a `Server ServerSettings` sub-struct.
+`Config` embeds `env.WithGasEnv` (from gasenv) for environment detection, and holds a `Server ServerSettings` sub-struct.
 
 | Field                    | Default    | Description                                              |
 |--------------------------|------------|----------------------------------------------------------|
@@ -804,6 +835,11 @@ app := gas.NewApp(
 | `w.ServiceContainer()`             | `*ServiceContainer`         |                                                       |
 | `w.MigrationManager()`             | `MigrationManager` (or nil) |                                                       |
 | `w.ConfigProvider()`               | `ConfigProvider` (or nil)   |                                                       |
+| `w.RegisterService(i, ctor, lifetime)` | —                       | Register by type token (see [Registering Services](#registering-services)) |
+| `w.RegisterSingletonService(i, ctor)` | —                        | Same, lifetime fixed to singleton                     |
+| `w.RegisterScopedService(i, ctor)` | —                           | Same, lifetime fixed to scoped                        |
+| `w.RegisterTransientService(i, ctor)` | —                        | Same, lifetime fixed to transient                     |
+| `w.RegisterServiceInstance(val)`   | —                           | Register a pre-built value under its dynamic type     |
 | `w.ActiveServices()`               | `[]string`                  |                                                       |
 | `w.CloseService(name)`             | `error`                     | Kill-switch for a single service                      |
 | `w.RestartService(name)`           | `error`                     | Re-initialize a previously closed service             |

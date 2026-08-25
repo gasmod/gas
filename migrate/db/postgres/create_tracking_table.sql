@@ -1,0 +1,10 @@
+CREATE TABLE IF NOT EXISTS __gas_migrations
+(
+    version         TEXT PRIMARY KEY,
+    service         TEXT        NOT NULL,
+    description     TEXT        NOT NULL DEFAULT '',
+    migrate_version TEXT        NOT NULL DEFAULT '',
+    module_version  TEXT        NOT NULL DEFAULT '',
+    applied_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    dirty           BOOLEAN     NOT NULL DEFAULT FALSE
+)
