@@ -3,8 +3,8 @@ module github.com/gasmod/gas/ui
 go 1.26.1
 
 require (
-	github.com/gasmod/gas v0.4.0
-	github.com/gasmod/gas/config v0.4.0
+	github.com/gasmod/gas v0.4.1
+	github.com/gasmod/gas/config v0.4.1
 	github.com/google/uuid v1.6.0
 )
 

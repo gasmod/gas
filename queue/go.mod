@@ -7,8 +7,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.32.27
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.26
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.44.2
-	github.com/gasmod/gas v0.4.0
-	github.com/gasmod/gas/config v0.4.0
+	github.com/gasmod/gas v0.4.1
+	github.com/gasmod/gas/config v0.4.1
 	github.com/testcontainers/testcontainers-go v0.43.0
 )
 
