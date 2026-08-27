@@ -2,7 +2,9 @@
 
 [![Test](https://github.com/gasmod/gas/actions/workflows/test.yml/badge.svg)](https://github.com/gasmod/gas/actions/workflows/test.yml) [![Go Reference](https://pkg.go.dev/badge/github.com/gasmod/gas/storage.svg)](https://pkg.go.dev/github.com/gasmod/gas/storage) ![Go Version](https://img.shields.io/github/go-mod/go-version/gasmod/gas?filename=storage/go.mod) [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Storage service for the [Gas](https://github.com/gasmod/gas) ecosystem. Provides a `gas.StorageProvider` implementation
+Part of the [Gas](../README.md) monorepo · [All modules](../README.md#modules) · [Examples](../example/README.md)
+
+Storage service for the [Gas](../README.md) framework. Provides a `gas.StorageProvider` implementation
 backed by AWS S3 (and S3-compatible services like MinIO, LocalStack, DigitalOcean Spaces).
 
 ## Install
@@ -10,6 +12,8 @@ backed by AWS S3 (and S3-compatible services like MinIO, LocalStack, DigitalOcea
 ```bash
 go get github.com/gasmod/gas/storage
 ```
+
+`s3.New()` returns a DI constructor that takes `gas.ConfigProvider` and `gas.Logger`, so register both alongside the storage service (see [gas/config](../config/README.md) and [gas/log](../log/README.md)).
 
 ## Backends
 
@@ -27,17 +31,31 @@ The S3 backend implements `gas.Service` and `gas.StorageProvider`.
 package main
 
 import (
+	"log"
+
 	"github.com/gasmod/gas"
+	"github.com/gasmod/gas/config"
+	"github.com/gasmod/gas/config/providers"
+	gaslog "github.com/gasmod/gas/log"
 	storages3 "github.com/gasmod/gas/storage/s3"
 )
 
 func main() {
+	cfg := config.New(config.WithProvider(providers.NewEnvProvider()))
+	if err := cfg.Load(); err != nil {
+		log.Fatal(err)
+	}
+
 	app := gas.NewApp(
-		gas.WithSingletonService[*storages3.Service](storages3.New()),
-		// ...
+		gas.WithServiceInstance[gas.ConfigProvider](cfg),
+		gas.WithSingletonService[gas.Logger](gaslog.NewSlogLogger()),
+
+		gas.WithSingletonService[gas.StorageProvider](storages3.New()),
 	)
 
-	app.Run()
+	if err := app.Run(); err != nil {
+		log.Fatal(err)
+	}
 }
 ```
 
@@ -85,6 +103,50 @@ func (s *Service) Init() error {
 	)
 	return nil
 }
+```
+
+### Operations
+
+`gas.StorageProvider` covers the six operations most applications need. Every one takes optional
+`gas.StorageOption` values at the end.
+
+| Method                                            | Returns                | Notes                                                        |
+|---------------------------------------------------|------------------------|--------------------------------------------------------------|
+| `Upload(ctx, key, data io.Reader, opts...)`       | `error`                | Streams the reader to the object store                       |
+| `Download(ctx, key, opts...)`                     | `*gas.StorageObject`   | Body, content type, size, and metadata; caller closes `Body` |
+| `Head(ctx, key, opts...)`                         | `*gas.ObjectInfo`      | Metadata without the body: size, content type, last modified |
+| `Delete(ctx, key, opts...)`                       | `error`                |                                                              |
+| `PresignDownloadURL(ctx, key, expires, opts...)`  | `string`               | Time-limited URL a browser can GET directly                  |
+| `PresignUploadURL(ctx, key, expires, opts...)`    | `string`               | Time-limited URL a browser can PUT directly                  |
+
+| Option                          | Applies to           | Effect                                        |
+|---------------------------------|----------------------|-----------------------------------------------|
+| `gas.InBucket(name)`            | all                  | Overrides the default bucket for one call     |
+| `gas.WithContentType(ct)`       | `Upload`, presigning | Sets the object's content type                |
+| `gas.WithMetadata(map)`         | `Upload`             | Attaches user metadata to the object          |
+
+Presigned URLs let clients transfer bytes straight to S3, so large files never pass through your server:
+
+```go
+// Hand the browser a URL it can PUT the file to, valid for 15 minutes.
+url, err := s.storage.PresignUploadURL(ctx, "uploads/"+id, 15*time.Minute,
+	gas.WithContentType("image/png"),
+)
+
+// ...and a URL it can download from later, from a different bucket.
+url, err = s.storage.PresignDownloadURL(ctx, "uploads/"+id, time.Hour,
+	gas.InBucket("archive-bucket"),
+)
+```
+
+`Download` returns an open body that the caller must close:
+
+```go
+obj, err := s.storage.Download(ctx, "uploads/"+id)
+if err != nil {
+	return err // storage.ErrKeyNotFound if the object is gone
+}
+defer obj.Body.Close()
 ```
 
 ### Direct S3 client access
@@ -166,9 +228,10 @@ if mock.CallCount("Upload") != 1 {
 
 ## Sentinel Errors
 
-The root `storage` package defines two sentinel errors:
+The root `storage` package defines three sentinel errors:
 
 ```go
-storage.ErrKeyNotFound // returned by Download or Head when the key does not exist
-storage.ErrClosed      // returned when an operation is attempted on a closed service
+storage.ErrKeyNotFound    // returned by Download or Head when the key does not exist
+storage.ErrClosed         // returned when an operation is attempted on a closed service
+storage.ErrBucketRequired // no default Storage.Bucket configured and no gas.InBucket() passed
 ```

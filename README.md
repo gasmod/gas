@@ -2,15 +2,128 @@
 
 [![Test](https://github.com/gasmod/gas/actions/workflows/test.yml/badge.svg)](https://github.com/gasmod/gas/actions/workflows/test.yml) [![Go Reference](https://pkg.go.dev/badge/github.com/gasmod/gas.svg)](https://pkg.go.dev/github.com/gasmod/gas) ![Go Version](https://img.shields.io/github/go-mod/go-version/gasmod/gas) [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Gas is the core of a modular Gas ecosystem for building micro-SaaS applications. It provides shared
-infrastructure — dependency injection, routing, middleware, events, migrations, and service lifecycle management — so you
-can focus on business logic instead of rebuilding the same plumbing for every project.
+**Gas is a modular Go framework for building micro-SaaS applications.** It provides the plumbing every product
+needs (dependency injection, routing, middleware, events, migrations, and service lifecycle management) so you
+can spend your time on business logic instead of rebuilding the same wiring for each project.
 
-## Install
+This repository is a monorepo. `github.com/gasmod/gas` is the core package documented below, and each official
+module lives beside it in its own directory as a separate Go module. Take only the pieces you need: an app that
+just serves HTTP depends on core alone.
+
+## Quick start
 
 ```bash
 go get github.com/gasmod/gas
 ```
+
+```go
+package main
+
+import (
+	"log"
+	"net/http"
+
+	"github.com/gasmod/gas"
+)
+
+func main() {
+	app := gas.NewApp()
+
+	app.Router().Handle("", http.MethodGet, "/", func(ctx gas.Context) error {
+		return ctx.Text(http.StatusOK, "Hello, World!")
+	})
+
+	if err := app.Run(); err != nil {
+		log.Fatal(err)
+	}
+}
+```
+
+```bash
+go run .
+# listening on 0.0.0.0:8080
+```
+
+That is a complete Gas app. From here you grow it by writing [services](#writing-a-service) and registering
+modules the same way, letting the DI container wire them together.
+
+## Modules
+
+Each module is its own Go module, so `go get` pulls in only what you actually use.
+
+| Module                             | Import path                      | What it gives you                                                                       |
+|------------------------------------|----------------------------------|-----------------------------------------------------------------------------------------|
+| **core** (this directory)          | `github.com/gasmod/gas`          | App and Worker lifecycle, DI container, router, middleware, events, provider interfaces |
+| [**auth**](auth/README.md)         | `github.com/gasmod/gas/auth`     | JWT, server-side sessions, API keys, and single-use tokens                              |
+| [**cache**](cache/README.md)       | `github.com/gasmod/gas/cache`    | Key-value caching, in-memory or Valkey (Redis-compatible)                               |
+| [**config**](config/README.md)     | `github.com/gasmod/gas/config`   | Config from env vars, JSON, `.env`, and AWS Secrets Manager, bound to structs           |
+| [**database**](database/README.md) | `github.com/gasmod/gas/database` | `database/sql` and native pgx pools, transaction helpers, sqlc-friendly                 |
+| [**email**](email/README.md)       | `github.com/gasmod/gas/email`    | Transactional email over AWS SES, including templated sends                             |
+| [**log**](log/README.md)           | `github.com/gasmod/gas/log`      | Structured logging (zerolog or slog) and HTTP/OTLP log shipping                         |
+| [**migrate**](migrate/README.md)   | `github.com/gasmod/gas/migrate`  | Service-owned database migrations with dirty-state detection and rollback               |
+| [**queue**](queue/README.md)       | `github.com/gasmod/gas/queue`    | Job queues backed by AWS SQS                                                            |
+| [**storage**](storage/README.md)   | `github.com/gasmod/gas/storage`  | Object storage on S3 and S3-compatible services                                         |
+| [**template**](template/README.md) | `github.com/gasmod/gas/template` | Template storage: memory, directory, embedded FS, database, or composite                |
+| [**ui**](ui/README.md)             | `github.com/gasmod/gas/ui`       | HTML rendering with layouts and partials, static files, HTMX fragments                  |
+
+No module imports another module's service package. They meet through the [provider
+interfaces](#provider-interfaces) defined in core, so any of them can be replaced by your own implementation or
+a test mock without the others noticing. The one shared dependency is `gas/config`: core and most modules embed
+its `gasenv` extension for environment detection, and bind their settings through `gas.ConfigProvider`.
+
+**Wiring them up.** A module's `New` returns a *constructor*, not a service: the DI container calls it with the
+dependencies it declares. Most modules ask for `gas.ConfigProvider` and `gas.Logger`, and the database-backed
+ones also ask for `gas.DatabaseProvider` and `gas.MigrationManager`. Every dependency must be registered or
+startup fails with `no registration for <type>`, which is deliberate: a typo in your wiring should not surface
+as a nil pointer on the first request. Each module README lists exactly what its constructors need.
+
+```go
+cfg := config.New(config.WithProvider(providers.NewEnvProvider()))
+if err := cfg.Load(); err != nil {
+	log.Fatal(err)
+}
+
+app := gas.NewApp(
+	// Infrastructure every module draws on.
+	gas.WithServiceInstance[gas.ConfigProvider](cfg),
+	gas.WithSingletonService[gas.Logger](gaslog.NewSlogLogger()),
+
+	// Modules, wired by interface so your services depend on the contract.
+	gas.WithSingletonService[gas.DatabaseProvider](database.New()),
+	gas.WithSingletonService[gas.MigrationManager](migrate.New()),
+	gas.WithSingletonService[gas.CacheProvider](cachemem.New()),
+
+	// Your own services.
+	gas.WithSingletonService[*billing.Service](billing.New),
+)
+```
+
+### Versioning
+
+All modules share a single version and are released together. A release tags the root module `vX.Y.Z` and each
+submodule `<dir>/vX.Y.Z`, which is what `go get github.com/gasmod/gas/auth@vX.Y.Z` resolves against. Mixing
+versions across modules is not supported, so upgrade them together.
+
+Gas is pre-1.0: minor versions may contain breaking changes. See the [CHANGELOG](CHANGELOG.md).
+
+## Examples
+
+Five runnable applications live in [`example/`](example/README.md), from a bare hello world up to a full API
+server using auth, database, storage, queue, email, and cache together.
+
+```bash
+cd example/hello-world && go run ./cmd
+```
+
+## Documentation
+
+- **Core reference** (below): [Key Concepts](#key-concepts) · [App and Worker](#app-lifecycle-http) ·
+  [Services and DI](#registering-services) · [Routing](#routing) · [Handlers](#di-aware-handlers) ·
+  [Context](#context) · [Errors](#error-handling) · [Middleware](#middleware) · [Events](#events) ·
+  [Kill-Switch](#kill-switch) · [CSRF](#csrf-protection) · [Request Scopes](#request-scopes) ·
+  [Providers](#provider-interfaces) · [Auth](#authentication--authorization) · [Configuration](#configuration)
+- **Module reference**: each module's README, linked in the table above.
+- **API reference**: [pkg.go.dev/github.com/gasmod/gas](https://pkg.go.dev/github.com/gasmod/gas)
 
 ## Key Concepts
 
@@ -147,6 +260,32 @@ gas.WithSingletonService[*auth.Service](auth.New)   // equivalent to WithService
 gas.WithScopedService[*RequestLog](NewRequestLog)    // equivalent to WithService(ctor, ServiceLifetimeScoped)
 gas.WithTransientService[*Nonce](NewNonce)           // equivalent to WithService(ctor, ServiceLifetimeTransient)
 ```
+
+#### Register under the type your consumers ask for
+
+The type parameter is the key the container stores the service under, and lookups are by **exact type**. The
+container deliberately does not search its registrations for something that happens to satisfy an interface,
+because that search is ambiguous the moment two services implement the same interface. So a service registered
+under `*database.Service` does not resolve a dependency declared as `gas.DatabaseProvider`:
+
+```go
+// Does NOT work: registered as *database.Service, but migrate asks for gas.DatabaseProvider.
+gas.WithSingletonService[*database.Service](database.New())
+gas.WithSingletonService[*migrate.Service](migrate.New())
+// building *migrate.Service: resolving dep gas.DatabaseProvider for *migrate.Service:
+//   no registration for gas.DatabaseProvider
+```
+
+```go
+// Works: registered under the interface its consumers declare.
+gas.WithSingletonService[gas.DatabaseProvider](database.New())
+gas.WithSingletonService[*migrate.Service](migrate.New())
+```
+
+The mismatch is caught at startup, not on the first request. As a rule, register infrastructure under its
+[provider interface](#provider-interfaces) and your own services under their concrete type. To reach a backend
+feature the interface does not expose, type-assert the provider you were injected rather than registering the
+concrete type as well; each module README shows the assertion for its backend.
 
 #### Registering by type token
 
@@ -653,7 +792,7 @@ Services depend on interfaces, not implementations. Gas defines common providers
 | `CacheProvider`    | `Get`, `Set`, `Delete`, `Exists`                                            |
 | `JobQueueProvider` | `Enqueue`, `Dequeue`, `Ack`, `Nack`                                         |
 | `EmailProvider`    | `Send`, `SendFromTemplate`                                                  |
-| `StorageProvider`  | `Upload`, `Download`, `Delete`, `PresignURL` (all accept `...StorageOption`)|
+| `StorageProvider`  | `Upload`, `Download`, `Delete`, `Head`, `PresignDownloadURL`, `PresignUploadURL` (all accept `...StorageOption`) |
 | `ConfigProvider`   | `SetDefault`, `SetDefaults`, `Set`, `Bind`, `Get`, `Find`, `Values`         |
 | `TemplateProvider` | `Get`, `List`, `Register`, `RegisterFS`                                     |
 | `UIProvider`       | `Render`, `RenderWithStatus`, `RenderFragment`, `RegisterFuncs`             |
@@ -848,9 +987,55 @@ app := gas.NewApp(
 
 ## App Methods
 
-`App` embeds `Worker`, so all Worker methods are available. Additionally:
+`App` embeds `Worker`, so all Worker methods are available. `App` overrides `Start` to also bind configuration,
+and adds:
 
-| Method                       | Returns                     |
-|------------------------------|-----------------------------|
-| `app.Router()`               | `*Router`                   |
-| `app.Config()`               | `*Config`                   |
+| Method           | Returns         | Description                                                                     |
+|------------------|-----------------|---------------------------------------------------------------------------------|
+| `app.Run()`      | `error`         | Start + Serve + block on SIGINT/SIGTERM + Stop. The usual entry point.           |
+| `app.Start()`    | `error`         | Worker.Start (services, migrations, ready hooks) plus config binding. Non-blocking. |
+| `app.Serve()`    | `error`         | Start the HTTP server and block. A clean shutdown returns nil.                   |
+| `app.Stop()`     | `error`         | Graceful HTTP shutdown within `ShutdownTimeout`, then Worker.Shutdown.           |
+| `app.Router()`   | `*Router`       | The App's router.                                                                |
+| `app.Config()`   | `*Config`       | The App's config.                                                                |
+| `app.Server()`   | `*http.Server`  | Built on first call from the current Config, then cached.                        |
+| `app.Handler()`  | `http.Handler`  | The router behind CSRF protection. Use it with `httptest` or your own listener.  |
+
+Splitting `Run` into `Start` / `Serve` / `Stop` is what lets tests drive an App without binding a port:
+
+```go
+app := myapp.New()
+if err := app.Start(); err != nil {
+	t.Fatal(err)
+}
+defer app.Stop()
+
+srv := httptest.NewServer(app.Handler())
+defer srv.Close()
+```
+
+## Contributing
+
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow: conventional
+commits, signed-off commits (DCO), tests with every change, and `make lint`.
+
+Working on the repo itself:
+
+```bash
+make test-all   # go test -race in every module
+make lint-all   # golangci-lint in every module
+make build-all  # go build in every module
+```
+
+A `go.work` file at the root ties the modules together, so local changes to one module are picked up by the
+others without a `replace` directive of your own.
+
+## Community and policies
+
+- [Code of Conduct](CODE_OF_CONDUCT.md)
+- [Security policy](SECURITY.md): please report vulnerabilities privately, never in a public issue.
+- [Changelog](CHANGELOG.md)
+
+## License
+
+[MIT](LICENSE) © Ahmed Kamal

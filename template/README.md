@@ -2,7 +2,9 @@
 
 [![Test](https://github.com/gasmod/gas/actions/workflows/test.yml/badge.svg)](https://github.com/gasmod/gas/actions/workflows/test.yml) [![Go Reference](https://pkg.go.dev/badge/github.com/gasmod/gas/template.svg)](https://pkg.go.dev/github.com/gasmod/gas/template) ![Go Version](https://img.shields.io/github/go-mod/go-version/gasmod/gas?filename=template/go.mod) [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Template storage service for the [Gas](https://github.com/gasmod/gas) ecosystem. Provides multiple `gas.TemplateProvider`
+Part of the [Gas](../README.md) monorepo · [All modules](../README.md#modules) · [Examples](../example/README.md)
+
+Template storage service for the [Gas](../README.md) framework. Provides multiple `gas.TemplateProvider`
 implementations — in-memory, filesystem, database, and composite — for storing and retrieving raw template content.
 
 ## Install
@@ -23,6 +25,12 @@ go get github.com/gasmod/gas/template
 
 Memory, directory, fs, and composite stores implement `gas.TemplateProvider`.
 The database store also implements `gas.Service` (with DI, migrations, and lifecycle management).
+
+The stores differ in how you construct them. `memory.NewStore()` and `composite.NewStore(...)` return a
+`*Store` directly. `dir.NewStore(path)` and `fs.NewStore(fsys)` return a zero-argument DI constructor, so call
+it yourself (`dir.NewStore("./templates")()`) when wiring by hand. `db.NewStore()` returns a DI constructor
+that takes `gas.DatabaseProvider`, `gas.Logger`, and `gas.MigrationManager` (see
+[gas/database](../database/README.md) and [gas/migrate](../migrate/README.md)).
 
 ## Usage
 
@@ -82,21 +90,35 @@ content, err := store.Get(ctx, "templates/home.html")
 package main
 
 import (
+    "log"
+
     "github.com/gasmod/gas"
+    "github.com/gasmod/gas/config"
+    "github.com/gasmod/gas/config/providers"
     database "github.com/gasmod/gas/database"
+    gaslog "github.com/gasmod/gas/log"
     migrate "github.com/gasmod/gas/migrate"
     tmpldb "github.com/gasmod/gas/template/db"
 )
 
 func main() {
+    cfg := config.New(config.WithProvider(providers.NewEnvProvider()))
+    if err := cfg.Load(); err != nil {
+        log.Fatal(err)
+    }
+
     app := gas.NewApp(
-        gas.WithSingletonService[*database.Service](database.New()),
-        gas.WithSingletonService[*migrate.Service](migrate.New()),
-        gas.WithSingletonService[*tmpldb.Store](tmpldb.NewStore()),
-        // ...
+        gas.WithServiceInstance[gas.ConfigProvider](cfg),
+        gas.WithSingletonService[gas.Logger](gaslog.NewSlogLogger()),
+
+        gas.WithSingletonService[gas.DatabaseProvider](database.New()),
+        gas.WithSingletonService[gas.MigrationManager](migrate.New()),
+        gas.WithSingletonService[gas.TemplateProvider](tmpldb.NewStore()),
     )
 
-    app.Run()
+    if err := app.Run(); err != nil {
+        log.Fatal(err)
+    }
 }
 ```
 
@@ -191,7 +213,7 @@ The templates table migration is registered automatically with `gas/migrate` dur
 Multiple `db.Store` instances can share the same table by using different namespaces:
 
 ```go
-gas.WithSingletonService[*tmpldb.Store](tmpldb.NewStore(tmpldb.WithNamespace("emails")))
+gas.WithSingletonService[gas.TemplateProvider](tmpldb.NewStore(tmpldb.WithNamespace("emails")))
 ```
 
 The default namespace is `"default"`.

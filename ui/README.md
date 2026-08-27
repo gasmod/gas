@@ -2,9 +2,11 @@
 
 [![Test](https://github.com/gasmod/gas/actions/workflows/test.yml/badge.svg)](https://github.com/gasmod/gas/actions/workflows/test.yml) [![Go Reference](https://pkg.go.dev/badge/github.com/gasmod/gas/ui.svg)](https://pkg.go.dev/github.com/gasmod/gas/ui) ![Go Version](https://img.shields.io/github/go-mod/go-version/gasmod/gas?filename=ui/go.mod) [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Template rendering, static file serving, and UI infrastructure for the [Gas](https://github.com/gasmod/gas) ecosystem.
+Part of the [Gas](../README.md) monorepo · [All modules](../README.md#modules) · [Examples](../example/README.md)
+
+Template rendering, static file serving, and UI infrastructure for the [Gas](../README.md) framework.
 Implements `gas.UIProvider` on top of a pluggable `gas.TemplateProvider` backend — filesystem, database, memory, or
-composite (see [gas/template](https://github.com/gasmod/gas/template)).
+composite (see [gas/template](../template/README.md)).
 
 ## What It Does
 
@@ -12,7 +14,7 @@ composite (see [gas/template](https://github.com/gasmod/gas/template)).
 
 - **Template rendering** using Go's `html/template` with layout/partial support
 - **Static file serving** with directory listing blocked
-- **Pluggable template backends** via `gas.TemplateProvider` — filesystem, database, memory, or composite (see [gas/template](https://github.com/gasmod/gas/template))
+- **Pluggable template backends** via `gas.TemplateProvider` — filesystem, database, memory, or composite (see [gas/template](../template/README.md))
 - **Template function registration** — other services can contribute helpers via `RegisterFuncs`
 - **`gas.UIProvider` interface** — other services accept this for rendering without importing gas/ui
 
@@ -22,12 +24,18 @@ composite (see [gas/template](https://github.com/gasmod/gas/template)).
 go get github.com/gasmod/gas/ui
 ```
 
+`ui.New[T]()` returns a DI constructor that takes your template provider `T`, `*gas.Router`,
+`gas.ConfigProvider`, and `gas.Logger`. Register all of them alongside it (see
+[gas/template](../template/README.md), [gas/config](../config/README.md), and [gas/log](../log/README.md)).
+
 ## Quick Start
 
 ```go
 package main
 
 import (
+	"os"
+
 	"github.com/gasmod/gas"
 	tmpl "github.com/gasmod/gas/template/fs"
 	ui "github.com/gasmod/gas/ui"
@@ -35,8 +43,8 @@ import (
 
 func main() {
 	app := gas.NewApp(
-		gas.WithSingletonService[gas.TemplateProvider](tmpl.NewStore("templates")),
-		gas.WithSingletonService[*ui.Service](
+		gas.WithSingletonService[gas.TemplateProvider](tmpl.NewStore(os.DirFS("templates"))),
+		gas.WithSingletonService[gas.UIProvider](
 			ui.New[gas.TemplateProvider](ui.WithConfig(&ui.Config{
 				UI: ui.Settings{
 					StaticDir:  "static",
@@ -195,8 +203,12 @@ Registration:
 
 ```go
 app := gas.NewApp(
-	gas.WithSingletonService[gas.TemplateProvider](tmpl.NewStore("templates")),
-	gas.WithSingletonService[*ui.Service](
+	gas.WithSingletonService[gas.TemplateProvider](tmpl.NewStore(os.DirFS("templates"))),
+
+	// The key must be gas.UIProvider, because that is what blog.New injects.
+	// Registering it as *ui.Service instead fails at startup with
+	// "no registration for gas.UIProvider".
+	gas.WithSingletonService[gas.UIProvider](
 		ui.New[gas.TemplateProvider](),
 	),
 	gas.WithSingletonService[*blog.Service](
@@ -255,9 +267,12 @@ everything else is a page.
 ### Single template
 
 ```go
-tp.Register("partials/blog-card.html", []byte(`{{define "blog-card"}}...{{end}}`))
-tp.Register("blog/post.html", []byte(`{{define "content"}}...{{end}}`))
+err := tp.Register(ctx, "partials/blog-card.html", []byte(`{{define "blog-card"}}...{{end}}`))
+err = tp.Register(ctx, "blog/post.html", []byte(`{{define "content"}}...{{end}}`))
 ```
+
+The `fs` backend is read-only, so `Register` and `RegisterFS` return `template.ErrReadOnly` there. Use a writable
+store, or wrap the read-only one in a [composite](../template/README.md#composite-backend) store.
 
 ### Embedded fs.FS (recommended for services)
 
@@ -268,6 +283,7 @@ Services can embed their templates with `//go:embed` and register the entire tre
 package blog
 
 import (
+	"context"
 	"embed"
 	"io/fs"
 
@@ -283,9 +299,11 @@ type Service struct {
 }
 
 func (s *Service) Init() error {
-	sub, _ := fs.Sub(blogTemplates, "templates")
-	s.tp.RegisterFS(sub)
-	return nil
+	sub, err := fs.Sub(blogTemplates, "templates")
+	if err != nil {
+		return err
+	}
+	return s.tp.RegisterFS(context.Background(), sub)
 }
 ```
 
@@ -325,7 +343,7 @@ func main() {
 
 	app := gas.NewApp(
 		// ... template provider registration ...
-		gas.WithSingletonService[*ui.Service](
+		gas.WithSingletonService[gas.UIProvider](
 			ui.New[gas.TemplateProvider](ui.WithStaticFS(sub)),
 		),
 	)
@@ -344,7 +362,7 @@ mux.Handle("/static/", ui.StaticHandlerFS("/static/", sub))
 ## Template Provider
 
 gas/ui receives its template backend via DI as a `gas.TemplateProvider`. Template storage and retrieval is fully
-decoupled from rendering. Implementations are provided by the [gas/template](https://github.com/gasmod/gas/template)
+decoupled from rendering. Implementations are provided by the [gas/template](../template/README.md)
 package:
 
 - **`fs.Store`** — filesystem-backed, sandboxed via `os.Root`
@@ -357,7 +375,7 @@ parameter on `New[T]` ensures the DI container resolves the correct concrete typ
 
 ```go
 gas.WithSingletonService[*MyCustomStore](NewMyCustomStore),
-gas.WithSingletonService[*ui.Service](ui.New[*MyCustomStore]()),
+gas.WithSingletonService[gas.UIProvider](ui.New[*MyCustomStore]()),
 ```
 
 ## Built-in Template Functions
@@ -369,7 +387,7 @@ gas.WithSingletonService[*ui.Service](ui.New[*MyCustomStore]()),
 | `safeURL`       | `(string) URL`                | Mark string as trusted URL                    |
 | `upper`         | `(string) string`             | Uppercase                                     |
 | `lower`         | `(string) string`             | Lowercase                                     |
-| `title`         | `(string) string`             | Title case                                    |
+| `title`         | `(string) string`             | `strings.ToTitle`: maps every letter to title case, so ASCII input comes back fully uppercased |
 | `trimSpace`     | `(string) string`             | Trim whitespace                               |
 | `contains`      | `(s, substr) bool`            | String contains                               |
 | `hasPrefix`     | `(s, prefix) bool`            | String has prefix                             |
@@ -481,8 +499,8 @@ mock.Reset()             // clear recorded calls
 
 ```go
 app := gas.NewApp(
-	gas.WithSingletonService[gas.TemplateProvider](tmpl.NewStore("templates")),
-	gas.WithSingletonService[*ui.Service](
+	gas.WithSingletonService[gas.TemplateProvider](tmpl.NewStore(os.DirFS("templates"))),
+	gas.WithSingletonService[gas.UIProvider](
 		ui.New[gas.TemplateProvider](ui.WithConfig(&ui.Config{
 			UI: ui.Settings{
 				StaticDir: "static",
@@ -491,6 +509,11 @@ app := gas.NewApp(
 	),
 )
 ```
+
+Two type parameters are in play and they do different jobs. `New[T]` names the **template provider** type the
+container should inject into the service, while the `WithSingletonService[...]` parameter names the key the
+**ui service itself** is stored under. They are independent: register under `gas.UIProvider` so consumers can
+inject it, and set `T` to whatever your template store is registered as.
 
 The `New[T]` function is generic over the template provider type and returns a curried DI constructor. The container
 injects the template provider, `*gas.Router`, `gas.ConfigProvider`, and `gas.Logger` automatically.

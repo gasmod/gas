@@ -2,7 +2,9 @@
 
 [![Test](https://github.com/gasmod/gas/actions/workflows/test.yml/badge.svg)](https://github.com/gasmod/gas/actions/workflows/test.yml) [![Go Reference](https://pkg.go.dev/badge/github.com/gasmod/gas/queue.svg)](https://pkg.go.dev/github.com/gasmod/gas/queue) ![Go Version](https://img.shields.io/github/go-mod/go-version/gasmod/gas?filename=queue/go.mod) [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Job queue service for the [Gas](https://github.com/gasmod/gas) ecosystem. Provides a `gas.JobQueueProvider` implementation
+Part of the [Gas](../README.md) monorepo · [All modules](../README.md#modules) · [Examples](../example/README.md)
+
+Job queue service for the [Gas](../README.md) framework. Provides a `gas.JobQueueProvider` implementation
 backed by AWS SQS, plus a test mock for use in unit tests.
 
 ## Install
@@ -10,6 +12,8 @@ backed by AWS SQS, plus a test mock for use in unit tests.
 ```bash
 go get github.com/gasmod/gas/queue
 ```
+
+`sqs.New()` returns a DI constructor that takes `gas.ConfigProvider` and `gas.Logger`, so register both alongside the queue (see [gas/config](../config/README.md) and [gas/log](../log/README.md)).
 
 ## Backends
 
@@ -29,17 +33,31 @@ callers can drain traffic during graceful shutdown).
 package main
 
 import (
+	"log"
+
 	"github.com/gasmod/gas"
+	"github.com/gasmod/gas/config"
+	"github.com/gasmod/gas/config/providers"
+	gaslog "github.com/gasmod/gas/log"
 	queuesqs "github.com/gasmod/gas/queue/sqs"
 )
 
 func main() {
+	cfg := config.New(config.WithProvider(providers.NewEnvProvider()))
+	if err := cfg.Load(); err != nil {
+		log.Fatal(err)
+	}
+
 	app := gas.NewApp(
-		gas.WithSingletonService[*queuesqs.Service](queuesqs.New()),
-		// ...
+		gas.WithServiceInstance[gas.ConfigProvider](cfg),
+		gas.WithSingletonService[gas.Logger](gaslog.NewSlogLogger()),
+
+		gas.WithSingletonService[gas.JobQueueProvider](queuesqs.New()),
 	)
 
-	app.Run()
+	if err := app.Run(); err != nil {
+		log.Fatal(err)
+	}
 }
 ```
 
