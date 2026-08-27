@@ -32,7 +32,10 @@ export default defineConfig({
 				{
 					label: 'Guides',
 					items: [
+						{ label: 'Route requests', slug: 'guides/routing' },
+						{ label: 'Add middleware', slug: 'guides/middleware' },
 						{ label: 'Connect a database', slug: 'guides/database' },
+						{ label: 'Cache expensive work', slug: 'guides/caching' },
 						{ label: 'Authenticate requests', slug: 'guides/auth' },
 						{ label: 'Serve HTML', slug: 'guides/html' },
 						{ label: 'Store and serve files', slug: 'guides/files' },
@@ -48,6 +51,7 @@ export default defineConfig({
 					label: 'Concepts',
 					items: [
 						{ label: 'Overview', slug: 'concepts/overview' },
+						{ label: 'App and Worker lifecycle', slug: 'concepts/lifecycle' },
 						{ label: 'Services and DI', slug: 'concepts/services-and-di' },
 						{ label: 'Request scopes', slug: 'concepts/request-scopes' },
 						{ label: 'Ownership and teardown', slug: 'concepts/ownership' },

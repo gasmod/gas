@@ -1,0 +1,101 @@
+---
+title: App and Worker lifecycle
+description: What Run does, in what order, and how to take it apart for tests.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+`App` serves HTTP. `Worker` is the same framework without a router or server,
+for Lambda functions, queue consumers, and CLI tools. `App` embeds `Worker`, so
+every DI registration option works with both; only HTTP-specific options such as
+`WithErrorHandler` and `WithTrustedOrigin` are App-only.
+
+## Startup order
+
+`Run` is a composition of smaller steps, and knowing the order explains most
+"why didn't my thing happen yet" questions.
+
+1. **Build singletons.** The container topologically sorts registrations,
+   validates lifetimes, and constructs every singleton. `Init` runs on each
+   service as it is built, so a service can rely on its dependencies already
+   being initialized.
+2. **Validate.** Registered instances are initialized, the router is sealed, and
+   every DI-aware handler's parameters are checked against the container.
+3. **Emit `SystemAllServicesInitialized`.**
+4. **Run migrations.** Everything registered during step 1, in global version
+   order across services.
+5. **Ready hooks**, in registration order.
+6. **Bind config**, then start the HTTP server (App only).
+
+Anything failing in steps 1 through 5 aborts startup and returns an error. The
+server never accepts a request against a half-built application.
+
+## Ready hooks
+
+Work that needs a live container but must finish before traffic arrives:
+
+```go
+app := gas.NewApp(
+	gas.WithSingletonService[*DB](NewDB),
+	gas.WithReadyFunc(func(sc *gas.ServiceContainer) error {
+		return seed.Run(gas.MustResolve[*DB](sc))
+	}),
+)
+```
+
+They run after migrations, so the schema exists, and before `Serve`, so nothing
+observes the half-seeded state. Any error aborts startup.
+
+## Taking Run apart
+
+`Run` is `Start` plus `Serve` plus signal handling plus `Stop`. Tests want the
+pieces:
+
+```go
+if err := app.Start(); err != nil { // services, migrations, hooks; does not block
+	t.Fatal(err)
+}
+defer app.Stop()
+
+srv := httptest.NewServer(app.Handler()) // router behind CSRF protection
+defer srv.Close()
+```
+
+`Handler()` returns exactly what the real server serves, so a test exercises the
+same middleware stack without binding a port. See
+[Test a service](/gas/guides/testing/).
+
+## Shutdown
+
+`Stop` emits `SystemServerShuttingDown`, gives in-flight requests up to
+`Server.ShutdownTimeout` to finish, then shuts the worker down: emit
+`SystemShuttingDown`, and `Close` every service in **reverse initialization
+order**, so a service can still use its dependencies while closing.
+
+<Aside type="note" title="Worker.Run and Worker.Start">
+`Worker.Run` blocks on SIGINT or SIGTERM and shuts down afterwards, which suits
+a long-running consumer. `Worker.Start` returns once setup is done, which is
+what Lambda wants: build once in `init`, then hand `Shutdown` to
+`lambda.WithEnableSIGTERM`. See [Run background jobs](/gas/guides/background-jobs/).
+</Aside>
+
+## Health and readiness
+
+Services opt in by implementing `gas.HealthReporter` or `gas.ReadyReporter`.
+`Worker.CheckHealth` and `Worker.CheckReady` poll every active reporter
+concurrently and return a map keyed by service name, and `Worker` itself
+satisfies `gas.HealthProvider` and `gas.ReadyProvider`, so a handler can inject
+them and expose probe endpoints.
+
+The distinction the modules follow: **liveness** fails only for a broken state a
+restart would fix, so `gas/database` does not ping there, since both
+`database/sql` and `pgxpool` reconnect on their own. **Readiness** fails while a
+dependency is unreachable, so traffic drains off an instance without killing it.
+Report a transient outage as unready, never unhealthy, or you turn a dependency
+blip into a restart loop.
+
+## Method reference
+
+The full method sets for `App` and `Worker` are on pkg.go.dev:
+[App](https://pkg.go.dev/github.com/gasmod/gas#App) and
+[Worker](https://pkg.go.dev/github.com/gasmod/gas#Worker).
