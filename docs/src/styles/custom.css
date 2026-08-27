@@ -1,0 +1,17 @@
+/* Gas brand accent. Starlight derives hover and border shades from these. */
+:root {
+	--sl-color-accent-low: #17303b;
+	--sl-color-accent: #2b7fa0;
+	--sl-color-accent-high: #b3dbe9;
+}
+
+:root[data-theme='light'] {
+	--sl-color-accent-low: #c5e3ee;
+	--sl-color-accent: #1c6b87;
+	--sl-color-accent-high: #123a49;
+}
+
+/* Give Go code blocks a little more room to breathe. */
+.expressive-code .frame pre {
+	padding-block: 0.9rem;
+}

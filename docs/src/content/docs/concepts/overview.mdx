@@ -1,0 +1,64 @@
+---
+title: Concepts
+description: Services, dependency injection, and ownership tracking in Gas.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Services
+
+A service is a self-contained unit of functionality, such as auth or billing,
+implementing three methods:
+
+```go
+type Service interface {
+	Name() string // Unique identifier, e.g. "gas/auth"
+	Init() error  // Register routes, middleware, subscriptions
+	Close() error // Clean up internal resources
+}
+```
+
+`Init` and `Close` are the managed lifecycle. The container calls `Init` on
+every service it holds during startup, and `Close` in reverse initialization
+order at shutdown.
+
+## Infrastructure flows inward
+
+Services never import each other. They receive shared infrastructure, the
+router, the event bus, and the provider interfaces, through constructor
+injection, and they talk to each other through events and those interfaces.
+
+```go
+func New(router *gas.Router, bus *gas.EventBus) *Service {
+	return &Service{router: router, bus: bus}
+}
+```
+
+This is what makes a module replaceable. A service that depends on
+`gas.StorageProvider` works unchanged against S3, against a fake in tests, or
+against an implementation you write yourself.
+
+## Ownership tracking
+
+Every route, middleware registration, and event subscription is tagged with the
+service that created it, which is what makes runtime teardown possible. See
+[Ownership and teardown](/gas/concepts/ownership/).
+
+## Failing at startup
+
+Gas prefers a loud failure before traffic arrives over a subtle one during a
+request. Rejected at startup:
+
+- A dependency with no registration, by exact type.
+- A type that declares `Init` or `Close` without implementing all three methods.
+- A transient registration whose type implements `Service`.
+- A singleton depending on a scoped or transient service.
+- A DI-aware handler declaring a parameter the container cannot resolve.
+- An invalid `Config`, per each module's `Validate`.
+
+## Two entry points
+
+`App` serves HTTP. `Worker` provides the same container, lifecycle, events, and
+migrations without a router or server, for Lambda functions, background workers,
+and CLI tools. `App` embeds `Worker`, so every DI registration option works with
+both.

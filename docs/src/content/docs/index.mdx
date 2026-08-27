@@ -1,0 +1,43 @@
+---
+title: Gas
+description: A modular Go framework for building micro-SaaS applications.
+template: splash
+hero:
+  tagline: A modular Go framework for building micro-SaaS applications. Dependency injection, routing, middleware, events, migrations, and service lifecycle, so you write business logic instead of wiring.
+  actions:
+    - text: Get started
+      link: /gas/start/getting-started/
+      icon: right-arrow
+    - text: View on GitHub
+      link: https://github.com/gasmod/gas
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid, Code } from '@astrojs/starlight/components';
+import quickstart from '../../../snippets/quickstart/main.go?raw';
+import { region } from '../../lib/snippet';
+
+<Code code={region(quickstart, 'app')} lang="go" title="main.go" />
+
+That is a complete Gas app. Everything else is additive: register modules the
+same way and let the DI container wire them together.
+
+<CardGrid stagger>
+	<Card title="Take only what you need" icon="puzzle">
+		Each module is its own Go module, so `go get` pulls in only what you use.
+		An app that just serves HTTP depends on the core package alone.
+	</Card>
+	<Card title="Services, not frameworks-in-frameworks" icon="seti:go">
+		A service is three methods: `Name`, `Init`, `Close`. The container
+		resolves constructors, sorts dependencies, and manages the lifecycle.
+	</Card>
+	<Card title="Wired by interface" icon="random">
+		Modules meet through provider interfaces declared in core, so any of them
+		swaps for your own implementation or a test mock.
+	</Card>
+	<Card title="Fails at startup, not in production" icon="error">
+		Unresolved dependencies, malformed services, and handler signature
+		mismatches are all rejected before the server accepts traffic.
+	</Card>
+</CardGrid>

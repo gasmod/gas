@@ -1,0 +1,99 @@
+---
+title: Authenticate requests
+description: JWTs, sessions, API keys, and single-use tokens.
+---
+
+import { Code, Aside, CardGrid, Card } from '@astrojs/starlight/components';
+import auth from '../../../../snippets/auth/main.go?raw';
+import { region } from '../../../lib/snippet';
+
+`gas/auth` provides four credential types behind one interface. Core declares
+`gas.Authenticator`, `gas.Authorizer`, and `gas.PrincipalRevoker`; the module
+implements them and adds middleware.
+
+```bash
+go get github.com/gasmod/gas/auth
+```
+
+<CardGrid>
+	<Card title="jwt" icon="seti:lock">Stateless, HS256 or RS256. No database.</Card>
+	<Card title="session" icon="seti:db">Server-side sessions with a cookie. Revocable.</Card>
+	<Card title="apikey" icon="seti:key">Hashed keys with scopes, for machine callers.</Card>
+	<Card title="token" icon="email">Single-use, expiring. Magic links, verification, resets.</Card>
+</CardGrid>
+
+## Wiring
+
+<Code code={region(auth, 'wiring')} lang="go" title="main.go" />
+
+<Aside type="caution">
+`jwt` is stateless and needs nothing but config. `session`, `apikey`, and
+`token` persist credentials and register their own migrations, so they need
+`gas.DatabaseProvider` and `gas.MigrationManager`. See
+[Connect a database](/gas/guides/database/).
+</Aside>
+
+Build configs from `DefaultConfig()`. A bare `&jwt.Config{}` literal leaves
+`Expiry` at zero, which fails validation at startup.
+
+## Protecting routes
+
+`auth.Middleware` runs an authenticator and puts the resulting `gas.Principal`
+on the request context. `auth.Chain` tries several in order, so one group can
+accept a JWT, a session cookie, or an API key.
+
+<Code code={region(auth, 'middleware')} lang="go" />
+
+Add `auth.RequireScheme(auth.SchemeSession)` when a route must insist on one
+specific credential type, for example a settings page that a long-lived API key
+should not reach.
+
+## Reading the principal
+
+<Code code={region(auth, 'principal')} lang="go" />
+
+A `Principal` carries `Subject()` (the stable user id), `Scheme()` (`jwt`,
+`session`, `apikey`), `CredentialID()` (the specific session or key), and
+metadata. `gas.MetadataValue[T]` reads metadata without an unchecked type
+assertion.
+
+## Issuing credentials
+
+<Code code={region(auth, 'issue')} lang="go" />
+
+Sessions are created with `Create(ctx, subject, meta, r)` and written with
+`SetCookie`. API keys come from `Generate(ctx, subject, name, scopes, opts...)`,
+which returns the plaintext key **exactly once**; only a SHA-256 hash is stored.
+Single-use tokens come from `Issue` and are consumed by `Verify`, which fails on
+the second attempt.
+
+## Error responses
+
+By default a failed authentication writes a plain `401`. To return the
+[unified error shape](/gas/guides/errors/) instead, take over the response:
+
+<Code code={region(auth, 'on-error')} lang="go" />
+
+## Revoking
+
+`session` and `apikey` implement `gas.PrincipalRevoker`: `Revoke` kills one
+credential, `RevokeAll` every credential for a subject, and `RevokeAllByScheme`
+every credential of one type. JWTs are stateless and cannot be revoked
+individually, which is the trade you accept for not touching a database on every
+request. Keep their expiry short if that matters.
+
+API key operations can join your own transaction. `apiKeyService.WithTx(tx)`
+returns a provider scoped to that transaction, so creating a user and their
+first key either both happen or neither does.
+
+## Databases
+
+`session`, `apikey`, and `token` support PostgreSQL, MySQL, and SQLite. The
+dialect is chosen automatically from the driver name.
+
+## Testing
+
+`authtest` provides `MockAuthenticator`, `MockAuthorizer`, and `MockRevoker`,
+each recording calls and delegating to an optional `Fn` field, so a protected
+handler can be tested without issuing real credentials. See
+[Test a service](/gas/guides/testing/).

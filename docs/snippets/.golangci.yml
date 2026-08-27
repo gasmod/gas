@@ -1,0 +1,23 @@
+version: "2"
+
+# Documentation snippets are illustrative Go that compiles as part of the
+# workspace, so the docs site cannot drift from the framework. They keep the
+# correctness linters and drop the house style rules that would force noise
+# into published examples. wrapcheck would wrap every returned error, hiding
+# the single call each snippet exists to show, and unused flags every snippet
+# function, since nothing calls illustrative code by design.
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+
+formatters:
+  enable:
+    - gofmt

@@ -1,0 +1,44 @@
+---
+title: Examples
+description: Five runnable applications, from a bare hello world to a full API server.
+---
+
+Every example lives in [`example/`](https://github.com/gasmod/gas/tree/main/example),
+is its own Go module, and has a `Makefile` with `test`, `build`, `lint`, `fmt`,
+and `vet` targets.
+
+| Example | Runs with | What it shows |
+|---|---|---|
+| [hello-world](https://github.com/gasmod/gas/tree/main/example/hello-world) | nothing | The smallest possible app: one inline handler, no services, no config |
+| [hello-world-2](https://github.com/gasmod/gas/tree/main/example/hello-world-2) | nothing | Service lifetimes, route groups, binding and validation, custom error handling |
+| [templates-basic](https://github.com/gasmod/gas/tree/main/example/templates-basic) | nothing | Server-rendered HTML with `gas/ui`: layouts, partials, static files |
+| [lambda-worker](https://github.com/gasmod/gas/tree/main/example/lambda-worker) | Postgres, SQS | `gas.Worker` instead of `gas.App`, for AWS Lambda and background jobs |
+| [api-server](https://github.com/gasmod/gas/tree/main/example/api-server) | Postgres, LocalStack | A real API: auth, database, storage, queue, email, and cache together |
+
+## Running one
+
+```bash
+git clone https://github.com/gasmod/gas
+cd gas/example/hello-world
+go run ./cmd      # http://localhost:8080
+```
+
+`hello-world-2` and `templates-basic` also run with no external services. For
+`api-server`, bring up Postgres and LocalStack first:
+
+```bash
+cd example/api-server
+docker compose up -d
+cp .env.example .env
+go run ./cmd
+```
+
+## Tests
+
+The HTTP examples drive a real server built from `App.Handler()`, so their tests
+exercise the same middleware and CSRF stack as production without binding a
+port. `lambda-worker` tests its handler through the worker's DI container.
+
+```bash
+make test-all   # from the repo root, every module and example
+```

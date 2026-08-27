@@ -1,0 +1,120 @@
+---
+title: Serve HTML
+description: Layouts, partials, static files, and HTMX fragments.
+---
+
+import { Code, Aside, FileTree } from '@astrojs/starlight/components';
+import htmlui from '../../../../snippets/htmlui/main.go?raw';
+import { region } from '../../../lib/snippet';
+
+Two modules, split along one line: `gas/template` decides **where template
+source lives**, `gas/ui` decides **how it renders**. That separation is what
+lets you develop against files on disk and ship a single binary with templates
+embedded, without the rendering code noticing.
+
+```bash
+go get github.com/gasmod/gas/template github.com/gasmod/gas/ui
+```
+
+## Wiring
+
+<Code code={region(htmlui, 'wiring')} lang="go" title="main.go" />
+
+<Aside type="note" title="Two type parameters, two jobs">
+`ui.New[T]` names the **template provider** to inject. The
+`WithSingletonService[...]` parameter names the key the **ui service** is stored
+under. They are independent: register under `gas.UIProvider` so your services
+can inject it, and set `T` to whatever your template store is registered as.
+</Aside>
+
+## Where templates come from
+
+| Backend | Use it for |
+|---|---|
+| `template/fs` | An `fs.FS`. `os.DirFS` in development, `embed.FS` in a release binary |
+| `template/dir` | A directory on disk, with an in-memory overlay for runtime additions |
+| `template/memory` | Tests and ephemeral content |
+| `template/db` | Templates users can edit, across multiple instances |
+| `template/composite` | Chain them: write to the first, read through all |
+
+The composite store is the interesting one. Put a database store first and an
+embedded store behind it, and you get user-editable templates that fall back to
+the versions you shipped.
+
+## Directory convention
+
+<FileTree>
+- templates/
+  - layouts/
+    - base.html the entry point, `{{define "base"}}`
+  - partials/
+    - nav.html parsed into every render
+    - footer.html
+  - home.html a page, rendered as `Render(w, "home", data)`
+  - notes/
+    - list.html nested pages work, `"notes/list"`
+</FileTree>
+
+Everything in `layouts/` and `partials/` is parsed into every render. Everything
+else is a page. A page that defines blocks gets wrapped in the layout; a page
+that defines none renders standalone.
+
+## Rendering
+
+<Code code={region(htmlui, 'render')} lang="go" title="notes/service.go" />
+
+Your service takes `gas.UIProvider` and never imports `gas/ui`, so it can be
+tested against `uitest.MockUI`.
+
+## HTMX
+
+`RenderFragment` renders a page without the layout wrapper, which is exactly
+what an HTMX swap wants. Same template, two entry points:
+
+<Code code={region(htmlui, 'fragment')} lang="go" />
+
+## Template functions
+
+Built in: `safe`, `safeAttr`, `safeURL`, `upper`, `lower`, `title`, `trimSpace`,
+`contains`, `hasPrefix`, `hasSuffix`, `replace`, `join`, `split`, `truncate`,
+`now`, `formatTime`, `formatTimePtr`, `add`, `sub`, `dict`, `list`, `json`, and
+`buildId`.
+
+`dict` is the one you will use most, since it is how a partial gets arbitrary
+data: `{{template "user-card" dict "Name" .UserName "Role" "admin"}}`.
+
+`buildId` returns a stable id per process, and a fresh one per call in
+development, which makes it a good cache-busting query parameter on asset URLs.
+
+<Aside type="caution">
+`title` maps to `strings.ToTitle`, which maps every letter to title case. On
+ASCII input that means the whole string comes back uppercased, not
+title-cased.
+</Aside>
+
+Any service can contribute helpers during `Init`:
+
+<Code code={region(htmlui, 'funcs')} lang="go" />
+
+Templates are built lazily on first render, so registrations made during `Init`
+are always in time. A name that collides with a built-in logs a warning.
+
+## Static files
+
+Set `UI.StaticDir` (or pass `ui.WithStaticFS` for an `embed.FS`) and the service
+registers a route serving it, with directory listing blocked. Three settings,
+three separate jobs:
+
+| Setting | Answers |
+|---|---|
+| `StaticDir` / `WithStaticFS` | **What** to serve |
+| `StaticPath` / `StaticPaths` | **Where** to serve it, as URL patterns |
+| `StaticStripPrefix` | **What to strip** before looking up the file |
+
+If the FS mirrors your URLs, strip nothing. If the FS is flat and the URLs are
+not, strip the prefix. When empty, nothing is stripped.
+
+## Development mode
+
+When `GasEnv` is development-like, templates rebuild on every request, so edits
+show up on refresh. In production they are built once.

@@ -1,0 +1,89 @@
+---
+title: Handle errors
+description: One error shape for every handler, with validation detail for free.
+---
+
+import { Code, Aside } from '@astrojs/starlight/components';
+import errs from '../../../../snippets/errors/main.go?raw';
+import { region } from '../../../lib/snippet';
+
+Handlers return `error`. Return a `gas.Error` and core renders it at the right
+status in a stable envelope, so applications do not each invent their own error
+struct.
+
+## Returning errors
+
+<Code code={region(errs, 'handler')} lang="go" title="users/service.go" />
+
+```json
+{"error":{"code":"not_found","message":"user not found"}}
+```
+
+| Constructor | Status | Code |
+|---|---|---|
+| `gas.BadRequest(msg)` | 400 | `bad_request` |
+| `gas.Unauthorized(msg)` | 401 | `unauthorized` |
+| `gas.Forbidden(msg)` | 403 | `forbidden` |
+| `gas.NotFound(msg)` | 404 | `not_found` |
+| `gas.Conflict(msg)` | 409 | `conflict` |
+| `gas.Unprocessable(msg)` | 422 | `validation_failed` |
+| `gas.TooManyRequests(msg)` | 429 | `rate_limited` |
+| `gas.Internal(msg)` | 500 | `internal_error` |
+| `gas.ServiceUnavailable(msg)` | 503 | `service_unavailable` |
+| `gas.NewError(status, code, msg)` | custom | custom |
+
+<Aside type="note" title="Causes are logged, never served">
+`WithCause(err)` keeps the underlying error reachable through `errors.Is` and
+`errors.As` and puts it in the log, but it is never serialized into the
+response. Anything that is not a `gas.Error`, including a raw error, a panic, or
+a DI failure, collapses to a generic 500 with the real error logged. Statuses at
+500 and above log at error level; the rest log at warn.
+</Aside>
+
+## Validation comes free
+
+<Code code={region(errs, 'binding')} lang="go" />
+
+Returning the error straight out of `BindJSON` gives a 400 (`invalid_json`) when
+the body is malformed, or a 422 with per-field detail when it parses but fails
+validation. Fields are named by the JSON tag the client actually sent, not the
+Go field name:
+
+```json
+{"error":{"code":"validation_failed","message":"request validation failed",
+  "fields":[{"field":"email","rule":"email","message":"must be a valid email address"}]}}
+```
+
+`BindForm` does the same for form bodies, using the `form` struct tag.
+
+## Adding detail
+
+<Code code={region(errs, 'detail')} lang="go" />
+
+## Reading errors back
+
+<Code code={region(errs, 'classify')} lang="go" />
+
+## Content negotiation
+
+Clients that do not explicitly prefer `text/html` get the JSON envelope. Clients
+that prefer HTML without also accepting JSON get a plain-text body instead, so
+server-rendered apps stay readable with no configuration.
+
+To render real HTML error pages, replace the handler:
+
+<Code code={region(errs, 'custom-handler')} lang="go" />
+
+A custom handler owns the entire response, so nothing is written unless you
+write it. `gas.WriteError(w, r, err)` renders the same envelope from any
+`http.Handler`, without logging and without touching the request scope, which
+makes it safe in middleware that runs before the scope exists, such as a CSRF
+deny handler. `gas.WantsJSON(r)` exposes the same negotiation.
+
+## Panics
+
+DI-aware handlers recover automatically. The stack trace goes to stderr, the
+error is logged through the request-scoped logger when one is available, and the
+panic is routed through the error handler as `gas: handler panic: <value>`.
+`http.ErrAbortHandler` is re-panicked so `net/http` can tear the connection down
+the way it expects.

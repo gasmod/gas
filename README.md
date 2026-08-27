@@ -117,6 +117,7 @@ cd example/hello-world && go run ./cmd
 
 ## Documentation
 
+- **Documentation site**: [gasmod.github.io/gas](https://gasmod.github.io/gas), with guides, module reference, and search.
 - **Core reference** (below): [Key Concepts](#key-concepts) · [App and Worker](#app-lifecycle-http) ·
   [Services and DI](#registering-services) · [Routing](#routing) · [Handlers](#di-aware-handlers) ·
   [Context](#context) · [Errors](#error-handling) · [Middleware](#middleware) · [Events](#events) ·

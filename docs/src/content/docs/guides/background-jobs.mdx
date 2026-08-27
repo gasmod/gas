@@ -1,0 +1,82 @@
+---
+title: Run background jobs
+description: Queues with SQS, and Worker for processes without HTTP.
+---
+
+import { Code, Aside } from '@astrojs/starlight/components';
+import jobs from '../../../../snippets/jobs/main.go?raw';
+import { region } from '../../../lib/snippet';
+
+Two pieces that are often used together but are independent. `gas.Worker` is the
+framework without a router or HTTP server. `gas/queue` is an SQS-backed
+`gas.JobQueueProvider`. You can enqueue from a web app and consume in a worker,
+or use either alone.
+
+```bash
+go get github.com/gasmod/gas/queue
+```
+
+## Worker instead of App
+
+<Code code={region(jobs, 'worker')} lang="go" title="cmd/worker/main.go" />
+
+`Worker` gives you the same DI container, service lifecycle, events, and
+migrations as `App`. `App` actually embeds `Worker`, so every registration
+option works with both. Only the HTTP-specific options, such as
+`WithErrorHandler` and `WithTrustedOrigin`, are App-only.
+
+`Run` blocks until SIGINT or SIGTERM. `Start` does the same setup without
+blocking, which is what you want when something else owns the process loop.
+
+## Enqueueing
+
+<Code code={region(jobs, 'enqueue')} lang="go" />
+
+The queue argument is the full SQS queue URL. `WithGroupID` and `WithDedupeID`
+map to FIFO ordering and deduplication and are ignored on standard queues.
+
+## Consuming
+
+The interface is deliberately pull-based, so you own the loop, the concurrency,
+and the failure policy.
+
+<Code code={region(jobs, 'consume')} lang="go" />
+
+`Dequeue` long-polls for up to the wait duration. `Ack` deletes the message.
+`Nack` makes it immediately visible again rather than waiting out the visibility
+timeout, which is what you want for a fast retry. Do neither and the message
+reappears when its visibility timeout expires, which is the safe default if your
+process dies mid-job.
+
+<Aside type="caution" title="At-least-once, so make handlers idempotent">
+SQS can deliver the same message more than once, and a crash between finishing
+work and calling `Ack` guarantees it. Key your side effects on something stable
+from the payload rather than assuming exactly-once delivery.
+</Aside>
+
+## On Lambda
+
+<Code code={region(jobs, 'lambda')} lang="go" title="cmd/lambda/main.go" />
+
+Build the worker in `init` so it survives across invocations, resolve your
+handler from the container once, then hand it to `lambda.Start`. Wire
+`Worker.Shutdown` into `lambda.WithEnableSIGTERM` so services close cleanly when
+the environment is frozen. The [lambda-worker
+example](/gas/reference/examples/) is a complete version of this.
+
+## Config
+
+| Field | Default | Description |
+|---|---|---|
+| `Queue.Region` | `us-east-1` | AWS region |
+| `Queue.Endpoint` | | Custom endpoint, for ElasticMQ. Empty uses AWS |
+| `Queue.AccessKeyID` | | Static access key. Empty uses the default chain |
+| `Queue.SecretAccessKey` | | Static secret key |
+| `Queue.VisibilityTimeout` | `30s` | How long a dequeued message stays hidden |
+| `Queue.WaitTimeSeconds` | `20` | Long-poll duration, 0 to 20 (an SQS limit) |
+
+## Testing
+
+`queuetest.MockQueue` records calls and delegates to `EnqueueFn`, `DequeueFn`,
+`AckFn`, and `NackFn`, so a consumer loop can be driven through a fixed set of
+jobs with no AWS involved.

@@ -1,0 +1,120 @@
+---
+title: Store and serve files
+description: Uploads, downloads, and presigned URLs on S3 and compatible services.
+---
+
+import { Code, Aside } from '@astrojs/starlight/components';
+import storage from '../../../../snippets/storage/main.go?raw';
+import wiring from '../../../../snippets/wiring/main.go?raw';
+import { region } from '../../../lib/snippet';
+
+`gas/storage` implements `gas.StorageProvider` on AWS S3 and on S3-compatible
+services such as MinIO, LocalStack, and DigitalOcean Spaces. Your services
+depend on the interface, so the same code runs against LocalStack in
+development and S3 in production.
+
+```bash
+go get github.com/gasmod/gas/storage
+```
+
+## Wiring
+
+`s3.New()` returns a DI constructor that takes `gas.ConfigProvider` and
+`gas.Logger`, so register both alongside it. Register the result under
+`gas.StorageProvider`, the interface your services inject.
+
+<Code code={region(wiring, 'app')} lang="go" title="main.go" />
+
+<Aside type="caution">
+The container matches by exact type. Registering this as `*s3.Service` leaves
+your services' `gas.StorageProvider` dependency unresolved and startup fails.
+See [Services and DI](/gas/concepts/services-and-di/).
+</Aside>
+
+## Consuming it
+
+A service depends on the interface, never on the backend package, so it can be
+tested against `storagetest.MockStorage` with no network.
+
+<Code code={region(storage, 'service')} lang="go" />
+
+## Operations
+
+`gas.StorageProvider` covers six operations, each accepting optional
+`gas.StorageOption` values.
+
+| Method | Returns | Notes |
+|---|---|---|
+| `Upload(ctx, key, data, opts...)` | `error` | Streams the reader to the object store |
+| `Download(ctx, key, opts...)` | `*gas.StorageObject` | Body, content type, size, metadata; caller closes `Body` |
+| `Head(ctx, key, opts...)` | `*gas.ObjectInfo` | Metadata without the body |
+| `Delete(ctx, key, opts...)` | `error` | |
+| `PresignDownloadURL(ctx, key, expires, opts...)` | `string` | Time-limited URL a browser can GET |
+| `PresignUploadURL(ctx, key, expires, opts...)` | `string` | Time-limited URL a browser can PUT |
+
+| Option | Applies to | Effect |
+|---|---|---|
+| `gas.InBucket(name)` | all | Overrides the default bucket for one call |
+| `gas.WithContentType(ct)` | `Upload`, presigning | Sets the object's content type |
+| `gas.WithMetadata(m)` | `Upload` | Attaches user metadata |
+
+<Code code={region(storage, 'upload')} lang="go" />
+
+`Download` returns an open body the caller must close, and reports a missing key
+as `storage.ErrKeyNotFound`.
+
+<Code code={region(storage, 'download')} lang="go" />
+
+Presigned URLs let the browser transfer bytes straight to S3, so large files
+never pass through your server. Signing is local; no network call is made.
+
+<Code code={region(storage, 'presign')} lang="go" />
+
+## Config
+
+Without `WithConfig`, settings bind from the registered `gas.ConfigProvider`, so
+they can come from environment variables or a config file. Build custom configs
+from `s3.DefaultConfig()` rather than a bare `&s3.Config{}` literal, so unset
+fields keep their defaults.
+
+| Field | Description |
+|---|---|
+| `Storage.Region` | AWS region (required) |
+| `Storage.Bucket` | Default bucket. Leave unset to require `gas.InBucket(...)` on every call |
+| `Storage.AccessKeyID` | Static AWS access key. Empty uses the default credential chain |
+| `Storage.SecretAccessKey` | Static AWS secret key |
+| `Storage.Endpoint` | Custom endpoint for S3-compatible services. Enables path-style addressing |
+
+## Readiness
+
+The service implements `gas.ReadyReporter`. With a default bucket configured,
+`CheckReady` issues a `HeadBucket` against it, so a Kubernetes readiness probe
+passes only once credentials are valid and the bucket is reachable.
+
+<Aside type="danger" title="Requires s3:ListBucket">
+Without `s3:ListBucket` on the bucket, `HeadBucket` returns 403 and the pod
+never becomes ready. If your policy is scoped narrowly to
+`s3:GetObject`/`s3:PutObject` on a prefix, add:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": "s3:ListBucket",
+  "Resource": "arn:aws:s3:::your-bucket"
+}
+```
+</Aside>
+
+With no default bucket, readiness succeeds once `Init` completes; there is no
+single bucket to probe. `gas.HealthReporter` is intentionally not implemented,
+since the S3 client is stateless and has no broken state a restart would clear.
+
+## Errors and testing
+
+Classify failures with `errors.Is` against `storage.ErrKeyNotFound`,
+`storage.ErrClosed`, and `storage.ErrBucketRequired`. The
+[`storagetest`](https://pkg.go.dev/github.com/gasmod/gas/storage/storagetest)
+package provides `MockStorage`, a recording mock of `gas.StorageProvider`.
+
+Full API reference on
+[pkg.go.dev](https://pkg.go.dev/github.com/gasmod/gas/storage).
