@@ -2,7 +2,9 @@
 
 [![Test](https://github.com/gasmod/gas/actions/workflows/test.yml/badge.svg)](https://github.com/gasmod/gas/actions/workflows/test.yml) [![Go Reference](https://pkg.go.dev/badge/github.com/gasmod/gas/auth.svg)](https://pkg.go.dev/github.com/gasmod/gas/auth) ![Go Version](https://img.shields.io/github/go-mod/go-version/gasmod/gas?filename=auth/go.mod) [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Authentication, authorization, and credential management for the [Gas](https://github.com/gasmod/gas) ecosystem.
+Part of the [Gas](../README.md) monorepo · [All modules](../README.md#modules) · [Examples](../example/README.md)
+
+Authentication, authorization, and credential management for the [Gas](../README.md) framework.
 Provides JWT, server-side session, API key, and single-use token services with multi-dialect database support
 (PostgreSQL, MySQL, SQLite).
 
@@ -23,6 +25,18 @@ go get github.com/gasmod/gas/auth
 | `auth/token`    | Single-use tokens (magic links, email verification, password reset)     | `gas.Service`                                              | `token.Provider`   |
 | `auth/authtest` | Test mocks for `Authenticator`, `Authorizer`, `PrincipalRevoker`        | --                                                         | --                 |
 
+Each service's `New()` returns a DI constructor. What the container must be able to resolve for it:
+
+| Constructor      | Dependencies                                                                     |
+|------------------|----------------------------------------------------------------------------------|
+| `jwt.New()`      | `gas.ConfigProvider`, `gas.Logger`                                               |
+| `session.New()`  | `gas.DatabaseProvider`, `gas.Logger`, `gas.MigrationManager`, `gas.ConfigProvider` |
+| `apikey.New()`   | `gas.DatabaseProvider`, `gas.Logger`, `gas.MigrationManager`, `gas.ConfigProvider` |
+| `token.New()`    | `gas.DatabaseProvider`, `gas.Logger`, `gas.MigrationManager`, `gas.ConfigProvider` |
+
+The three database-backed services register their own migrations during `Init()`, so
+[gas/database](../database/README.md) and [gas/migrate](../migrate/README.md) must be registered too.
+
 ## Provider Interfaces
 
 Each service package exports a `Provider` interface that captures its public contract. Use these
@@ -41,27 +55,53 @@ var _ token.Provider   = (*token.Service)(nil)
 package main
 
 import (
+    "log"
+
     "github.com/gasmod/gas"
     "github.com/gasmod/gas/auth/jwt"
     "github.com/gasmod/gas/auth/session"
+    "github.com/gasmod/gas/config"
+    "github.com/gasmod/gas/config/providers"
+    "github.com/gasmod/gas/database"
+    gaslog "github.com/gasmod/gas/log"
+    "github.com/gasmod/gas/migrate"
 )
 
 func main() {
+    cfg := config.New(config.WithProvider(providers.NewEnvProvider()))
+    if err := cfg.Load(); err != nil {
+        log.Fatal(err)
+    }
+
+    // Start from DefaultConfig: it fills in SigningMethod and Expiry, and a
+    // zero Expiry fails validation.
+    jwtCfg := jwt.DefaultConfig()
+    jwtCfg.JWT.SigningKey = "a-signing-key-of-at-least-32-bytes!!"
+
     app := gas.NewApp(
+        gas.WithServiceInstance[gas.ConfigProvider](cfg),
+        gas.WithSingletonService[gas.Logger](gaslog.NewSlogLogger()),
+
+        // session (like apikey and token) persists credentials and owns a
+        // migration, so it needs a database and the migration manager.
+        gas.WithSingletonService[gas.DatabaseProvider](database.New()),
+        gas.WithSingletonService[gas.MigrationManager](migrate.New()),
+
         gas.WithSingletonService[*jwt.Service](jwt.New(
-            jwt.WithConfig(&jwt.Config{
-                JWT: jwt.Settings{
-                    SigningKey:    "your-secret-key",
-                    SigningMethod: "HS256",
-                },
-            }),
+            jwt.WithConfig(jwtCfg),
         )),
         gas.WithSingletonService[*session.Service](session.New()),
     )
 
-    app.Run()
+    if err := app.Run(); err != nil {
+        log.Fatal(err)
+    }
 }
 ```
+
+The auth services are registered under their concrete types here because you hand them to `auth.Middleware`
+directly rather than injecting them as an interface. `jwt.Service` is stateless and needs no database; only
+`session`, `apikey`, and `token` do.
 
 ## Scheme Constants
 

@@ -2,7 +2,9 @@
 
 [![Test](https://github.com/gasmod/gas/actions/workflows/test.yml/badge.svg)](https://github.com/gasmod/gas/actions/workflows/test.yml) [![Go Reference](https://pkg.go.dev/badge/github.com/gasmod/gas/config.svg)](https://pkg.go.dev/github.com/gasmod/gas/config) ![Go Version](https://img.shields.io/github/go-mod/go-version/gasmod/gas?filename=config/go.mod) [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Configuration management service for the [Gas ecosystem](https://github.com/gasmod). Supports loading from multiple providers (environment variables, JSON files, `.env` files) and binding to Go structs.
+Part of the [Gas](../README.md) monorepo · [All modules](../README.md#modules) · [Examples](../example/README.md)
+
+Configuration management service for the [Gas](../README.md) framework. Supports loading from multiple providers (environment variables, JSON files, `.env` files) and binding to Go structs.
 
 ## Features
 

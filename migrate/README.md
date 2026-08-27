@@ -1,39 +1,67 @@
 # gas/migrate
 
-[![Test](https://github.com/gasmod/gas/actions/workflows/test.yml/badge.svg)](https://github.com/gasmod/gas/actions/workflows/test.yml) [![Go Reference](https://pkg.go.dev/badge/github.com/gasmod/gas/migrate.svg)](https://pkg.go.dev/github.com/gasmod/gas/migrate) ![Go Version](https://img.shields.io/github/go-mod/go-version/gasmod/gas?filename=migrate/go.mod) [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Test](https://github.com/gasmod/gas/actions/workflows/test.yml/badge.svg)](https://github.com/gasmod/gas/actions/workflows/test.yml) [![Go Reference](https://pkg.go.dev/badge/github.com/gasmod/gas/migrate.svg)](https://pkg.go.dev/github.com/gasmod/gas/migrate) ![Go Version](https://img.shields.io/github/go-mod/go-version/gasmod/gas?filename=migrate/go.mod) [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Migration manager for the [Gas](https://github.com/gasmod/gas) ecosystem. Tracks and applies database migrations across
+Part of the [Gas](../README.md) monorepo · [All modules](../README.md#modules) · [Examples](../example/README.md)
+
+Migration manager for the [Gas](../README.md) framework. Tracks and applies database migrations across
 all Gas services with dirty-state detection and rollback support.
 
 ## Install
 
-```
+```bash
 go get github.com/gasmod/gas/migrate
 ```
+
+`migrate.New()` returns a DI constructor that takes `gas.DatabaseProvider`, so register a database alongside it (see [gas/database](../database/README.md)).
 
 ## Usage
 
 ### Wiring in `main.go`
 
+Register the migration manager once. Every service that owns migrations then receives it as a
+`gas.MigrationManager` and registers its own during `Init()`.
+
 ```go
 package main
 
 import (
+	"log"
+
 	"github.com/gasmod/gas"
+	"github.com/gasmod/gas/auth/session"
+	"github.com/gasmod/gas/config"
+	"github.com/gasmod/gas/config/providers"
 	database "github.com/gasmod/gas/database"
+	gaslog "github.com/gasmod/gas/log"
 	migrate "github.com/gasmod/gas/migrate"
 )
 
 func main() {
+	cfg := config.New(config.WithProvider(providers.NewEnvProvider()))
+	if err := cfg.Load(); err != nil {
+		log.Fatal(err)
+	}
+
 	app := gas.NewApp(
-		gas.WithSingletonService[*database.Service](database.New()),
-		gas.WithSingletonService[*migrate.Service](migrate.New()),
-		gas.WithSingletonService[*auth.Service](auth.New),
+		gas.WithServiceInstance[gas.ConfigProvider](cfg),
+		gas.WithSingletonService[gas.Logger](gaslog.NewSlogLogger()),
+
+		gas.WithSingletonService[gas.DatabaseProvider](database.New()),
+		gas.WithSingletonService[gas.MigrationManager](migrate.New()),
+
+		// Registers its own session-table migration during Init().
+		gas.WithSingletonService[*session.Service](session.New()),
 	)
 
-	app.Run()
+	if err := app.Run(); err != nil {
+		log.Fatal(err)
+	}
 }
 ```
+
+`app.Run()` (or `worker.Start()`) applies pending migrations after services initialize and before the HTTP server
+accepts traffic, so a service's schema is in place before its first request.
 
 ### Registering migrations
 

@@ -2,7 +2,9 @@
 
 [![Test](https://github.com/gasmod/gas/actions/workflows/test.yml/badge.svg)](https://github.com/gasmod/gas/actions/workflows/test.yml) [![Go Reference](https://pkg.go.dev/badge/github.com/gasmod/gas/email.svg)](https://pkg.go.dev/github.com/gasmod/gas/email) ![Go Version](https://img.shields.io/github/go-mod/go-version/gasmod/gas?filename=email/go.mod) [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Email service for the [Gas](https://github.com/gasmod/gas) ecosystem. Provides a `gas.EmailProvider` implementation
+Part of the [Gas](../README.md) monorepo · [All modules](../README.md#modules) · [Examples](../example/README.md)
+
+Email service for the [Gas](../README.md) framework. Provides a `gas.EmailProvider` implementation
 backed by AWS SES, plus a test mock for use in unit tests.
 
 ## Install
@@ -10,6 +12,8 @@ backed by AWS SES, plus a test mock for use in unit tests.
 ```bash
 go get github.com/gasmod/gas/email
 ```
+
+`ses.New()` returns a DI constructor that takes `gas.TemplateProvider`, `gas.ConfigProvider`, and `gas.Logger`. Register all three alongside it (see [gas/template](../template/README.md), [gas/config](../config/README.md), and [gas/log](../log/README.md)).
 
 ## Backends
 
@@ -27,17 +31,34 @@ The SES backend implements `gas.Service` and `gas.EmailProvider`.
 package main
 
 import (
+	"log"
+
 	"github.com/gasmod/gas"
+	"github.com/gasmod/gas/config"
+	"github.com/gasmod/gas/config/providers"
 	emailses "github.com/gasmod/gas/email/ses"
+	gaslog "github.com/gasmod/gas/log"
+	tmplmem "github.com/gasmod/gas/template/memory"
 )
 
 func main() {
+	cfg := config.New(config.WithProvider(providers.NewEnvProvider()))
+	if err := cfg.Load(); err != nil {
+		log.Fatal(err)
+	}
+
 	app := gas.NewApp(
-		gas.WithSingletonService[*emailses.Service](emailses.New()),
-		// ...
+		gas.WithServiceInstance[gas.ConfigProvider](cfg),
+		gas.WithSingletonService[gas.Logger](gaslog.NewSlogLogger()),
+
+		// ses.New() also needs a gas.TemplateProvider, for SendFromTemplate.
+		gas.WithServiceInstance[gas.TemplateProvider](tmplmem.NewStore()),
+		gas.WithSingletonService[gas.EmailProvider](emailses.New()),
 	)
 
-	app.Run()
+	if err := app.Run(); err != nil {
+		log.Fatal(err)
+	}
 }
 ```
 

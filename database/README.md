@@ -2,7 +2,9 @@
 
 [![Test](https://github.com/gasmod/gas/actions/workflows/test.yml/badge.svg)](https://github.com/gasmod/gas/actions/workflows/test.yml) [![Go Reference](https://pkg.go.dev/badge/github.com/gasmod/gas/database.svg)](https://pkg.go.dev/github.com/gasmod/gas/database) ![Go Version](https://img.shields.io/github/go-mod/go-version/gasmod/gas?filename=database/go.mod) [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Database connection service for the [Gas](https://github.com/gasmod/gas) ecosystem. Wraps `database/sql` and native
+Part of the [Gas](../README.md) monorepo · [All modules](../README.md#modules) · [Examples](../example/README.md)
+
+Database connection service for the [Gas](../README.md) framework. Wraps `database/sql` and native
 `pgxpool` to provide connection management, transaction helpers, and sqlc compatibility.
 
 ## Install
@@ -10,6 +12,8 @@ Database connection service for the [Gas](https://github.com/gasmod/gas) ecosyst
 ```bash
 go get github.com/gasmod/gas/database
 ```
+
+`database.New()` returns a DI constructor that takes `gas.ConfigProvider` and `gas.Logger`, so register both alongside the database (see [gas/config](../config/README.md) and [gas/log](../log/README.md)).
 
 ## Modes
 
@@ -29,39 +33,59 @@ returns the native `*pgxpool.Pool` for sqlc pgx mode.
 package main
 
 import (
+	"log"
+
 	_ "github.com/jackc/pgx/v5/stdlib" // register pgx as database/sql driver
 
 	"github.com/gasmod/gas"
+	"github.com/gasmod/gas/config"
+	"github.com/gasmod/gas/config/providers"
 	database "github.com/gasmod/gas/database"
+	gaslog "github.com/gasmod/gas/log"
 )
 
 func main() {
+	cfg := config.New(config.WithProvider(providers.NewEnvProvider()))
+	if err := cfg.Load(); err != nil {
+		log.Fatal(err)
+	}
+
+	// Start from DefaultConfig so Mode and the pool settings are populated;
+	// a bare &database.Config{} literal leaves Mode empty and fails Validate.
+	dbCfg := database.DefaultConfig()
+	dbCfg.Database.DSN = "postgres://user:pass@localhost:5432/mydb?sslmode=disable"
+	dbCfg.Database.Driver = "pgx"
+
 	app := gas.NewApp(
-		gas.WithService[*database.Service](
-			database.New(database.WithConfig(&database.Config{
-				Database: database.Settings{
-					DSN:    "postgres://user:pass@localhost:5432/mydb?sslmode=disable",
-					Driver: "pgx",
-				},
-			})),
-			gas.ServiceLifetimeSingleton,
+		gas.WithServiceInstance[gas.ConfigProvider](cfg),
+		gas.WithSingletonService[gas.Logger](gaslog.NewSlogLogger()),
+
+		// Registered under gas.DatabaseProvider, the interface that services
+		// (and gas/migrate) inject. Registering it as *database.Service instead
+		// would leave those dependencies unresolved at startup.
+		gas.WithSingletonService[gas.DatabaseProvider](
+			database.New(database.WithConfig(dbCfg)),
 		),
-		// ...
 	)
 
-	app.Run()
+	if err := app.Run(); err != nil {
+		log.Fatal(err)
+	}
 }
 ```
+
+`WithConfig` supplies the settings directly, so `Init` skips binding from the config provider. The provider is
+still a constructor parameter and must be registered either way; drop `WithConfig` and the service binds its
+settings from it instead.
 
 ### Native pgx mode
 
 ```go
-database.New(database.WithConfig(&database.Config{
-	Database: database.Settings{
-		Mode: database.ModePgx,
-		DSN:  "postgres://user:pass@localhost:5432/mydb?sslmode=disable",
-	},
-}))
+cfg := database.DefaultConfig()
+cfg.Database.Mode = database.ModePgx
+cfg.Database.DSN = "postgres://user:pass@localhost:5432/mydb?sslmode=disable"
+
+database.New(database.WithConfig(cfg))
 
 // After Init(), both are available:
 // svc.DB()   -> *sql.DB (via stdlib adapter)
@@ -91,12 +115,11 @@ than silently ignored.
 ```go
 import _ "modernc.org/sqlite"
 
-database.New(database.WithConfig(&database.Config{
-	Database: database.Settings{
-		Driver: "sqlite",
-		DSN:    "./app.db",
-	},
-}))
+cfg := database.DefaultConfig()
+cfg.Database.Driver = "sqlite"
+cfg.Database.DSN = "./app.db"
+
+database.New(database.WithConfig(cfg))
 ```
 
 ### Dependency injection

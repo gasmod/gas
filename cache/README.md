@@ -2,7 +2,9 @@
 
 [![Test](https://github.com/gasmod/gas/actions/workflows/test.yml/badge.svg)](https://github.com/gasmod/gas/actions/workflows/test.yml) [![Go Reference](https://pkg.go.dev/badge/github.com/gasmod/gas/cache.svg)](https://pkg.go.dev/github.com/gasmod/gas/cache) ![Go Version](https://img.shields.io/github/go-mod/go-version/gasmod/gas?filename=cache/go.mod) [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Cache service for the [Gas](https://github.com/gasmod/gas) ecosystem. Provides two `gas.CacheProvider` implementations —
+Part of the [Gas](../README.md) monorepo · [All modules](../README.md#modules) · [Examples](../example/README.md)
+
+Cache service for the [Gas](../README.md) framework. Provides two `gas.CacheProvider` implementations —
 an in-memory backend for development and testing, and a Valkey (Redis-compatible) backend for production.
 
 ## Install
@@ -10,6 +12,8 @@ an in-memory backend for development and testing, and a Valkey (Redis-compatible
 ```bash
 go get github.com/gasmod/gas/cache
 ```
+
+Both backends' `New()` returns a DI constructor that takes `gas.ConfigProvider` and `gas.Logger`, so register both alongside the cache (see [gas/config](../config/README.md) and [gas/log](../log/README.md)).
 
 ## Backends
 
@@ -30,17 +34,32 @@ and readiness probes.
 package main
 
 import (
+	"log"
+
 	"github.com/gasmod/gas"
+	"github.com/gasmod/gas/config"
+	"github.com/gasmod/gas/config/providers"
 	cachemem "github.com/gasmod/gas/cache/memory"
+	gaslog "github.com/gasmod/gas/log"
 )
 
 func main() {
+	cfg := config.New(config.WithProvider(providers.NewEnvProvider()))
+	if err := cfg.Load(); err != nil {
+		log.Fatal(err)
+	}
+
 	app := gas.NewApp(
-		gas.WithSingletonService[*cachemem.Service](cachemem.New()),
-		// ...
+		gas.WithServiceInstance[gas.ConfigProvider](cfg),
+		gas.WithSingletonService[gas.Logger](gaslog.NewSlogLogger()),
+
+		// Registered under gas.CacheProvider, the interface consumers inject.
+		gas.WithSingletonService[gas.CacheProvider](cachemem.New()),
 	)
 
-	app.Run()
+	if err := app.Run(); err != nil {
+		log.Fatal(err)
+	}
 }
 ```
 
@@ -61,17 +80,31 @@ cachemem.New(cachemem.WithConfig(cfg))
 package main
 
 import (
+	"log"
+
 	"github.com/gasmod/gas"
+	"github.com/gasmod/gas/config"
+	"github.com/gasmod/gas/config/providers"
 	cachevk "github.com/gasmod/gas/cache/valkey"
+	gaslog "github.com/gasmod/gas/log"
 )
 
 func main() {
+	cfg := config.New(config.WithProvider(providers.NewEnvProvider()))
+	if err := cfg.Load(); err != nil {
+		log.Fatal(err)
+	}
+
 	app := gas.NewApp(
-		gas.WithSingletonService[*cachevk.Service](cachevk.New()),
-		// ...
+		gas.WithServiceInstance[gas.ConfigProvider](cfg),
+		gas.WithSingletonService[gas.Logger](gaslog.NewSlogLogger()),
+
+		gas.WithSingletonService[gas.CacheProvider](cachevk.New()),
 	)
 
-	app.Run()
+	if err := app.Run(); err != nil {
+		log.Fatal(err)
+	}
 }
 ```
 

@@ -2,20 +2,29 @@
 
 [![Test](https://github.com/gasmod/gas/actions/workflows/test.yml/badge.svg)](https://github.com/gasmod/gas/actions/workflows/test.yml) [![Go Reference](https://pkg.go.dev/badge/github.com/gasmod/gas/log.svg)](https://pkg.go.dev/github.com/gasmod/gas/log) ![Go Version](https://img.shields.io/github/go-mod/go-version/gasmod/gas?filename=log/go.mod) [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Logging backends for the [Gas](https://github.com/gasmod/gas) ecosystem. Implements the `gas.Logger`, `gas.LogEvent`, `gas.LoggerContext`, and `gas.MutableLoggerContext` interfaces with three interchangeable backends.
+Part of the [Gas](../README.md) monorepo · [All modules](../README.md#modules) · [Examples](../example/README.md)
 
-```
+Logging backends for the [Gas](../README.md) framework. Implements the `gas.Logger`, `gas.LogEvent`, `gas.LoggerContext`, and `gas.MutableLoggerContext` interfaces, so application code logs against one fluent API and you pick the backend at wiring time.
+
+## Install
+
+```bash
 go get github.com/gasmod/gas/log
 ```
 
 ## Backends
+
+Two backends write locally:
 
 | Backend     | Constructor                                        | Backing library                             | Notes                                                                         |
 |-------------|----------------------------------------------------|---------------------------------------------|-------------------------------------------------------------------------------|
 | **Zerolog** | `NewZeroLogLogger(opts ...ZeroLogLoggerOption)`    | [rs/zerolog](https://github.com/rs/zerolog) | High-performance structured JSON logging. Full level support including Trace. |
 | **Slog**    | `NewSlogLogger(opts ...SlogLoggerOption)`          | `log/slog` (stdlib)                         | Zero-dependency option. Trace maps to Debug (slog has no Trace level).        |
 
-Each constructor returns a constructor function type (`ZeroLogLoggerCtor`, `SlogLoggerCtor`) compatible with the Gas DI container. When no options are provided, backends use sensible defaults: Zerolog uses the global `zerolog/log.Logger`; Slog uses `slog.Default()` with an initial event capacity of 5.
+A third, `NewShippingLogger(endpoint, marshaler, opts ...ShippingOption)`, writes locally *and* batches records to
+an HTTP endpoint. See [Shipping logs over HTTP](#shipping-logs-over-http).
+
+Each constructor returns a constructor function type (`ZeroLogLoggerCtor`, `SlogLoggerCtor`, `ShippingLoggerCtor`) compatible with the Gas DI container. When no options are provided, backends use sensible defaults: Zerolog uses the global `zerolog/log.Logger`; Slog uses `slog.Default()` with an initial event capacity of 5.
 
 ## Usage
 
