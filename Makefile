@@ -28,6 +28,13 @@ fmt: ## Format code
 vet: ## Run go vet
 	go vet ./...
 
+# Module Update
+
+mod-update: ## Update go modules
+	go mod tidy
+	go get -u all
+	go mod tidy
+
 ####################
 #     Bulk Ops     #
 ####################
@@ -61,3 +68,6 @@ fmt-all: ## Run make fmt across all modules
 
 vet-all: ## Run make vet across all modules
 	$(call run_all,vet)
+
+mod-update-all: ## Run mod-update across all modules
+	$(call run_all,mod-update)

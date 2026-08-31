@@ -6,17 +6,17 @@ module github.com/gasmod/gas/docs/snippets
 go 1.26.1
 
 require (
-	github.com/gasmod/gas v0.4.1
-	github.com/gasmod/gas/auth v0.4.1
-	github.com/gasmod/gas/config v0.4.1
-	github.com/gasmod/gas/database v0.4.1
-	github.com/gasmod/gas/email v0.4.1
-	github.com/gasmod/gas/log v0.4.1
-	github.com/gasmod/gas/migrate v0.4.1
-	github.com/gasmod/gas/queue v0.4.1
-	github.com/gasmod/gas/storage v0.4.1
-	github.com/gasmod/gas/template v0.4.1
-	github.com/gasmod/gas/ui v0.4.1
+	github.com/gasmod/gas v0.4.2
+	github.com/gasmod/gas/auth v0.4.2
+	github.com/gasmod/gas/config v0.4.2
+	github.com/gasmod/gas/database v0.4.2
+	github.com/gasmod/gas/email v0.4.2
+	github.com/gasmod/gas/log v0.4.2
+	github.com/gasmod/gas/migrate v0.4.2
+	github.com/gasmod/gas/queue v0.4.2
+	github.com/gasmod/gas/storage v0.4.2
+	github.com/gasmod/gas/template v0.4.2
+	github.com/gasmod/gas/ui v0.4.2
 	github.com/jackc/pgx/v5 v5.10.0
 )
 

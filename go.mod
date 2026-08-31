@@ -3,7 +3,7 @@ module github.com/gasmod/gas
 go 1.26.1
 
 require (
-	github.com/gasmod/gas/config v0.4.1
+	github.com/gasmod/gas/config v0.4.2
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/go-playground/validator/v10 v10.30.3
 	github.com/gorilla/schema v1.4.1

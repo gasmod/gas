@@ -1,4 +1,4 @@
-.PHONY: help test test-coverage build lint fmt
+.PHONY: help test test-coverage build lint fmt vet mod-update
 
 # Default target
 help: ## Display this help screen
@@ -25,3 +25,8 @@ fmt: ## Format code
 
 vet: ## Run go vet
 	go vet ./...
+
+mod-update: ## Update go modules
+	go mod tidy
+	go get -u all
+	go mod tidy
