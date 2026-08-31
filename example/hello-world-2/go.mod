@@ -3,8 +3,8 @@ module github.com/gasmod/gas/example/hello-world-2
 go 1.26.1
 
 require (
-	github.com/gasmod/gas v0.4.1
-	github.com/gasmod/gas/config v0.4.1
+	github.com/gasmod/gas v0.4.2
+	github.com/gasmod/gas/config v0.4.2
 )
 
 require (

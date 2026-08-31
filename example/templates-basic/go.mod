@@ -3,11 +3,11 @@ module github.com/gasmod/gas/example/templates-basic
 go 1.26.1
 
 require (
-	github.com/gasmod/gas v0.4.1
-	github.com/gasmod/gas/config v0.4.1
-	github.com/gasmod/gas/log v0.4.1
-	github.com/gasmod/gas/template v0.4.1
-	github.com/gasmod/gas/ui v0.4.1
+	github.com/gasmod/gas v0.4.2
+	github.com/gasmod/gas/config v0.4.2
+	github.com/gasmod/gas/log v0.4.2
+	github.com/gasmod/gas/template v0.4.2
+	github.com/gasmod/gas/ui v0.4.2
 )
 
 require (
