@@ -1,0 +1,94 @@
+---
+title: Add middleware
+description: Named and inline middleware, the built-ins, and cross-origin protection.
+---
+
+import { Code, Aside } from '@astrojs/starlight/components';
+import mw from '../../../../snippets/middleware/main.go?raw';
+import { region } from '../../../lib/snippet';
+
+## Named or inline
+
+<Code code={region(mw, 'register')} lang="go" />
+
+<Code code={region(mw, 'apply')} lang="go" />
+
+The distinction matters more than it looks. Named middleware is **owned** by the
+service that registered it, so a teardown of that service disables it everywhere
+it is referenced. Inline middleware has no owner and survives any teardown. See
+[Ownership and teardown](/gas/concepts/ownership/).
+
+`UseMiddlewareByName` panics if the name is not registered, which is deliberate:
+a typo should not silently leave a route unguarded.
+
+## Request logging
+
+```go
+router.UseMiddlewareFunc(gas.RequestLogger[gas.Logger]())
+```
+
+Logs method, path, status, bytes, duration, and remote address, at error level
+for statuses at 400 and above. Needs a scoped `gas.Logger` in the container.
+Covered in [Structured logging](/gas/guides/logging/).
+
+## Security headers
+
+<Code code={region(mw, 'security')} lang="go" />
+
+Applied by default:
+
+| Header | Default |
+|---|---|
+| `X-Content-Type-Options` | `nosniff` |
+| `X-Frame-Options` | `DENY` |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` |
+| `Permissions-Policy` | `camera=(), microphone=(), geolocation=()` |
+
+Emitted only when you configure them, because a wrong value is worse than none:
+`Content-Security-Policy`, `Strict-Transport-Security`,
+`Cross-Origin-Opener-Policy`, and `Cross-Origin-Resource-Policy`.
+
+<Aside type="caution">
+Turn on HSTS only once you are fully on HTTPS. Browsers honour it for the
+duration of `max-age`, so a premature header can make a site unreachable for
+visitors who already received it.
+</Aside>
+
+## Cache-Control
+
+<Code code={region(mw, 'cachecontrol')} lang="go" />
+
+Path filters accept exact paths, prefixes, and suffixes, in singular and plural
+forms. With no filters the header applies to every request; with no directives
+the middleware passes through without setting anything.
+
+## Cross-origin protection
+
+Gas enables Go's
+[`http.CrossOriginProtection`](https://pkg.go.dev/net/http#CrossOriginProtection)
+by default. Non-safe cross-origin browser requests, POST, PUT, PATCH, DELETE,
+are rejected unless the origin is trusted. Safe methods always pass, and
+requests with no `Sec-Fetch-Site` or `Origin` header, such as curl and
+server-to-server calls, are allowed through.
+
+Same-origin apps need no configuration. Anything else does:
+
+<Code code={region(mw, 'csrf')} lang="go" />
+
+<Aside type="danger" title="Bypasses are exactly that">
+`WithCSRFInsecureBypassPattern` removes the protection for matching paths. It
+exists for endpoints that authenticate differently, such as a webhook receiver
+verifying a signature. If the path has no such check of its own, do not bypass
+it.
+</Aside>
+
+A deny handler runs before the request scope exists, so resolve nothing from DI
+inside it. `gas.WriteError` is safe there: it renders the unified error shape
+without logging or touching the scope.
+
+## Ordering
+
+Middleware runs in registration order, outermost first. Global middleware wraps
+group middleware, which wraps per-route middleware. Register logging early so it
+observes everything downstream, and authentication before anything that assumes
+a principal is present.

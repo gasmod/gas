@@ -1,0 +1,80 @@
+---
+title: Route requests
+description: Register routes, scope middleware, and read request data.
+---
+
+import { Code, Aside } from '@astrojs/starlight/components';
+import rt from '../../../../snippets/routing/main.go?raw';
+import { region } from '../../../lib/snippet';
+
+The router is [chi](https://github.com/go-chi/chi) underneath, with two
+additions: every route records the service that owns it, and handlers may
+declare their dependencies as parameters.
+
+## Registering routes
+
+<Code code={region(rt, 'handle')} lang="go" title="notes/service.go" />
+
+The first argument is the owning service name, which is what makes
+[teardown](/gas/concepts/ownership/) and route attribution possible. Passing
+`s.Name()` keeps it honest.
+
+Middleware is attached per route with `gas.MiddlewareByName(...)`, resolved from
+the router's registry, or `gas.MiddlewareFunc(...)` for an inline one.
+
+## Handler forms
+
+Both work on the same router. A plain `http.HandlerFunc` is passed through
+untouched. A **DI-aware handler** takes `gas.Context` first, dependencies in the
+middle, and returns `error`:
+
+```go
+func (s *Service) createUser(ctx gas.Context, db gas.DatabaseProvider, mailer gas.EmailProvider) error
+```
+
+Each dependency is resolved from that request's [scope](/gas/concepts/request-scopes/).
+At startup the router checks that every declared parameter is registered, so a
+missing dependency fails before the server accepts traffic rather than on the
+first request that hits the route.
+
+Returning an error renders it through the [error handler](/gas/guides/errors/),
+and panics are recovered and routed the same way.
+
+## Grouping
+
+`Group` scopes middleware without changing paths:
+
+<Code code={region(rt, 'group')} lang="go" />
+
+`Route` mounts a path prefix. Several services may mount the same prefix, which
+is how independent features share `/api`:
+
+<Code code={region(rt, 'route')} lang="go" />
+
+<Aside type="note">
+Each `Route` body runs in its own group, so `Use` inside one block applies only
+to the handlers registered in that block. The second service's routes are
+unaffected by the first's middleware, even though both hang off `/api`.
+</Aside>
+
+## Reading the request
+
+<Code code={region(rt, 'params')} lang="go" />
+
+`gas.Context` embeds `context.Context`, so it goes straight into database
+calls, gRPC clients, and anything else taking a context, with no unwrapping.
+It also carries the response helpers: `JSON`, `XML`, `RSS`, `HTML`, `Text`,
+`NoContent`, `Redirect`, `Error`, and `ErrorJSON`, plus `BindJSON` and
+`BindForm` for request bodies. The full method list is on
+[pkg.go.dev](https://pkg.go.dev/github.com/gasmod/gas#Context).
+
+Because it is an interface, tests can implement only the parts they need by
+embedding `gas.Context` in a struct and overriding a method or two.
+
+## Escape hatches
+
+`router.NotFound(service, handler)` sets the fallback. `router.Mux()` returns
+the underlying chi router when you need something Gas does not wrap.
+`router.Routes()` reports every registered route with its owner, and
+`router.NamedMiddleware()` does the same for middleware, which is what the
+startup route-map log prints in development.

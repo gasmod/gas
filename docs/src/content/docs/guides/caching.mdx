@@ -1,0 +1,93 @@
+---
+title: Cache expensive work
+description: In-memory for one instance, Valkey for many, behind one interface.
+---
+
+import { Code, Aside } from '@astrojs/starlight/components';
+import cch from '../../../../snippets/caching/main.go?raw';
+import { region } from '../../../lib/snippet';
+
+`gas/cache` implements `gas.CacheProvider` twice: in-memory for development and
+single-instance deployments, and Valkey (Redis-compatible) for anything running
+more than one process. Your services depend on the interface, so which one is
+running is a wiring decision.
+
+```bash
+go get github.com/gasmod/gas/cache
+```
+
+## Wiring
+
+<Code code={region(cch, 'wiring')} lang="go" title="main.go" />
+
+<Code code={region(cch, 'valkey')} lang="go" />
+
+<Aside type="caution" title="In-memory is per process">
+Two instances behind a load balancer have two separate caches, so an
+invalidation on one is invisible to the other. That is fine for genuinely
+immutable data and wrong for anything a user can change. Once you run more than
+one replica, use Valkey.
+</Aside>
+
+## Cache-aside
+
+<Code code={region(cch, 'cache-aside')} lang="go" title="profiles/service.go" />
+
+Two details worth copying. A miss is `cache.ErrKeyNotFound`, a sentinel rather
+than a nil value, so an empty result stays distinguishable from an absent one.
+And a cache failure that is not a miss is returned rather than swallowed, so a
+broken cache surfaces instead of quietly turning into load on your database.
+
+## Invalidating
+
+<Code code={region(cch, 'invalidate')} lang="go" />
+
+Prefer deleting over overwriting. If the write to the source of truth succeeds
+and the cache write then fails, an overwrite leaves a stale entry that outlives
+the request; a delete just costs the next reader a miss.
+
+## TTLs
+
+`Set` takes a TTL per entry. Passing zero uses `Cache.DefaultTTL`, which is
+itself zero by default, meaning entries never expire. On the in-memory backend
+that makes an unbounded cache, so set either `DefaultTTL` or `MaxEntries` if
+keys are user-controlled.
+
+## Config
+
+**Memory**
+
+| Field | Default | Description |
+|---|---|---|
+| `Cache.MaxEntries` | `0` | Maximum entries; 0 is unlimited |
+| `Cache.CleanupInterval` | `1m` | How often expired entries are evicted; 0 disables |
+| `Cache.DefaultTTL` | `0` | TTL when `Set` is called with 0; 0 never expires |
+
+**Valkey**
+
+| Field | Default | Description |
+|---|---|---|
+| `Cache.Addr` | `localhost:6379` | Server address |
+| `Cache.Password` | | Empty means no auth |
+| `Cache.DB` | `0` | Database number |
+| `Cache.DialTimeout` | `5s` | Timeout for new connections |
+| `Cache.WriteTimeout` | `3s` | Write and periodic PING deadline |
+| `Cache.ConnRetries` | `0` | Connection retry attempts |
+| `Cache.ConnRetryInterval` | `2s` | Base retry interval, doubling each attempt |
+
+## Health and readiness
+
+The Valkey backend implements both. `CheckHealth` reports only whether the
+service is closed, because the client reconnects internally and a restart would
+not fix a transient network fault. `CheckReady` issues a `PING`, so traffic
+drains off an instance while the dependency is unreachable.
+
+The in-memory backend implements neither on purpose: it has no external
+dependency and no warmup, so liveness and readiness are exactly the service
+lifecycle the framework already tracks.
+
+## Testing
+
+`cachetest.MockCache` records calls and takes `GetFn`, `SetFn`, `DeleteFn`, and
+`ExistsFn` overrides, so cache-aside logic can be tested for both the hit and
+the miss path without a server. See [Test a service](/gas/guides/testing/).
