@@ -12,6 +12,7 @@ use (
 	./config/examples/json_fs
 	./config/examples/secretsmanager
 	./database
+	./docs/snippets
 	./email
 	./example/api-server
 	./example/hello-world

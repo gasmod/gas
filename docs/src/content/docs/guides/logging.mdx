@@ -1,0 +1,99 @@
+---
+title: Structured logging
+description: Pick a backend, attach request fields, and ship logs.
+---
+
+import { Code, Aside } from '@astrojs/starlight/components';
+import lg from '../../../../snippets/logging/main.go?raw';
+import { region } from '../../../lib/snippet';
+
+Core declares `gas.Logger` as a fluent interface. `gas/log` supplies backends
+that implement it, so application code logs against one API and the backend is a
+wiring decision.
+
+```bash
+go get github.com/gasmod/gas/log
+```
+
+## Choosing a backend
+
+| Backend | Library | Notes |
+|---|---|---|
+| `NewZeroLogLogger()` | [rs/zerolog](https://github.com/rs/zerolog) | Fast structured JSON, full level support including Trace |
+| `NewSlogLogger()` | `log/slog` | Zero extra dependencies. Trace maps to Debug |
+| `NewShippingLogger()` | `log/slog` plus HTTP | Writes locally and batches records to an endpoint |
+
+Each returns a constructor function, not a logger, so it drops straight into the
+container.
+
+<Code code={region(lg, 'register')} lang="go" title="main.go" />
+
+<Aside type="note" title="Singleton or scoped?">
+Register a **singleton** and every service shares one logger. Register it
+**scoped** and each HTTP request gets its own, which is what lets middleware
+attach request-specific fields without leaking them into other requests. Most
+apps that use the request logger want scoped.
+</Aside>
+
+## Logging
+
+<Code code={region(lg, 'fluent')} lang="go" />
+
+Every event ends with `Send()`. Fields available on events, on `With()`, and on
+`SetBaseFields()`: `Str`, `Int`, `Int64`, `Float64`, `Bool`, `Err`, `Duration`,
+and `Any`.
+
+## Request-scoped fields
+
+`With()` branches into a new logger, which is wrong for middleware, since the
+handler downstream holds the original. `SetBaseFields()` mutates in place
+instead, so everything logged later in that request carries the fields, even
+from code that never saw the middleware.
+
+<Code code={region(lg, 'base-fields')} lang="go" />
+
+## Request logging
+
+<Code code={region(lg, 'request-logger')} lang="go" />
+
+Logs method, path, status, bytes written, duration, and remote address for every
+request, at error level for statuses at 400 and above. If chi's `RequestID`
+middleware is mounted upstream, the request id is attached automatically; pass
+`gas.WithRequestLoggerAppendRequestID(false)` to turn that off.
+
+## Shipping logs
+
+<Code code={region(lg, 'shipping')} lang="go" />
+
+Records are captured by an `slog.Handler`, batched, and delivered by a
+background goroutine. The wire format is a pluggable `Marshaler`, with an
+OTLP/HTTP JSON one included.
+
+Delivery is best-effort by design: when the queue is full, records are dropped
+rather than blocking the code that logged them, and delivery failures go to
+`WithErrorHandler` rather than surfacing at the call site. Logging should not
+be able to stall or fail a request.
+
+The shipping logger implements `gas.Service`, so registering it in the container
+means `Close` drains buffered records at shutdown. Outside the container, call
+`Flush()` before exit.
+
+## Context propagation
+
+`gas.WithLogger(ctx, logger)` puts a logger on a context and
+`gas.LoggerFromContext(ctx)` takes it back out, returning nil when absent. Useful
+for code far from the handler that should still log with request fields
+attached.
+
+## Levels
+
+| `gas.Logger` | Zerolog | Slog |
+|---|---|---|
+| `Trace` | `TraceLevel` | `LevelDebug` |
+| `Debug` | `DebugLevel` | `LevelDebug` |
+| `Info` | `InfoLevel` | `LevelInfo` |
+| `Warn` | `WarnLevel` | `LevelWarn` |
+| `Error` | `ErrorLevel` | `LevelError` |
+
+If no logger is registered at all, Gas falls back to a slog-backed one and warns
+once, so startup diagnostics are never silently lost.

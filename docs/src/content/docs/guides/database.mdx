@@ -1,0 +1,116 @@
+---
+title: Connect a database
+description: Wire a connection pool, run migrations, and use transactions.
+---
+
+import { Code, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+import db from '../../../../snippets/database/main.go?raw';
+import { region } from '../../../lib/snippet';
+
+Two modules do this job. `gas/database` owns the connection pool and hands out
+`gas.DatabaseProvider`. `gas/migrate` applies schema changes that individual
+services declare. They are separate because plenty of apps want a database
+without migrations, and workers want migrations without a router.
+
+```bash
+go get github.com/gasmod/gas/database github.com/gasmod/gas/migrate
+```
+
+## Wiring
+
+<Code code={region(db, 'wiring')} lang="go" title="main.go" />
+
+<Aside type="caution">
+Both are registered under their provider interface. `migrate.New()` asks the
+container for `gas.DatabaseProvider`, so registering the database as
+`*database.Service` leaves that dependency unresolved and startup fails. See
+[Services and DI](/gas/concepts/services-and-di/).
+</Aside>
+
+Settings bind from the config provider, so a DSN can come from
+`DATABASE__DSN` in the environment. To set them in code instead:
+
+<Code code={region(db, 'explicit-config')} lang="go" />
+
+## Choosing a mode
+
+| Mode | Backend | Use it when |
+|---|---|---|
+| `ModeSQL` (default) | `database/sql` | Any driver: PostgreSQL, SQLite, MySQL |
+| `ModePgx` | `pgxpool.Pool` | PostgreSQL, and you want pgx types, batching, or the performance |
+
+`DB()` returns a `*sql.DB` in both modes, so sqlc's `database/sql` output always
+works. In pgx mode, `Pool()` additionally returns the native pool for sqlc's pgx
+output, and `database.PoolFrom(provider)` unwraps it, reporting `false` when the
+provider is not pgx-backed so you can fall back.
+
+## Transactions
+
+`WithTx` commits when the function returns nil and rolls back otherwise,
+including on panic.
+
+<Code code={region(db, 'transaction')} lang="go" />
+
+If the function returns an error, that error comes back and the rollback is
+attempted; a rollback that itself fails is logged and joined onto it. A commit
+failure is returned wrapped. In pgx mode, `WithPgxTx` mirrors this against
+`pgx.Tx`, rolling back on a context detached from cancellation so cleanup still
+runs when the caller's context is already done.
+
+## Migrations belong to services
+
+A service declares its own schema during `Init`. Nothing central lists every
+migration, so deleting a service deletes its migrations with it.
+
+<Code code={region(db, 'migrations')} lang="go" title="notes/service.go" />
+
+`RegisterSlice` takes many at once, and `RegisterFS` reads `.up.sql`/`.down.sql`
+pairs out of an `embed.FS` using the naming convention
+`{version}_{description}.up.sql`.
+
+`Run` (or `Worker.Start`) applies everything pending in global version order
+across all services, after services initialize and before traffic is accepted.
+Each migration runs in its own transaction.
+
+<Aside type="danger" title="Dirty migrations block startup">
+A migration that fails is recorded as dirty, and every later run refuses to
+proceed until you resolve it. Fix the cause, remove or correct the row in the
+`__gas_migrations` table, then run again. If two services register the same
+version, both `RunPending` and `Down` fail with an error naming the version and
+both services.
+</Aside>
+
+Roll back with `Down(n)`, which reverses the last `n` applied migrations in
+reverse version order.
+
+## sqlc
+
+sqlc generates a `DBTX` interface in its own output package, satisfied by
+`*sql.DB` and `*sql.Tx` in `database/sql` mode and by `*pgxpool.Pool` and
+`pgx.Tx` in pgx mode. Pass `DB()`, `Pool()`, or a transaction straight into the
+generated constructor. This module deliberately declares no `DBTX` of its own.
+
+## Health and readiness
+
+`CheckHealth` (liveness) fails only when the service is uninitialized or closed.
+It does not ping, because both `database/sql` and `pgxpool` reconnect on their
+own and a restart would not help a transient outage. `CheckReady` does ping, so
+a failing dependency drains traffic off the instance instead of killing it.
+
+## Config
+
+| Field | Default | Description |
+|---|---|---|
+| `Database.Mode` | `sql` | `sql` or `pgx` |
+| `Database.Driver` | `postgres` | `database/sql` driver name, ModeSQL only |
+| `Database.DSN` | | Connection string, required unless a connector is supplied |
+| `Database.MaxOpenConns` | `25` | Maximum open connections |
+| `Database.MaxIdleConns` | `5` | Maximum idle connections, ModeSQL only |
+| `Database.ConnMaxLifetime` | `30m` | Maximum connection reuse time |
+| `Database.ConnMaxIdleTime` | `5m` | Maximum connection idle time |
+| `Database.ConnRetries` | `0` | Connection retry attempts |
+| `Database.ConnRetryInterval` | `2s` | Base retry interval, doubling each attempt |
+
+For full control over connection setup, such as custom TLS or IAM auth tokens,
+pass a `driver.Connector` with `database.WithConnector`. Driver and DSN are then
+not required. Connectors are ModeSQL only.

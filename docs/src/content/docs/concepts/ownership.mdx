@@ -1,0 +1,100 @@
+---
+title: Ownership and teardown
+description: Why every route and subscription is tagged, and what the kill-switch does.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Every route, named middleware, and event subscription is tagged with the service
+that registered it. That bookkeeping exists for one reason: a single service can
+be shut down at runtime without restarting the process.
+
+```go
+app.CloseService("auth")   // everything auth registered now returns 503
+app.RestartService("auth") // re-initializes and re-arms it
+```
+
+## What actually gets disabled
+
+Everything the service registered is replaced with a static `503` in the
+[unified error shape](/gas/guides/errors/). That means its routes, and also
+**every named middleware it registered, wherever that middleware is referenced**,
+including on routes owned by services that are still running.
+
+```go
+router.Register("auth", "require-auth", requireAuth) // owned by "auth"
+
+router.Route("/api", func(sub *gas.Router) {
+	sub.Use(gas.MiddlewareByName("require-auth"))
+	sub.Handle("billing", http.MethodGet, "/invoices", handler) // owned by "billing"
+})
+
+app.CloseService("auth")
+// GET /api/invoices -> 503, even though "billing" is still running.
+```
+
+<Aside type="danger" title="Disabled, never skipped">
+That behaviour is deliberate. If teardown skipped a missing middleware instead
+of failing the request, killing an auth service would silently strip
+authorization from every route that used it and leave them open. Failing closed
+is the only safe option.
+
+The consequence is a blast radius worth designing around: registering a widely
+used middleware under a service that later gets killed takes every consumer down
+with it. Ownership is only tracked for names passed to `Register`; an inline
+`gas.MiddlewareFunc` has no owner and survives any teardown.
+</Aside>
+
+## Reacting to it
+
+Other services can respond, which is how a system degrades deliberately rather
+than by accident.
+
+```go
+gas.SubscribeWithOwner(bus, s.Name(), gas.SystemServiceClosed,
+	func(data gas.SystemServiceClosedPayload) {
+		// enter degraded mode if data.ServiceName was a dependency
+	})
+```
+
+## Events
+
+Events are typed, so payloads are checked at compile time rather than asserted
+at runtime.
+
+```go
+var UserCreated = gas.Event[UserCreatedPayload]{Name: "user:created"}
+
+type UserCreatedPayload struct{ Email string }
+
+gas.SubscribeWithOwner(bus, s.Name(), UserCreated, func(data UserCreatedPayload) {
+	// provision a billing account for data.Email
+})
+
+gas.Emit(bus, UserCreated, UserCreatedPayload{Email: "user@example.com"}).Wait()
+```
+
+`Emit` returns a `*sync.WaitGroup`, so the caller decides whether to wait for
+handlers or move on. Subscribing with `SubscribeWithOwner` is what ties the
+subscription to a service so teardown can remove it; an unowned subscription
+lives until the process exits.
+
+## System events
+
+| Event | Fired when |
+|---|---|
+| `gas.SystemServiceClosed` | A service is closed via `CloseService` |
+| `gas.SystemServiceInitialized` | A service finishes `Init`, including on restart |
+| `gas.SystemAllServicesInitialized` | Every service has initialized successfully |
+| `gas.SystemShuttingDown` | A Worker or App begins shutdown; always fires |
+| `gas.SystemServerShuttingDown` | The HTTP server begins graceful shutdown; App only |
+| `gas.AppConfigUpdated` | App config is updated after binding; App only |
+
+## When to reach for this
+
+Rarely, and that is fine. The kill-switch earns its keep when one subsystem is
+failing in a way that threatens the rest, a dependency is down and its routes
+should fail fast rather than pile up, or you are draining one feature ahead of a
+deploy. If you never call `CloseService`, ownership tracking still pays for
+itself by making the route map attributable: `router.Routes()` reports who owns
+what.

@@ -1,0 +1,66 @@
+---
+title: Modules
+description: Every official Gas module, what it does, and the guide that uses it.
+---
+
+Each module is its own Go module, so `go get` pulls in only what you use. The
+guide column is where you'll find it in use; the API reference for each lives on
+pkg.go.dev.
+
+| Module | Does | Guide | API |
+|---|---|---|---|
+| `auth` | JWT, sessions, API keys, single-use tokens | [Authenticate requests](/gas/guides/auth/) | [ref](https://pkg.go.dev/github.com/gasmod/gas/auth) |
+| `cache` | Key-value caching, in-memory or Valkey | [Connect a database](/gas/guides/database/) | [ref](https://pkg.go.dev/github.com/gasmod/gas/cache) |
+| `config` | Env, JSON, `.env`, AWS Secrets Manager | [Configure an app](/gas/guides/configuration/) | [ref](https://pkg.go.dev/github.com/gasmod/gas/config) |
+| `database` | `database/sql` and pgx pools, transactions | [Connect a database](/gas/guides/database/) | [ref](https://pkg.go.dev/github.com/gasmod/gas/database) |
+| `email` | Transactional email over AWS SES | [Send email](/gas/guides/email/) | [ref](https://pkg.go.dev/github.com/gasmod/gas/email) |
+| `log` | Structured logging, HTTP/OTLP shipping | [Structured logging](/gas/guides/logging/) | [ref](https://pkg.go.dev/github.com/gasmod/gas/log) |
+| `migrate` | Service-owned migrations, rollback | [Connect a database](/gas/guides/database/) | [ref](https://pkg.go.dev/github.com/gasmod/gas/migrate) |
+| `queue` | Job queues backed by AWS SQS | [Run background jobs](/gas/guides/background-jobs/) | [ref](https://pkg.go.dev/github.com/gasmod/gas/queue) |
+| `storage` | Object storage on S3 and compatible services | [Store and serve files](/gas/guides/files/) | [ref](https://pkg.go.dev/github.com/gasmod/gas/storage) |
+| `template` | Template storage: memory, dir, FS, database | [Serve HTML](/gas/guides/html/) | [ref](https://pkg.go.dev/github.com/gasmod/gas/template) |
+| `ui` | HTML rendering, static files, HTMX fragments | [Serve HTML](/gas/guides/html/) | [ref](https://pkg.go.dev/github.com/gasmod/gas/ui) |
+
+## How they fit together
+
+No module imports another module's service package. They meet through the
+provider interfaces declared in the core package, so any of them can be replaced
+by your own implementation or a test mock without the others noticing. The one
+shared dependency is `gas/config`: core and most modules embed its `gasenv`
+extension for environment detection and bind their settings through
+`gas.ConfigProvider`.
+
+That is why every guide registers modules under an interface rather than a
+concrete type. See [Services and DI](/gas/concepts/services-and-di/).
+
+## What each constructor needs
+
+A module's `New` returns a **constructor**, not a service. The container calls
+it with the dependencies it declares, and every one of them must be registered
+or startup fails with `no registration for <type>`.
+
+| Constructor | Resolves from the container |
+|---|---|
+| `cachemem.New()`, `cachevk.New()` | `gas.ConfigProvider`, `gas.Logger` |
+| `database.New()` | `gas.ConfigProvider`, `gas.Logger` |
+| `migrate.New()` | `gas.DatabaseProvider` |
+| `s3.New()` | `gas.ConfigProvider`, `gas.Logger` |
+| `sqs.New()` | `gas.ConfigProvider`, `gas.Logger` |
+| `ses.New()` | `gas.TemplateProvider`, `gas.ConfigProvider`, `gas.Logger` |
+| `jwt.New()` | `gas.ConfigProvider`, `gas.Logger` |
+| `session.New()`, `apikey.New()`, `token.New()` | `gas.DatabaseProvider`, `gas.Logger`, `gas.MigrationManager`, `gas.ConfigProvider` |
+| `ui.New[T]()` | `T` (a `gas.TemplateProvider`), `*gas.Router`, `gas.ConfigProvider`, `gas.Logger` |
+| `templatedb.NewStore()` | `gas.DatabaseProvider`, `gas.Logger`, `gas.MigrationManager` |
+| `templatedir.NewStore(path)`, `templatefs.NewStore(fsys)` | nothing; call the returned function yourself |
+| `gaslog.NewSlogLogger()`, `gaslog.NewZeroLogLogger()` | nothing |
+| `config.New()` | nothing; built before the app |
+
+## Versioning
+
+All modules share a single version and are released together. A release tags the
+root module `vX.Y.Z` and each submodule `<dir>/vX.Y.Z`, which is what
+`go get github.com/gasmod/gas/auth@vX.Y.Z` resolves against. Mixing versions
+across modules is not supported.
+
+Gas is pre-1.0, so minor versions may contain breaking changes. See the
+[changelog](https://github.com/gasmod/gas/blob/main/CHANGELOG.md).

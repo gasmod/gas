@@ -1,0 +1,72 @@
+---
+title: Test a service
+description: Mock providers, drive real handlers, and skip the containers.
+---
+
+import { Code, Aside } from '@astrojs/starlight/components';
+import tst from '../../../../snippets/testing/service_test.go?raw';
+import { region } from '../../../lib/snippet';
+
+Because services depend on provider interfaces rather than backends, most tests
+need no database, no AWS, and no containers. The two patterns below cover almost
+everything.
+
+## Mock the provider
+
+Every module ships a recording mock in a `*test` package: `storagetest`,
+`cachetest`, `emailtest`, `queuetest`, `templatetest`, `configtest`,
+`migratetest`, `authtest`, and `uitest`. Each records every call and delegates
+to an optional `Fn` field, so you set only what the test exercises.
+
+<Code code={region(tst, 'mock')} lang="go" title="files/service_test.go" />
+
+The shared shape across all of them: per-method `Fn` fields, a `Calls` slice,
+`CallCount(method)`, and `Reset()`. They are safe for concurrent use, so a test
+that fans out goroutines can still assert on counts.
+
+## Drive the real handler stack
+
+Unit tests miss routing, middleware, binding, and error rendering. `App.Handler()`
+returns the router behind CSRF protection, which is exactly what production
+serves, so an end-to-end test can exercise all of it without binding a port.
+
+<Code code={region(tst, 'handler')} lang="go" title="files/service_test.go" />
+
+<Aside type="note" title="Start and Stop, not Run">
+`Run` blocks until a signal, which is not what a test wants. `Start` does the
+setup, services, migrations, and ready hooks, and returns. Pair it with
+`Shutdown` in `t.Cleanup`. This split exists precisely so apps are testable.
+</Aside>
+
+This is how the [examples](/gas/reference/examples/) test themselves, and it
+catches the failures unit tests cannot: a route registered on the wrong method,
+middleware ordering, a handler dependency that is not registered.
+
+## Startup failures are test failures
+
+`Start` returns an error when anything is misconfigured: an unresolved
+dependency, a malformed service, a handler declaring a parameter the container
+cannot supply, or a `Config` that fails `Validate`. A test that just calls
+`Start` and asserts no error is a genuinely useful smoke test of your wiring.
+
+## Scoped services outside a request
+
+Scoped services normally come from the per-request scope. In a test or a
+background job, make one yourself:
+
+```go
+scope := container.NewScope()
+defer scope.Close() // calls Close on every scoped Service resolved here
+
+svc := gas.MustResolve[*MyScopedService](scope)
+```
+
+To run code that expects a request scope, attach one to a context with
+`gas.WithRequestScope(ctx, scope)`.
+
+## Integration tests
+
+When you do want the real thing, the modules' own suites use
+[testcontainers](https://testcontainers.com/) to run Postgres, LocalStack, and
+Valkey, and guard them so `go test -short` skips them. CI runs the short form
+per module, so container-backed tests stay opt-in locally.

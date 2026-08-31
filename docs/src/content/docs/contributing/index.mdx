@@ -1,0 +1,58 @@
+---
+title: Contributing
+description: How to work on Gas.
+---
+
+Issues and pull requests are welcome. The full guide lives in
+[CONTRIBUTING.md](https://github.com/gasmod/gas/blob/main/CONTRIBUTING.md).
+
+## Working on the repo
+
+A `go.work` file at the root ties the modules together, so local changes to one
+module are picked up by the others without a `replace` directive of your own.
+
+```bash
+make test-all   # go test -race in every module
+make lint-all   # golangci-lint in every module
+make build-all  # go build in every module
+```
+
+## Pull requests
+
+- Conventional commits (`feat:`, `fix:`, `docs:`, and so on).
+- Sign off every commit with `git commit -s`; the DCO requires it.
+- New features need tests. Bug fixes need a regression test.
+- Keep pull requests focused: one logical change each.
+
+## Working on these docs
+
+The site is [Starlight](https://starlight.astro.build/) and lives in `docs/`.
+
+```bash
+cd docs
+npm install
+npm run dev
+```
+
+Code blocks that show real wiring are **not** written in Markdown. They are
+imported from `docs/snippets/`, a Go module that compiles as part of the
+workspace, and sliced by region marker:
+
+```go
+// #region app
+app := gas.NewApp(
+	gas.WithSingletonService[gas.StorageProvider](storages3.New()),
+)
+// #endregion app
+```
+
+```mdx
+import wiring from '../../../snippets/wiring/main.go?raw';
+import { region } from '../../lib/snippet';
+
+<Code code={region(wiring, 'app')} lang="go" />
+```
+
+That way `go build ./...` and CI catch documentation drift, and a renamed region
+fails the docs build rather than silently publishing an empty code block. When
+you add a snippet, put it in the Go file first.

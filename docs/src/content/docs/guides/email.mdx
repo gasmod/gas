@@ -1,0 +1,80 @@
+---
+title: Send email
+description: Transactional email over SES, with templates.
+---
+
+import { Code, Aside } from '@astrojs/starlight/components';
+import email from '../../../../snippets/email/main.go?raw';
+import { region } from '../../../lib/snippet';
+
+`gas/email` implements `gas.EmailProvider` on AWS SES. Bodies can be literal
+strings or rendered from templates held by a `gas.TemplateProvider`, which is
+the same interface [Serve HTML](/gas/guides/html/) uses, so both surfaces can
+share one store.
+
+```bash
+go get github.com/gasmod/gas/email
+```
+
+## Wiring
+
+<Code code={region(email, 'wiring')} lang="go" title="main.go" />
+
+<Aside type="caution">
+`ses.New()` asks for a `gas.TemplateProvider` as well as config and a logger,
+even if you only ever call `Send`. Register one or startup fails with
+`no registration for gas.TemplateProvider`.
+</Aside>
+
+If your container resolves a concrete store type rather than the interface, use
+`ses.NewWithCustomProvider[*mystore.Store]()`.
+
+## Sending
+
+<Code code={region(email, 'send')} lang="go" title="orders/service.go" />
+
+`From` defaults to `Email.FromEmail` from config and can be overridden per
+message. `Cc`, `Bcc`, `ReplyTo`, and arbitrary `Headers` are available.
+
+## Templated sends
+
+<Code code={region(email, 'templated')} lang="go" />
+
+Subject and text bodies render with `text/template`; the HTML body renders with
+`html/template`, so it escapes by default. Any template field left empty falls
+back to the corresponding literal field on the embedded `Email`, which means you
+can template the body and hard-code the subject.
+
+## Local development
+
+Point `Email.Endpoint` at LocalStack and nothing else changes:
+
+```bash
+EMAIL__REGION=us-east-1
+EMAIL__FROM_EMAIL=noreply@example.com
+EMAIL__ENDPOINT=http://localhost:4566
+```
+
+## Config
+
+| Field | Description |
+|---|---|
+| `Email.Region` | AWS region (required) |
+| `Email.FromEmail` | Default sender address (required) |
+| `Email.Endpoint` | Custom endpoint, for LocalStack. Empty uses AWS |
+| `Email.AccessKeyID` | Static access key. Empty uses the default credential chain |
+| `Email.SecretAccessKey` | Static secret key |
+
+## Readiness
+
+The service implements `gas.ReadyReporter`, returning `email.ErrClosed` once
+`Close` has run so a Kubernetes readiness probe depools the pod during a drain.
+`gas.HealthReporter` is deliberately not implemented: the SES client is
+stateless, so there is no broken state a restart would clear.
+
+## Testing
+
+`emailtest.MockEmail` records every call and delegates to `SendFn` and
+`SendFromTemplateFn` when set, so a signup flow can assert that exactly one
+welcome email was sent without touching AWS. See
+[Test a service](/gas/guides/testing/).

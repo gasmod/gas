@@ -1,0 +1,138 @@
+---
+title: Services and DI
+description: How Gas registers services, resolves dependencies, and manages lifetimes.
+---
+
+import { Aside, Code, Tabs, TabItem } from '@astrojs/starlight/components';
+import wiring from '../../../../snippets/wiring/main.go?raw';
+import { region } from '../../../lib/snippet';
+
+Services are registered with the DI container through constructors. The
+container resolves dependencies, topologically sorts them, validates lifetime
+rules, and calls `Init()` on every `Service` it holds.
+
+## Registering
+
+```go
+gas.WithService[*auth.Service](auth.New, gas.ServiceLifetimeSingleton)
+```
+
+Shorthands infer the lifetime from the name:
+
+```go
+gas.WithSingletonService[*auth.Service](auth.New)
+gas.WithScopedService[*RequestLog](NewRequestLog)
+gas.WithTransientService[*Nonce](NewNonce)
+```
+
+Pre-built values are registered as instances and treated as singletons.
+Pre-built means pre-constructed, not pre-initialized: if the value implements
+`gas.Service`, the container still calls `Init()` at startup and `Close()` at
+shutdown, so do not call `Init()` yourself first.
+
+```go
+gas.WithServiceInstance[gas.ConfigProvider](cfg)
+```
+
+## Register under the type your consumers ask for
+
+The type parameter is the key the service is stored under, and lookups are by
+**exact type**. The container deliberately does not scan its registrations for
+something that happens to satisfy an interface, because that search is ambiguous
+as soon as two services implement the same one.
+
+<Tabs>
+<TabItem label="Fails at startup">
+```go
+// migrate asks for gas.DatabaseProvider, but the database is registered
+// under its concrete type.
+gas.WithSingletonService[*database.Service](database.New())
+gas.WithSingletonService[*migrate.Service](migrate.New())
+```
+
+```
+building *migrate.Service: resolving dep gas.DatabaseProvider for *migrate.Service:
+  no registration for gas.DatabaseProvider
+```
+</TabItem>
+<TabItem label="Works">
+```go
+gas.WithSingletonService[gas.DatabaseProvider](database.New())
+gas.WithSingletonService[gas.MigrationManager](migrate.New())
+```
+</TabItem>
+</Tabs>
+
+As a rule, register infrastructure under its provider interface and your own
+services under their concrete type:
+
+<Code code={region(wiring, 'app')} lang="go" title="main.go" />
+
+To reach a backend feature the interface does not expose, type-assert the
+provider you were injected rather than also registering the concrete type. Each
+module documents the assertion for its backend.
+
+## Lifetimes
+
+| Lifetime | Created | `Init()` runs | Notes |
+|---|---|---|---|
+| Singleton | Once, shared everywhere | During `BuildAll()` | The default for infrastructure |
+| Scoped | Once per `Scope` | On first resolution in the scope | One instance per HTTP request |
+| Transient | Fresh on every resolution | Never | **Cannot implement `Service`** |
+
+### Why transient services cannot implement `Service`
+
+Because nothing would ever call `Close()` on them. Singletons are recorded in
+the container and scoped instances in their `Scope`, which is what lets each be
+torn down. A transient is handed to the caller and no reference is kept, by
+design. Allowing a managed lifecycle there would mean either retaining every
+instance, making "transient" an unbounded leak, or never closing them at all.
+Service names would collide too, since the kill-switch addresses services by
+`Name()` and every transient instance shares one.
+
+The rule is enforced with a panic at registration, because it is decidable from
+the type alone.
+
+<Aside type="note" title="Captive dependencies">
+The mirror-image check runs at build time: a singleton may not depend on a
+scoped or transient service. A longer-lived holder would pin a shorter-lived
+instance and silently promote its lifetime, so the container rejects it with
+`captive dependency: singleton X depends on scoped Y`.
+</Aside>
+
+## Service shape
+
+A registered type that declares `Init` or `Close` must implement all three
+methods:
+
+```go
+type Service interface {
+	Name() string // Unique identifier, e.g. "gas/auth"
+	Init() error  // Register routes, middleware, subscriptions
+	Close() error // Clean up internal resources
+}
+```
+
+Anything short of that is rejected at startup with an error naming the missing
+or mistyped methods, rather than registering cleanly and then never being
+initialized. A type declaring none of them, or only `Name()`, is an ordinary
+dependency and is unaffected.
+
+## Resolving
+
+```go
+svc, err := gas.Resolve[*auth.Service](container)
+svc := gas.MustResolve[*auth.Service](container)
+```
+
+When the type is not known at compile time, register and resolve against the
+container with a type token:
+
+```go
+c := w.ServiceContainer()
+c.RegisterSingletonService(gas.TypePtr[*auth.Service](), auth.New)
+svc := c.MustResolve(gas.TypePtr[*auth.Service]()).(*auth.Service)
+```
+
+The token is dereferenced once, so `TypePtr[*T]()` registers under `*T`. Both
+forms share registrations and return the same instances.

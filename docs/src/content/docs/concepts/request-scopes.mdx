@@ -1,0 +1,87 @@
+---
+title: Request scopes
+description: How per-request instances are created, resolved, and closed.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+An `App` installs middleware that opens a DI `Scope` for every HTTP request.
+Services registered as scoped get a fresh instance per request: `Init` runs on
+first resolution inside the scope, and `Close` runs when the request finishes.
+
+That is what makes per-request state safe. A logger carrying the request id, a
+transaction spanning one request, an audit buffer flushed at the end: all of
+them want exactly one instance per request and cleanup guaranteed even when the
+handler panics.
+
+## Getting hold of one
+
+The typed handler form needs nothing. Declare the dependency as a parameter and
+the router resolves it from that request's scope:
+
+```go
+func (s *Service) handleOrder(ctx gas.Context, txLog *TransactionLog) error {
+	txLog.Record("order created")
+	return ctx.NoContent()
+}
+```
+
+From a plain `http.HandlerFunc`, use the helpers:
+
+```go
+txLog := gas.MustResolveFromRequestScope[*TransactionLog](r)
+txLog, err := gas.ResolveFromRequestScope[*TransactionLog](r) // non-panicking
+```
+
+Both wrap `gas.RequestScope(r)` plus a resolve. For several services at once,
+take the scope directly:
+
+```go
+scope := gas.RequestScope(r)
+txLog := gas.MustResolve[*TransactionLog](scope)
+audit := gas.MustResolve[*AuditBuffer](scope)
+```
+
+## Closing order
+
+`Scope.Close()` closes scoped services in **reverse resolution order**, so a
+service can still use the scoped dependencies it was built from while shutting
+down. It mirrors how the container closes singletons in reverse initialization
+order at process shutdown.
+
+<Aside type="caution" title="A singleton cannot hold a scoped service">
+Registering a singleton that depends on a scoped service is rejected at startup
+with `captive dependency: singleton X depends on scoped Y`. The singleton would
+capture the first request's instance and hand it to every later request, which
+is a data leak between requests rather than a performance quirk. Take the
+dependency in the handler instead, where the scope is live.
+</Aside>
+
+## Outside HTTP
+
+Background jobs and tests make scopes explicitly:
+
+```go
+scope := container.NewScope()
+defer scope.Close()
+
+svc, err := gas.Resolve[*MyScopedService](scope)
+```
+
+To run code that expects a request scope, attach one to a context:
+
+```go
+ctx := gas.WithRequestScope(context.Background(), scope)
+```
+
+Code calling `gas.RequestScope(r)` on a request built from that context will
+find it, which is how a worker reuses handler logic without an HTTP request.
+
+## Choosing a lifetime
+
+Reach for **scoped** when an instance carries per-request state or must be
+cleaned up per request. Reach for **singleton** for anything stateless or
+expensive to build, which is most infrastructure. Reach for **transient** for
+small value objects that must be fresh every time and own no resources, since
+transients cannot implement `Service` and are never closed. The reasoning is in
+[Services and DI](/gas/concepts/services-and-di/#lifetimes).

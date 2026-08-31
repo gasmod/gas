@@ -1,0 +1,66 @@
+---
+title: Getting started
+description: Install Gas, serve a first route, and add your first module.
+---
+
+import { Code, Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+import quickstart from '../../../../snippets/quickstart/main.go?raw';
+import wiring from '../../../../snippets/wiring/main.go?raw';
+import { region } from '../../../lib/snippet';
+
+## Requirements
+
+Go 1.26 or newer. Gas is pre-1.0, so minor versions may contain breaking
+changes; see the [changelog](https://github.com/gasmod/gas/blob/main/CHANGELOG.md).
+
+## Your first app
+
+<Steps>
+
+1. Install the core package.
+
+   ```bash
+   go get github.com/gasmod/gas
+   ```
+
+2. Serve a route.
+
+   <Code code={region(quickstart, 'app')} lang="go" title="main.go" />
+
+3. Run it.
+
+   ```bash
+   go run .
+   # listening on 0.0.0.0:8080
+   ```
+
+</Steps>
+
+`gas.NewApp` builds a router, an event bus, and a DI container. `Run` initializes
+every registered service, applies pending migrations, executes ready hooks,
+starts the HTTP server, and blocks until a shutdown signal arrives. On shutdown
+it closes services in reverse initialization order.
+
+## Adding a module
+
+Modules are registered as services. Most of them ask the container for a
+`gas.ConfigProvider` and a `gas.Logger`, so those go in first.
+
+<Code code={region(wiring, 'config')} lang="go" title="main.go" />
+
+<Code code={region(wiring, 'app')} lang="go" title="main.go" />
+
+<Aside type="caution" title="Register under the interface, not the concrete type">
+The container resolves dependencies by **exact type**. A service registered as
+`*s3.Service` will not satisfy a dependency declared as `gas.StorageProvider`,
+and startup fails with `no registration for gas.StorageProvider`. Register
+infrastructure under its provider interface and your own services under their
+concrete type. See [Services and DI](/gas/concepts/services-and-di/).
+</Aside>
+
+## Where to go next
+
+- [Concepts](/gas/concepts/overview/) explains services, lifetimes, and ownership tracking.
+- [Modules](/gas/reference/modules/) lists everything you can bolt on.
+- [Examples](/gas/reference/examples/) has five runnable applications, from a bare hello world to a full API server.
+- [pkg.go.dev](https://pkg.go.dev/github.com/gasmod/gas) is the API reference.

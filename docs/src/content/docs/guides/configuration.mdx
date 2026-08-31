@@ -1,0 +1,128 @@
+---
+title: Configure an app
+description: Load settings from env vars, files, and Secrets Manager, then bind them.
+---
+
+import { Code, Aside } from '@astrojs/starlight/components';
+import cfg from '../../../../snippets/configure/main.go?raw';
+import { region } from '../../../lib/snippet';
+
+`gas/config` is the one module that is not a service. It is built and loaded
+**before** the app, so a bad configuration fails before anything else starts,
+and every other module binds its own settings through the
+`gas.ConfigProvider` you register.
+
+```bash
+go get github.com/gasmod/gas/config
+```
+
+## Loading
+
+<Code code={region(cfg, 'load')} lang="go" title="main.go" />
+
+<Code code={region(cfg, 'register')} lang="go" title="main.go" />
+
+Later providers override earlier ones, so the order above means environment
+variables are the base and the JSON file wins. Pick the order that matches how
+you deploy; a common one is env last so a container can override anything.
+
+<Aside type="caution">
+The environment provider is registered automatically **only when you register
+no provider at all**. As soon as you pass one explicitly, add
+`providers.NewEnvProvider()` yourself if you still want environment variables.
+</Aside>
+
+## Key naming
+
+Keys are lowercased. By default they stay flat, so `DATABASE_HOST` becomes
+`database_host`. Use a double underscore to nest, which is what every Gas module
+expects:
+
+```bash
+DATABASE__DSN=postgres://localhost/app   # database.dsn
+STORAGE__BUCKET=uploads                  # storage.bucket
+JWT__SIGNING_KEY=...                     # jwt.signing_key
+```
+
+A prefix is stripped literally, so include the trailing separator:
+`WithEnvPrefix("APP_")` turns `APP_HOST` into `host`, while `WithEnvPrefix("APP")`
+leaves you with `_host`.
+
+<Code code={region(cfg, 'env')} lang="go" />
+
+<Aside type="note" title="Some variables never reach your config">
+A denylist drops session and security-sensitive names before they are read:
+`PATH`, `HOME`, `SHELL`, `USER`, the `LD_*` and `DYLD_*` loader variables,
+`SSH_*`, `SUDO_*`, `TERM`, `LANG`, `TMPDIR`, `EDITOR`, `HOST`, `HOSTNAME`, `CI`,
+`GITHUB_TOKEN`, and similar. `HOST` and `CI` are the ones that catch people out.
+Matching happens on the full variable name before any prefix is stripped, so
+prefixed variables are never filtered.
+</Aside>
+
+## Providers
+
+| Provider | Source |
+|---|---|
+| `providers.NewEnvProvider()` | Process environment |
+| `providers.NewJSONProvider()` | A JSON file, from disk or an `fs.FS` |
+| `providers.NewDotEnvProvider()` | A `.env` file |
+| `secretsmanager.NewProvider()` | AWS Secrets Manager, fetched eagerly at load |
+
+Write your own by implementing `Name() string` and `Load() (map[string]any, error)`.
+Add `LoadContext(ctx)` and `LoadWithContext` will pass its context through, which
+matters for anything doing network calls.
+
+<Aside type="caution">
+Despite its name, `WithDotEnvFileNotFoundPanic(true)`, the default, makes a
+missing file fail `Load()` with an error. It does not panic.
+`WithDotEnvFileAppendToOSEnv` defaults to `false`, because exporting `.env`
+entries into the live process environment leaks them to child processes.
+</Aside>
+
+## Binding to structs
+
+<Code code={region(cfg, 'bind')} lang="go" />
+
+Fields match on `json` tags first, then case-insensitively by name. Supported:
+every int, uint, and float width, bool, string, `time.Duration`, slices,
+fixed-size arrays, maps, nested structs, and embedded structs. Comma-separated
+strings bind to slices; a fixed-size array needs a real list, and a source with
+more elements than fit is an error rather than a silent truncation.
+
+Validation runs through [go-playground/validator](https://github.com/go-playground/validator)
+on `validate` tags. Pass `config.WithValidate(false)` to skip it, or
+`config.WithValidator(v)` to supply an instance with your own custom rules
+registered.
+
+## Environments
+
+The `gasenv` extension resolves the current environment from config providers,
+then `GAS_ENV`, then a default of `Development`. Embed `gasenv.WithGasEnv` in
+your config struct and `Bind` populates it, giving you `IsProduction()`,
+`IsDevelopmentLike()`, and friends. Gas uses this itself, which is how `gas/ui`
+knows to rebuild templates on every request in development.
+
+## Server settings
+
+Core reads its own `gas.Config` for the HTTP server.
+
+<Code code={region(cfg, 'server')} lang="go" />
+
+| Field | Default |
+|---|---|
+| `Server.Host` | `0.0.0.0` |
+| `Server.Port` | `8080` |
+| `Server.ReadTimeout` | `5s` |
+| `Server.WriteTimeout` | `10s` |
+| `Server.IdleTimeout` | `2m` |
+| `Server.ShutdownTimeout` | `30s` |
+
+## Testing
+
+`configtest.MockConfig` records calls and takes per-method `Fn` overrides. When
+a test needs real `Get`/`Find`/`Bind` behaviour over known values, use
+`configtest.NewMockConfigWithValues`, which delegates to a real config and
+avoids leaking the machine's environment into the test. Seed it with nested
+maps, not dotted keys: values go through `SetDefaults`, which does not split on
+`.`, so `"database.host"` would become one flat key that `Get("database.host")`
+cannot reach.

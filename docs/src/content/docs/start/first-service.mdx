@@ -1,0 +1,80 @@
+---
+title: Your first service
+description: Package a feature as a Gas service and let the container wire it.
+---
+
+import { Code, Aside, Steps } from '@astrojs/starlight/components';
+import service from '../../../../snippets/service/main.go?raw';
+import { region } from '../../../lib/snippet';
+
+An inline handler is fine for one route. Past that, features are packaged as
+**services**: a constructor, three lifecycle methods, and whatever routes,
+middleware, and subscriptions the feature owns.
+
+## The shape
+
+<Code code={region(service, 'service')} lang="go" title="notes/service.go" />
+
+Three things are happening.
+
+`New` is an ordinary constructor. Its parameters are dependencies, and the
+container fills every one of them in. Nothing in the service reaches out to find
+its collaborators, which is what makes it testable: pass fakes and you have a
+unit test.
+
+`Init` is where the service claims what it owns, registering routes,
+middleware, and event subscriptions. It runs once, after all singletons are
+built, and before the server accepts traffic. Everything registered here is
+tagged with the service name, which is what makes runtime
+[teardown](/gas/concepts/ownership/) possible.
+
+`Close` releases whatever the service holds. It runs at shutdown in reverse
+initialization order, so a service can still use its dependencies while closing.
+
+<Aside type="note">
+A type that declares `Init` or `Close` must implement all three methods.
+Anything short of that is rejected at startup with an error naming what's
+missing, rather than registering cleanly and then never being initialized. A
+type with none of them is an ordinary dependency and is unaffected.
+</Aside>
+
+## Handlers can declare dependencies
+
+The router accepts plain `http.HandlerFunc` handlers, and it also accepts typed
+handlers that take `gas.Context` first, dependencies in the middle, and return
+`error`. Each dependency is resolved from that request's scope.
+
+<Code code={region(service, 'handler')} lang="go" title="notes/service.go" />
+
+No `RequestScope` call, no `MustResolve`, no manual error writing. Returning a
+`gas.Error` renders it at the right status; returning anything else becomes a
+500 with the real error logged. See [Handle errors](/gas/guides/errors/).
+
+At startup the router validates that every handler dependency is registered. A
+typo fails the build of the app, not the first request that hits the route.
+
+## Register it
+
+<Code code={region(service, 'register')} lang="go" title="main.go" />
+
+Your own services go in under their concrete type, since nothing else needs to
+swap them out. Infrastructure goes in under its provider interface. That
+distinction matters more than it looks: see
+[Services and DI](/gas/concepts/services-and-di/).
+
+## Services do not import each other
+
+A service receives the router, the event bus, and provider interfaces. It never
+imports another service. When two features need to coordinate, they do it
+through [events](/gas/concepts/ownership/#events) or through an interface
+declared in core, so either side can be replaced without touching the other.
+
+## Next
+
+<Steps>
+
+1. [Connect a database](/gas/guides/database/) and give the service somewhere to store notes.
+2. [Handle errors](/gas/guides/errors/) so failures come back in a consistent shape.
+3. [Test a service](/gas/guides/testing/) with mocks and a real handler stack.
+
+</Steps>
