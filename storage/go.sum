@@ -72,10 +72,10 @@ github.com/felixge/httpsnoop v1.1.0 h1:3YtUj32ZZkqZtt3sZZsClsymw/QDuVfpNhoA31zeO
 github.com/felixge/httpsnoop v1.1.0/go.mod h1:Zqxgdd+1Rkcz8euOqdr7lqgCRJztwr5hp9vDSi5UZCE=
 github.com/gabriel-vasile/mimetype v1.4.15 h1:05iP/CYtZ/w455R/KZM6rZ5ieAdh99UPtd+d3YzLmaI=
 github.com/gabriel-vasile/mimetype v1.4.15/go.mod h1:azpTcoLcDZRNgFou5j+APrqQx9HqVPWa6ijYQIIVswQ=
-github.com/gasmod/gas v0.4.1 h1:uUo09wpHNAROYNLkMZQv9Ld+/5iEsn00zAN1yGYjR1w=
-github.com/gasmod/gas v0.4.1/go.mod h1:mBzBhmikGu8iB+RIYQu76QibiuGaL4vBWkBjv6RdkwY=
-github.com/gasmod/gas/config v0.4.1 h1:u0hLToPZyyxQ7yKUQnHybhkbSxSIOsjBGIpxrrKI4MU=
-github.com/gasmod/gas/config v0.4.1/go.mod h1:kmNrLsQTdr0Ya95ai90fAPXIuOmRIjdA113dvR1+ZOY=
+github.com/gasmod/gas v0.4.2 h1:AVf3cBV/69WpjThk9oucWaXnetW4PS/EI5rz27cHmnI=
+github.com/gasmod/gas v0.4.2/go.mod h1:QaSuLtxHSHwLsx/jVnEfasRxSEN2CwiQnm3/zheYgpY=
+github.com/gasmod/gas/config v0.4.2 h1:2YWU0wymJI4B6QwpWMGfpblLy2SqAtLqkVoM1XeO8lM=
+github.com/gasmod/gas/config v0.4.2/go.mod h1:nLLZFQHUGb5X7tcJGyDqdFOLt3PorPEjnpaRpMe3NLo=
 github.com/go-chi/chi/v5 v5.3.2 h1:5YQkICvTCSZ25hoRsyJazN0scjzKGiu4VAUc7H1o1nY=
 github.com/go-chi/chi/v5 v5.3.2/go.mod h1:R+tYY2hNuVUUjxoPtqUdgBqevM9s9njzkTLutVsOCto=
 github.com/go-logr/logr v1.2.2/go.mod h1:jdQByPbusPIv2/zmleS9BjJVeZ6kBagPoEUsqbVz/1A=
