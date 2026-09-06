@@ -246,6 +246,18 @@ gas.RegisterInstance[T any](c *ServiceContainer, val T)
 
 Constructor signature: `func(DepA, DepB, ...) T` or `func(DepA, DepB, ...) (T, error)`
 
+The signature is validated at registration, not at build time. Registration
+panics — naming the constructor and the type — if `ctor` is not a function, is
+variadic, returns other than one or two values, returns a first result that is
+neither assignable to `T` nor an implementation of `T` when `T` is an
+interface, or returns a second result that is not `error`. Parameters are not
+checked here: they are the dependencies, and whether they resolve is only
+knowable at `BuildAll` time.
+
+Registering a constructor returning a concrete `*Impl` under an interface `T`
+is the normal case and stays valid — it implements `T` without being
+assignable to it.
+
 ### Reflection-based registration
 
 Every generic registration helper has a reflection-based twin on
