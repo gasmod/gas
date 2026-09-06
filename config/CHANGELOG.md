@@ -17,6 +17,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`providers.ContextProvider`** — optional interface (`LoadContext(ctx)`);
   `Config.LoadWithContext` now passes its context to providers that
   implement it.
+- **`Config.LoadProvider` / `Config.LoadProviderContext`** — register a
+  provider after construction and load it immediately, merging its values over
+  what is already loaded. Same override rule as `WithProvider`: the provider
+  wins on the keys it defines and leaves the rest alone, and reusing a
+  `Name()` is allowed with the later values winning. The provider is
+  registered only once its values are in hand, so a failed load leaves nothing
+  registered and the call can be retried. Extension `PreLoad`/`PostLoad` hooks
+  are not run — call `Load()` afterwards if an extension such as `gasenv`
+  needs to observe the new values.
+
+### Changed
+
+- **`Config.LoadWithContext` now merges atomically.** Every provider is loaded
+  before anything is merged, so a failing provider no longer leaves the values
+  of the providers ahead of it applied, and a concurrent reader no longer
+  observes a state where an earlier provider has landed but a later one that
+  overrides it has not. Provider I/O also no longer runs while the config lock
+  is held.
 
 ## [0.3.0] - 2026-07-02
 

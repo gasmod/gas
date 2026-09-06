@@ -77,6 +77,11 @@ func NewServiceContainer() *ServiceContainer {
 // RegisterCtor registers a constructor for type T with an optional lifetime.
 // Constructor signature: func(DepA, DepB, ...) T  or  func(DepA, DepB, ...) (T, error)
 //
+// Panics if ctor is not a function the container can call: it must be
+// non-variadic, return one or two values, produce a first result assignable to
+// T (or implementing T when T is an interface), and, when it returns two, have
+// error as the second. See validateCtorShape.
+//
 // Panics if lifetime is Transient and T implements Service — transient
 // services cannot have managed lifecycles. Use Singleton or Scoped instead.
 //
@@ -87,6 +92,8 @@ func RegisterCtor[T any](c *ServiceContainer, ctor any, lifetime ServiceLifetime
 }
 
 func registerCtor(c *ServiceContainer, t reflect.Type, ctor any, lifetime ServiceLifetime) {
+	validateCtorShape(t, ctor)
+
 	if lifetime == ServiceLifetimeTransient {
 		svcType := reflect.TypeFor[Service]()
 		if t.Implements(svcType) || (t.Kind() == reflect.Pointer && t.Implements(svcType)) {
@@ -592,6 +599,67 @@ func (c *ServiceContainer) topoSort() ([]reflect.Type, error) {
 		return nil, fmt.Errorf("circular dependency detected")
 	}
 	return order, nil
+}
+
+// --- internal: constructor shape enforcement ---
+
+var errorType = reflect.TypeFor[error]()
+
+// validateCtorShape rejects a constructor whose signature the container cannot
+// call, at the point of registration rather than deep inside invoke. Without
+// it a non-func, a variadic func, or a wrong result list registers cleanly and
+// fails much later: reflect panics out of BuildAll with a message that names
+// neither the constructor nor the type it was registered for, and a
+// three-result constructor is worse still — invoke only checks the error when
+// NumOut is 2, so its error is dropped and the service is built anyway.
+//
+// Inputs beyond variadicity are deliberately not checked. A constructor's
+// parameters are its dependencies, and whether they resolve is only knowable
+// once the container is built; invoke already reports that properly.
+//
+// Panics rather than returning an error, matching the transient/Service check:
+// every path here is a programmer error fixed at the call site, and
+// registerCtor is reached through eight exported entry points that have no
+// error return to add one to.
+func validateCtorShape(t reflect.Type, ctor any) {
+	ct := reflect.TypeOf(ctor)
+	if ct == nil || ct.Kind() != reflect.Func {
+		panic(fmt.Sprintf("gas: constructor for %v is %v, want a function", t, ctorTypeName(ct)))
+	}
+
+	// invoke builds exactly NumIn arguments and calls with them, so a variadic
+	// tail would be passed as a single slice argument rather than expanded.
+	if ct.IsVariadic() {
+		panic(fmt.Sprintf("gas: constructor %v for %v is variadic; dependencies must be declared as fixed parameters", ct, t))
+	}
+
+	if ct.NumOut() != 1 && ct.NumOut() != 2 {
+		panic(fmt.Sprintf(
+			"gas: constructor %v for %v returns %d values; want (%v) or (%v, error)",
+			ct, t, ct.NumOut(), t, t,
+		))
+	}
+
+	// t is commonly an interface registered against a constructor returning a
+	// concrete pointer, which is not assignable but does implement it. invoke
+	// converts that case, so accept exactly what it can handle.
+	if out := ct.Out(0); !out.AssignableTo(t) && (t.Kind() != reflect.Interface || !out.Implements(t)) {
+		panic(fmt.Sprintf("gas: constructor %v returns %v, which is not assignable to %v", ct, out, t))
+	}
+
+	if ct.NumOut() == 2 && !ct.Out(1).Implements(errorType) {
+		panic(fmt.Sprintf("gas: constructor %v for %v has second result %v; want error", ct, t, ct.Out(1)))
+	}
+}
+
+// ctorTypeName renders a constructor's type for an error message, spelling out
+// the nil case rather than printing a bare "<nil>".
+func ctorTypeName(ct reflect.Type) string {
+	if ct == nil {
+		return "nil"
+	}
+
+	return ct.String()
 }
 
 // --- internal: Service shape enforcement ---

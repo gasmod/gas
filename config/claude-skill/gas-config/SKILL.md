@@ -50,7 +50,31 @@ Implements `gas.ConfigProvider`.
 ```go
 func (c *Config) Load() error                          // loads from all providers
 func (c *Config) LoadWithContext(ctx context.Context) error
+
+func (c *Config) LoadProvider(p providers.Provider) error                          // register + load one provider
+func (c *Config) LoadProviderContext(ctx context.Context, p providers.Provider) error
 ```
+
+`Load`/`LoadWithContext` replay **every** registered provider, so calling them
+twice reloads rather than double-registers. Providers are all invoked before
+anything is merged: provider I/O never runs under the lock, a reader never sees
+a half-applied load, and a failing provider leaves `values` untouched instead
+of merging the providers that ran before it.
+
+`LoadProvider`/`LoadProviderContext` register a provider *after* construction
+and immediately merge its values over what is already loaded. Same override
+rule as `WithProvider` — the provider wins on the keys it defines and leaves
+the rest alone, and reusing a `Name()` is allowed (later values win). The
+provider is registered only once its values are in hand, so a failed load
+leaves nothing registered and the call can be retried.
+
+Two things `LoadProvider` does **not** do, unlike `LoadWithContext`:
+
+- It does not run extension `PreLoad`/`PostLoad` hooks. A `gasenv` extension
+  will not re-derive `currentEnv` from a provider added this way; call
+  `Load()` afterwards if the new provider can supply the env key.
+- It does not re-run the already-registered providers, so their values stay as
+  they were at the last `Load()`.
 
 ### Reading values
 
@@ -119,7 +143,8 @@ type Provider interface {
 }
 
 // Optional: providers that call remote services can also implement this;
-// Config.LoadWithContext prefers LoadContext over Load when present.
+// Config.LoadWithContext and Config.LoadProviderContext prefer LoadContext
+// over Load when present.
 type ContextProvider interface {
     Provider
     LoadContext(ctx context.Context) (map[string]any, error)
@@ -137,6 +162,13 @@ provider1 (lowest) → provider2 → provider3 (highest, wins on conflict)
 
 If you specify **no** providers at all, a default `EnvProvider` is created
 automatically.
+
+Ordering is registration order, and `Config.LoadProvider` appends to the same
+list — a provider registered that way sits at the top of the chain and wins
+over everything loaded before it, until some later provider outranks it.
+Provider names are not unique keys: registering the same `Name()` twice, via
+`WithProvider` or `LoadProvider`, is allowed and the later one wins on the
+keys it defines.
 
 ### Environment variables
 
