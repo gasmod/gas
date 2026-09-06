@@ -25,3 +25,10 @@ fmt: ## Format code
 
 vet: ## Run go vet
 	go vet ./...
+
+# Module Update
+
+mod-update: ## Update go modules
+	go mod tidy
+	go get -u all
+	go mod tidy
