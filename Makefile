@@ -42,7 +42,7 @@ mod-update: ## Update go modules
 define run_all
 	@fail=0; \
 	for m in $(MODS); do \
-		printf '➡️  %-20s make %-6s ... ' "$$m" "$(1)"; \
+		printf '➡️  %-35s make %-6s ' "$$m" "$(1) ..."; \
 		if out=$$($(MAKE) -C $$m $(1) 2>&1); then \
 			echo "✅"; \
 		else \
@@ -71,3 +71,5 @@ vet-all: ## Run make vet across all modules
 
 mod-update-all: ## Run mod-update across all modules
 	$(call run_all,mod-update)
+
+verify-all: build-all lint-all vet-all test-all

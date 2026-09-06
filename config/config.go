@@ -170,6 +170,53 @@ func (c *Config) Load() error {
 	return c.LoadWithContext(context.Background())
 }
 
+// LoadProvider registers the provider and loads its values into the configuration,
+// merging them over any values already present. Like the providers passed to New,
+// a provider registered here overrides the keys it defines and leaves the rest
+// alone, so registering the same name twice is allowed and the later values win.
+//
+// Returns an error if loading fails.
+func (c *Config) LoadProvider(p providers.Provider) error {
+	return c.LoadProviderContext(context.Background(), p)
+}
+
+// LoadProviderContext behaves like LoadProvider, using the provided context when the provider
+// implements providers.ContextProvider.
+func (c *Config) LoadProviderContext(ctx context.Context, p providers.Provider) error {
+	values, err := loadValues(ctx, p)
+	if err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// The provider is registered only once its values are in hand, so a failed
+	// load leaves nothing behind and the caller is free to retry.
+	c.providers = append(c.providers, p)
+
+	// Merge values, later providers override
+	maputils.Merge(c.values, maputils.NormalizeKeys(values))
+
+	return nil
+}
+
+// loadValues invokes the provider, preferring context-aware loading when it is
+// supported, and wraps any failure with ErrProviderLoadFailed.
+func loadValues(ctx context.Context, p providers.Provider) (values map[string]any, err error) {
+	if cp, ok := p.(providers.ContextProvider); ok {
+		values, err = cp.LoadContext(ctx)
+	} else {
+		values, err = p.Load()
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("%w %s: %w", ErrProviderLoadFailed, p.Name(), err)
+	}
+
+	return values, nil
+}
+
 // LoadWithContext loads configuration with the provided context, executing pre-Load and post-Load
 // hooks for extensions.
 func (c *Config) LoadWithContext(ctx context.Context) error {
@@ -179,30 +226,29 @@ func (c *Config) LoadWithContext(ctx context.Context) error {
 		}
 	}
 
-	c.mu.Lock()
+	c.mu.RLock()
+	registered := make([]providers.Provider, len(c.providers))
+	copy(registered, c.providers)
+	c.mu.RUnlock()
 
-	for _, p := range c.providers {
-		var (
-			values map[string]any
-			err    error
-		)
-
-		// Prefer context-aware loading when the provider supports it.
-		if cp, ok := p.(providers.ContextProvider); ok {
-			values, err = cp.LoadContext(ctx)
-		} else {
-			values, err = p.Load()
-		}
-
+	// Every provider is loaded before anything is merged, so a reader never
+	// observes a config where an earlier provider has landed but a later one
+	// that overrides it has not, and provider I/O never runs under the lock.
+	loaded := make([]map[string]any, 0, len(registered))
+	for _, p := range registered {
+		values, err := loadValues(ctx, p)
 		if err != nil {
-			c.mu.Unlock()
-
-			return fmt.Errorf("%w %s: %w", ErrProviderLoadFailed, p.Name(), err)
+			return err
 		}
+
+		loaded = append(loaded, values)
+	}
+
+	c.mu.Lock()
+	for _, values := range loaded {
 		// Merge values, later providers override
 		maputils.Merge(c.values, maputils.NormalizeKeys(values))
 	}
-
 	c.mu.Unlock()
 
 	for _, ext := range c.extensions {

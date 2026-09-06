@@ -25,6 +25,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Constructor signatures are validated at registration.** `RegisterCtor` and
+  the reflection-based `Register*Service` twins now panic at the call site,
+  naming the constructor and the type it was registered for, when the
+  constructor is not a function, is variadic, returns other than one or two
+  values, produces a first result that is neither assignable to nor an
+  implementation of the registered type, or returns a non-error second value.
+  These previously registered cleanly and surfaced as a bare `reflect` panic
+  out of `BuildAll` with no registration site in the message — except the
+  three-result case, which built the service and silently dropped the
+  constructor's error.
 - The default `ErrorHandler` now renders a `gas.Error` at its own status
   instead of collapsing everything to a plain-text 500. Clients that do not
   explicitly prefer `text/html` receive the JSON envelope.
