@@ -895,3 +895,80 @@ func TestConfig_BindFixedSizeArray(t *testing.T) {
 	})
 	assert.Equal(t, [3]int{8080, 8081, 0}, settings.Ports)
 }
+
+func TestConfig_LoadProvider(t *testing.T) {
+	t.Parallel()
+
+	base := &mockProvider{name: "base", data: map[string]any{"shared": "base", "onlyBase": "b"}}
+	cfg := config.New(config.WithProvider(base))
+	require.NoError(t, cfg.Load())
+
+	later := &mockProvider{name: "later", data: map[string]any{"shared": "later"}}
+	require.NoError(t, cfg.LoadProvider(later))
+
+	assert.Equal(t, "later", cfg.Get("shared"))
+	assert.Equal(t, "b", cfg.Get("onlyBase"))
+}
+
+func TestConfig_LoadProvider_SameNameOverrides(t *testing.T) {
+	t.Parallel()
+
+	mockP1 := &mockProvider{name: "mock", data: map[string]any{"key": "value", "kept": "yes"}}
+	cfg := config.New(config.WithProvider(mockP1))
+	require.NoError(t, cfg.Load())
+
+	// Reusing a name is allowed: the later values win on the keys they define.
+	require.NoError(t, cfg.LoadProvider(&mockProvider{name: "mock", data: map[string]any{"key": "other"}}))
+	assert.Equal(t, "other", cfg.Get("key"))
+	assert.Equal(t, "yes", cfg.Get("kept"))
+}
+
+func TestConfig_LoadProvider_FailedLoadIsNotRegistered(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.New()
+	require.NoError(t, cfg.Load())
+
+	flaky := &mockProvider{name: "flaky", err: errors.New("load failed")}
+
+	err := cfg.LoadProvider(flaky)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, config.ErrProviderLoadFailed)
+
+	// A provider that failed to load must not stay registered: if it had been,
+	// this Load would re-invoke it and fail on the same error.
+	require.NoError(t, cfg.Load())
+
+	// The caller is free to retry once the provider recovers.
+	flaky.err = nil
+	flaky.data = map[string]any{"recovered": "yes"}
+	require.NoError(t, cfg.LoadProvider(flaky))
+	assert.Equal(t, "yes", cfg.Get("recovered"))
+}
+
+func TestConfig_LoadWithContext_ReloadsRegisteredProviders(t *testing.T) {
+	t.Parallel()
+
+	mockP1 := &mockProvider{name: "mock", data: map[string]any{"key": "value"}}
+	cfg := config.New(config.WithProvider(mockP1))
+
+	// Load replays every registered provider, so calling it twice must reload
+	// them rather than treat them as new registrations.
+	require.NoError(t, cfg.LoadWithContext(context.Background()))
+	require.NoError(t, cfg.LoadWithContext(context.Background()))
+
+	assert.Equal(t, "value", cfg.Get("key"))
+}
+
+func TestConfig_WithProvider_SameNameOverrides(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.New(
+		config.WithProvider(&mockProvider{name: "dup", data: map[string]any{"key": "first", "kept": "yes"}}),
+		config.WithProvider(&mockProvider{name: "dup", data: map[string]any{"key": "second"}}),
+	)
+
+	require.NoError(t, cfg.Load())
+	assert.Equal(t, "second", cfg.Get("key"))
+	assert.Equal(t, "yes", cfg.Get("kept"))
+}
