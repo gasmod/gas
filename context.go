@@ -37,14 +37,70 @@ type Context interface {
 	Text(status int, s string) error
 	// NoContent writes a 204 No Content response.
 	NoContent() error
-	// Error writes err as the unified error response, negotiating JSON or
+
+	// WriteError writes err as the unified error response, negotiating JSON or
 	// plain text the same way the default ErrorHandler does. Values that are
 	// not, and do not wrap, an *Error render as a canonical 500.
-	Error(err error) error
-	// ErrorJSON writes the JSON error envelope regardless of the Accept
+	WriteError(err error) error
+	// WriteErrorJSON writes the JSON error envelope regardless of the Accept
 	// header. Use it for JSON API routes in an app whose ErrorHandler renders
 	// HTML.
-	ErrorJSON(err error) error
+	WriteErrorJSON(err error) error
+
+	// The constructors below build an *Error and return it. Unlike WriteError
+	// they write nothing, so calling one without returning the value from the
+	// handler sends no response at all. The ErrorHandler renders whatever a
+	// handler returns.
+	//
+	// They are declared to return error, so the *Error builder methods do not
+	// chain off them. Use the package-level constructors (BadRequest, NotFound
+	// and the rest) when a response needs Fields or Details.
+
+	// BadRequest returns a 400 *Error with code CodeBadRequest.
+	BadRequest(msg string) error
+	// Unauthorized returns a 401 *Error with code CodeUnauthorized.
+	Unauthorized(msg string) error
+	// Forbidden returns a 403 *Error with code CodeForbidden.
+	Forbidden(msg string) error
+	// NotFound returns a 404 *Error with code CodeNotFound.
+	NotFound(msg string) error
+	// Conflict returns a 409 *Error with code CodeConflict.
+	Conflict(msg string) error
+	// Unprocessable returns a 422 *Error with code CodeValidationFailed.
+	Unprocessable(msg string) error
+	// TooManyRequests returns a 429 *Error with code CodeRateLimited.
+	TooManyRequests(msg string) error
+	// Internal returns a 500 *Error with code CodeInternal.
+	Internal(msg string) error
+	// ServiceUnavailable returns a 503 *Error with code CodeUnavailable.
+	ServiceUnavailable(msg string) error
+
+	// The Err variants below are the same constructors with err attached as
+	// the underlying cause. The cause reaches logs and errors.Is / errors.As;
+	// it is never written to the response.
+
+	// BadRequestErr returns a 400 *Error with code CodeBadRequest, caused by err.
+	BadRequestErr(err error, msg string) error
+	// UnauthorizedErr returns a 401 *Error with code CodeUnauthorized, caused by err.
+	UnauthorizedErr(err error, msg string) error
+	// ForbiddenErr returns a 403 *Error with code CodeForbidden, caused by err.
+	ForbiddenErr(err error, msg string) error
+	// NotFoundErr returns a 404 *Error with code CodeNotFound, caused by err.
+	NotFoundErr(err error, msg string) error
+	// ConflictErr returns a 409 *Error with code CodeConflict, caused by err.
+	ConflictErr(err error, msg string) error
+	// UnprocessableErr returns a 422 *Error with code CodeValidationFailed,
+	// caused by err.
+	UnprocessableErr(err error, msg string) error
+	// TooManyRequestsErr returns a 429 *Error with code CodeRateLimited,
+	// caused by err.
+	TooManyRequestsErr(err error, msg string) error
+	// InternalErr returns a 500 *Error with code CodeInternal, caused by err.
+	InternalErr(err error, msg string) error
+	// ServiceUnavailableErr returns a 503 *Error with code CodeUnavailable,
+	// caused by err.
+	ServiceUnavailableErr(err error, msg string) error
+
 	// Redirect sends an HTTP redirect to the given URL with the given status code.
 	Redirect(status int, url string)
 	// Param returns the URL parameter value by name (chi.URLParam).
@@ -55,18 +111,24 @@ type Context interface {
 	Header(key string) string
 	// SetHeader sets a response header.
 	SetHeader(key, value string)
+
 	// BindJSON decodes the request body as JSON into dest and performs automatic validation
 	// using the configured validator.
 	BindJSON(dest any) error
 	// BindForm binds form data from the HTTP request to the provided destination object
 	// and performs automatic validation using the configured validator.
 	BindForm(dest any) error
-	// Validator returns a pointer to the validator.Validate instance used for request validation.
+	// Validator returns the *validator.Validate used for request validation,
+	// building the package default on first use if none was supplied.
 	Validator() *validator.Validate
-	// FormDecoder returns a preconfigured *schema.Decoder instance for decoding form data into structs.
+	// FormDecoder returns the *schema.Decoder used to decode form data into
+	// structs, building the package default on first use if none was supplied.
 	FormDecoder() *schema.Decoder
 }
 
+// reqContext is the Context implementation backing every DI-aware handler.
+// The embedded context.Context is the parent passed to NewContext, so value
+// lookups, cancellation, and deadlines fall through to it.
 type reqContext struct {
 	context.Context
 
@@ -91,7 +153,11 @@ func WithFormDecoder(d *schema.Decoder) ContextOption {
 	return func(c *reqContext) { c.formDecoder = d }
 }
 
-// NewContext creates a Context from the standard HTTP pair.
+// NewContext creates a Context from the standard HTTP pair. It panics if
+// parent, w, or r is nil.
+//
+// The returned Context is installed as the request's own context, so
+// Request().Context() and the Context itself are the same value.
 func NewContext(parent context.Context, w http.ResponseWriter, r *http.Request, opts ...ContextOption) Context {
 	if parent == nil {
 		panic("cannot create context from nil parent")
@@ -125,6 +191,9 @@ func (c *reqContext) JSON(status int, v any) error {
 	return json.NewEncoder(c.w).Encode(v)
 }
 
+// xmlWithContentType writes v as an XML document under the given content
+// type, emitting xml.Header ahead of the encoded value. XML and RSS differ
+// only in the content type they pass.
 func (c *reqContext) xmlWithContentType(status int, v any, contentType string) error {
 	c.w.Header().Set("Content-Type", contentType)
 	c.w.WriteHeader(status)
@@ -182,16 +251,90 @@ func (c *reqContext) NoContent() error {
 	return nil
 }
 
-// Error writes err as the unified error response, negotiating JSON or plain
-// text via the Accept header. It returns only a genuine encode or write
-// failure, matching JSON.
-func (c *reqContext) Error(err error) error {
+// WriteError writes err as the unified error response, negotiating JSON or plain
+// text via the Accept header. It reports a JSON encode failure; the plain-text
+// branch discards write errors the way http.Error does.
+func (c *reqContext) WriteError(err error) error {
 	return WriteError(c.w, c.r, err)
 }
 
-// ErrorJSON writes the JSON error envelope regardless of the Accept header.
-func (c *reqContext) ErrorJSON(err error) error {
+// WriteErrorJSON writes the JSON error envelope regardless of the Accept
+// header, so a route can serve JSON errors under an ErrorHandler that
+// otherwise renders HTML.
+func (c *reqContext) WriteErrorJSON(err error) error {
 	return writeErrorResponse(c.w, coerceError(err), true)
+}
+
+func (c *reqContext) BadRequest(msg string) error {
+	return BadRequest(msg)
+}
+
+func (c *reqContext) Unauthorized(msg string) error {
+	return Unauthorized(msg)
+}
+
+func (c *reqContext) Forbidden(msg string) error {
+	return Forbidden(msg)
+}
+
+func (c *reqContext) NotFound(msg string) error {
+	return NotFound(msg)
+}
+
+func (c *reqContext) Conflict(msg string) error {
+	return Conflict(msg)
+}
+
+func (c *reqContext) Unprocessable(msg string) error {
+	return Unprocessable(msg)
+}
+
+func (c *reqContext) TooManyRequests(msg string) error {
+	return TooManyRequests(msg)
+}
+
+func (c *reqContext) Internal(msg string) error {
+	return Internal(msg)
+}
+
+func (c *reqContext) ServiceUnavailable(msg string) error {
+	return ServiceUnavailable(msg)
+}
+
+func (c *reqContext) BadRequestErr(err error, msg string) error {
+	return BadRequest(msg).WithCause(err)
+}
+
+func (c *reqContext) UnauthorizedErr(err error, msg string) error {
+	return Unauthorized(msg).WithCause(err)
+}
+
+func (c *reqContext) ForbiddenErr(err error, msg string) error {
+	return Forbidden(msg).WithCause(err)
+}
+
+func (c *reqContext) NotFoundErr(err error, msg string) error {
+	return NotFound(msg).WithCause(err)
+}
+
+func (c *reqContext) ConflictErr(err error, msg string) error {
+	return Conflict(msg).WithCause(err)
+}
+
+func (c *reqContext) UnprocessableErr(err error, msg string) error {
+	return Unprocessable(msg).WithCause(err)
+}
+
+func (c *reqContext) TooManyRequestsErr(err error, msg string) error {
+	return TooManyRequests(msg).WithCause(err)
+}
+
+func (c *reqContext) InternalErr(err error, msg string) error {
+	return Internal(msg).WithCause(err)
+}
+
+func (c *reqContext) ServiceUnavailableErr(err error, msg string) error {
+	return ServiceUnavailable(msg).WithCause(err)
 }
 
 func (c *reqContext) Redirect(status int, url string) {
@@ -216,8 +359,8 @@ func (c *reqContext) SetHeader(key, value string) {
 
 // BindJSON decodes the request body as JSON into dest and validates it.
 // A malformed body yields a 400 *Error; a validation failure yields a 422
-// *Error whose Fields describe each violation. The underlying decode or
-// validation error remains reachable through errors.As.
+// *Error carrying one Field per violation the validator reported. The
+// underlying decode or validation error remains reachable through errors.As.
 func (c *reqContext) BindJSON(dest any) error {
 	if err := json.NewDecoder(c.r.Body).Decode(dest); err != nil {
 		return NewError(http.StatusBadRequest, CodeInvalidJSON,
@@ -229,7 +372,8 @@ func (c *reqContext) BindJSON(dest any) error {
 
 // BindForm binds form data from the request into dest and validates it.
 // A parse or decode failure yields a 400 *Error; a validation failure yields a
-// 422 *Error whose Fields describe each violation.
+// 422 *Error carrying one Field per violation the validator reported. The
+// underlying error remains reachable through errors.As.
 func (c *reqContext) BindForm(dest any) error {
 	if err := c.r.ParseForm(); err != nil {
 		return NewError(http.StatusBadRequest, CodeInvalidForm,

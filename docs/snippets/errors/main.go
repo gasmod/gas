@@ -77,7 +77,7 @@ func classify(err error) int {
 func htmlOrJSON() gas.AppOption {
 	return gas.WithErrorHandler(func(ctx gas.Context, err error) {
 		if gas.WantsJSON(ctx.Request()) {
-			_ = ctx.Error(err)
+			_ = ctx.WriteError(err)
 			return
 		}
 		_ = ctx.HTML(http.StatusInternalServerError, "<h1>Something went wrong</h1>")

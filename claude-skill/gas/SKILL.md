@@ -503,8 +503,8 @@ Panics if any of parent, w, or r is nil. Options: `gas.WithValidate(v)`,
 | `HTML`           | `(status int, s string) error` | text/html                |
 | `Text`           | `(status int, s string) error` | text/plain               |
 | `NoContent`      | `() error`                     | 204                      |
-| `Error`          | `(err error) error`            | unified error response   |
-| `ErrorJSON`      | `(err error) error`            | forces the JSON envelope |
+| `WriteError`     | `(err error) error`            | unified error response   |
+| `WriteErrorJSON` | `(err error) error`            | forces the JSON envelope |
 | `Redirect`       | `(status int, url string)`     |                          |
 | `Param`          | `(key string) string`          | chi.URLParam             |
 | `Query`          | `(key string) string`          |                          |
@@ -514,6 +514,23 @@ Panics if any of parent, w, or r is nil. Options: `gas.WithValidate(v)`,
 | `BindForm`       | `(dest any) error`             | decode + validate        |
 | `Validator`      | `() *validator.Validate`       | go-playground/validator  |
 | `FormDecoder`    | `() *schema.Decoder`           | gorilla/schema           |
+
+`Context` also mirrors every constructor in the Errors table below, twice:
+`ctx.NotFound(msg)` and `ctx.NotFoundErr(err, msg)`, the second attaching the
+cause. Same for `BadRequest`, `Unauthorized`, `Forbidden`, `Conflict`,
+`Unprocessable`, `TooManyRequests`, `Internal`, and `ServiceUnavailable`.
+
+These only build the `*gas.Error` and return it. Unlike `WriteError` they write
+nothing, so the value has to be returned from the handler for the
+`ErrorHandler` to render it; calling one as a bare statement sends no response
+at all. They are also declared to return `error`, not `*gas.Error`, so the
+builders do not chain off them:
+
+```go
+return ctx.NotFoundErr(sql.ErrNoRows, "user not found") // ok
+return ctx.NotFound("user not found").WithDetail("id", id) // does not compile
+return gas.NotFound("user not found").WithDetail("id", id) // use this instead
+```
 
 `BindJSON` and `BindForm` both decode and then run struct validation via
 `go-playground/validator`, returning a `*gas.Error`: 400 (`invalid_json` /
@@ -597,8 +614,10 @@ gas.WantsJSON(r *http.Request) bool
 ```
 
 Clients that do not explicitly prefer `text/html` get JSON. Inside a handler,
-`ctx.Error(err)` writes the negotiated response and `ctx.ErrorJSON(err)` forces
-the envelope.
+`ctx.WriteError(err)` writes the negotiated response and `ctx.WriteErrorJSON(err)`
+forces the envelope. Both are for handlers that write the error themselves;
+returning the error and letting the `ErrorHandler` render it is the default
+path.
 
 Override the handler via `gas.WithErrorHandler(h)` or `router.SetErrorHandler(h)`.
 

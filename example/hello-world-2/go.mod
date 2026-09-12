@@ -3,9 +3,9 @@ module github.com/gasmod/gas/example/hello-world-2
 go 1.26.1
 
 require (
-	github.com/gasmod/gas v0.4.3
-	github.com/gasmod/gas/config v0.4.3
-	github.com/gasmod/gas/log v0.4.3
+	github.com/gasmod/gas v0.4.4
+	github.com/gasmod/gas/config v0.4.4
+	github.com/gasmod/gas/log v0.4.4
 )
 
 require (
@@ -19,7 +19,7 @@ require (
 	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/rs/zerolog v1.35.1 // indirect
-	golang.org/x/crypto v0.56.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
+	golang.org/x/crypto v0.57.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 )

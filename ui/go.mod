@@ -3,8 +3,8 @@ module github.com/gasmod/gas/ui
 go 1.26.1
 
 require (
-	github.com/gasmod/gas v0.4.3
-	github.com/gasmod/gas/config v0.4.3
+	github.com/gasmod/gas v0.4.4
+	github.com/gasmod/gas/config v0.4.4
 	github.com/google/uuid v1.6.0
 )
 
@@ -16,7 +16,7 @@ require (
 	github.com/go-playground/validator/v10 v10.30.4 // indirect
 	github.com/gorilla/schema v1.4.1 // indirect
 	github.com/leodido/go-urn v1.5.0 // indirect
-	golang.org/x/crypto v0.56.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
+	golang.org/x/crypto v0.57.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 )

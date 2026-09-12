@@ -512,7 +512,7 @@ func TestContext_Error(t *testing.T) {
 		req.Header.Set("Accept", "text/html")
 		ctx := gas.NewContext(req.Context(), rr, req)
 
-		if err := ctx.Error(gas.Forbidden("not your resource")); err != nil {
+		if err := ctx.WriteError(gas.Forbidden("not your resource")); err != nil {
 			t.Fatal(err)
 		}
 		if rr.Code != http.StatusForbidden {
@@ -529,7 +529,7 @@ func TestContext_Error(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 		ctx := gas.NewContext(req.Context(), rr, req)
 
-		if err := ctx.Error(errors.New("connection refused")); err != nil {
+		if err := ctx.WriteError(errors.New("connection refused")); err != nil {
 			t.Fatal(err)
 		}
 		if rr.Code != http.StatusInternalServerError {
@@ -549,7 +549,7 @@ func TestContext_ErrorJSON_IgnoresAccept(t *testing.T) {
 	req.Header.Set("Accept", "text/html") // would otherwise render plain text
 	ctx := gas.NewContext(req.Context(), rr, req)
 
-	if err := ctx.ErrorJSON(gas.Conflict("already exists")); err != nil {
+	if err := ctx.WriteErrorJSON(gas.Conflict("already exists")); err != nil {
 		t.Fatal(err)
 	}
 
