@@ -35,8 +35,8 @@ type FieldError struct {
 // Error is the unified error shape for Gas handlers. Return it from a DI-aware
 // handler and the ErrorHandler renders it; see WriteError for the wire format.
 //
-// Status is carried by the HTTP status line and is deliberately absent from
-// the JSON body, so the two can never disagree.
+// Status is serialized into the JSON body alongside the HTTP status line.
+// WriteError writes the normalized status to both, so the two never disagree.
 //
 // The wrapped cause is unexported and never serialized. It reaches logs and
 // errors.Is / errors.As, never a client.
@@ -46,7 +46,7 @@ type FieldError struct {
 //
 //nolint:govet // fieldalignment: declaration order is the documented wire order
 type Error struct {
-	Status  int            `json:"-"`
+	Status  int            `json:"status"`
 	Code    string         `json:"code"`
 	Message string         `json:"message"`
 	Fields  []FieldError   `json:"fields,omitempty"`
@@ -212,6 +212,12 @@ func writeErrorResponse(w http.ResponseWriter, e *Error, asJSON bool) error {
 	if !asJSON {
 		http.Error(w, e.Message, status)
 		return nil
+	}
+
+	if e.Status != status {
+		normalized := *e
+		normalized.Status = status
+		e = &normalized
 	}
 
 	w.Header().Set("Content-Type", "application/json")

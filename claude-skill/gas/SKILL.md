@@ -551,7 +551,7 @@ define their own error struct.
 
 ```go
 type Error struct {
-	Status  int            `json:"-"`
+	Status  int            `json:"status"`
 	Code    string         `json:"code"`
 	Message string         `json:"message"`
 	Fields  []FieldError   `json:"fields,omitempty"`

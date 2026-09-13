@@ -138,8 +138,8 @@ func TestError_CauseIsNeverSerialized(t *testing.T) {
 	if strings.Contains(string(buf), "password authentication failed") {
 		t.Fatalf("cause leaked into JSON: %s", buf)
 	}
-	if strings.Contains(string(buf), `"Status"`) || strings.Contains(string(buf), `"status"`) {
-		t.Fatalf("status leaked into JSON body: %s", buf)
+	if !strings.Contains(string(buf), `"status":500`) {
+		t.Fatalf("status missing from JSON body: %s", buf)
 	}
 }
 
@@ -305,6 +305,13 @@ func TestWriteError_CoercesInvalidStatus(t *testing.T) {
 			}
 			if rr.Code != tt.want {
 				t.Fatalf("status = %d, want %d", rr.Code, tt.want)
+			}
+			var got gas.ErrorResponse
+			if decErr := json.NewDecoder(rr.Body).Decode(&got); decErr != nil {
+				t.Fatal(decErr)
+			}
+			if got.Error.Status != tt.want {
+				t.Fatalf("body status = %d, want %d", got.Error.Status, tt.want)
 			}
 		})
 	}

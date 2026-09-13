@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`gas.Error.Status` is serialized into the JSON body** as `"status"`. An
+  invalid status is normalized to 500 in both the status line and the body, so
+  the two always agree.
 - **Constructor signatures are validated at registration.** `RegisterCtor` and
   the reflection-based `Register*Service` twins now panic at the call site,
   naming the constructor and the type it was registered for, when the
