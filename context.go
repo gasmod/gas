@@ -125,6 +125,8 @@ type Context interface {
 	// structs, building the package default on first use if none was supplied.
 	FormDecoder() *schema.Decoder
 
+	// Principal returns the authenticated Principal attached to the request,
+	// or a 401 *Error with code CodeUnauthorized when none is present.
 	Principal() (Principal, error)
 }
 
@@ -390,6 +392,9 @@ func (c *reqContext) BindForm(dest any) error {
 	return c.validateStruct(dest)
 }
 
+// Principal returns the Principal stored in the request context by an
+// authentication middleware. When no principal is present it returns a 401
+// *Error, so handlers can return the error directly to reject the request.
 func (c *reqContext) Principal() (Principal, error) {
 	p := PrincipalFromContext(c)
 	if p == nil {
