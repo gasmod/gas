@@ -124,6 +124,10 @@ type Context interface {
 	// FormDecoder returns the *schema.Decoder used to decode form data into
 	// structs, building the package default on first use if none was supplied.
 	FormDecoder() *schema.Decoder
+
+	// Principal returns the authenticated Principal attached to the request,
+	// or a 401 *Error with code CodeUnauthorized when none is present.
+	Principal() (Principal, error)
 }
 
 // reqContext is the Context implementation backing every DI-aware handler.
@@ -386,6 +390,17 @@ func (c *reqContext) BindForm(dest any) error {
 	}
 
 	return c.validateStruct(dest)
+}
+
+// Principal returns the Principal stored in the request context by an
+// authentication middleware. When no principal is present it returns a 401
+// *Error, so handlers can return the error directly to reject the request.
+func (c *reqContext) Principal() (Principal, error) {
+	p := PrincipalFromContext(c)
+	if p == nil {
+		return nil, c.Unauthorized(http.StatusText(http.StatusUnauthorized))
+	}
+	return p, nil
 }
 
 // validateStruct runs struct validation and shapes any failure into a 422
