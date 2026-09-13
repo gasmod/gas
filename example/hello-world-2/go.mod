@@ -3,9 +3,9 @@ module github.com/gasmod/gas/example/hello-world-2
 go 1.26.1
 
 require (
-	github.com/gasmod/gas v0.4.4
-	github.com/gasmod/gas/config v0.4.4
-	github.com/gasmod/gas/log v0.4.4
+	github.com/gasmod/gas v0.4.5
+	github.com/gasmod/gas/config v0.4.5
+	github.com/gasmod/gas/log v0.4.5
 )
 
 require (
