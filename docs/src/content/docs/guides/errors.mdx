@@ -16,7 +16,7 @@ struct.
 <Code code={region(errs, 'handler')} lang="go" title="users/service.go" />
 
 ```json
-{"error":{"code":"not_found","message":"user not found"}}
+{"error":{"status":404,"code":"not_found","message":"user not found"}}
 ```
 
 | Constructor | Status | Code |
@@ -50,7 +50,7 @@ validation. Fields are named by the JSON tag the client actually sent, not the
 Go field name:
 
 ```json
-{"error":{"code":"validation_failed","message":"request validation failed",
+{"error":{"status":422,"code":"validation_failed","message":"request validation failed",
   "fields":[{"field":"email","rule":"email","message":"must be a valid email address"}]}}
 ```
 
