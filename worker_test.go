@@ -39,8 +39,8 @@ func TestNewWorker_WithOptions(t *testing.T) {
 	}
 
 	names := w.ActiveServices()
-	if len(names) != 3 || !slices.Contains(names, "test-svc") {
-		t.Fatalf("expected [test-svc], got %v", names)
+	if len(names) != 2 || !slices.Contains(names, "test-svc") {
+		t.Fatalf("expected [gas/eventbus, test-svc], got %v", names)
 	}
 }
 
@@ -348,8 +348,8 @@ func TestWorker_ActiveServices(t *testing.T) {
 	}
 
 	names := w.ActiveServices()
-	if len(names) != 3 || !slices.Contains(names, "svc-a") { // 2 built-in services (gas/worker, gas/eventbus) + "svc-a"
-		t.Fatalf("expected 3 active services, got %d", len(names))
+	if len(names) != 2 || !slices.Contains(names, "svc-a") { // 1 built-in service (gas/eventbus) + "svc-a"
+		t.Fatalf("expected 2 active services, got %d", len(names))
 	}
 }
 

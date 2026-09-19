@@ -2,7 +2,7 @@ module github.com/gasmod/gas/config/examples/basic
 
 go 1.27
 
-require github.com/gasmod/gas/config v0.5.0
+require github.com/gasmod/gas/config v0.5.1
 
 require (
 	github.com/gabriel-vasile/mimetype v1.4.15 // indirect

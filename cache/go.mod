@@ -3,8 +3,8 @@ module github.com/gasmod/gas/cache
 go 1.27
 
 require (
-	github.com/gasmod/gas v0.5.0
-	github.com/gasmod/gas/config v0.5.0
+	github.com/gasmod/gas v0.5.1
+	github.com/gasmod/gas/config v0.5.1
 	github.com/testcontainers/testcontainers-go v0.44.0
 	github.com/valkey-io/valkey-go v1.0.78
 )

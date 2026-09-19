@@ -2,7 +2,7 @@ module github.com/gasmod/gas/config/examples/secretsmanager
 
 go 1.27
 
-require github.com/gasmod/gas/config v0.5.0
+require github.com/gasmod/gas/config v0.5.1
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.47.0 // indirect
