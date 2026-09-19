@@ -59,15 +59,15 @@ func (m *mockMigrationMgr) Close() error      { return nil }
 func (m *mockMigrationMgr) RunPending() error { return nil }
 func (m *mockMigrationMgr) Down(_ int) error  { return nil }
 
-func (m *mockMigrationMgr) Register(_ string, migration gas.Migration) {
+func (m *mockMigrationMgr) Register(_ gas.Service, migration gas.Migration) {
 	m.migrations = append(m.migrations, migration)
 }
 
-func (m *mockMigrationMgr) RegisterSlice(_ string, migrations []gas.Migration) {
+func (m *mockMigrationMgr) RegisterSlice(_ gas.Service, migrations []gas.Migration) {
 	m.migrations = append(m.migrations, migrations...)
 }
 
-func (m *mockMigrationMgr) RegisterFS(_ string, _ fs.FS) error { return nil }
+func (m *mockMigrationMgr) RegisterFS(_ gas.Service, _ fs.FS) error { return nil }
 
 // nopMigrationMgr is a shared, read-only-safe mock for tests that don't
 // inspect registered migrations. Each call to Register is a no-op.
@@ -410,7 +410,7 @@ func TestE2E_RegisterAndGet(t *testing.T) {
 	t.Parallel()
 	s := openTestDB(t)
 
-	s.Register(context.Background(), "emails/welcome.html", []byte("<h1>Welcome</h1>"))
+	_ = s.Register(context.Background(), "emails/welcome.html", []byte("<h1>Welcome</h1>"))
 
 	got, err := s.Get(context.Background(), "emails/welcome.html")
 	if err != nil {
@@ -435,8 +435,8 @@ func TestE2E_RegisterOverwrite(t *testing.T) {
 	t.Parallel()
 	s := openTestDB(t)
 
-	s.Register(context.Background(), "page.html", []byte("v1"))
-	s.Register(context.Background(), "page.html", []byte("v2"))
+	_ = s.Register(context.Background(), "page.html", []byte("v1"))
+	_ = s.Register(context.Background(), "page.html", []byte("v2"))
 
 	got, err := s.Get(context.Background(), "page.html")
 	if err != nil {
@@ -451,9 +451,9 @@ func TestE2E_List(t *testing.T) {
 	t.Parallel()
 	s := openTestDB(t)
 
-	s.Register(context.Background(), "c.html", []byte("c"))
-	s.Register(context.Background(), "a.html", []byte("a"))
-	s.Register(context.Background(), "b.html", []byte("b"))
+	_ = s.Register(context.Background(), "c.html", []byte("c"))
+	_ = s.Register(context.Background(), "a.html", []byte("a"))
+	_ = s.Register(context.Background(), "b.html", []byte("b"))
 
 	names, err := s.List(context.Background())
 	if err != nil {
@@ -488,7 +488,7 @@ func TestE2E_Exists(t *testing.T) {
 	t.Parallel()
 	s := openTestDB(t)
 
-	s.Register(context.Background(), "page.html", []byte("content"))
+	_ = s.Register(context.Background(), "page.html", []byte("content"))
 
 	exists, err := s.Exists("page.html")
 	if err != nil {
@@ -516,7 +516,7 @@ func TestE2E_Delete(t *testing.T) {
 	t.Parallel()
 	s := openTestDB(t)
 
-	s.Register(context.Background(), "page.html", []byte("content"))
+	_ = s.Register(context.Background(), "page.html", []byte("content"))
 
 	if err := s.Delete("page.html"); err != nil {
 		t.Fatalf("Delete() error: %v", err)
@@ -562,8 +562,8 @@ func TestE2E_NamespaceIsolation(t *testing.T) {
 		t.Fatalf("Init(ns-b): %v", err)
 	}
 
-	nsA.Register(context.Background(), "page.html", []byte("from A"))
-	nsB.Register(context.Background(), "page.html", []byte("from B"))
+	_ = nsA.Register(context.Background(), "page.html", []byte("from A"))
+	_ = nsB.Register(context.Background(), "page.html", []byte("from B"))
 
 	gotA, err := nsA.Get(context.Background(), "page.html")
 	if err != nil {

@@ -3,6 +3,7 @@ package gas
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"sync"
 )
 
@@ -84,26 +85,48 @@ func safeCall(ctx context.Context, fn func(context.Context) error) (err error) {
 	return fn(ctx)
 }
 
-// CloseService performs the kill-switch sequence for a single service at
-// runtime. Infrastructure is cleaned up first so that even if Close()
-// panics or fails, routes and subscriptions are already removed.
-func (w *Worker) CloseService(name string) error {
+// CloseService performs the kill-switch sequence for the service registered
+// under T at runtime:
+//
+//	w.CloseService[*auth.Service]()
+//
+// Infrastructure is cleaned up first, so even if Close panics or fails, the
+// service's routes and event subscriptions are already gone. Its routes then
+// answer 503, and named middleware it owns is disabled wherever it is used.
+//
+// The service is looked up among the instances the container has already
+// built, so a registration that was never initialized is reported as an error
+// rather than constructed here. Returns an error if T has no built instance or
+// is not currently active; a failure from the service's own Close is logged,
+// not returned, because the teardown above it has already happened.
+func (w *Worker) CloseService[T Service]() error {
 	w.mu.Lock()
-	defer w.mu.Unlock()
+
+	s, ok := w.serviceContainer.resolveBuilt[T]()
+	if !ok {
+		w.mu.Unlock()
+		return fmt.Errorf(
+			"gas: service %v has no built instance; it was never initialized, or is registered under a different type (lookup is by exact registration type)",
+			reflect.TypeFor[T](),
+		)
+	}
+
+	name := s.Name()
 
 	svc, ok := w.activeServices[name]
 	if !ok {
+		w.mu.Unlock()
 		return fmt.Errorf("gas: service %q is not active", name)
 	}
 
 	// 1. App sets this hook to remove routes and middleware.
 	if w.onServiceClose != nil {
-		w.onServiceClose(name)
+		w.onServiceClose(s)
 	}
 
 	// 2. Remove event subscriptions.
 	if w.eventBus != nil {
-		w.eventBus.RemoveByService(name)
+		w.eventBus.RemoveByService(s)
 	}
 
 	// 3. Close the service (internal cleanup).
@@ -114,21 +137,41 @@ func (w *Worker) CloseService(name string) error {
 	// 4. Remove from active services.
 	delete(w.activeServices, name)
 
+	w.mu.Unlock()
+
 	// 5. Notify all other services.
-	Emit(w.eventBus, SystemServiceClosed, SystemServiceClosedPayload{ServiceName: name}).Wait()
+	w.eventBus.Emit[SystemServiceClosed](SystemServiceClosedPayload{ServiceName: name}).Wait()
 
 	w.getLogger().Info("service closed").Str("service", name).Send()
 	return nil
 }
 
-// RestartService re-initializes a previously closed service. The service
-// must have been registered with the Worker at construction time and built
-// during InitServices (i.e., it must be a singleton in serviceOrder).
-func (w *Worker) RestartService(name string) error {
+// RestartService re-initializes the previously closed service registered
+// under T, re-running Init on the same instance so it registers its routes,
+// middleware and subscriptions again:
+//
+//	w.RestartService[*auth.Service]()
+//
+// The service must have been registered with the Worker at construction time
+// and built during InitServices (that is, it must be a singleton in
+// serviceOrder). Returns an error if T has no built instance, is already
+// active, or its Init fails.
+func (w *Worker) RestartService[T Service]() error {
 	w.mu.Lock()
-	defer w.mu.Unlock()
+
+	s, ok := w.serviceContainer.resolveBuilt[T]()
+	if !ok {
+		w.mu.Unlock()
+		return fmt.Errorf(
+			"gas: service %v has no built instance; it was never initialized, or is registered under a different type (lookup is by exact registration type)",
+			reflect.TypeFor[T](),
+		)
+	}
+
+	name := s.Name()
 
 	if _, ok := w.activeServices[name]; ok {
+		w.mu.Unlock()
 		return fmt.Errorf("gas: service %q is already active", name)
 	}
 
@@ -141,17 +184,21 @@ func (w *Worker) RestartService(name string) error {
 		}
 	}
 	if svc == nil {
+		w.mu.Unlock()
 		return fmt.Errorf("gas: service %q not found", name)
 	}
 
 	// Re-initialize.
 	if err := svc.Init(); err != nil {
+		w.mu.Unlock()
 		return fmt.Errorf("gas: re-init %s: %w", name, err)
 	}
 
 	w.activeServices[name] = svc
 
-	Emit(w.eventBus, SystemServiceInitialized, SystemServiceInitializedPayload{ServiceName: name}).Wait()
+	w.mu.Unlock()
+
+	w.eventBus.Emit[SystemServiceInitialized](SystemServiceInitializedPayload{ServiceName: name}).Wait()
 
 	w.getLogger().Info("service restarted").Str("service", name).Send()
 	return nil

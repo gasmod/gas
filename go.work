@@ -1,4 +1,4 @@
-go 1.26.1
+go 1.27
 
 use (
 	.
@@ -28,16 +28,16 @@ use (
 )
 
 replace (
-	github.com/gasmod/gas v0.4.6 => .
-	github.com/gasmod/gas/auth v0.4.6 => ./auth
-	github.com/gasmod/gas/cache v0.4.6 => ./cache
-	github.com/gasmod/gas/config v0.4.6 => ./config
-	github.com/gasmod/gas/database v0.4.6 => ./database
-	github.com/gasmod/gas/email v0.4.6 => ./email
-	github.com/gasmod/gas/log v0.4.6 => ./log
-	github.com/gasmod/gas/migrate v0.4.6 => ./migrate
-	github.com/gasmod/gas/queue v0.4.6 => ./queue
-	github.com/gasmod/gas/storage v0.4.6 => ./storage
-	github.com/gasmod/gas/template v0.4.6 => ./template
-	github.com/gasmod/gas/ui v0.4.6 => ./ui
+	github.com/gasmod/gas v0.5.0 => .
+	github.com/gasmod/gas/auth v0.5.0 => ./auth
+	github.com/gasmod/gas/cache v0.5.0 => ./cache
+	github.com/gasmod/gas/config v0.5.0 => ./config
+	github.com/gasmod/gas/database v0.5.0 => ./database
+	github.com/gasmod/gas/email v0.5.0 => ./email
+	github.com/gasmod/gas/log v0.5.0 => ./log
+	github.com/gasmod/gas/migrate v0.5.0 => ./migrate
+	github.com/gasmod/gas/queue v0.5.0 => ./queue
+	github.com/gasmod/gas/storage v0.5.0 => ./storage
+	github.com/gasmod/gas/template v0.5.0 => ./template
+	github.com/gasmod/gas/ui v0.5.0 => ./ui
 )

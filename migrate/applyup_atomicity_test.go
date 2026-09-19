@@ -26,7 +26,11 @@ import (
 // the CREATE TABLE is already committed when the insert aborts, so the table
 // survives. With atomic apply the abort rolls the DDL back and the table never
 // exists.
+//
+//goland:noinspection SqlResolve,SqlNoDataSourceInspection
 func TestApplyUp_RecordingFailureRollsBackSchema(t *testing.T) {
+	mod := &testService{name: "mod-a"}
+
 	s, db := newTestService(t)
 	ctx := context.Background()
 	raw := db.DB()
@@ -44,7 +48,7 @@ func TestApplyUp_RecordingFailureRollsBackSchema(t *testing.T) {
 	}
 
 	const version = "20250601001"
-	s.Register("mod-a", gas.Migration{
+	s.Register(mod, gas.Migration{
 		Version:     version,
 		Description: "create widgets table",
 		Up:          "CREATE TABLE widgets (id INTEGER PRIMARY KEY)",
@@ -63,6 +67,7 @@ func TestApplyUp_RecordingFailureRollsBackSchema(t *testing.T) {
 	}
 }
 
+//goland:noinspection SqlResolve,SqlNoDataSourceInspection
 func tableExists(t *testing.T, raw *sql.DB, name string) bool {
 	t.Helper()
 	var n int

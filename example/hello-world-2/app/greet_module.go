@@ -36,7 +36,7 @@ func (m *GreetModule) Name() string {
 // Init registers this module's middleware, routes, and event subscriptions.
 func (m *GreetModule) Init() error {
 	// Register a named middleware so other modules can reference it by name.
-	m.router.Register(m.Name(), "request-logger", func(next http.Handler) http.Handler {
+	m.router.Register(m, "request-logger", func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			logger := gas.MustResolveFromRequestScope[RequestLogger](r)
 			logger.SetBaseFields().Str("source", "request-logger-mw").Apply()
@@ -52,23 +52,23 @@ func (m *GreetModule) Init() error {
 	m.router.Use(gas.MiddlewareByName("request-logger"))
 
 	// Top-level routes.
-	m.router.Handle(m.Name(), http.MethodGet, "/", m.handleIndex)
-	m.router.Handle(m.Name(), http.MethodGet, "/greet/{name}", m.handleGreet)
-	m.router.Handle(m.Name(), http.MethodGet, "/json", m.handleJSON)
-	m.router.Handle(m.Name(), http.MethodGet, "/error", m.handleError)
-	m.router.Handle(m.Name(), http.MethodGet, "/panic", m.handlePanic)
-	m.router.Handle(m.Name(), http.MethodGet, "/abort", m.handleErrAbortHandler)
+	m.router.Handle(m, http.MethodGet, "/", m.handleIndex)
+	m.router.Handle(m, http.MethodGet, "/greet/{name}", m.handleGreet)
+	m.router.Handle(m, http.MethodGet, "/json", m.handleJSON)
+	m.router.Handle(m, http.MethodGet, "/error", m.handleError)
+	m.router.Handle(m, http.MethodGet, "/panic", m.handlePanic)
+	m.router.Handle(m, http.MethodGet, "/abort", m.handleErrAbortHandler)
 
 	// Custom 404 handler.
-	m.router.NotFound(m.Name(), m.handleNotFound)
+	m.router.NotFound(m, m.handleNotFound)
 
 	// Subscribe to system events with ownership tracking.
-	gas.SubscribeWithOwner(m.eventBus, m.Name(), gas.SystemAllServicesInitialized, func(_ gas.SystemAllServicesInitializedPayload) {
+	m.eventBus.SubscribeWithOwner[gas.SystemAllServicesInitialized](m, func(_ gas.SystemAllServicesInitializedPayload) {
 		// This runs once at startup after all modules have been initialized.
 		m.logger.Info("all services initialized").Str("module", m.Name()).Send()
 	})
 
-	gas.SubscribeWithOwner(m.eventBus, m.Name(), gas.SystemServerShuttingDown, func(_ gas.SystemServerShuttingDownPayload) {
+	m.eventBus.SubscribeWithOwner[gas.SystemServerShuttingDown](m, func(_ gas.SystemServerShuttingDownPayload) {
 		// This runs when the server is shutting down — useful for cleanup.
 		m.logger.Info("server shutting down").Str("module", m.Name()).Send()
 	})

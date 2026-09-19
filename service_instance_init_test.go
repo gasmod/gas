@@ -2,6 +2,7 @@ package gas_test
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -37,7 +38,7 @@ func TestServiceInstanceIsInitialized(t *testing.T) {
 	if got := strings.Join(inits, " "); got != "instance" {
 		t.Errorf("init calls = [%s], want [instance]", got)
 	}
-	if got := w.ActiveServices(); len(got) != 1 || got[0] != "instance" {
+	if got := w.ActiveServices(); len(got) != 3 || !slices.Contains(got, "instance") { // 2 built-in services (gas/worker, gas/eventbus) + "instance"
 		t.Errorf("ActiveServices = %v, want [instance]", got)
 	}
 }

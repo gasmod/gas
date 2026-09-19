@@ -650,7 +650,7 @@ func (s *MyService) Init() error {
     chain := auth.Chain{s.jwt, s.session, s.apikey}
     s.router.Group(func(sub *gas.Router) {
         sub.UseMiddlewareFunc(auth.Middleware(chain))
-        sub.Handle(s.Name(), "GET", "/protected", s.handleProtected)
+        sub.Handle(s, "GET", "/protected", s.handleProtected)
     })
     return nil
 }

@@ -30,7 +30,7 @@ func (s *Service) Name() string { return "files" }
 func (s *Service) Close() error { return nil }
 
 func (s *Service) Init() error {
-	s.router.Handle(s.Name(), http.MethodGet, "/files/{key}", s.download)
+	s.router.Handle(s, http.MethodGet, "/files/{key}", s.download)
 	return nil
 }
 

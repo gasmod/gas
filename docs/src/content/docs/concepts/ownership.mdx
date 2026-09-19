@@ -10,9 +10,14 @@ that registered it. That bookkeeping exists for one reason: a single service can
 be shut down at runtime without restarting the process.
 
 ```go
-app.CloseService("auth")   // everything auth registered now returns 503
-app.RestartService("auth") // re-initializes and re-arms it
+app.CloseService[*auth.Service]()   // everything auth registered now returns 503
+app.RestartService[*auth.Service]() // re-initializes and re-arms it
 ```
+
+The type argument is the type the service was registered under, matched
+exactly. The owner passed to `Handle`, `Register`, and `SubscribeWithOwner` is
+the service itself, so from inside a service you pass `s`; ownership is tracked
+by its `Name()`. Passing `nil` means no owning service.
 
 ## What actually gets disabled
 
@@ -22,15 +27,15 @@ Everything the service registered is replaced with a static `503` in the
 including on routes owned by services that are still running.
 
 ```go
-router.Register("auth", "require-auth", requireAuth) // owned by "auth"
+router.Register(authSvc, "require-auth", requireAuth) // owned by auth
 
 router.Route("/api", func(sub *gas.Router) {
 	sub.Use(gas.MiddlewareByName("require-auth"))
-	sub.Handle("billing", http.MethodGet, "/invoices", handler) // owned by "billing"
+	sub.Handle(billingSvc, http.MethodGet, "/invoices", handler) // owned by billing
 })
 
-app.CloseService("auth")
-// GET /api/invoices -> 503, even though "billing" is still running.
+app.CloseService[*auth.Service]()
+// GET /api/invoices -> 503, even though billing is still running.
 ```
 
 <Aside type="danger" title="Disabled, never skipped">
@@ -51,7 +56,7 @@ Other services can respond, which is how a system degrades deliberately rather
 than by accident.
 
 ```go
-gas.SubscribeWithOwner(bus, s.Name(), gas.SystemServiceClosed,
+bus.SubscribeWithOwner[gas.SystemServiceClosed](s,
 	func(data gas.SystemServiceClosedPayload) {
 		// enter degraded mode if data.ServiceName was a dependency
 	})
@@ -59,19 +64,20 @@ gas.SubscribeWithOwner(bus, s.Name(), gas.SystemServiceClosed,
 
 ## Events
 
-Events are typed, so payloads are checked at compile time rather than asserted
-at runtime.
+An event is a type, not a value. Embedding `gas.Event[Payload]` binds the event
+to its payload, so a handler or an emit with the wrong payload does not compile,
+and two events never collide even when their payloads are identical.
 
 ```go
-var UserCreated = gas.Event[UserCreatedPayload]{Name: "user:created"}
+type UserCreated struct{ gas.Event[UserCreatedPayload] }
 
 type UserCreatedPayload struct{ Email string }
 
-gas.SubscribeWithOwner(bus, s.Name(), UserCreated, func(data UserCreatedPayload) {
+bus.SubscribeWithOwner[UserCreated](s, func(data UserCreatedPayload) {
 	// provision a billing account for data.Email
 })
 
-gas.Emit(bus, UserCreated, UserCreatedPayload{Email: "user@example.com"}).Wait()
+bus.Emit[UserCreated](UserCreatedPayload{Email: "user@example.com"}).Wait()
 ```
 
 `Emit` returns a `*sync.WaitGroup`, so the caller decides whether to wait for

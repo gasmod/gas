@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-19
+
 ### Added
 
 - **Unified error shape** — `gas.Error` with `Status`, `Code`, `Message`,
@@ -22,14 +24,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   directly from a handler.
 - **`gas.ErrorResponse`** — the `{"error": {...}}` envelope, exported so Go
   clients and tests can decode it.
+- **`Worker.ReadyFunc`** — the imperative form of `WithReadyFunc`. Safe for
+  concurrent use; panics if called after the ready hooks have run, since the
+  func would never execute.
+- **`Scope.Resolve[T]` and `Scope.MustResolve[T]`** — resolve directly from a
+  scope.
+- `*Worker`, `*EventBus`, and `*Router` implement `gas.Service`, so they can
+  be passed as owners. They appear in `ActiveServices` as `gas/worker`,
+  `gas/eventbus`, and `gas/router`.
 
 ### Changed
 
+- **BREAKING: Go 1.27 is required.** The API now uses generic methods.
+- **BREAKING: DI registration and resolution are generic methods.**
+  `gas.RegisterCtor`, `gas.RegisterInstance`, `gas.Resolve`, `gas.MustResolve`,
+  `gas.TypePtr`, and the reflection-based type-token methods are removed. Use
+  `c.RegisterService[T](ctor, lifetime)`, `c.RegisterSingletonService[T](ctor)`
+  (and the scoped and transient variants), `c.RegisterServiceInstance[T](val)`,
+  `c.Resolve[T]()`, and `c.MustResolve[T]()` on `*ServiceContainer`; the
+  registration methods are forwarded on `*Worker`. `CanResolve` is now
+  `c.CanResolve[T]()`. The `With*Service` options are unchanged.
+- **BREAKING: `RegisterServiceInstance` registers under the static type.** It
+  previously used the value's dynamic type; it now registers under `T` at the
+  call site, so an interface-typed variable is resolvable as that interface
+  only.
+- **BREAKING: events are types, not values.** Declare an event by embedding
+  its payload, `type UserCreated struct{ gas.Event[UserCreatedPayload] }`, and
+  use the generic methods `bus.Emit[UserCreated](payload)`,
+  `bus.Subscribe[UserCreated](handler)`, and
+  `bus.SubscribeWithOwner[UserCreated](service, handler)`. The package-level
+  `gas.Emit`, `gas.Subscribe`, and `gas.SubscribeWithOwner`, the string-keyed
+  `EventBus` methods, and `Event.Name` are removed. Subscriptions are keyed by
+  the event type, so two events never collide even with identical payloads.
+  The system events (`gas.SystemServiceClosed` and the rest) are now types.
+- **BREAKING: owners are a `gas.Service`, not a name.** `Router.Handle`,
+  `Router.Register`, `Router.NotFound`, `Router.RemoveByService`,
+  `EventBus.SubscribeWithOwner`, `EventBus.RemoveByService`, and
+  `MigrationManager.Register` / `RegisterSlice` / `RegisterFS` take the service
+  itself; pass `s` instead of `s.Name()`. `Migration.Service` is a
+  `gas.Service`. Ownership is still tracked by `Name()`. A `nil` owner on the
+  router means no owning service and is attributed to the root router
+  (`gas/router`), on sub-routers too.
+- **BREAKING: the kill switch is addressed by type.** `CloseService(name)` and
+  `RestartService(name)` become `CloseService[T]()` and `RestartService[T]()`,
+  where `T` is the exact type the service was registered under. Neither
+  constructs a service that was never built.
+- **BREAKING: `NopLoggerCtor` is removed**; `NewNopLogger` returns a plain
+  `func() *NopLogger`.
+- **BREAKING (gas/auth): the `db` stores' `Init` takes the owning
+  `gas.Service`** instead of its name.
 - **`gas.Error.Status` is serialized into the JSON body** as `"status"`. An
   invalid status is normalized to 500 in both the status line and the body, so
   the two always agree.
-- **Constructor signatures are validated at registration.** `RegisterCtor` and
-  the reflection-based `Register*Service` twins now panic at the call site,
+- **Constructor signatures are validated at registration.** `RegisterService`
+  and its lifetime variants now panic at the call site,
   naming the constructor and the type it was registered for, when the
   constructor is not a function, is variadic, returns other than one or two
   values, produces a first result that is neither assignable to nor an
@@ -50,8 +98,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   underlying error remains reachable through `errors.As`.
 - Validation field names now follow the `json` tag the client sent rather than
   the Go struct field name.
+
 ### Fixed
 
+- **`CloseService` and `RestartService` deadlocked a subscriber that called
+  back into the Worker.** Both emitted their system event while holding the
+  Worker lock; they now release it first.
 - **Shutdown closed services in a random order.** `Worker.Shutdown` documents
   "reverse initialization order", but `InitServices` derived `serviceOrder` by
   ranging over the container's instance map, and Go randomizes map iteration.
@@ -138,5 +190,6 @@ repository; this entry summarizes the framework as published.
 - Eliminated a data race between the router and the service kill-switch by
   switching route storage to copy-on-write.
 
-[Unreleased]: https://github.com/gasmod/gas/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/gasmod/gas/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/gasmod/gas/releases/tag/v0.5.0
 [0.3.0]: https://github.com/gasmod/gas/releases/tag/v0.3.0

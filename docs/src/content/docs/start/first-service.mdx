@@ -25,7 +25,7 @@ unit test.
 `Init` is where the service claims what it owns, registering routes,
 middleware, and event subscriptions. It runs once, after all singletons are
 built, and before the server accepts traffic. Everything registered here is
-tagged with the service name, which is what makes runtime
+tagged with the service that registered it, which is what makes runtime
 [teardown](/gas/concepts/ownership/) possible.
 
 `Close` releases whatever the service holds. It runs at shutdown in reverse

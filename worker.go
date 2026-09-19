@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"reflect"
+	"slices"
 	"sync"
 	"syscall"
 )
@@ -27,16 +28,21 @@ type Worker struct {
 	// onServiceClose is called by CloseService before removing event
 	// subscriptions and closing the service. App sets this to call
 	// router.RemoveByService.
-	onServiceClose func(name string)
+	onServiceClose func(s Service)
 
 	activeServices map[string]Service // runtime kill-switch tracking
 	serviceOrder   []Service          // init order for reverse-close at shutdown
 
 	readyFuncs []func(*ServiceContainer) error
+	readyRan   bool // set once Start reaches the ready hooks; guarded by mu
 
 	mu       sync.Mutex
 	initOnce sync.Once
 }
+
+var _ HealthProvider = (*Worker)(nil)
+var _ ReadyProvider = (*Worker)(nil)
+var _ Service = (*Worker)(nil)
 
 // NewWorker creates a Worker with the given options. Only WorkerOption values
 // are applied; passing an AppOption panics.
@@ -47,9 +53,9 @@ func NewWorker(opts ...Option) *Worker {
 		activeServices:   make(map[string]Service),
 	}
 
-	RegisterInstance[*EventBus](w.serviceContainer, w.eventBus)
-	RegisterInstance[HealthProvider](w.serviceContainer, w)
-	RegisterInstance[ReadyProvider](w.serviceContainer, w)
+	w.serviceContainer.RegisterServiceInstance[*EventBus](w.eventBus)
+	w.serviceContainer.RegisterServiceInstance[HealthProvider](w)
+	w.serviceContainer.RegisterServiceInstance[ReadyProvider](w)
 
 	for _, opt := range opts {
 		switch o := opt.(type) {
@@ -63,6 +69,16 @@ func NewWorker(opts ...Option) *Worker {
 	return w
 }
 
+// Name returns the service name of the Worker.
+func (w *Worker) Name() string { return "gas/worker" }
+
+// Init is a no-op. It exists so the Worker satisfies Service and can be passed
+// as an owner; use InitServices or Start to bring the Worker up.
+func (w *Worker) Init() error { return nil }
+
+// Close is a no-op; use Shutdown to stop the Worker and close its services.
+func (w *Worker) Close() error { return nil }
+
 // EventBus returns the Worker's event bus.
 func (w *Worker) EventBus() *EventBus { return w.eventBus }
 
@@ -72,7 +88,7 @@ func (w *Worker) ServiceContainer() *ServiceContainer { return w.serviceContaine
 // MigrationManager resolves the MigrationManager from the DI container.
 // Returns nil if no MigrationManager is registered.
 func (w *Worker) MigrationManager() MigrationManager {
-	mgr, err := Resolve[MigrationManager](w.serviceContainer)
+	mgr, err := w.serviceContainer.Resolve[MigrationManager]()
 	if err != nil {
 		return nil
 	}
@@ -82,7 +98,7 @@ func (w *Worker) MigrationManager() MigrationManager {
 // ConfigProvider resolves the ConfigProvider from the DI container.
 // Returns nil if no ConfigProvider is registered.
 func (w *Worker) ConfigProvider() ConfigProvider {
-	cfg, err := Resolve[ConfigProvider](w.serviceContainer)
+	cfg, err := w.serviceContainer.Resolve[ConfigProvider]()
 	if err != nil {
 		return nil
 	}
@@ -104,6 +120,13 @@ func (w *Worker) InitServices() (err error) {
 		w.serviceContainer.EachInstance(func(v reflect.Value) {
 			if svc, ok := v.Interface().(Service); ok {
 				w.mu.Lock()
+				// An instance registered under several types (the Worker is both
+				// HealthProvider and ReadyProvider) is tracked once, so shutdown
+				// does not close it twice.
+				if _, tracked := w.activeServices[svc.Name()]; tracked {
+					w.mu.Unlock()
+					return
+				}
 				w.activeServices[svc.Name()] = svc
 				w.serviceOrder = append(w.serviceOrder, svc)
 				w.mu.Unlock()
@@ -117,7 +140,7 @@ func (w *Worker) InitServices() (err error) {
 			}
 		}
 
-		Emit(w.eventBus, SystemAllServicesInitialized, SystemAllServicesInitializedPayload{}).Wait()
+		w.eventBus.Emit[SystemAllServicesInitialized](SystemAllServicesInitializedPayload{}).Wait()
 	})
 	return
 }
@@ -138,8 +161,14 @@ func (w *Worker) Start() error {
 		}
 	}
 
-	// Run ready hooks.
-	for _, fn := range w.readyFuncs {
+	// Run ready hooks. Snapshot under the lock so a concurrent ReadyFunc
+	// either lands before this point or panics; it is never silently dropped.
+	w.mu.Lock()
+	w.readyRan = true
+	readyFuncs := slices.Clone(w.readyFuncs)
+	w.mu.Unlock()
+
+	for _, fn := range readyFuncs {
 		if fnErr := fn(w.serviceContainer); fnErr != nil {
 			w.getLogger().Error("ready hook failed").Err("error", fnErr).Send()
 			return fmt.Errorf("gas: ready hook: %w", fnErr)
@@ -153,11 +182,10 @@ func (w *Worker) Start() error {
 // initialization order. Safe to call multiple times (subsequent calls are
 // no-ops once services are closed).
 func (w *Worker) Shutdown() error {
-	Emit(w.eventBus, SystemShuttingDown, SystemShuttingDownPayload{}).Wait()
+	w.eventBus.Emit[SystemShuttingDown](SystemShuttingDownPayload{}).Wait()
 
 	// Close all services in reverse init order.
-	for i := len(w.serviceOrder) - 1; i >= 0; i-- {
-		svc := w.serviceOrder[i]
+	for _, svc := range slices.Backward(w.serviceOrder) {
 		w.getLogger().Info("closing service").Str("service", svc.Name()).Send()
 		if svcErr := svc.Close(); svcErr != nil {
 			w.getLogger().Error("service close error").
@@ -190,14 +218,32 @@ func (w *Worker) Run() error {
 	return w.Shutdown()
 }
 
+// ReadyFunc registers a function that runs after all services are initialized
+// and migrations are applied, but before Run blocks or Start returns. It is
+// the imperative form of WithReadyFunc and may be called any number of times
+// before startup; the funcs run in registration order and the first error
+// aborts startup.
+//
+// Safe for concurrent use. Panics if called once Start has reached the ready
+// hooks, because the func would never run.
+func (w *Worker) ReadyFunc(fn func(*ServiceContainer) error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.readyRan {
+		panic("gas: ReadyFunc called after ready hooks have run")
+	}
+	w.readyFuncs = append(w.readyFuncs, fn)
+}
+
 func (w *Worker) getLogger() Logger {
 	if w.logger == nil {
 		// See if we have a logger registered
-		logger, err := Resolve[Logger](w.serviceContainer)
+		logger, err := w.serviceContainer.Resolve[Logger]()
 		if err != nil {
 			// fallback to slog
 			logger = newSlogLogger(slog.Default())
-			RegisterInstance[Logger](w.serviceContainer, logger)
+			w.serviceContainer.RegisterServiceInstance[Logger](logger)
 			logger.Warn("no logger registered").Err("reason", err).Send()
 		}
 		w.logger = logger
@@ -207,45 +253,49 @@ func (w *Worker) getLogger() Logger {
 
 // --- ServiceContainer helpers ---
 
-// RegisterService registers a constructor for the type of t with the given
-// lifetime on the worker's service container. t is a type token, typically
-// TypePtr[T]().
-func (w *Worker) RegisterService(t, ctor any, lifetime ServiceLifetime) {
-	w.serviceContainer.RegisterService(t, ctor, lifetime)
+// RegisterService registers a constructor for type T with the given lifetime
+// on the worker's service container. It is the imperative form of WithService,
+// for wiring done after the Worker is built. See
+// ServiceContainer.RegisterService for the accepted constructor signatures and
+// the panics on a bad one.
+func (w *Worker) RegisterService[T any](ctor any, lifetime ServiceLifetime) {
+	w.serviceContainer.RegisterService[T](ctor, lifetime)
 }
 
-// RegisterTransientService registers a constructor for the type of t with the
-// Transient lifetime on the worker's service container. t is a type token,
-// typically TypePtr[T]().
-func (w *Worker) RegisterTransientService(t, ctor any) {
-	w.serviceContainer.RegisterTransientService(t, ctor)
+// RegisterTransientService registers a constructor for type T with the
+// Transient lifetime on the worker's service container, so a fresh T is built
+// on every resolution. T must not implement Service.
+func (w *Worker) RegisterTransientService[T any](ctor any) {
+	w.serviceContainer.RegisterTransientService[T](ctor)
 }
 
-// RegisterScopedService registers a constructor for the type of t with the
-// Scoped lifetime on the worker's service container. t is a type token,
-// typically TypePtr[T]().
-func (w *Worker) RegisterScopedService(t, ctor any) {
-	w.serviceContainer.RegisterScopedService(t, ctor)
+// RegisterScopedService registers a constructor for type T with the Scoped
+// lifetime on the worker's service container, so one T is built per Scope. In
+// an App, each request gets its own scope; see ResolveFromRequestScope.
+func (w *Worker) RegisterScopedService[T any](ctor any) {
+	w.serviceContainer.RegisterScopedService[T](ctor)
 }
 
-// RegisterSingletonService registers a constructor for the type of t with the
-// Singleton lifetime on the worker's service container. t is a type token,
-// typically TypePtr[T]().
-func (w *Worker) RegisterSingletonService(t, ctor any) {
-	w.serviceContainer.RegisterSingletonService(t, ctor)
+// RegisterSingletonService registers a constructor for type T with the
+// Singleton lifetime on the worker's service container, so one T is built and
+// shared by every consumer.
+func (w *Worker) RegisterSingletonService[T any](ctor any) {
+	w.serviceContainer.RegisterSingletonService[T](ctor)
 }
 
-// RegisterServiceInstance registers a pre-built value on the worker's service
-// container under its dynamic type. Treated as a singleton.
-func (w *Worker) RegisterServiceInstance(val any) {
-	w.serviceContainer.RegisterServiceInstance(val)
+// RegisterServiceInstance registers an already-built value on the worker's
+// service container under T, the static type at the call site, not the dynamic
+// type of val. Treated as a singleton; see
+// ServiceContainer.RegisterServiceInstance for the lifecycle it takes on.
+func (w *Worker) RegisterServiceInstance[T any](val T) {
+	w.serviceContainer.RegisterServiceInstance[T](val)
 }
 
 // --- WorkerOption functions ---
 
 // WithService registers a constructor-based service with the given lifetime.
 func WithService[T any](ctor any, lifetime ServiceLifetime) WorkerOption {
-	return func(w *Worker) { RegisterCtor[T](w.serviceContainer, ctor, lifetime) }
+	return func(w *Worker) { w.serviceContainer.RegisterService[T](ctor, lifetime) }
 }
 
 // WithServiceInstance registers a pre-built service instance (singleton).
@@ -256,22 +306,22 @@ func WithService[T any](ctor any, lifetime ServiceLifetime) WorkerOption {
 // what hands the lifecycle to the container, however the value got there. Do
 // not call Init() yourself before registering, or it runs twice.
 func WithServiceInstance[T any](val T) WorkerOption {
-	return func(w *Worker) { RegisterInstance[T](w.serviceContainer, val) }
+	return func(w *Worker) { w.serviceContainer.RegisterServiceInstance[T](val) }
 }
 
 // WithTransientService registers a transient service constructor.
 func WithTransientService[T any](ctor any) WorkerOption {
-	return func(w *Worker) { RegisterCtor[T](w.serviceContainer, ctor, ServiceLifetimeTransient) }
+	return func(w *Worker) { w.serviceContainer.RegisterTransientService[T](ctor) }
 }
 
 // WithScopedService registers a service constructor with a scoped lifetime.
 func WithScopedService[T any](ctor any) WorkerOption {
-	return func(w *Worker) { RegisterCtor[T](w.serviceContainer, ctor, ServiceLifetimeScoped) }
+	return func(w *Worker) { w.serviceContainer.RegisterScopedService[T](ctor) }
 }
 
 // WithSingletonService registers a singleton service constructor.
 func WithSingletonService[T any](ctor any) WorkerOption {
-	return func(w *Worker) { RegisterCtor[T](w.serviceContainer, ctor, ServiceLifetimeSingleton) }
+	return func(w *Worker) { w.serviceContainer.RegisterSingletonService[T](ctor) }
 }
 
 // WithReadyFunc registers a function that runs after all services are
@@ -279,5 +329,5 @@ func WithSingletonService[T any](ctor any) WorkerOption {
 // returns. Multiple funcs are called in registration order; any error
 // aborts startup.
 func WithReadyFunc(fn func(*ServiceContainer) error) WorkerOption {
-	return func(w *Worker) { w.readyFuncs = append(w.readyFuncs, fn) }
+	return func(w *Worker) { w.ReadyFunc(fn) }
 }

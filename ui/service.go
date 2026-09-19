@@ -147,10 +147,10 @@ func (s *Service) initStaticRoute() error {
 
 	if len(s.cfg.UI.StaticPaths) > 0 {
 		for _, path := range s.cfg.UI.StaticPaths {
-			s.router.Handle(s.Name(), http.MethodGet, path, handler)
+			s.router.Handle(s, http.MethodGet, path, handler)
 		}
 	} else {
-		s.router.Handle(s.Name(), http.MethodGet, s.cfg.UI.StaticPath, handler)
+		s.router.Handle(s, http.MethodGet, s.cfg.UI.StaticPath, handler)
 	}
 
 	return nil

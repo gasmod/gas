@@ -13,7 +13,7 @@ import (
 func New() *gas.App {
 	app := gas.NewApp()
 
-	app.Router().Handle("", http.MethodGet, "/", func(ctx gas.Context) error {
+	app.Router().Handle(nil, http.MethodGet, "/", func(ctx gas.Context) error {
 		return ctx.Text(http.StatusOK, "Hello, World!")
 	})
 

@@ -12,7 +12,7 @@ import (
 // Named middleware is owned by the service that registers it, which is what
 // lets a teardown disable it everywhere it is referenced.
 func register(router *gas.Router) {
-	router.Register("auth", "require-auth", func(next http.Handler) http.Handler {
+	router.Register(nil, "require-auth", func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// validate a token, then:
 			next.ServeHTTP(w, r)

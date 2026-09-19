@@ -83,34 +83,28 @@ func TestRegisterCtor_AcceptsValidShapes(t *testing.T) {
 		{
 			name: "interface registered with concrete pointer constructor",
 			register: func(c *gas.ServiceContainer) {
-				gas.RegisterCtor[greeter](c, newConcreteGreeter, gas.ServiceLifetimeSingleton)
+				c.RegisterService[greeter](newConcreteGreeter, gas.ServiceLifetimeSingleton)
 			},
 		},
 		{
 			name: "concrete type returning itself",
 			register: func(c *gas.ServiceContainer) {
-				gas.RegisterCtor[*concreteGreeter](c, newConcreteGreeter, gas.ServiceLifetimeSingleton)
+				c.RegisterService[*concreteGreeter](newConcreteGreeter, gas.ServiceLifetimeSingleton)
 			},
 		},
 		{
 			name: "two results with error",
 			register: func(c *gas.ServiceContainer) {
-				gas.RegisterCtor[greeter](c, newGreeterWithError, gas.ServiceLifetimeSingleton)
+				c.RegisterService[greeter](newGreeterWithError, gas.ServiceLifetimeSingleton)
 			},
 		},
 		{
 			name: "constructor with dependencies",
 			register: func(c *gas.ServiceContainer) {
-				gas.RegisterCtor[*plainDep](c, newPlainDep, gas.ServiceLifetimeSingleton)
-				gas.RegisterCtor[greeter](c, func(_ *plainDep) *concreteGreeter {
+				c.RegisterService[*plainDep](newPlainDep, gas.ServiceLifetimeSingleton)
+				c.RegisterService[greeter](func(_ *plainDep) *concreteGreeter {
 					return newConcreteGreeter()
 				}, gas.ServiceLifetimeSingleton)
-			},
-		},
-		{
-			name: "reflection-based entry point",
-			register: func(c *gas.ServiceContainer) {
-				c.RegisterSingletonService(gas.TypePtr[*concreteGreeter](), newConcreteGreeter)
 			},
 		},
 	}
@@ -136,13 +130,13 @@ func TestRegisterCtor_InterfaceRegistrationResolves(t *testing.T) {
 	t.Parallel()
 
 	c := gas.NewServiceContainer()
-	gas.RegisterCtor[greeter](c, newConcreteGreeter, gas.ServiceLifetimeSingleton)
+	c.RegisterService[greeter](newConcreteGreeter, gas.ServiceLifetimeSingleton)
 
 	if err := c.BuildAll(); err != nil {
 		t.Fatalf("BuildAll: %v", err)
 	}
 
-	g, err := gas.Resolve[greeter](c)
+	g, err := c.Resolve[greeter]()
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -164,21 +158,21 @@ func TestRegisterCtor_RejectsBadShapes(t *testing.T) {
 			name:  "nil constructor",
 			wants: []string{"want a function", "nil"},
 			register: func(c *gas.ServiceContainer) {
-				gas.RegisterCtor[greeter](c, nil, gas.ServiceLifetimeSingleton)
+				c.RegisterService[greeter](nil, gas.ServiceLifetimeSingleton)
 			},
 		},
 		{
 			name:  "non-function constructor",
 			wants: []string{"want a function"},
 			register: func(c *gas.ServiceContainer) {
-				gas.RegisterCtor[*concreteGreeter](c, &concreteGreeter{}, gas.ServiceLifetimeSingleton)
+				c.RegisterService[*concreteGreeter](&concreteGreeter{}, gas.ServiceLifetimeSingleton)
 			},
 		},
 		{
 			name:  "variadic constructor",
 			wants: []string{"variadic"},
 			register: func(c *gas.ServiceContainer) {
-				gas.RegisterCtor[greeter](c, func(_ ...*plainDep) *concreteGreeter {
+				c.RegisterService[greeter](func(_ ...*plainDep) *concreteGreeter {
 					return newConcreteGreeter()
 				}, gas.ServiceLifetimeSingleton)
 			},
@@ -187,7 +181,7 @@ func TestRegisterCtor_RejectsBadShapes(t *testing.T) {
 			name:  "no results",
 			wants: []string{"returns 0 values"},
 			register: func(c *gas.ServiceContainer) {
-				gas.RegisterCtor[greeter](c, func() {}, gas.ServiceLifetimeSingleton)
+				c.RegisterService[greeter](func() {}, gas.ServiceLifetimeSingleton)
 			},
 		},
 		{
@@ -196,7 +190,7 @@ func TestRegisterCtor_RejectsBadShapes(t *testing.T) {
 			name:  "three results",
 			wants: []string{"returns 3 values"},
 			register: func(c *gas.ServiceContainer) {
-				gas.RegisterCtor[greeter](c, func() (*concreteGreeter, error, error) {
+				c.RegisterService[greeter](func() (*concreteGreeter, error, error) {
 					return nil, nil, errors.New("dropped")
 				}, gas.ServiceLifetimeSingleton)
 			},
@@ -205,7 +199,7 @@ func TestRegisterCtor_RejectsBadShapes(t *testing.T) {
 			name:  "second result is not error",
 			wants: []string{"second result", "want error"},
 			register: func(c *gas.ServiceContainer) {
-				gas.RegisterCtor[greeter](c, func() (*concreteGreeter, notAnError) {
+				c.RegisterService[greeter](func() (*concreteGreeter, notAnError) {
 					return newConcreteGreeter(), notAnError{}
 				}, gas.ServiceLifetimeSingleton)
 			},
@@ -214,35 +208,28 @@ func TestRegisterCtor_RejectsBadShapes(t *testing.T) {
 			name:  "result does not implement the registered interface",
 			wants: []string{"not assignable to"},
 			register: func(c *gas.ServiceContainer) {
-				gas.RegisterCtor[greeter](c, func() *unrelated { return &unrelated{} }, gas.ServiceLifetimeSingleton)
+				c.RegisterService[greeter](func() *unrelated { return &unrelated{} }, gas.ServiceLifetimeSingleton)
 			},
 		},
 		{
 			name:  "result is not the registered concrete type",
 			wants: []string{"not assignable to"},
 			register: func(c *gas.ServiceContainer) {
-				gas.RegisterCtor[*concreteGreeter](c, newPlainDep, gas.ServiceLifetimeSingleton)
-			},
-		},
-		{
-			name:  "reflection-based entry point is validated too",
-			wants: []string{"want a function"},
-			register: func(c *gas.ServiceContainer) {
-				c.RegisterSingletonService(gas.TypePtr[*concreteGreeter](), "not a constructor")
+				c.RegisterService[*concreteGreeter](newPlainDep, gas.ServiceLifetimeSingleton)
 			},
 		},
 		{
 			name:  "scoped registration is validated too",
 			wants: []string{"returns 0 values"},
 			register: func(c *gas.ServiceContainer) {
-				gas.RegisterCtor[greeter](c, func() {}, gas.ServiceLifetimeScoped)
+				c.RegisterService[greeter](func() {}, gas.ServiceLifetimeScoped)
 			},
 		},
 		{
 			name:  "transient registration is validated too",
 			wants: []string{"returns 0 values"},
 			register: func(c *gas.ServiceContainer) {
-				gas.RegisterCtor[*plainDep](c, func() {}, gas.ServiceLifetimeTransient)
+				c.RegisterService[*plainDep](func() {}, gas.ServiceLifetimeTransient)
 			},
 		},
 	}
@@ -266,14 +253,14 @@ func TestRegisterCtor_RejectedCtorIsNotRegistered(t *testing.T) {
 	c := gas.NewServiceContainer()
 
 	requirePanic(t, []string{"returns 0 values"}, func() {
-		gas.RegisterCtor[greeter](c, func() {}, gas.ServiceLifetimeSingleton)
+		c.RegisterService[greeter](func() {}, gas.ServiceLifetimeSingleton)
 	})
 
 	if err := c.BuildAll(); err != nil {
 		t.Fatalf("BuildAll after a rejected registration: %v", err)
 	}
 
-	if _, err := gas.Resolve[greeter](c); err == nil {
+	if _, err := c.Resolve[greeter](); err == nil {
 		t.Fatal("expected greeter to be unregistered after the rejected registration")
 	}
 }
@@ -287,7 +274,7 @@ func TestRegisterCtor_TransientServiceCheckStillApplies(t *testing.T) {
 	c := gas.NewServiceContainer()
 
 	requirePanic(t, []string{"transient service", "Singleton or Scoped"}, func() {
-		gas.RegisterCtor[*testService](c, func() *testService {
+		c.RegisterService[*testService](func() *testService {
 			return &testService{name: "transient"}
 		}, gas.ServiceLifetimeTransient)
 	})

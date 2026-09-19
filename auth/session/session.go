@@ -85,7 +85,7 @@ func (s *Service) Init() error {
 
 	s.verifySecureCookieOptions()
 
-	if err := s.store.Init(s.Name()); err != nil {
+	if err := s.store.Init(s); err != nil {
 		return fmt.Errorf("%s: store init: %w", s.Name(), err)
 	}
 

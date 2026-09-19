@@ -83,13 +83,13 @@ Services register their migrations during `Init()`. Three approaches:
 
 ```go
 // Single migration
-func (s *Service) Register(service string, migration gas.Migration)
+func (s *Service) Register(service gas.Service, migration gas.Migration)
 
 // Batch of migrations
-func (s *Service) RegisterSlice(service string, migrations []gas.Migration)
+func (s *Service) RegisterSlice(service gas.Service, migrations []gas.Migration)
 
 // Embedded SQL files (see "Embedded SQL Files" section)
-func (s *Service) RegisterFS(service string, fsys fs.FS) error
+func (s *Service) RegisterFS(service gas.Service, fsys fs.FS) error
 ```
 
 All three set `migration.Service` automatically — callers don't need to fill it.
@@ -114,7 +114,7 @@ Both methods return an error if the service is closed.
 ```go
 type Migration struct {
     Version     string // e.g. "20250216001"
-    Service     string // owning service name (set automatically by Register*)
+    Service     gas.Service // owning service (set automatically by Register*)
     Description string // human-readable
     Up          string // apply SQL
     Down        string // rollback SQL
@@ -164,7 +164,7 @@ import "embed"
 var migrationsFS embed.FS
 
 func (s *MyService) Init() error {
-    return s.migrationMgr.RegisterFS(s.Name(), migrationsFS)
+    return s.migrationMgr.RegisterFS(s, migrationsFS)
 }
 ```
 
@@ -235,9 +235,9 @@ type MockMigrationManager struct {
     NameFn          func() string
     InitFn          func() error
     CloseFn         func() error
-    RegisterFn      func(service string, m gas.Migration)
-    RegisterSliceFn func(service string, migrations []gas.Migration)
-    RegisterFSFn    func(service string, fsys fs.FS) error
+    RegisterFn      func(service gas.Service, m gas.Migration)
+    RegisterSliceFn func(service gas.Service, migrations []gas.Migration)
+    RegisterFSFn    func(service gas.Service, fsys fs.FS) error
     RunPendingFn    func() error
     DownFn          func(n int) error
     Calls           []Call
@@ -322,12 +322,12 @@ func (s *Service) Name() string { return "gas/auth" }
 
 func (s *Service) Init() error {
     // Register migrations from embedded SQL files.
-    if err := s.migrationMgr.RegisterFS(s.Name(), migrationsFS); err != nil {
+    if err := s.migrationMgr.RegisterFS(s, migrationsFS); err != nil {
         return err
     }
 
     // Or register inline migrations:
-    // s.migrationMgr.RegisterSlice(s.Name(), []gas.Migration{
+    // s.migrationMgr.RegisterSlice(s, []gas.Migration{
     //     {
     //         Version:     "20250216001",
     //         Description: "create users table",
@@ -336,7 +336,7 @@ func (s *Service) Init() error {
     //     },
     // })
 
-    s.router.Handle(s.Name(), "GET", "/users", s.handleListUsers)
+    s.router.Handle(s, "GET", "/users", s.handleListUsers)
     return nil
 }
 

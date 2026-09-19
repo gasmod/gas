@@ -29,35 +29,35 @@ func New() *gas.App {
 		log.Fatalf("failed to load config: %s\n", err)
 	}
 
-	app := gas.NewApp(
-		// Pre-built config instance registered as a singleton. Other gas
-		// packages (gas/ui, gas/log, etc.) bind their settings from this
-		// provider automatically.
-		gas.WithServiceInstance[gas.ConfigProvider](cfgProvider),
+	app := gas.NewApp()
 
-		// Filesystem-backed template provider rooted at ./templates.
-		// gas/ui reads layouts/, partials/, and page templates from here.
-		gas.WithSingletonService[gas.TemplateProvider](templatefs.NewStore(os.DirFS("templates"))),
+	// Pre-built config instance registered as a singleton. Other gas
+	// packages (gas/ui, gas/log, etc.) bind their settings from this
+	// provider automatically.
+	app.RegisterServiceInstance[gas.ConfigProvider](cfgProvider)
 
-		// gas/ui renders templates and serves static files. The type
-		// parameter tells DI which concrete TemplateProvider type to
-		// resolve (here, the gas.TemplateProvider interface).
-		gas.WithSingletonService[gas.UIProvider](ui.New[gas.TemplateProvider]()),
+	// Filesystem-backed template provider rooted at ./templates.
+	// gas/ui reads layouts/, partials/, and page templates from here.
+	app.RegisterSingletonService[gas.TemplateProvider](templatefs.NewStore(os.DirFS("templates")))
 
-		// Singleton logger for service-level logging (startup, shutdown,
-		// background work). Uses slog with the default handler.
-		gas.WithSingletonService[gas.Logger](gaslog.NewSlogLogger()),
+	// gas/ui renders templates and serves static files. The type
+	// parameter tells DI which concrete TemplateProvider type to
+	// resolve (here, the gas.TemplateProvider interface).
+	app.RegisterSingletonService[gas.UIProvider](ui.New[gas.TemplateProvider]())
 
-		// Scoped request logger — see request_logger.go. Registered as a
-		// separate type so the request logger middleware can resolve it
-		// independently from the singleton gas.Logger.
-		gas.WithScopedService[RequestLogger](func(l gas.Logger) RequestLogger {
-			return l.With().Logger()
-		}),
+	// Singleton logger for service-level logging (startup, shutdown,
+	// background work). Uses slog with the default handler.
+	app.RegisterSingletonService[gas.Logger](gaslog.NewSlogLogger())
 
-		// Application module — implements gas.Service for route registration.
-		gas.WithSingletonService[*Module](NewModule),
-	)
+	// Scoped request logger — see request_logger.go. Registered as a
+	// separate type so the request logger middleware can resolve it
+	// independently from the singleton gas.Logger.
+	app.RegisterScopedService[RequestLogger](func(l gas.Logger) RequestLogger {
+		return l.With().Logger()
+	})
+
+	// Application module — implements gas.Service for route registration.
+	app.RegisterSingletonService[*Module](NewModule)
 
 	// RequestLogger middleware logs method, path, status, and duration for
 	// every request. It resolves the scoped RequestLogger (not the singleton

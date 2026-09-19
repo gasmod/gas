@@ -52,7 +52,7 @@ func TestDIHandler_HappyPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	app.Router().Handle("test", "GET", "/di", func(ctx gas.Context, dep *testDep) error {
+	app.Router().Handle(nil, "GET", "/di", func(ctx gas.Context, dep *testDep) error {
 		return ctx.Text(http.StatusOK, dep.Value)
 	})
 
@@ -78,7 +78,7 @@ func TestDIHandler_ZeroDeps(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	app.Router().Handle("test", "GET", "/zero", func(ctx gas.Context) error {
+	app.Router().Handle(nil, "GET", "/zero", func(ctx gas.Context) error {
 		return ctx.Text(http.StatusOK, "no deps")
 	})
 
@@ -107,7 +107,7 @@ func TestDIHandler_MultipleDeps(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	app.Router().Handle("test", "GET", "/multi", func(ctx gas.Context, a *testDep, b *testDepB) error {
+	app.Router().Handle(nil, "GET", "/multi", func(ctx gas.Context, a *testDep, b *testDepB) error {
 		return ctx.JSON(http.StatusOK, map[string]any{
 			"value": a.Value,
 			"count": b.Count,
@@ -146,7 +146,7 @@ func TestDIHandler_InterfaceDep(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	app.Router().Handle("test", "GET", "/greet", func(ctx gas.Context, g Greeter) error {
+	app.Router().Handle(nil, "GET", "/greet", func(ctx gas.Context, g Greeter) error {
 		return ctx.Text(http.StatusOK, g.Greet())
 	})
 
@@ -172,7 +172,7 @@ func TestDIHandler_BackwardCompat_HandlerFunc(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	app.Router().Handle("test", "GET", "/compat", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	app.Router().Handle(nil, "GET", "/compat", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("compat"))
 	}))
@@ -199,7 +199,7 @@ func TestDIHandler_BackwardCompat_FuncLiteral(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	app.Router().Handle("test", "GET", "/literal", func(w http.ResponseWriter, r *http.Request) {
+	app.Router().Handle(nil, "GET", "/literal", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("literal"))
 	})
@@ -222,42 +222,42 @@ func TestDIHandler_BackwardCompat_FuncLiteral(t *testing.T) {
 func TestDIHandler_Panic_NotAFunc(t *testing.T) {
 	router := gas.NewRouter()
 	assertPanics(t, "not a func", func() {
-		router.Handle("test", "GET", "/bad", "not a function")
+		router.Handle(nil, "GET", "/bad", "not a function")
 	})
 }
 
 func TestDIHandler_Panic_NoParams(t *testing.T) {
 	router := gas.NewRouter()
 	assertPanics(t, "no params", func() {
-		router.Handle("test", "GET", "/bad", func() error { return nil })
+		router.Handle(nil, "GET", "/bad", func() error { return nil })
 	})
 }
 
 func TestDIHandler_Panic_WrongFirstParam(t *testing.T) {
 	router := gas.NewRouter()
 	assertPanics(t, "wrong first param", func() {
-		router.Handle("test", "GET", "/bad", func(s string) error { return nil })
+		router.Handle(nil, "GET", "/bad", func(s string) error { return nil })
 	})
 }
 
 func TestDIHandler_Panic_WrongReturn(t *testing.T) {
 	router := gas.NewRouter()
 	assertPanics(t, "wrong return", func() {
-		router.Handle("test", "GET", "/bad", func(ctx gas.Context) string { return "" })
+		router.Handle(nil, "GET", "/bad", func(ctx gas.Context) string { return "" })
 	})
 }
 
 func TestDIHandler_Panic_NoReturn(t *testing.T) {
 	router := gas.NewRouter()
 	assertPanics(t, "no return", func() {
-		router.Handle("test", "GET", "/bad", func(ctx gas.Context) {})
+		router.Handle(nil, "GET", "/bad", func(ctx gas.Context) {})
 	})
 }
 
 func TestDIHandler_Panic_TooManyReturns(t *testing.T) {
 	router := gas.NewRouter()
 	assertPanics(t, "too many returns", func() {
-		router.Handle("test", "GET", "/bad", func(ctx gas.Context) (int, error) { return 0, nil })
+		router.Handle(nil, "GET", "/bad", func(ctx gas.Context) (int, error) { return 0, nil })
 	})
 }
 
@@ -269,7 +269,7 @@ func TestDIHandler_BootValidation_MissingDep(t *testing.T) {
 	app := gas.NewApp()
 
 	// Register a DI handler that depends on *testDep, but don't register *testDep.
-	app.Router().Handle("test", "GET", "/missing", func(ctx gas.Context, dep *testDep) error {
+	app.Router().Handle(nil, "GET", "/missing", func(ctx gas.Context, dep *testDep) error {
 		return nil
 	})
 
@@ -290,7 +290,7 @@ func TestDIHandler_BootValidation_Group(t *testing.T) {
 	app := gas.NewApp()
 
 	app.Router().Group(func(sub *gas.Router) {
-		sub.Handle("test", "GET", "/grouped", func(ctx gas.Context, dep *testDep) error {
+		sub.Handle(nil, "GET", "/grouped", func(ctx gas.Context, dep *testDep) error {
 			return nil
 		})
 	})
@@ -308,7 +308,7 @@ func TestDIHandler_BootValidation_Route(t *testing.T) {
 	app := gas.NewApp()
 
 	app.Router().Route("/api", func(sub *gas.Router) {
-		sub.Handle("test", "GET", "/users", func(ctx gas.Context, dep *testDep) error {
+		sub.Handle(nil, "GET", "/users", func(ctx gas.Context, dep *testDep) error {
 			return nil
 		})
 	})
@@ -333,7 +333,7 @@ func TestDIHandler_ErrorHandling_Default(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	app.Router().Handle("test", "GET", "/err", func(ctx gas.Context) error {
+	app.Router().Handle(nil, "GET", "/err", func(ctx gas.Context) error {
 		return errors.New("something went wrong")
 	})
 
@@ -375,7 +375,7 @@ func TestDIHandler_ErrorHandling_Custom(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	app.Router().Handle("test", "GET", "/custom-err", func(ctx gas.Context) error {
+	app.Router().Handle(nil, "GET", "/custom-err", func(ctx gas.Context) error {
 		return errors.New("bad input")
 	})
 
@@ -404,7 +404,7 @@ func TestDIHandler_NilError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	app.Router().Handle("test", "GET", "/ok", func(ctx gas.Context) error {
+	app.Router().Handle(nil, "GET", "/ok", func(ctx gas.Context) error {
 		return ctx.Text(http.StatusOK, "all good")
 	})
 
@@ -704,7 +704,7 @@ func TestRouter_NotFound_DIHandler(t *testing.T) {
 	app := gas.NewApp()
 
 	// Register NotFound before InitServices so it's in place before Seal().
-	app.Router().NotFound("test", func(ctx gas.Context) error {
+	app.Router().NotFound(nil, func(ctx gas.Context) error {
 		return ctx.Text(http.StatusNotFound, "custom 404")
 	})
 
@@ -715,7 +715,7 @@ func TestRouter_NotFound_DIHandler(t *testing.T) {
 	// At least one route must exist so Chi builds the middleware handler
 	// chain. Without any route, Chi's ServeHTTP bypasses middleware for
 	// NotFound — this is a Chi implementation detail.
-	app.Router().Handle("test", "GET", "/exists", func(w http.ResponseWriter, r *http.Request) {
+	app.Router().Handle(nil, "GET", "/exists", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -748,7 +748,7 @@ func TestDIHandler_ScopedIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	app.Router().Handle("test", "GET", "/scoped", func(ctx gas.Context, dep *testDep) error {
+	app.Router().Handle(nil, "GET", "/scoped", func(ctx gas.Context, dep *testDep) error {
 		return ctx.Text(http.StatusOK, dep.Value)
 	})
 
@@ -779,7 +779,7 @@ func TestDIHandler_SingletonDep(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	app.Router().Handle("test", "GET", "/single", func(ctx gas.Context, dep *testDep) error {
+	app.Router().Handle(nil, "GET", "/single", func(ctx gas.Context, dep *testDep) error {
 		return ctx.Text(http.StatusOK, dep.Value)
 	})
 

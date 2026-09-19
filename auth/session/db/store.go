@@ -69,7 +69,7 @@ func New() func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager) *Store {
 }
 
 // Init selects the correct sqlc adapter and registers migrations.
-func (s *Store) Init(serviceName string) error {
+func (s *Store) Init(service gas.Service) error {
 	sqlDB := s.db.DB()
 
 	var up, down string
@@ -88,10 +88,10 @@ func (s *Store) Init(serviceName string) error {
 		down = migrationDownSQLite
 		s.q = newSQLiteAdapter(litedb.New(sqlDB))
 	default:
-		return fmt.Errorf("%s: unsupported driver: %q", serviceName, s.db.Driver())
+		return fmt.Errorf("%s: unsupported driver: %q", service.Name(), s.db.Driver())
 	}
 
-	s.migMgr.Register(serviceName, gas.Migration{
+	s.migMgr.Register(service, gas.Migration{
 		Version:     "20250323001",
 		Description: "create sessions table",
 		Up:          up,

@@ -62,7 +62,7 @@ type testEnv struct {
 func (e *testEnv) token(t *testing.T, subject string) string {
 	t.Helper()
 
-	signed, err := gas.MustResolve[*jwt.Service](e.app.ServiceContainer()).Sign(subject, nil)
+	signed, err := e.app.ServiceContainer().MustResolve[*jwt.Service]().Sign(subject, nil)
 	if err != nil {
 		t.Fatalf("signing token for %s: %v", subject, err)
 	}
@@ -77,13 +77,13 @@ func newTestApp(t *testing.T) *testEnv {
 	cache := newMemCache()
 	c := a.ServiceContainer()
 
-	gas.RegisterInstance[gas.ConfigProvider](c, testConfig(t))
-	c.RegisterSingletonService(gas.TypePtr[gas.DatabaseProvider](), fakeDatabase(conn))
-	gas.RegisterInstance[gas.MigrationManager](c, &migratetest.MockMigrationManager{})
-	gas.RegisterInstance[gas.StorageProvider](c, &storagetest.MockStorage{})
-	gas.RegisterInstance[gas.JobQueueProvider](c, &queuetest.MockQueue{})
-	gas.RegisterInstance[gas.EmailProvider](c, &emailtest.MockEmail{})
-	gas.RegisterInstance[gas.CacheProvider](c, cache.provider())
+	c.RegisterServiceInstance[gas.ConfigProvider](testConfig(t))
+	c.RegisterSingletonService[gas.DatabaseProvider](fakeDatabase(conn))
+	c.RegisterServiceInstance[gas.MigrationManager](&migratetest.MockMigrationManager{})
+	c.RegisterServiceInstance[gas.StorageProvider](&storagetest.MockStorage{})
+	c.RegisterServiceInstance[gas.JobQueueProvider](&queuetest.MockQueue{})
+	c.RegisterServiceInstance[gas.EmailProvider](&emailtest.MockEmail{})
+	c.RegisterServiceInstance[gas.CacheProvider](cache.provider())
 
 	// Start builds all 15 registered services in dependency order, runs each
 	// Init (route and migration registration), seals the router, and validates

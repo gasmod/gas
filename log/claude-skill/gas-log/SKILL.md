@@ -482,7 +482,7 @@ func (s *Service) Close() error  { return nil }
 
 func (s *Service) Init() error {
     s.logger.Info("service initialized").Str("name", s.Name()).Send()
-    s.router.Handle(s.Name(), "GET", "/users/{id}", s.handleGetUser)
+    s.router.Handle(s, "GET", "/users/{id}", s.handleGetUser)
     return nil
 }
 

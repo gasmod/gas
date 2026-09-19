@@ -52,7 +52,12 @@ type handlerMeta struct {
 //	func(gas.Context, Dep1, Dep2, ...) error
 //
 // Panics if the signature is invalid.
-func adaptHandler(handler any, getErrorHandler func() ErrorHandler, validate *validator.Validate, formDecoder *schema.Decoder) (http.HandlerFunc, []reflect.Type) {
+func adaptHandler(
+	handler any,
+	getErrorHandler func() ErrorHandler,
+	validate *validator.Validate,
+	formDecoder *schema.Decoder,
+) (http.HandlerFunc, []reflect.Type) {
 	handlerVal := reflect.ValueOf(handler)
 	handlerType := handlerVal.Type()
 
@@ -81,7 +86,18 @@ func adaptHandler(handler any, getErrorHandler func() ErrorHandler, validate *va
 
 	meta := &handlerMeta{fn: handlerVal, depTypes: depTypes}
 
-	adapted := func(w http.ResponseWriter, r *http.Request) {
+	adapted := adaptedHandler(getErrorHandler, validate, formDecoder, meta)
+
+	return adapted, depTypes
+}
+
+func adaptedHandler(
+	getErrorHandler func() ErrorHandler,
+	validate *validator.Validate,
+	formDecoder *schema.Decoder,
+	meta *handlerMeta,
+) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		// don't recover context initialization panics
 		ctx := NewContext(r.Context(), w, r, WithValidate(validate), WithFormDecoder(formDecoder))
 
@@ -132,6 +148,4 @@ func adaptHandler(handler any, getErrorHandler func() ErrorHandler, validate *va
 			eh(ctx, errVal.Interface().(error))
 		}
 	}
-
-	return adapted, depTypes
 }

@@ -38,7 +38,7 @@ Work that needs a live container but must finish before traffic arrives:
 app := gas.NewApp(
 	gas.WithSingletonService[*DB](NewDB),
 	gas.WithReadyFunc(func(sc *gas.ServiceContainer) error {
-		return seed.Run(gas.MustResolve[*DB](sc))
+		return seed.Run(sc.MustResolve[*DB]())
 	}),
 )
 ```

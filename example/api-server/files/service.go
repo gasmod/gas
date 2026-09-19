@@ -19,7 +19,7 @@ var migrationsFS embed.FS
 
 // FileUploaded is emitted after a file is successfully stored. Other services
 // can subscribe to react to new uploads.
-var FileUploaded = gas.Event[FileUploadedPayload]{Name: "file:uploaded"}
+type FileUploaded struct{ gas.Event[FileUploadedPayload] }
 
 // FileUploadedPayload carries the identity of a newly stored file.
 type FileUploadedPayload struct {
@@ -68,7 +68,7 @@ func (s *Service) Name() string { return "files" }
 
 // Init registers migrations and the authenticated /api/files route group.
 func (s *Service) Init() error {
-	if err := s.mgr.RegisterFS(s.Name(), migrationsFS); err != nil {
+	if err := s.mgr.RegisterFS(s, migrationsFS); err != nil {
 		return fmt.Errorf("registering files migrations: %w", err)
 	}
 
@@ -76,11 +76,11 @@ func (s *Service) Init() error {
 	s.router.Group(func(sub *gas.Router) {
 		sub.UseMiddlewareFunc(s.auth.Middleware())
 
-		sub.Handle(s.Name(), http.MethodPost, "/api/files", s.handleUpload)
-		sub.Handle(s.Name(), http.MethodGet, "/api/files", s.handleList)
-		sub.Handle(s.Name(), http.MethodGet, "/api/files/{id}", s.handleGet)
-		sub.Handle(s.Name(), http.MethodGet, "/api/files/{id}/download", s.handleDownload)
-		sub.Handle(s.Name(), http.MethodDelete, "/api/files/{id}", s.handleDelete)
+		sub.Handle(s, http.MethodPost, "/api/files", s.handleUpload)
+		sub.Handle(s, http.MethodGet, "/api/files", s.handleList)
+		sub.Handle(s, http.MethodGet, "/api/files/{id}", s.handleGet)
+		sub.Handle(s, http.MethodGet, "/api/files/{id}/download", s.handleDownload)
+		sub.Handle(s, http.MethodDelete, "/api/files/{id}", s.handleDelete)
 	})
 
 	return nil
@@ -148,7 +148,7 @@ func (s *Service) handleUpload(ctx gas.Context) error {
 	}
 
 	// Emit event for other services to react to.
-	gas.Emit(s.bus, FileUploaded, FileUploadedPayload{
+	s.bus.Emit[FileUploaded](FileUploadedPayload{
 		FileID: f.ID,
 		UserID: userID,
 		Name:   f.Name,

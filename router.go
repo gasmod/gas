@@ -39,7 +39,7 @@ type RegisteredRoute struct {
 // pendingHandler records a DI-aware handler's dependency types for boot-time
 // validation. Collected during Handle() and inspected in InitServices().
 type pendingHandler struct {
-	service  string
+	service  Service
 	method   string
 	path     string
 	depTypes []reflect.Type
@@ -109,6 +109,9 @@ type Router struct {
 	// (routes/pendingHandlers) is recorded exactly once — on an op's first
 	// build — and skipped on every later rebuild. buildMux toggles it per op.
 	rebuilding *bool
+	// root is the top-level router. Registrations made without a service are
+	// owned by it, on sub-routers too, so ownerless routes share one owner.
+	root *Router
 
 	// Fields below carry inline scalar data (string length, slice len/cap)
 	// and are grouped after the pure-pointer fields to keep the struct
@@ -132,6 +135,24 @@ type Router struct {
 	// into their own sub-mux and never queue, rebuild, or serve.
 	isSub bool
 }
+
+var _ Service = (*Router)(nil)
+
+// Name returns the name of the router as a string.
+func (r *Router) Name() string {
+	if r.prefix != "" {
+		return fmt.Sprintf("gas/router(%s)", r.prefix)
+	}
+	return "gas/router"
+}
+
+// Init initializes the Router instance and prepares it for handling requests.
+// It returns an error if initialization fails.
+func (r *Router) Init() error { return nil }
+
+// Close terminates any active connections and releases associated resources.
+// It returns an error if the operation fails.
+func (r *Router) Close() error { return nil }
 
 // muxSnapshot wraps a chi.Router so it can be stored in an atomic.Pointer
 // (chi.Router is an interface, which atomic.Pointer cannot hold directly).
@@ -164,6 +185,7 @@ func NewRouter() *Router {
 		validator:       newValidator(),
 		formDecoder:     dec,
 	}
+	r.root = r
 	// Publish an empty tree so ServeHTTP never sees a nil snapshot before Seal.
 	r.served.Store(&muxSnapshot{mux: mux})
 	return r
@@ -193,6 +215,7 @@ func newSubRouter(mux chi.Router, parent *Router, prefix string) *Router {
 		mu:      sync.RWMutex{},
 		sealed:  true,
 		isSub:   true,
+		root:    parent.root,
 	}
 }
 
@@ -215,9 +238,14 @@ func (r *Router) SetErrorHandler(h ErrorHandler) {
 
 // Register adds a named middleware to the internal registry and tracks which
 // service owns it.
-func (r *Router) Register(service, name string, mw func(http.Handler) http.Handler) {
+func (r *Router) Register(service Service, name string, mw func(http.Handler) http.Handler) {
+	if service == nil {
+		service = r.root
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	// A restarted service re-registering its name reclaims it from the 503
 	// short-circuit RemoveByService installed.
 	_, wasRetired := r.retired[name]
@@ -335,7 +363,11 @@ func (r *Router) Route(pattern string, fn func(sub *Router)) {
 // directly (for MiddlewareFunc) and applied in order (outermost first).
 // Panics if a named middleware is not registered or if a DI-aware handler has an invalid signature.
 // When the router is unsealed, the registration is deferred until Seal().
-func (r *Router) Handle(service, method, path string, handler any, middleware ...Middleware) {
+func (r *Router) Handle(service Service, method, path string, handler any, middleware ...Middleware) {
+	if service == nil {
+		service = r.root
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -397,41 +429,51 @@ func (r *Router) Handle(service, method, path string, handler any, middleware ..
 	// Registering a service's route also clears any pending 503 overlay from a
 	// prior RemoveByService, so RestartService brings the routes back to life.
 	if !*r.rebuilding {
-		allMiddlewareNames := make([]string, 0, len(r.scopeMiddleware)+len(middlewareNames))
-		allMiddlewareNames = append(allMiddlewareNames, r.scopeMiddleware...)
-		allMiddlewareNames = append(allMiddlewareNames, middlewareNames...)
-
-		fullPath := r.prefix + path
-		delete(r.removed, service)
-		r.routes[service] = append(r.routes[service], registeredRoute{
-			method:     method,
-			path:       fullPath,
-			middleware: allMiddlewareNames,
-		})
-		if method == http.MethodGet {
-			r.routes[service] = append(r.routes[service], registeredRoute{
-				method:     http.MethodHead,
-				path:       fullPath,
-				middleware: allMiddlewareNames,
-				autoHEAD:   true,
-			})
-		}
+		r.recordBookkeeping(service, method, path, middlewareNames)
 	}
 
 	r.applyOp(op)
 }
 
+func (r *Router) recordBookkeeping(service Service, method, path string, middlewareNames []string) {
+	allMiddlewareNames := make([]string, 0, len(r.scopeMiddleware)+len(middlewareNames))
+	allMiddlewareNames = append(allMiddlewareNames, r.scopeMiddleware...)
+	allMiddlewareNames = append(allMiddlewareNames, middlewareNames...)
+
+	fullPath := r.prefix + path
+	name := service.Name()
+	delete(r.removed, name)
+	r.routes[name] = append(r.routes[name], registeredRoute{
+		method:     method,
+		path:       fullPath,
+		middleware: allMiddlewareNames,
+	})
+	if method == http.MethodGet {
+		r.routes[name] = append(r.routes[name], registeredRoute{
+			method:     http.MethodHead,
+			path:       fullPath,
+			middleware: allMiddlewareNames,
+			autoHEAD:   true,
+		})
+	}
+}
+
 // NotFound registers a custom not-found handler for the router, associated with the specified service.
 // The handler can be http.HandlerFunc or a DI-aware function (same rules as Handle).
 // Panics if a not found handler is already registered by another service.
-func (r *Router) NotFound(service string, handler any) {
+func (r *Router) NotFound(service Service, handler any) {
+	if service == nil {
+		service = r.root
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	if r.notFoundHandlerService != "" {
 		panic(fmt.Errorf("gas: service %q already registered a not found handler", r.notFoundHandlerService))
 	}
-	r.notFoundHandlerService = service
+
+	r.notFoundHandlerService = service.Name()
 
 	var httpHandler http.HandlerFunc
 	switch h := handler.(type) {
@@ -468,15 +510,20 @@ func (r *Router) NotFound(service string, handler any) {
 //
 // The teardown is applied by rebuilding a fresh routing tree and swapping it
 // in atomically, so requests in flight on the old tree are never disrupted.
-func (r *Router) RemoveByService(service string) {
+func (r *Router) RemoveByService(service Service) {
+	if service == nil {
+		service = r.root
+	}
+	name := service.Name()
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	// Record the routes so each rebuild can overlay them with 503 handlers,
 	// then drop them from the live registration set.
-	if routes, ok := r.routes[service]; ok {
-		r.removed[service] = routes
-		delete(r.routes, service)
+	if routes, ok := r.routes[name]; ok {
+		r.removed[name] = routes
+		delete(r.routes, name)
 	}
 
 	// Retire middleware owned by this service. Every reference to it, in any
@@ -484,10 +531,10 @@ func (r *Router) RemoveByService(service string) {
 	// short-circuit on the rebuild below: killing a service disables the
 	// middleware it registered wherever that middleware is used, not just the
 	// routes it owns.
-	for name, nm := range r.registry {
-		if nm.service == service {
-			r.retired[name] = nm
-			delete(r.registry, name)
+	for mwName, nm := range r.registry {
+		if nm.service.Name() == name {
+			r.retired[mwName] = nm
+			delete(r.registry, mwName)
 		}
 	}
 
@@ -526,7 +573,7 @@ func (r *Router) NamedMiddleware() map[string]string {
 	defer r.mu.RUnlock()
 	out := make(map[string]string, len(r.registry))
 	for name, nm := range r.registry {
-		out[name] = nm.service
+		out[name] = nm.service.Name()
 	}
 	return out
 }
