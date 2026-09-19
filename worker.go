@@ -69,10 +69,14 @@ func NewWorker(opts ...Option) *Worker {
 	return w
 }
 
+// Name returns the service name of the Worker.
 func (w *Worker) Name() string { return "gas/worker" }
 
+// Init is a no-op. It exists so the Worker satisfies Service and can be passed
+// as an owner; use InitServices or Start to bring the Worker up.
 func (w *Worker) Init() error { return nil }
 
+// Close is a no-op; use Shutdown to stop the Worker and close its services.
 func (w *Worker) Close() error { return nil }
 
 // EventBus returns the Worker's event bus.

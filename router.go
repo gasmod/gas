@@ -109,6 +109,9 @@ type Router struct {
 	// (routes/pendingHandlers) is recorded exactly once — on an op's first
 	// build — and skipped on every later rebuild. buildMux toggles it per op.
 	rebuilding *bool
+	// root is the top-level router. Registrations made without a service are
+	// owned by it, on sub-routers too, so ownerless routes share one owner.
+	root *Router
 
 	// Fields below carry inline scalar data (string length, slice len/cap)
 	// and are grouped after the pure-pointer fields to keep the struct
@@ -131,9 +134,6 @@ type Router struct {
 	// isSub marks sub-routers created via Group/Route. They build directly
 	// into their own sub-mux and never queue, rebuild, or serve.
 	isSub bool
-	// root is the top-level router. Registrations made without a service are
-	// owned by it, on sub-routers too, so ownerless routes share one owner.
-	root *Router
 }
 
 var _ Service = (*Router)(nil)
