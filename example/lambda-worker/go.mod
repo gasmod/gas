@@ -4,11 +4,11 @@ go 1.27
 
 require (
 	github.com/aws/aws-lambda-go v1.55.0
-	github.com/gasmod/gas v0.5.0
-	github.com/gasmod/gas/config v0.5.0
-	github.com/gasmod/gas/database v0.5.0
-	github.com/gasmod/gas/log v0.5.0
-	github.com/gasmod/gas/queue v0.5.0
+	github.com/gasmod/gas v0.5.1
+	github.com/gasmod/gas/config v0.5.1
+	github.com/gasmod/gas/database v0.5.1
+	github.com/gasmod/gas/log v0.5.1
+	github.com/gasmod/gas/queue v0.5.1
 )
 
 require (

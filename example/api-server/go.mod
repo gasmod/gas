@@ -3,17 +3,17 @@ module github.com/gasmod/gas/example/api-server
 go 1.27
 
 require (
-	github.com/gasmod/gas v0.5.0
-	github.com/gasmod/gas/auth v0.5.0
-	github.com/gasmod/gas/cache v0.5.0
-	github.com/gasmod/gas/config v0.5.0
-	github.com/gasmod/gas/database v0.5.0
-	github.com/gasmod/gas/email v0.5.0
-	github.com/gasmod/gas/log v0.5.0
-	github.com/gasmod/gas/migrate v0.5.0
-	github.com/gasmod/gas/queue v0.5.0
-	github.com/gasmod/gas/storage v0.5.0
-	github.com/gasmod/gas/template v0.5.0
+	github.com/gasmod/gas v0.5.1
+	github.com/gasmod/gas/auth v0.5.1
+	github.com/gasmod/gas/cache v0.5.1
+	github.com/gasmod/gas/config v0.5.1
+	github.com/gasmod/gas/database v0.5.1
+	github.com/gasmod/gas/email v0.5.1
+	github.com/gasmod/gas/log v0.5.1
+	github.com/gasmod/gas/migrate v0.5.1
+	github.com/gasmod/gas/queue v0.5.1
+	github.com/gasmod/gas/storage v0.5.1
+	github.com/gasmod/gas/template v0.5.1
 	github.com/google/uuid v1.6.0
 	golang.org/x/crypto v0.57.0
 )
