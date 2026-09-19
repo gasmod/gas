@@ -1047,8 +1047,8 @@ func TestApp_ActiveServices(t *testing.T) {
 	}
 
 	names := app.ActiveServices()
-	if len(names) != 4 { // 3 built-in services (gas/worker, gas/router, gas/eventbus) + "svc-a"
-		t.Fatalf("expected 4 active service, got %d", len(names))
+	if len(names) != 3 { // 2 built-in services (gas/router, gas/eventbus) + "svc-a"
+		t.Fatalf("expected 3 active service, got %d", len(names))
 	}
 }
 

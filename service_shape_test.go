@@ -203,7 +203,7 @@ func TestCompleteServiceStillInitializes(t *testing.T) {
 	if err := w.InitServices(); err != nil {
 		t.Fatalf("InitServices: %v", err)
 	}
-	if got := w.ActiveServices(); len(got) != 3 || !slices.Contains(got, "complete") {
-		t.Errorf("ActiveServices = %v, want [complete]", got)
+	if got := w.ActiveServices(); len(got) != 2 || !slices.Contains(got, "complete") {
+		t.Errorf("ActiveServices = %v, want [gas/eventbus, complete]", got)
 	}
 }

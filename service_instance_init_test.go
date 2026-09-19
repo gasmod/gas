@@ -38,8 +38,8 @@ func TestServiceInstanceIsInitialized(t *testing.T) {
 	if got := strings.Join(inits, " "); got != "instance" {
 		t.Errorf("init calls = [%s], want [instance]", got)
 	}
-	if got := w.ActiveServices(); len(got) != 3 || !slices.Contains(got, "instance") { // 2 built-in services (gas/worker, gas/eventbus) + "instance"
-		t.Errorf("ActiveServices = %v, want [instance]", got)
+	if got := w.ActiveServices(); len(got) != 2 || !slices.Contains(got, "instance") { // 1 built-in (gas/eventbus) + "instance"
+		t.Errorf("ActiveServices = %v, want [gas/eventbus, instance]", got)
 	}
 }
 
