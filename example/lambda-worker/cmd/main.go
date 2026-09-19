@@ -32,7 +32,7 @@ func init() {
 func main() {
 	// Resolve the handler once — all deps were injected by the container
 	// during Start. This is the only manual resolve needed.
-	h := gas.MustResolve[*app.Handler](worker.ServiceContainer())
+	h := worker.ServiceContainer().MustResolve[*app.Handler]()
 
 	// WithEnableSIGTERM registers a callback that Lambda invokes before
 	// freezing the execution environment. Worker.Shutdown emits

@@ -1,8 +1,8 @@
 module github.com/gasmod/gas/config/examples/dotenv
 
-go 1.26.1
+go 1.27
 
-require github.com/gasmod/gas/config v0.4.6
+require github.com/gasmod/gas/config v0.5.0
 
 require (
 	github.com/gabriel-vasile/mimetype v1.4.15 // indirect

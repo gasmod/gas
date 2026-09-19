@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -38,7 +39,7 @@ func TestNewWorker_WithOptions(t *testing.T) {
 	}
 
 	names := w.ActiveServices()
-	if len(names) != 1 || names[0] != "test-svc" {
+	if len(names) != 3 || !slices.Contains(names, "test-svc") {
 		t.Fatalf("expected [test-svc], got %v", names)
 	}
 }
@@ -153,7 +154,7 @@ func TestWorker_Shutdown_ReverseOrder(t *testing.T) {
 
 	// Subscribe to shutdown event.
 	var shutdownEmitted atomic.Bool
-	gas.Subscribe(w.EventBus(), gas.SystemShuttingDown, func(_ gas.SystemShuttingDownPayload) {
+	w.EventBus().Subscribe[gas.SystemShuttingDown](func(_ gas.SystemShuttingDownPayload) {
 		shutdownEmitted.Store(true)
 	})
 
@@ -174,7 +175,7 @@ func TestWorker_Shutdown_EmitsSystemShuttingDown(t *testing.T) {
 	}
 
 	var emitted atomic.Bool
-	gas.Subscribe(w.EventBus(), gas.SystemShuttingDown, func(_ gas.SystemShuttingDownPayload) {
+	w.EventBus().Subscribe[gas.SystemShuttingDown](func(_ gas.SystemShuttingDownPayload) {
 		emitted.Store(true)
 	})
 
@@ -195,7 +196,7 @@ func TestWorker_InitServices_EmitsAllServicesInitialized(t *testing.T) {
 	w := gas.NewWorker()
 
 	var emitted atomic.Bool
-	gas.Subscribe(w.EventBus(), gas.SystemAllServicesInitialized, func(_ gas.SystemAllServicesInitializedPayload) {
+	w.EventBus().Subscribe[gas.SystemAllServicesInitialized](func(_ gas.SystemAllServicesInitializedPayload) {
 		emitted.Store(true)
 	})
 
@@ -247,22 +248,22 @@ func TestWorker_CloseService(t *testing.T) {
 	}
 
 	var closedName string
-	gas.Subscribe(w.EventBus(), gas.SystemServiceClosed, func(data gas.SystemServiceClosedPayload) {
+	w.EventBus().Subscribe[gas.SystemServiceClosed](func(data gas.SystemServiceClosedPayload) {
 		closedName = data.ServiceName
 	})
 
-	if err := w.CloseService("test-svc"); err != nil {
+	if err := w.CloseService[*testService](); err != nil {
 		t.Fatal(err)
 	}
 
 	if !svc.closed.Load() {
 		t.Fatal("expected service to be closed")
 	}
-	if closedName != "test-svc" {
+	if closedName != svc.Name() {
 		t.Fatalf("expected service-closed event for test-svc, got %q", closedName)
 	}
 	for _, n := range w.ActiveServices() {
-		if n == "test-svc" {
+		if n == svc.Name() {
 			t.Fatal("test-svc should not be active")
 		}
 	}
@@ -270,7 +271,7 @@ func TestWorker_CloseService(t *testing.T) {
 
 func TestWorker_CloseService_NotActive(t *testing.T) {
 	w := gas.NewWorker()
-	err := w.CloseService("nonexistent")
+	err := w.CloseService[*testService]()
 	if err == nil {
 		t.Fatal("expected error for non-active service")
 	}
@@ -285,16 +286,16 @@ func TestWorker_RestartService(t *testing.T) {
 	if err := w.InitServices(); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.CloseService("test-svc"); err != nil {
+	if err := w.CloseService[*testService](); err != nil {
 		t.Fatal(err)
 	}
 
 	var restartedName string
-	gas.Subscribe(w.EventBus(), gas.SystemServiceInitialized, func(data gas.SystemServiceInitializedPayload) {
+	w.EventBus().Subscribe[gas.SystemServiceInitialized](func(data gas.SystemServiceInitializedPayload) {
 		restartedName = data.ServiceName
 	})
 
-	if err := w.RestartService("test-svc"); err != nil {
+	if err := w.RestartService[*testService](); err != nil {
 		t.Fatal(err)
 	}
 
@@ -306,7 +307,7 @@ func TestWorker_RestartService(t *testing.T) {
 	if svc.closed.Load() {
 		t.Fatal("service should not be closed after restart")
 	}
-	if restartedName != "test-svc" {
+	if restartedName != svc.Name() {
 		t.Fatalf("expected service-initialized event for test-svc, got %q", restartedName)
 	}
 }
@@ -319,7 +320,7 @@ func TestWorker_RestartService_AlreadyActive(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := w.RestartService("test-svc")
+	err := w.RestartService[*testService]()
 	if err == nil {
 		t.Fatal("expected error for already-active service")
 	}
@@ -330,7 +331,7 @@ func TestWorker_RestartService_NotFound(t *testing.T) {
 	if err := w.InitServices(); err != nil {
 		t.Fatal(err)
 	}
-	err := w.RestartService("nonexistent")
+	err := w.RestartService[*testService]()
 	if err == nil {
 		t.Fatal("expected error for unknown service")
 	}
@@ -347,8 +348,8 @@ func TestWorker_ActiveServices(t *testing.T) {
 	}
 
 	names := w.ActiveServices()
-	if len(names) != 1 {
-		t.Fatalf("expected 1 active service, got %d", len(names))
+	if len(names) != 3 || !slices.Contains(names, "svc-a") { // 2 built-in services (gas/worker, gas/eventbus) + "svc-a"
+		t.Fatalf("expected 3 active services, got %d", len(names))
 	}
 }
 
@@ -375,12 +376,12 @@ func TestWorker_CloseService_CloseError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := w.CloseService("failing-close")
+	err := w.CloseService[*testService]()
 	if err != nil {
 		t.Fatalf("expected nil error from CloseService even if Close() fails, got %v", err)
 	}
 
-	if _, ok := w.ActiveServicesMap()["failing-close"]; ok {
+	if _, ok := w.ActiveServicesMap()[svc.Name()]; ok {
 		t.Fatal("service should be removed from active services even if Close() fails")
 	}
 }
@@ -476,7 +477,7 @@ func TestWorker_CheckHealth_ResolvableAsProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	hp, err := gas.Resolve[gas.HealthProvider](w.ServiceContainer())
+	hp, err := w.ServiceContainer().Resolve[gas.HealthProvider]()
 	if err != nil {
 		t.Fatalf("resolve HealthProvider: %v", err)
 	}
@@ -484,7 +485,7 @@ func TestWorker_CheckHealth_ResolvableAsProvider(t *testing.T) {
 		t.Fatalf("expected svc=nil from HealthProvider, got ok=%v err=%v", ok, err)
 	}
 
-	rp, err := gas.Resolve[gas.ReadyProvider](w.ServiceContainer())
+	rp, err := w.ServiceContainer().Resolve[gas.ReadyProvider]()
 	if err != nil {
 		t.Fatalf("resolve ReadyProvider: %v", err)
 	}
@@ -513,7 +514,7 @@ func TestWorker_CheckHealth_AfterCloseService(t *testing.T) {
 	if err := w.InitServices(); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.CloseService("a"); err != nil {
+	if err := w.CloseService[*reporterService[tagA]](); err != nil {
 		t.Fatal(err)
 	}
 	results := w.CheckHealth(context.Background())

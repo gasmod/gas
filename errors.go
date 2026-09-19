@@ -146,8 +146,7 @@ func (e *Error) WithDetail(key string, val any) *Error {
 
 // AsError reports whether err is, or wraps, an *Error and returns it.
 func AsError(err error) (*Error, bool) {
-	var e *Error
-	if errors.As(err, &e) {
+	if e, ok := errors.AsType[*Error](err); ok {
 		return e, true
 	}
 	return nil, false

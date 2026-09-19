@@ -3,6 +3,7 @@ package gas
 import (
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -11,7 +12,7 @@ import (
 
 type namedMiddleware struct {
 	fn      func(http.Handler) http.Handler
-	service string
+	service Service
 }
 
 // Middleware represents either a named middleware (resolved from the router's
@@ -271,21 +272,22 @@ func (opt *CacheControlOptions) shouldCachePath(path string) bool {
 		return true
 	}
 
-	for _, p := range opt.paths {
-		if path == p {
-			return true
-		}
+	if slices.Contains(opt.paths, path) {
+		return true
 	}
-	for _, p := range opt.pathPrefixes {
-		if strings.HasPrefix(path, p) {
-			return true
-		}
+
+	if slices.ContainsFunc(opt.pathPrefixes, func(p string) bool {
+		return strings.HasPrefix(path, p)
+	}) {
+		return true
 	}
-	for _, p := range opt.pathSuffixes {
-		if strings.HasSuffix(path, p) {
-			return true
-		}
+
+	if slices.ContainsFunc(opt.pathSuffixes, func(p string) bool {
+		return strings.HasSuffix(path, p)
+	}) {
+		return true
 	}
+
 	return false
 }
 

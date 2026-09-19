@@ -38,8 +38,8 @@ take the scope directly:
 
 ```go
 scope := gas.RequestScope(r)
-txLog := gas.MustResolve[*TransactionLog](scope)
-audit := gas.MustResolve[*AuditBuffer](scope)
+txLog := scope.MustResolve[*TransactionLog]()
+audit := scope.MustResolve[*AuditBuffer]()
 ```
 
 ## Closing order
@@ -65,7 +65,7 @@ Background jobs and tests make scopes explicitly:
 scope := container.NewScope()
 defer scope.Close()
 
-svc, err := gas.Resolve[*MyScopedService](scope)
+svc, err := scope.Resolve[*MyScopedService]()
 ```
 
 To run code that expects a request scope, attach one to a context:

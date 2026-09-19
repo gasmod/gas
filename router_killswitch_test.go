@@ -33,15 +33,18 @@ func ksPassthrough(next http.Handler) http.Handler { return next }
 // TestKillSwitchDisablesMiddlewareScopedInSubRouter covers a middleware pulled
 // in by sub.Use() inside a Route() block by a service that was NOT killed.
 func TestKillSwitchDisablesMiddlewareScopedInSubRouter(t *testing.T) {
+	auth := &testService{name: "auth"}
+	billing := &testService{name: "billing"}
+
 	router := gas.NewRouter()
-	router.Register("auth", "require-auth", ksPassthrough)
+	router.Register(auth, "require-auth", ksPassthrough)
 
 	router.Route("/api", func(sub *gas.Router) {
 		sub.Use(gas.MiddlewareByName("require-auth"))
-		sub.Handle("billing", http.MethodGet, "/invoices", ksHandler)
+		sub.Handle(billing, http.MethodGet, "/invoices", ksHandler)
 	})
-	router.Handle("auth", http.MethodGet, "/login", ksHandler)
-	router.Handle("billing", http.MethodGet, "/plans", ksHandler)
+	router.Handle(auth, http.MethodGet, "/login", ksHandler)
+	router.Handle(billing, http.MethodGet, "/plans", ksHandler)
 	router.Seal()
 
 	if got := ksStatus(t, router, "/api/invoices"); got != http.StatusOK {
@@ -53,7 +56,7 @@ func TestKillSwitchDisablesMiddlewareScopedInSubRouter(t *testing.T) {
 			t.Fatalf("RemoveByService panicked: %v", r)
 		}
 	}()
-	router.RemoveByService("auth")
+	router.RemoveByService(auth)
 
 	if got := ksStatus(t, router, "/api/invoices"); got != http.StatusServiceUnavailable {
 		t.Errorf("/api/invoices = %d, want 503 (guarded by killed service's middleware)", got)
@@ -69,10 +72,13 @@ func TestKillSwitchDisablesMiddlewareScopedInSubRouter(t *testing.T) {
 // TestKillSwitchDisablesMiddlewareOnSubRouterRoute covers a per-route
 // MiddlewareByName on a sub-router's Handle.
 func TestKillSwitchDisablesMiddlewareOnSubRouterRoute(t *testing.T) {
+	auth := &testService{name: "auth"}
+	billing := &testService{name: "billing"}
+
 	router := gas.NewRouter()
-	router.Register("auth", "require-auth", ksPassthrough)
+	router.Register(auth, "require-auth", ksPassthrough)
 	router.Group(func(sub *gas.Router) {
-		sub.Handle("billing", http.MethodGet, "/invoices", ksHandler, gas.MiddlewareByName("require-auth"))
+		sub.Handle(billing, http.MethodGet, "/invoices", ksHandler, gas.MiddlewareByName("require-auth"))
 	})
 	router.Seal()
 
@@ -81,7 +87,7 @@ func TestKillSwitchDisablesMiddlewareOnSubRouterRoute(t *testing.T) {
 			t.Fatalf("RemoveByService panicked: %v", r)
 		}
 	}()
-	router.RemoveByService("auth")
+	router.RemoveByService(auth)
 
 	if got := ksStatus(t, router, "/invoices"); got != http.StatusServiceUnavailable {
 		t.Errorf("/invoices = %d, want 503", got)
@@ -94,22 +100,25 @@ func TestKillSwitchDisablesMiddlewareOnSubRouterRoute(t *testing.T) {
 // registration and its op closure captured the func, so RemoveByService could
 // never reach it.
 func TestKillSwitchDisablesMiddlewareOnTopLevelRoute(t *testing.T) {
+	auth := &testService{name: "auth"}
+	billing := &testService{name: "billing"}
+
 	ran := 0
 	router := gas.NewRouter()
-	router.Register("auth", "require-auth", func(next http.Handler) http.Handler {
+	router.Register(auth, "require-auth", func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ran++
 			next.ServeHTTP(w, r)
 		})
 	})
-	router.Handle("billing", http.MethodGet, "/invoices", ksHandler, gas.MiddlewareByName("require-auth"))
+	router.Handle(billing, http.MethodGet, "/invoices", ksHandler, gas.MiddlewareByName("require-auth"))
 	router.Seal()
 
 	if got := ksStatus(t, router, "/invoices"); got != http.StatusOK || ran != 1 {
 		t.Fatalf("before kill-switch: status=%d runs=%d, want 200/1", got, ran)
 	}
 
-	router.RemoveByService("auth")
+	router.RemoveByService(auth)
 
 	if got := ksStatus(t, router, "/invoices"); got != http.StatusServiceUnavailable {
 		t.Errorf("/invoices = %d, want 503", got)
@@ -122,17 +131,20 @@ func TestKillSwitchDisablesMiddlewareOnTopLevelRoute(t *testing.T) {
 // TestKillSwitchDisablesGlobalMiddleware covers a middleware applied globally
 // via top-level Use(). Killing its owner takes down every route under it.
 func TestKillSwitchDisablesGlobalMiddleware(t *testing.T) {
+	auth := &testService{name: "auth"}
+	billing := &testService{name: "billing"}
+
 	router := gas.NewRouter()
-	router.Register("auth", "require-auth", ksPassthrough)
+	router.Register(auth, "require-auth", ksPassthrough)
 	router.Use(gas.MiddlewareByName("require-auth"))
-	router.Handle("billing", http.MethodGet, "/invoices", ksHandler)
+	router.Handle(billing, http.MethodGet, "/invoices", ksHandler)
 	router.Seal()
 
 	if got := ksStatus(t, router, "/invoices"); got != http.StatusOK {
 		t.Fatalf("before kill-switch: /invoices = %d, want 200", got)
 	}
 
-	router.RemoveByService("auth")
+	router.RemoveByService(auth)
 
 	if got := ksStatus(t, router, "/invoices"); got != http.StatusServiceUnavailable {
 		t.Errorf("/invoices = %d, want 503 (global middleware owned by killed service)", got)
@@ -143,21 +155,25 @@ func TestKillSwitchDisablesGlobalMiddleware(t *testing.T) {
 // router: later rebuilds (the RestartService -> Init -> Handle path) must keep
 // working.
 func TestKillSwitchLeavesRouterUsable(t *testing.T) {
+	auth := &testService{name: "auth"}
+	billing := &testService{name: "billing"}
+	reports := &testService{name: "reports"}
+
 	router := gas.NewRouter()
-	router.Register("auth", "require-auth", ksPassthrough)
+	router.Register(auth, "require-auth", ksPassthrough)
 	router.Route("/api", func(sub *gas.Router) {
 		sub.Use(gas.MiddlewareByName("require-auth"))
-		sub.Handle("billing", http.MethodGet, "/invoices", ksHandler)
+		sub.Handle(billing, http.MethodGet, "/invoices", ksHandler)
 	})
 	router.Seal()
-	router.RemoveByService("auth")
+	router.RemoveByService(auth)
 
 	defer func() {
 		if r := recover(); r != nil {
 			t.Fatalf("router poisoned: registering a route after the kill-switch: %v", r)
 		}
 	}()
-	router.Handle("reports", http.MethodGet, "/reports", ksHandler)
+	router.Handle(reports, http.MethodGet, "/reports", ksHandler)
 
 	if got := ksStatus(t, router, "/reports"); got != http.StatusOK {
 		t.Errorf("/reports = %d, want 200", got)
@@ -168,28 +184,31 @@ func TestKillSwitchLeavesRouterUsable(t *testing.T) {
 // service back re-arms its middleware everywhere it is referenced, and its own
 // routes come back with it.
 func TestRestartServiceRestoresMiddlewareAndRoutes(t *testing.T) {
+	auth := &testService{name: "auth"}
+	billing := &testService{name: "billing"}
+
 	router := gas.NewRouter()
-	router.Register("auth", "require-auth", ksPassthrough)
+	router.Register(auth, "require-auth", ksPassthrough)
 	router.Route("/api", func(sub *gas.Router) {
 		sub.Use(gas.MiddlewareByName("require-auth"))
-		sub.Handle("billing", http.MethodGet, "/invoices", ksHandler)
+		sub.Handle(billing, http.MethodGet, "/invoices", ksHandler)
 	})
-	router.Handle("auth", http.MethodGet, "/login", ksHandler)
+	router.Handle(auth, http.MethodGet, "/login", ksHandler)
 	router.Seal()
-	router.RemoveByService("auth")
+	router.RemoveByService(auth)
 
 	if got := ksStatus(t, router, "/api/invoices"); got != http.StatusServiceUnavailable {
 		t.Fatalf("after kill-switch: /api/invoices = %d, want 503", got)
 	}
 
 	// RestartService -> svc.Init() re-registers the middleware, then the routes.
-	router.Register("auth", "require-auth", ksPassthrough)
+	router.Register(auth, "require-auth", ksPassthrough)
 
 	if got := ksStatus(t, router, "/api/invoices"); got != http.StatusOK {
 		t.Errorf("after restart: /api/invoices = %d, want 200 (middleware re-armed)", got)
 	}
 
-	router.Handle("auth", http.MethodGet, "/login", ksHandler)
+	router.Handle(auth, http.MethodGet, "/login", ksHandler)
 	if got := ksStatus(t, router, "/login"); got != http.StatusOK {
 		t.Errorf("after restart: /login = %d, want 200", got)
 	}
@@ -199,18 +218,21 @@ func TestRestartServiceRestoresMiddlewareAndRoutes(t *testing.T) {
 // only tracked for names passed to Register, so an inline MiddlewareFunc is
 // not swept up by an unrelated service's teardown.
 func TestKillSwitchLeavesAnonymousMiddlewareAlone(t *testing.T) {
+	auth := &testService{name: "auth"}
+	billing := &testService{name: "billing"}
+
 	ran := 0
 	router := gas.NewRouter()
-	router.Register("auth", "require-auth", ksPassthrough)
+	router.Register(auth, "require-auth", ksPassthrough)
 	router.Use(gas.MiddlewareFunc(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ran++
 			next.ServeHTTP(w, r)
 		})
 	}))
-	router.Handle("billing", http.MethodGet, "/plans", ksHandler)
+	router.Handle(billing, http.MethodGet, "/plans", ksHandler)
 	router.Seal()
-	router.RemoveByService("auth")
+	router.RemoveByService(auth)
 
 	if got := ksStatus(t, router, "/plans"); got != http.StatusOK {
 		t.Errorf("/plans = %d, want 200", got)

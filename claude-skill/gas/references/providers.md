@@ -323,9 +323,9 @@ type LogEvent interface {
 ```go
 type MigrationManager interface {
 	Service
-	Register(service string, m Migration)
-	RegisterSlice(service string, migrations []Migration)
-	RegisterFS(service string, fsys fs.FS) error
+	Register(service Service, m Migration)
+	RegisterSlice(service Service, migrations []Migration)
+	RegisterFS(service Service, fsys fs.FS) error
 	RunPending() error
 	Down(n int) error
 }

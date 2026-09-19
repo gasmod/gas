@@ -21,8 +21,8 @@ func TestServiceContainer_CircularDependency(t *testing.T) {
 	type A struct{}
 	type B struct{}
 
-	gas.RegisterCtor[*A](c, func(b *B) *A { return &A{} }, gas.ServiceLifetimeSingleton)
-	gas.RegisterCtor[*B](c, func(a *A) *B { return &B{} }, gas.ServiceLifetimeSingleton)
+	c.RegisterService[*A](func(b *B) *A { return &A{} }, gas.ServiceLifetimeSingleton)
+	c.RegisterService[*B](func(a *A) *B { return &B{} }, gas.ServiceLifetimeSingleton)
 
 	err := c.BuildAll()
 	if err == nil {
@@ -39,8 +39,8 @@ func TestServiceContainer_CaptiveDependency(t *testing.T) {
 		type SvcScoped struct{}
 		type SvcSingleton struct{}
 
-		gas.RegisterCtor[*SvcScoped](c, func() *SvcScoped { return &SvcScoped{} }, gas.ServiceLifetimeScoped)
-		gas.RegisterCtor[*SvcSingleton](c, func(s *SvcScoped) *SvcSingleton { return &SvcSingleton{} }, gas.ServiceLifetimeSingleton)
+		c.RegisterService[*SvcScoped](func() *SvcScoped { return &SvcScoped{} }, gas.ServiceLifetimeScoped)
+		c.RegisterService[*SvcSingleton](func(s *SvcScoped) *SvcSingleton { return &SvcSingleton{} }, gas.ServiceLifetimeSingleton)
 
 		err := c.BuildAll()
 		if err == nil {
@@ -56,8 +56,8 @@ func TestServiceContainer_CaptiveDependency(t *testing.T) {
 		type SvcTransient struct{}
 		type SvcSingleton struct{}
 
-		gas.RegisterCtor[*SvcTransient](c, func() *SvcTransient { return &SvcTransient{} }, gas.ServiceLifetimeTransient)
-		gas.RegisterCtor[*SvcSingleton](c, func(s *SvcTransient) *SvcSingleton { return &SvcSingleton{} }, gas.ServiceLifetimeSingleton)
+		c.RegisterService[*SvcTransient](func() *SvcTransient { return &SvcTransient{} }, gas.ServiceLifetimeTransient)
+		c.RegisterService[*SvcSingleton](func(s *SvcTransient) *SvcSingleton { return &SvcSingleton{} }, gas.ServiceLifetimeSingleton)
 
 		err := c.BuildAll()
 		if err == nil {
@@ -74,8 +74,11 @@ func TestServiceContainer_CaptiveDependency(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRouter_NotFound_PanicOnDoubleRegistration(t *testing.T) {
+	svc1 := &testService{name: "svc1"}
+	svc2 := &testService{name: "svc2"}
+
 	router := gas.NewRouter()
-	router.NotFound("svc1", func(ctx gas.Context) error { return nil })
+	router.NotFound(svc1, func(ctx gas.Context) error { return nil })
 
 	defer func() {
 		if r := recover(); r == nil {
@@ -83,10 +86,12 @@ func TestRouter_NotFound_PanicOnDoubleRegistration(t *testing.T) {
 		}
 	}()
 
-	router.NotFound("svc2", func(ctx gas.Context) error { return nil })
+	router.NotFound(svc2, func(ctx gas.Context) error { return nil })
 }
 
 func TestRouter_Handle_PanicOnMissingNamedMiddleware(t *testing.T) {
+	svc := &testService{name: "svc"}
+
 	router := gas.NewRouter()
 
 	defer func() {
@@ -96,7 +101,7 @@ func TestRouter_Handle_PanicOnMissingNamedMiddleware(t *testing.T) {
 	}()
 
 	// Handle calls resolveMiddleware immediately, even if unsealed
-	router.Handle("svc", "GET", "/", func(ctx gas.Context) error { return nil }, gas.MiddlewareByName("missing"))
+	router.Handle(svc, "GET", "/", func(ctx gas.Context) error { return nil }, gas.MiddlewareByName("missing"))
 }
 
 // ---------------------------------------------------------------------------
@@ -104,6 +109,8 @@ func TestRouter_Handle_PanicOnMissingNamedMiddleware(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestDIHandler_PanicRecovery(t *testing.T) {
+	svc := &testService{name: "svc"}
+
 	var capturedErr error
 	app := gas.NewApp(
 		gas.WithErrorHandler(func(ctx gas.Context, err error) {
@@ -116,7 +123,7 @@ func TestDIHandler_PanicRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	app.Router().Handle("test", "GET", "/panic", func(ctx gas.Context) error {
+	app.Router().Handle(svc, "GET", "/panic", func(ctx gas.Context) error {
 		panic("boom")
 	})
 
@@ -135,7 +142,7 @@ func TestDIHandler_PanicRecovery(t *testing.T) {
 func TestServiceContainer_ConstructorError(t *testing.T) {
 	c := gas.NewServiceContainer()
 	type Svc struct{}
-	gas.RegisterCtor[*Svc](c, func() (*Svc, error) {
+	c.RegisterService[*Svc](func() (*Svc, error) {
 		return nil, errors.New("ctor failed")
 	}, gas.ServiceLifetimeSingleton)
 
@@ -148,12 +155,12 @@ func TestServiceContainer_ConstructorError(t *testing.T) {
 func TestServiceContainer_InitError(t *testing.T) {
 	c := gas.NewServiceContainer()
 	svc := &testService{name: "failing", initErr: errors.New("init failed")}
-	gas.RegisterInstance[*testService](c, svc)
+	c.RegisterServiceInstance[*testService](svc)
 
 	// BuildAll doesn't call Init on RegisterInstance.
 	// We need to use RegisterCtor or a scenario where Init is called.
 	c = gas.NewServiceContainer()
-	gas.RegisterCtor[*testService](c, func() *testService {
+	c.RegisterService[*testService](func() *testService {
 		return svc
 	}, gas.ServiceLifetimeSingleton)
 
@@ -230,7 +237,7 @@ func TestApp_CloseService_CloseError(t *testing.T) {
 	// delete(a.activeServices, name)
 	// return nil
 
-	err := app.CloseService("failing-close")
+	err := app.CloseService[*testService]()
 	if err != nil {
 		t.Fatalf("expected nil error from CloseService even if Close() fails, got %v", err)
 	}
@@ -243,5 +250,5 @@ func TestApp_CloseService_CloseError(t *testing.T) {
 func TestEventBus_Emit_NoSubscribers_Concurrent(t *testing.T) {
 	bus := gas.NewEventBus()
 	// Should not panic and should return a WaitGroup that we can Wait on.
-	bus.Emit("non-existent", nil).Wait()
+	bus.Emit[gas.Event[any]](nil).Wait()
 }

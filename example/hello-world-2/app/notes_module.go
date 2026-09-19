@@ -42,7 +42,7 @@ func (m *NotesModule) Name() string { return "notes-module" }
 // Init registers this module's named middleware and its /notes route group.
 func (m *NotesModule) Init() error {
 	// Register a named middleware for content-type checking.
-	m.router.Register(m.Name(), "json-content-type", func(next http.Handler) http.Handler {
+	m.router.Register(m, "json-content-type", func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Header.Get("Content-Type") != "application/json" {
 				http.Error(w, "Content-Type must be application/json", http.StatusUnsupportedMediaType)
@@ -54,14 +54,14 @@ func (m *NotesModule) Init() error {
 
 	// All note routes live under /notes using Route().
 	m.router.Route("/notes", func(sub *gas.Router) {
-		sub.Handle(m.Name(), http.MethodGet, "/", m.handleList)
-		sub.Handle(m.Name(), http.MethodGet, "/{slug}", m.handleShow)
+		sub.Handle(m, http.MethodGet, "/", m.handleList)
+		sub.Handle(m, http.MethodGet, "/{slug}", m.handleShow)
 
 		// Group() for write endpoints — applies inline middleware to a subset of routes.
 		sub.Group(func(write *gas.Router) {
 			// Apply the named "json-content-type" middleware only to write routes.
 			write.Use(gas.MiddlewareByName("json-content-type"))
-			write.Handle(m.Name(), http.MethodPost, "/", m.handleCreate)
+			write.Handle(m, http.MethodPost, "/", m.handleCreate)
 		})
 	})
 

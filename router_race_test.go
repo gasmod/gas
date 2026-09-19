@@ -51,10 +51,12 @@ func TestRouterServeHTTPRacesKillSwitch(t *testing.T) {
 		paths[i] = fmt.Sprintf("/r%d", i)
 	}
 
+	victim := &testService{name: "victim"}
+
 	for range rounds {
 		router := gas.NewRouter()
 		for _, p := range paths {
-			router.Handle("victim", http.MethodGet, p, handler)
+			router.Handle(victim, http.MethodGet, p, handler)
 		}
 		router.Seal()
 
@@ -94,7 +96,7 @@ func TestRouterServeHTTPRacesKillSwitch(t *testing.T) {
 		// The runtime kill-switch: rip out the service's routes (one chi tree
 		// write per route) while requests are in flight. This is exactly what
 		// Worker.CloseService does to a live router.
-		router.RemoveByService("victim")
+		router.RemoveByService(victim)
 
 		close(stop)
 		done.Wait()
@@ -116,10 +118,13 @@ func TestRouterServeHTTPRacesRuntimeHandle(t *testing.T) {
 		readers = 8
 	)
 
+	base := &testService{name: "base"}
+	late := &testService{name: "late"}
+
 	handler := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }
 
 	router := gas.NewRouter()
-	router.Handle("base", http.MethodGet, "/warm", handler)
+	router.Handle(base, http.MethodGet, "/warm", handler)
 	router.Seal()
 
 	stop := make(chan struct{})
@@ -154,7 +159,7 @@ func TestRouterServeHTTPRacesRuntimeHandle(t *testing.T) {
 	// Register routes at runtime while requests are in flight. Each Handle on a
 	// sealed router rebuilds and atomically swaps the tree.
 	for i := range nRoutes {
-		router.Handle("late", http.MethodGet, fmt.Sprintf("/late%d", i), handler)
+		router.Handle(late, http.MethodGet, fmt.Sprintf("/late%d", i), handler)
 	}
 
 	close(stop)
@@ -169,8 +174,10 @@ func TestRouterServeHTTPRacesRuntimeHandle(t *testing.T) {
 func TestRouterRemoveThenReRegisterServes(t *testing.T) {
 	ok := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }
 
+	victim := &testService{name: "victim"}
+
 	router := gas.NewRouter()
-	router.Handle("victim", http.MethodGet, "/x", ok)
+	router.Handle(victim, http.MethodGet, "/x", ok)
 	router.Seal()
 
 	serve := func() int {
@@ -183,13 +190,13 @@ func TestRouterRemoveThenReRegisterServes(t *testing.T) {
 		t.Fatalf("before removal: expected 200, got %d", got)
 	}
 
-	router.RemoveByService("victim")
+	router.RemoveByService(victim)
 	if got := serve(); got != http.StatusServiceUnavailable {
 		t.Fatalf("after removal: expected 503, got %d", got)
 	}
 
 	// Re-register the same service/path, mirroring RestartService -> Init.
-	router.Handle("victim", http.MethodGet, "/x", ok)
+	router.Handle(victim, http.MethodGet, "/x", ok)
 	if got := serve(); got != http.StatusOK {
 		t.Fatalf("after re-registration: expected 200, got %d", got)
 	}
@@ -202,12 +209,15 @@ func TestRouterRemoveThenReRegisterServes(t *testing.T) {
 func TestRouterPostSealGroupedRouteTracked(t *testing.T) {
 	ok := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }
 
+	base := &testService{name: "base"}
+	svc := &testService{name: "svc"}
+
 	router := gas.NewRouter()
-	router.Handle("base", http.MethodGet, "/base", ok)
+	router.Handle(base, http.MethodGet, "/base", ok)
 	router.Seal()
 
 	router.Route("/api", func(sub *gas.Router) {
-		sub.Handle("svc", http.MethodGet, "/thing", ok)
+		sub.Handle(svc, http.MethodGet, "/thing", ok)
 	})
 
 	serve := func() int {
@@ -219,11 +229,11 @@ func TestRouterPostSealGroupedRouteTracked(t *testing.T) {
 	if got := serve(); got != http.StatusOK {
 		t.Fatalf("serve /api/thing: expected 200, got %d", got)
 	}
-	if got := router.Routes()["svc"]; len(got) == 0 {
+	if got := router.Routes()[svc.Name()]; len(got) == 0 {
 		t.Fatal("post-seal sub-route not tracked in Routes()")
 	}
 
-	router.RemoveByService("svc")
+	router.RemoveByService(svc)
 	if got := serve(); got != http.StatusServiceUnavailable {
 		t.Fatalf("after RemoveByService: expected 503, got %d", got)
 	}

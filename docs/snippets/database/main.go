@@ -79,7 +79,7 @@ type Service struct {
 func (s *Service) Name() string { return "notes" }
 
 func (s *Service) Init() error {
-	s.migrations.Register(s.Name(), gas.Migration{
+	s.migrations.Register(s, gas.Migration{
 		Version:     "20250216001",
 		Description: "create notes table",
 		Up:          "CREATE TABLE notes (id SERIAL PRIMARY KEY, body TEXT NOT NULL);",

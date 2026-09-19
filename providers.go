@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	config "github.com/gasmod/gas/config"
+	"github.com/gasmod/gas/config"
 )
 
 // DatabaseProvider abstracts database access. Implemented by gas/database

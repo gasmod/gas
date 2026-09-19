@@ -121,18 +121,21 @@ dependency and is unaffected.
 ## Resolving
 
 ```go
-svc, err := gas.Resolve[*auth.Service](container)
-svc := gas.MustResolve[*auth.Service](container)
+svc, err := container.Resolve[*auth.Service]()
+svc := container.MustResolve[*auth.Service]()
 ```
 
-When the type is not known at compile time, register and resolve against the
-container with a type token:
+`Resolve` and `MustResolve` are generic methods on both `*ServiceContainer` and
+`*Scope`. Scoped services cannot be resolved from the container; resolve them
+from a [scope](/gas/concepts/request-scopes/) instead.
+
+The options passed to `NewApp` have imperative twins on the container, and
+forwarded on the Worker, for wiring done after construction:
 
 ```go
 c := w.ServiceContainer()
-c.RegisterSingletonService(gas.TypePtr[*auth.Service](), auth.New)
-svc := c.MustResolve(gas.TypePtr[*auth.Service]()).(*auth.Service)
+c.RegisterSingletonService[*auth.Service](auth.New)
+svc := c.MustResolve[*auth.Service]()
 ```
 
-The token is dereferenced once, so `TypePtr[*T]()` registers under `*T`. Both
-forms share registrations and return the same instances.
+Both forms share registrations and return the same instances.

@@ -15,9 +15,10 @@ declare their dependencies as parameters.
 
 <Code code={region(rt, 'handle')} lang="go" title="notes/service.go" />
 
-The first argument is the owning service name, which is what makes
-[teardown](/gas/concepts/ownership/) and route attribution possible. Passing
-`s.Name()` keeps it honest.
+The first argument is the owning service, which is what makes
+[teardown](/gas/concepts/ownership/) and route attribution possible. Pass the
+service itself (`s`); ownership is tracked by its `Name()`. `nil` registers a
+route with no owning service.
 
 Middleware is attached per route with `gas.MiddlewareByName(...)`, resolved from
 the router's registry, or `gas.MiddlewareFunc(...)` for an inline one.

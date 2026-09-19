@@ -22,9 +22,9 @@ type MockMigrationManager struct {
 	NameFn          func() string
 	InitFn          func() error
 	CloseFn         func() error
-	RegisterFn      func(service string, m gas.Migration)
-	RegisterSliceFn func(service string, migrations []gas.Migration)
-	RegisterFSFn    func(service string, fsys fs.FS) error
+	RegisterFn      func(service gas.Service, m gas.Migration)
+	RegisterSliceFn func(service gas.Service, migrations []gas.Migration)
+	RegisterFSFn    func(service gas.Service, fsys fs.FS) error
 	RunPendingFn    func() error
 	DownFn          func(n int) error
 	Calls           []Call
@@ -74,7 +74,7 @@ func (m *MockMigrationManager) Close() error {
 }
 
 // Register records the call and delegates to RegisterFn if set.
-func (m *MockMigrationManager) Register(service string, migration gas.Migration) {
+func (m *MockMigrationManager) Register(service gas.Service, migration gas.Migration) {
 	m.record("Register", service, migration)
 	if m.RegisterFn != nil {
 		m.RegisterFn(service, migration)
@@ -82,7 +82,7 @@ func (m *MockMigrationManager) Register(service string, migration gas.Migration)
 }
 
 // RegisterSlice records the call and delegates to RegisterSliceFn if set.
-func (m *MockMigrationManager) RegisterSlice(service string, migrations []gas.Migration) {
+func (m *MockMigrationManager) RegisterSlice(service gas.Service, migrations []gas.Migration) {
 	m.record("RegisterSlice", service, migrations)
 	if m.RegisterSliceFn != nil {
 		m.RegisterSliceFn(service, migrations)
@@ -90,7 +90,7 @@ func (m *MockMigrationManager) RegisterSlice(service string, migrations []gas.Mi
 }
 
 // RegisterFS records the call and delegates to RegisterFSFn if set.
-func (m *MockMigrationManager) RegisterFS(service string, fsys fs.FS) error {
+func (m *MockMigrationManager) RegisterFS(service gas.Service, fsys fs.FS) error {
 	m.record("RegisterFS", service, fsys)
 	if m.RegisterFSFn != nil {
 		return m.RegisterFSFn(service, fsys)

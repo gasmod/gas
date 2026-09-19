@@ -16,13 +16,13 @@ func (s *Service) Close() error { return nil }
 // Handle takes the owning service name, a method, a path, and either a plain
 // http.HandlerFunc or a DI-aware handler. Both forms coexist on one router.
 func (s *Service) Init() error {
-	s.router.Handle(s.Name(), http.MethodGet, "/notes", s.list)
+	s.router.Handle(s, http.MethodGet, "/notes", s.list)
 
-	s.router.Handle(s.Name(), http.MethodPost, "/notes", s.create,
+	s.router.Handle(s, http.MethodPost, "/notes", s.create,
 		gas.MiddlewareByName("require-auth"),
 	)
 
-	s.router.Handle(s.Name(), http.MethodGet, "/healthz",
+	s.router.Handle(s, http.MethodGet, "/healthz",
 		func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 
 	return nil
@@ -35,8 +35,8 @@ func (s *Service) Init() error {
 func groups(router *gas.Router, s *Service) {
 	router.Group(func(sub *gas.Router) {
 		sub.UseMiddlewareByName("require-auth")
-		sub.Handle("admin", http.MethodGet, "/admin/dashboard", s.list)
-		sub.Handle("admin", http.MethodGet, "/admin/settings", s.list)
+		sub.Handle(nil, http.MethodGet, "/admin/dashboard", s.list)
+		sub.Handle(nil, http.MethodGet, "/admin/settings", s.list)
 	})
 }
 
@@ -48,12 +48,12 @@ func groups(router *gas.Router, s *Service) {
 func mounts(router *gas.Router, s *Service) {
 	router.Route("/api", func(sub *gas.Router) {
 		sub.Use(gas.MiddlewareByName("require-auth"))
-		sub.Handle("notes", http.MethodGet, "/notes", s.list) // guarded
+		sub.Handle(nil, http.MethodGet, "/notes", s.list) // guarded
 	})
 
 	// Registered by a different service, same mount, unaffected by the Use above.
 	router.Route("/api", func(sub *gas.Router) {
-		sub.Handle("billing", http.MethodGet, "/plans", s.list) // not guarded
+		sub.Handle(nil, http.MethodGet, "/plans", s.list) // not guarded
 	})
 }
 

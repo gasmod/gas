@@ -8,7 +8,7 @@ import (
 	"testing/fstest"
 
 	"github.com/gasmod/gas"
-	database "github.com/gasmod/gas/database"
+	"github.com/gasmod/gas/database"
 	_ "modernc.org/sqlite"
 )
 
@@ -30,7 +30,7 @@ func newTestDB(t *testing.T) gas.DatabaseProvider {
 	if err := db.Init(); err != nil {
 		t.Fatalf("database Init: %v", err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { _ = db.Close() })
 	return db
 }
 
@@ -41,7 +41,7 @@ func newTestService(t *testing.T) (*Service, gas.DatabaseProvider) {
 	if err := s.Init(); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() { _ = s.Close() })
 	return s, db
 }
 
@@ -69,51 +69,71 @@ func TestInit_CreatesTrackingTable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tracking table should exist: %v", err)
 	}
-	rows.Close()
+	_ = rows.Close()
 }
 
+type testService struct {
+	name  string
+	init  func() error
+	close func() error
+}
+
+var _ gas.Service = (*testService)(nil)
+
+func (s *testService) Name() string { return s.name }
+func (s *testService) Init() error  { return s.init() }
+func (s *testService) Close() error { return s.close() }
+
+//goland:noinspection SqlResolve,SqlNoDataSourceInspection
 func TestRegister(t *testing.T) {
+	auth := &testService{name: "gas/auth"}
+	billing := &testService{name: "gas/billing"}
+
 	s, _ := newTestService(t)
-	s.Register("gas/auth", gas.Migration{
+	s.Register(auth, gas.Migration{
 		Version:     "20250216001",
 		Description: "create users table",
 		Up:          "CREATE TABLE users (id INTEGER PRIMARY KEY)",
 		Down:        "DROP TABLE users",
 	})
-	s.Register("gas/auth", gas.Migration{
+	s.Register(auth, gas.Migration{
 		Version:     "20250216002",
 		Description: "create sessions table",
 		Up:          "CREATE TABLE sessions (id INTEGER PRIMARY KEY)",
 		Down:        "DROP TABLE sessions",
 	})
-	s.Register("gas/billing", gas.Migration{
+	s.Register(billing, gas.Migration{
 		Version:     "20250217001",
 		Description: "create plans table",
 		Up:          "CREATE TABLE plans (id INTEGER PRIMARY KEY)",
 		Down:        "DROP TABLE plans",
 	})
 
-	if len(s.migrations["gas/auth"]) != 2 {
-		t.Errorf("expected 2 auth migrations, got %d", len(s.migrations["gas/auth"]))
+	if len(s.migrations[auth.Name()]) != 2 {
+		t.Errorf("expected 2 auth migrations, got %d", len(s.migrations[auth.Name()]))
 	}
-	if len(s.migrations["gas/billing"]) != 1 {
-		t.Errorf("expected 1 billing migration, got %d", len(s.migrations["gas/billing"]))
+	if len(s.migrations[billing.Name()]) != 1 {
+		t.Errorf("expected 1 billing migration, got %d", len(s.migrations[billing.Name()]))
 	}
-	if s.migrations["gas/auth"][0].Service != "gas/auth" {
+	if s.migrations[auth.Name()][0].Service != auth {
 		t.Error("expected Service field to be set on registration")
 	}
 }
 
+//goland:noinspection SqlResolve,SqlNoDataSourceInspection
 func TestRunPending(t *testing.T) {
+	auth := &testService{name: "gas/auth"}
+	billing := &testService{name: "gas/billing"}
+
 	s, db := newTestService(t)
 
-	s.Register("gas/auth", gas.Migration{
+	s.Register(auth, gas.Migration{
 		Version:     "20250216001",
 		Description: "create users table",
 		Up:          "CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT)",
 		Down:        "DROP TABLE users",
 	})
-	s.Register("gas/billing", gas.Migration{
+	s.Register(billing, gas.Migration{
 		Version:     "20250216002",
 		Description: "create plans table",
 		Up:          "CREATE TABLE plans (id INTEGER PRIMARY KEY, name TEXT)",
@@ -149,10 +169,13 @@ func TestRunPending(t *testing.T) {
 	}
 }
 
+//goland:noinspection SqlResolve,SqlNoDataSourceInspection
 func TestRunPending_SkipsApplied(t *testing.T) {
+	mod := &testService{name: "mod-a"}
+
 	s, _ := newTestService(t)
 
-	s.Register("mod-a", gas.Migration{
+	s.Register(mod, gas.Migration{
 		Version:     "20250216001",
 		Description: "first",
 		Up:          "CREATE TABLE first_table (id INTEGER PRIMARY KEY)",
@@ -164,7 +187,7 @@ func TestRunPending_SkipsApplied(t *testing.T) {
 	}
 
 	// Register another migration and run again.
-	s.Register("mod-a", gas.Migration{
+	s.Register(mod, gas.Migration{
 		Version:     "20250216002",
 		Description: "second",
 		Up:          "CREATE TABLE second_table (id INTEGER PRIMARY KEY)",
@@ -184,15 +207,18 @@ func TestRunPending_SkipsApplied(t *testing.T) {
 	}
 }
 
+//goland:noinspection SqlResolve,SqlNoDataSourceInspection
 func TestRunPending_DirtyBlocks(t *testing.T) {
+	mod := &testService{name: "mod-a"}
+
 	s, _ := newTestService(t)
 
 	ctx := context.Background()
-	if err := s.markDirty(ctx, "20250216001", "mod-a", "broken migration"); err != nil {
+	if err := s.markDirty(ctx, "20250216001", mod.name, "broken migration"); err != nil {
 		t.Fatalf("markDirty: %v", err)
 	}
 
-	s.Register("mod-a", gas.Migration{
+	s.Register(mod, gas.Migration{
 		Version:     "20250216002",
 		Description: "should not run",
 		Up:          "CREATE TABLE should_not_exist (id INTEGER PRIMARY KEY)",
@@ -205,9 +231,11 @@ func TestRunPending_DirtyBlocks(t *testing.T) {
 }
 
 func TestRunPending_FailedMigrationMarksDirty(t *testing.T) {
+	mod := &testService{name: "mod-a"}
+
 	s, _ := newTestService(t)
 
-	s.Register("mod-a", gas.Migration{
+	s.Register(mod, gas.Migration{
 		Version:     "20250216001",
 		Description: "invalid SQL",
 		Up:          "THIS IS NOT VALID SQL",
@@ -231,16 +259,19 @@ func TestRunPending_FailedMigrationMarksDirty(t *testing.T) {
 	}
 }
 
+//goland:noinspection SqlResolve,SqlNoDataSourceInspection
 func TestDown(t *testing.T) {
+	mod := &testService{name: "mod-a"}
+
 	s, db := newTestService(t)
 
-	s.Register("mod-a", gas.Migration{
+	s.Register(mod, gas.Migration{
 		Version:     "20250216001",
 		Description: "create table a",
 		Up:          "CREATE TABLE table_a (id INTEGER PRIMARY KEY)",
 		Down:        "DROP TABLE table_a",
 	})
-	s.Register("mod-a", gas.Migration{
+	s.Register(mod, gas.Migration{
 		Version:     "20250216002",
 		Description: "create table b",
 		Up:          "CREATE TABLE table_b (id INTEGER PRIMARY KEY)",
@@ -278,16 +309,19 @@ func TestDown(t *testing.T) {
 	}
 }
 
+//goland:noinspection SqlResolve,SqlNoDataSourceInspection
 func TestDown_AllMigrations(t *testing.T) {
+	mod := &testService{name: "mod-a"}
+
 	s, _ := newTestService(t)
 
-	s.Register("mod-a", gas.Migration{
+	s.Register(mod, gas.Migration{
 		Version:     "20250216001",
 		Description: "create table",
 		Up:          "CREATE TABLE down_all (id INTEGER PRIMARY KEY)",
 		Down:        "DROP TABLE down_all",
 	})
-	s.Register("mod-a", gas.Migration{
+	s.Register(mod, gas.Migration{
 		Version:     "20250216002",
 		Description: "create table 2",
 		Up:          "CREATE TABLE down_all2 (id INTEGER PRIMARY KEY)",
@@ -311,10 +345,13 @@ func TestDown_AllMigrations(t *testing.T) {
 	}
 }
 
+//goland:noinspection SqlResolve,SqlNoDataSourceInspection
 func TestDown_MoreThanApplied(t *testing.T) {
+	mod := &testService{name: "mod-a"}
+
 	s, _ := newTestService(t)
 
-	s.Register("mod-a", gas.Migration{
+	s.Register(mod, gas.Migration{
 		Version:     "20250216001",
 		Description: "create table",
 		Up:          "CREATE TABLE down_extra (id INTEGER PRIMARY KEY)",
@@ -341,7 +378,7 @@ func TestDown_MoreThanApplied(t *testing.T) {
 
 func TestRunPending_Closed(t *testing.T) {
 	s, _ := newTestService(t)
-	s.Close()
+	_ = s.Close()
 
 	if err := s.RunPending(); err == nil {
 		t.Fatal("expected error when service is closed")
@@ -350,30 +387,34 @@ func TestRunPending_Closed(t *testing.T) {
 
 func TestDown_Closed(t *testing.T) {
 	s, _ := newTestService(t)
-	s.Close()
+	_ = s.Close()
 
 	if err := s.Down(1); err == nil {
 		t.Fatal("expected error when service is closed")
 	}
 }
 
+//goland:noinspection SqlResolve,SqlNoDataSourceInspection
 func TestGlobalVersionOrder(t *testing.T) {
+	modA := &testService{name: "mod-a"}
+	modB := &testService{name: "mod-b"}
+
 	s, db := newTestService(t)
 
 	// Register out of order across services.
-	s.Register("mod-b", gas.Migration{
+	s.Register(modB, gas.Migration{
 		Version:     "20250216002",
 		Description: "mod-b first",
 		Up:          "CREATE TABLE mod_b_first (id INTEGER PRIMARY KEY)",
 		Down:        "DROP TABLE mod_b_first",
 	})
-	s.Register("mod-a", gas.Migration{
+	s.Register(modA, gas.Migration{
 		Version:     "20250216001",
 		Description: "mod-a first",
 		Up:          "CREATE TABLE mod_a_first (id INTEGER PRIMARY KEY)",
 		Down:        "DROP TABLE mod_a_first",
 	})
-	s.Register("mod-a", gas.Migration{
+	s.Register(modA, gas.Migration{
 		Version:     "20250216003",
 		Description: "mod-a second",
 		Up:          "CREATE TABLE mod_a_second (id INTEGER PRIMARY KEY)",
@@ -397,9 +438,9 @@ func TestGlobalVersionOrder(t *testing.T) {
 		version string
 		service string
 	}{
-		{"20250216001", "mod-a"},
-		{"20250216002", "mod-b"},
-		{"20250216003", "mod-a"},
+		{"20250216001", modA.name},
+		{"20250216002", modB.name},
+		{"20250216003", modA.name},
 	}
 	for i, exp := range expected {
 		if applied[i].Version != exp.version || applied[i].Service != exp.service {
@@ -417,10 +458,13 @@ func TestGlobalVersionOrder(t *testing.T) {
 	}
 }
 
+//goland:noinspection SqlResolve,SqlNoDataSourceInspection
 func TestRegisterSlice(t *testing.T) {
+	mod := &testService{name: "mod-a"}
+
 	s, db := newTestService(t)
 
-	s.RegisterSlice("mod-a", []gas.Migration{
+	s.RegisterSlice(mod, []gas.Migration{
 		{
 			Version:     "20250216001",
 			Description: "create table x",
@@ -435,10 +479,10 @@ func TestRegisterSlice(t *testing.T) {
 		},
 	})
 
-	if len(s.migrations["mod-a"]) != 2 {
-		t.Fatalf("expected 2 migrations, got %d", len(s.migrations["mod-a"]))
+	if len(s.migrations[mod.Name()]) != 2 {
+		t.Fatalf("expected 2 migrations, got %d", len(s.migrations[mod.Name()]))
 	}
-	if s.migrations["mod-a"][0].Service != "mod-a" {
+	if s.migrations[mod.Name()][0].Service != mod {
 		t.Error("expected Service field to be set")
 	}
 
@@ -455,7 +499,10 @@ func TestRegisterSlice(t *testing.T) {
 	}
 }
 
+//goland:noinspection SqlResolve,SqlNoDataSourceInspection
 func TestRegisterFS(t *testing.T) {
+	modFs := &testService{name: "mod-fs"}
+
 	s, db := newTestService(t)
 
 	fsys := fstest.MapFS{
@@ -465,23 +512,23 @@ func TestRegisterFS(t *testing.T) {
 		"20250216002_create_orders.down.sql":   {Data: []byte("DROP TABLE orders")},
 	}
 
-	if err := s.RegisterFS("mod-fs", fsys); err != nil {
+	if err := s.RegisterFS(modFs, fsys); err != nil {
 		t.Fatalf("RegisterFS: %v", err)
 	}
 
-	if len(s.migrations["mod-fs"]) != 2 {
-		t.Fatalf("expected 2 migrations, got %d", len(s.migrations["mod-fs"]))
+	if len(s.migrations[modFs.Name()]) != 2 {
+		t.Fatalf("expected 2 migrations, got %d", len(s.migrations[modFs.Name()]))
 	}
 
 	// Check parsed version and description.
-	mig := s.migrations["mod-fs"][0]
+	mig := s.migrations[modFs.Name()][0]
 	if mig.Version != "20250216001" {
 		t.Errorf("version = %q, want 20250216_001", mig.Version)
 	}
 	if mig.Description != "create accounts" {
 		t.Errorf("description = %q, want 'create accounts'", mig.Description)
 	}
-	if mig.Service != "mod-fs" {
+	if mig.Service != modFs {
 		t.Errorf("service = %q, want mod-fs", mig.Service)
 	}
 
@@ -498,19 +545,25 @@ func TestRegisterFS(t *testing.T) {
 	}
 }
 
+//goland:noinspection SqlResolve,SqlNoDataSourceInspection
 func TestRegisterFS_MissingDown(t *testing.T) {
+	modFs := &testService{name: "mod-fs"}
+
 	s, _ := newTestService(t)
 
 	fsys := fstest.MapFS{
 		"20250216001_orphan.up.sql": {Data: []byte("CREATE TABLE orphan (id INTEGER PRIMARY KEY)")},
 	}
 
-	if err := s.RegisterFS("mod-fs", fsys); err == nil {
+	if err := s.RegisterFS(modFs, fsys); err == nil {
 		t.Fatal("expected error for missing down file")
 	}
 }
 
+//goland:noinspection SqlResolve,SqlNoDataSourceInspection
 func TestRegisterFS_DownOnlyIgnored(t *testing.T) {
+	modFs := &testService{name: "mod-fs"}
+
 	s, _ := newTestService(t)
 
 	// A .down.sql without a matching .up.sql should be silently ignored
@@ -519,19 +572,22 @@ func TestRegisterFS_DownOnlyIgnored(t *testing.T) {
 		"20250216001_orphan.down.sql": {Data: []byte("DROP TABLE orphan")},
 	}
 
-	if err := s.RegisterFS("mod-fs", fsys); err != nil {
+	if err := s.RegisterFS(modFs, fsys); err != nil {
 		t.Fatalf("RegisterFS: %v", err)
 	}
 
-	if len(s.migrations["mod-fs"]) != 0 {
-		t.Fatalf("expected 0 migrations, got %d", len(s.migrations["mod-fs"]))
+	if len(s.migrations[modFs.Name()]) != 0 {
+		t.Fatalf("expected 0 migrations, got %d", len(s.migrations[modFs.Name()]))
 	}
 }
 
+//goland:noinspection SqlResolve,SqlNoDataSourceInspection
 func TestVersionColumnsStored(t *testing.T) {
+	auth := &testService{name: "gas/auth"}
+
 	s, _ := newTestService(t)
 
-	s.Register("gas/auth", gas.Migration{
+	s.Register(auth, gas.Migration{
 		Version:     "20250216001",
 		Description: "create table",
 		Up:          "CREATE TABLE ver_test (id INTEGER PRIMARY KEY)",
@@ -587,7 +643,7 @@ func TestCheckReady_NotInitialized(t *testing.T) {
 
 func TestCheckReady_Closed(t *testing.T) {
 	s, _ := newTestService(t)
-	s.Close()
+	_ = s.Close()
 	if err := s.CheckReady(context.Background()); err == nil {
 		t.Fatal("expected error when closed")
 	}
@@ -600,9 +656,12 @@ func TestCheckReady_NoMigrations(t *testing.T) {
 	}
 }
 
+//goland:noinspection SqlResolve,SqlNoDataSourceInspection
 func TestCheckReady_PendingMigrations(t *testing.T) {
+	mod := &testService{name: "mod-a"}
+
 	s, _ := newTestService(t)
-	s.Register("mod-a", gas.Migration{
+	s.Register(mod, gas.Migration{
 		Version:     "20250216001",
 		Description: "pending",
 		Up:          "CREATE TABLE pending_t (id INTEGER PRIMARY KEY)",
@@ -618,9 +677,12 @@ func TestCheckReady_PendingMigrations(t *testing.T) {
 	}
 }
 
+//goland:noinspection SqlResolve,SqlNoDataSourceInspection
 func TestCheckReady_AfterRunPending(t *testing.T) {
+	mod := &testService{name: "mod-a"}
+
 	s, _ := newTestService(t)
-	s.Register("mod-a", gas.Migration{
+	s.Register(mod, gas.Migration{
 		Version:     "20250216001",
 		Description: "create",
 		Up:          "CREATE TABLE ready_t (id INTEGER PRIMARY KEY)",
@@ -650,16 +712,20 @@ func TestCheckReady_DirtyMigration(t *testing.T) {
 	}
 }
 
+//goland:noinspection SqlResolve,SqlNoDataSourceInspection
 func TestRunPending_DuplicateVersion(t *testing.T) {
+	svcA := &testService{name: "service-a"}
+	svcB := &testService{name: "service-b"}
+
 	s, _ := newTestService(t)
 
-	s.Register("service-a", gas.Migration{
+	s.Register(svcA, gas.Migration{
 		Version:     "20250216001",
 		Description: "create users table",
 		Up:          "CREATE TABLE users (id INTEGER PRIMARY KEY)",
 		Down:        "DROP TABLE users",
 	})
-	s.Register("service-b", gas.Migration{
+	s.Register(svcB, gas.Migration{
 		Version:     "20250216001",
 		Description: "create posts table",
 		Up:          "CREATE TABLE posts (id INTEGER PRIMARY KEY)",
@@ -675,10 +741,14 @@ func TestRunPending_DuplicateVersion(t *testing.T) {
 	}
 }
 
+//goland:noinspection SqlResolve,SqlNoDataSourceInspection
 func TestDown_DuplicateVersion(t *testing.T) {
+	svcA := &testService{name: "service-a"}
+	svcB := &testService{name: "service-b"}
+
 	s, _ := newTestService(t)
 
-	s.Register("service-a", gas.Migration{
+	s.Register(svcA, gas.Migration{
 		Version:     "20250216001",
 		Description: "create users table",
 		Up:          "CREATE TABLE users (id INTEGER PRIMARY KEY)",
@@ -690,7 +760,7 @@ func TestDown_DuplicateVersion(t *testing.T) {
 	}
 
 	// Now register a conflicting migration from another service.
-	s.Register("service-b", gas.Migration{
+	s.Register(svcB, gas.Migration{
 		Version:     "20250216001",
 		Description: "create posts table",
 		Up:          "CREATE TABLE posts (id INTEGER PRIMARY KEY)",

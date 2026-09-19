@@ -13,20 +13,20 @@ import (
 )
 
 // Register adds a migration owned by the given service.
-func (s *Service) Register(service string, migration gas.Migration) {
+func (s *Service) Register(service gas.Service, migration gas.Migration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	migration.Service = service
-	s.migrations[service] = append(s.migrations[service], migration)
+	s.migrations[service.Name()] = append(s.migrations[service.Name()], migration)
 }
 
 // RegisterSlice adds multiple migrations at once for the given service.
-func (s *Service) RegisterSlice(service string, migrations []gas.Migration) {
+func (s *Service) RegisterSlice(service gas.Service, migrations []gas.Migration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, migration := range migrations {
 		migration.Service = service
-		s.migrations[service] = append(s.migrations[service], migration)
+		s.migrations[service.Name()] = append(s.migrations[service.Name()], migration)
 	}
 }
 
@@ -39,7 +39,7 @@ func (s *Service) RegisterSlice(service string, migrations []gas.Migration) {
 // The version is the first underscore-delimited segment, and the description
 // is the remaining underscored segments converted to spaces.
 // Every .up.sql file must have a matching .down.sql file.
-func (s *Service) RegisterFS(service string, fsys fs.FS) error {
+func (s *Service) RegisterFS(service gas.Service, fsys fs.FS) error {
 	pairs, err := parseMigrationFS(fsys)
 	if err != nil {
 		return fmt.Errorf("gas/migrate: %w", err)
@@ -49,7 +49,7 @@ func (s *Service) RegisterFS(service string, fsys fs.FS) error {
 	defer s.mu.Unlock()
 	for _, p := range pairs {
 		p.migration.Service = service
-		s.migrations[service] = append(s.migrations[service], p.migration)
+		s.migrations[service.Name()] = append(s.migrations[service.Name()], p.migration)
 	}
 	return nil
 }
@@ -223,7 +223,7 @@ func (s *Service) applyUp(ctx context.Context, migration gas.Migration) error {
 
 	if _, err := tx.ExecContext(ctx, migration.Up); err != nil {
 		_ = tx.Rollback()
-		if markErr := s.markDirty(ctx, migration.Version, migration.Service, migration.Description); markErr != nil {
+		if markErr := s.markDirty(ctx, migration.Version, migration.Service.Name(), migration.Description); markErr != nil {
 			return fmt.Errorf("gas/migrate: migration %s failed: %w (also failed to mark dirty: %w)",
 				migration.Version, err, markErr)
 		}
@@ -236,9 +236,9 @@ func (s *Service) applyUp(ctx context.Context, migration gas.Migration) error {
 	// the database is left unchanged — rather than schema-applied-but-unrecorded,
 	// which would re-run the non-idempotent DDL on the next pass and wedge the
 	// pipeline as dirty.
-	if err := s.markApplied(ctx, tx, migration.Version, migration.Service, migration.Description); err != nil {
+	if err := s.markApplied(ctx, tx, migration.Version, migration.Service.Name(), migration.Description); err != nil {
 		_ = tx.Rollback()
-		if markErr := s.markDirty(ctx, migration.Version, migration.Service, migration.Description); markErr != nil {
+		if markErr := s.markDirty(ctx, migration.Version, migration.Service.Name(), migration.Description); markErr != nil {
 			return fmt.Errorf("gas/migrate: recording migration %s failed: %w (also failed to mark dirty: %w)",
 				migration.Version, err, markErr)
 		}
@@ -246,7 +246,7 @@ func (s *Service) applyUp(ctx context.Context, migration gas.Migration) error {
 	}
 
 	if err := tx.Commit(); err != nil {
-		if markErr := s.markDirty(ctx, migration.Version, migration.Service, migration.Description); markErr != nil {
+		if markErr := s.markDirty(ctx, migration.Version, migration.Service.Name(), migration.Description); markErr != nil {
 			return fmt.Errorf("gas/migrate: commit failed for %s: %w (also failed to mark dirty: %w)",
 				migration.Version, err, markErr)
 		}
@@ -287,11 +287,11 @@ func (s *Service) allMigrationsSorted() ([]gas.Migration, error) {
 	// Check for duplicate versions across services.
 	seen := make(map[string]string, len(all)) // version → service
 	for _, mig := range all {
-		if owner, ok := seen[mig.Version]; ok && owner != mig.Service {
+		if owner, ok := seen[mig.Version]; ok && owner != mig.Service.Name() {
 			return nil, fmt.Errorf("gas/migrate: duplicate migration version %q registered by services %q and %q",
-				mig.Version, owner, mig.Service)
+				mig.Version, owner, mig.Service.Name())
 		}
-		seen[mig.Version] = mig.Service
+		seen[mig.Version] = mig.Service.Name()
 	}
 
 	sort.Slice(all, func(i, j int) bool {

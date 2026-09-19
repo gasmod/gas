@@ -60,7 +60,7 @@ func protect(router *gas.Router, jwtSvc *jwt.Service, sessSvc *session.Service, 
 
 	router.Route("/api", func(sub *gas.Router) {
 		sub.UseMiddlewareFunc(auth.Middleware(chain))
-		sub.Handle("notes", http.MethodGet, "/notes", listNotes)
+		sub.Handle(nil, http.MethodGet, "/notes", listNotes)
 	})
 }
 

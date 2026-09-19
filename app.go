@@ -11,25 +11,6 @@ import (
 	"syscall"
 )
 
-type requestScopeKey struct{}
-
-// RequestScope returns the per-request Scope from the request context.
-// Panics if called outside the scope middleware (i.e. before InitServices
-// installs it, or on a non-App-managed handler).
-func RequestScope(r *http.Request) *Scope {
-	s, ok := r.Context().Value(requestScopeKey{}).(*Scope)
-	if !ok {
-		panic("gas: no request scope in context — is the request served by an App-managed router?")
-	}
-	return s
-}
-
-// WithRequestScope adds a Scope instance to the context using a custom key for managing scoped service lifetimes.
-// Useful for testing and managing scoped service lifetimes within request contexts.
-func WithRequestScope(ctx context.Context, scope *Scope) context.Context {
-	return context.WithValue(ctx, requestScopeKey{}, scope)
-}
-
 // App manages service lifecycle, the HTTP server, and graceful shutdown.
 // It embeds a Worker for DI, events, migrations, and service management,
 // and adds routing, CSRF protection, and an HTTP listener on top.
@@ -80,11 +61,7 @@ func WithCSRFDenyHandler(h http.Handler) AppOption {
 // NewApp creates an App with the given options.
 // Router and EventBus are created internally and registered in the container.
 func NewApp(opts ...Option) *App {
-	w := &Worker{
-		serviceContainer: NewServiceContainer(),
-		eventBus:         NewEventBus(),
-		activeServices:   make(map[string]Service),
-	}
+	w := NewWorker()
 
 	a := &App{
 		Worker:         w,
@@ -94,10 +71,7 @@ func NewApp(opts ...Option) *App {
 	}
 
 	// Register infra as instances in the container.
-	RegisterInstance[*Router](w.serviceContainer, a.router)
-	RegisterInstance[*EventBus](w.serviceContainer, w.eventBus)
-	RegisterInstance[HealthProvider](w.serviceContainer, w)
-	RegisterInstance[ReadyProvider](w.serviceContainer, w)
+	w.serviceContainer.RegisterServiceInstance[*Router](a.router)
 
 	// Set hooks so Worker delegates HTTP-specific work back to App.
 	w.postBuildHook = func() error {
@@ -107,18 +81,18 @@ func NewApp(opts ...Option) *App {
 		// Validate all DI-aware handler dependencies.
 		for _, ph := range *a.router.pendingHandlers {
 			for _, depType := range ph.depTypes {
-				if !w.serviceContainer.CanResolve(depType) {
+				if !w.serviceContainer.canResolveType(depType) {
 					return fmt.Errorf(
 						"gas: handler %s %s (service %q): dependency %v is not registered in the container",
-						ph.method, ph.path, ph.service, depType,
+						ph.method, ph.path, ph.service.Name(), depType,
 					)
 				}
 			}
 		}
 		return nil
 	}
-	w.onServiceClose = func(name string) {
-		a.router.RemoveByService(name)
+	w.onServiceClose = func(s Service) {
+		a.router.RemoveByService(s)
 	}
 
 	for _, opt := range opts {
@@ -137,9 +111,7 @@ func NewApp(opts ...Option) *App {
 }
 
 // Config retrieves the application's configuration.
-func (a *App) Config() *Config {
-	return a.cfg
-}
+func (a *App) Config() *Config { return a.cfg }
 
 // Router returns the App's router.
 func (a *App) Router() *Router { return a.router }
@@ -203,7 +175,7 @@ func (a *App) Serve() error {
 func (a *App) Stop() error {
 	srv := a.Server()
 
-	Emit(a.Worker.eventBus, SystemServerShuttingDown, SystemServerShuttingDownPayload{}).Wait()
+	a.Worker.eventBus.Emit[SystemServerShuttingDown](SystemServerShuttingDownPayload{}).Wait()
 
 	ctx, cancel := context.WithTimeout(context.Background(), a.cfg.Server.ShutdownTimeout)
 	defer cancel()
@@ -258,7 +230,7 @@ func (a *App) bindConfig() error {
 		return fmt.Errorf("gas: config validation: %w", err)
 	}
 
-	Emit(a.Worker.eventBus, AppConfigUpdated, AppConfigUpdatedPayload{Config: *a.cfg}).Wait()
+	a.Worker.eventBus.Emit[AppConfigUpdated](AppConfigUpdatedPayload{Config: *a.cfg}).Wait()
 
 	return nil
 }

@@ -168,12 +168,13 @@ w := gas.NewWorker(opts ...Option) *Worker
 | `ServiceContainer` | `() *ServiceContainer`   | The DI container                                                                 |
 | `MigrationManager` | `() MigrationManager`    | Resolved from DI, nil if unregistered                                            |
 | `ConfigProvider`   | `() ConfigProvider`      | Resolved from DI, nil if unregistered                                            |
-| `RegisterService`  | `(i, ctor any, lifetime ServiceLifetime)` | Forwards to the container's reflection-based registration        |
-| `RegisterTransientService` / `RegisterScopedService` / `RegisterSingletonService` | `(i, ctor any)` | Same, with the lifetime fixed |
-| `RegisterServiceInstance` | `(val any)`       | Registers a pre-built value under its dynamic type                               |
-| `ActiveServices`   | `() []string`            | Names of currently active services                                               |
-| `CloseService`     | `(name string) error`    | Kill switch: 503 the service's routes and middleware, remove subs, `Close()`, emit event |
-| `RestartService`   | `(name string) error`    | Re-initialize a previously closed service, re-arming its routes and middleware   |
+| `RegisterService[T]` | `(ctor any, lifetime ServiceLifetime)` | Imperative form of `WithService`; forwards to the container             |
+| `RegisterTransientService[T]` / `RegisterScopedService[T]` / `RegisterSingletonService[T]` | `(ctor any)` | Same, with the lifetime fixed |
+| `RegisterServiceInstance[T]` | `(val T)`      | Registers a pre-built value under `T`, the static type at the call site          |
+| `ReadyFunc`        | `(fn func(*ServiceContainer) error)` | Imperative form of `WithReadyFunc`; panics if called after the ready hooks ran |
+| `ActiveServices`   | `() []string`            | Names of active services, including the framework ones (`gas/worker`, `gas/eventbus`, `gas/router` in an App) |
+| `CloseService[T Service]`   | `() error`      | Kill switch: 503 the service's routes and middleware, remove subs, `Close()`, emit event |
+| `RestartService[T Service]` | `() error`      | Re-initialize a previously closed service, re-arming its routes and middleware   |
 | `CheckHealth`      | `(ctx) map[string]error` | Concurrently polls all active `HealthReporter`s; also satisfies `HealthProvider` |
 | `CheckReady`       | `(ctx) map[string]error` | Concurrently polls all active `ReadyReporter`s; also satisfies `ReadyProvider`   |
 
@@ -190,7 +191,7 @@ defer w.Shutdown()
 lambda.Start(func(ctx context.Context, event MyEvent) error {
     scope := w.ServiceContainer().NewScope()
     defer scope.Close()
-    svc := gas.MustResolve[*myservice.Service](scope)
+    svc := scope.MustResolve[*myservice.Service]()
     return svc.Handle(ctx, event)
 })
 ```
@@ -239,10 +240,27 @@ yourself, or grab the `*http.Server` / `http.Handler` directly.
 
 ### Registration
 
+Registration and resolution are generic methods (Go 1.27) on
+`*ServiceContainer`, forwarded on `*Worker`. There are no package-level
+`RegisterCtor` / `RegisterInstance` / `Resolve` functions and no `TypePtr`
+type tokens any more.
+
 ```go
-gas.RegisterCtor[T any](c *ServiceContainer, ctor any, lifetime ServiceLifetime)
-gas.RegisterInstance[T any](c *ServiceContainer, val T)
+c.RegisterService[T any](ctor any, lifetime ServiceLifetime)
+c.RegisterSingletonService[T any](ctor any)
+c.RegisterScopedService[T any](ctor any)
+c.RegisterTransientService[T any](ctor any)
+c.RegisterServiceInstance[T any](val T)
 ```
+
+```go
+c.RegisterSingletonService[*myservice.Service](myservice.New)
+```
+
+`RegisterServiceInstance` registers under `T`, the static type at the call
+site, not the dynamic type of `val`. Passing an interface-typed variable makes
+the value resolvable as that interface only; name `T` explicitly to control it.
+Registering a type twice replaces the earlier registration.
 
 Constructor signature: `func(DepA, DepB, ...) T` or `func(DepA, DepB, ...) (T, error)`
 
@@ -258,50 +276,21 @@ Registering a constructor returning a concrete `*Impl` under an interface `T`
 is the normal case and stays valid — it implements `T` without being
 assignable to it.
 
-### Reflection-based registration
-
-Every generic registration helper has a reflection-based twin on
-`*ServiceContainer` (and, forwarded, on `*Worker`). These take the type as a
-*value* rather than a type parameter, which is what you need when the type is
-only known at runtime. `TypePtr[T]()` builds the type token:
-
-```go
-gas.TypePtr[T any]() *T // typed nil pointer used as a type token
-
-c.RegisterService(i, ctor any, lifetime ServiceLifetime)
-c.RegisterTransientService(i, ctor any)
-c.RegisterScopedService(i, ctor any)
-c.RegisterSingletonService(i, ctor any)
-c.RegisterServiceInstance(val any) // registered under val's dynamic type
-```
-
-```go
-c.RegisterSingletonService(gas.TypePtr[*myservice.Service](), myservice.New)
-```
-
-The `i` argument is dereferenced once, so `TypePtr[*T]()` registers under `*T`.
-`RegisterServiceInstance` is the exception: it uses the value's dynamic type
-directly, so pass the value itself (`c.RegisterServiceInstance(&myThing{})`).
-
 ### Resolution
 
 ```go
-gas.Resolve[T any](r Resolver) (T, error)
-gas.MustResolve[T any](r Resolver) T // panics on failure
+c.Resolve[T any]() (T, error)      // *ServiceContainer
+c.MustResolve[T any]() T           // panics on failure
+scope.Resolve[T any]() (T, error)  // *Scope
+scope.MustResolve[T any]() T
 ```
 
-`Resolver` is implemented by `*ServiceContainer` and `*Scope`.
-
-The reflection-based twins live on `*ServiceContainer` and return `any`:
+Scoped registrations cannot be resolved from the container; resolve them from
+a `Scope` (`c.NewScope()`), which also serves singletons and transients.
 
 ```go
-c.Resolve(i any) (any, error)
-c.MustResolve(i any) any // panics on failure
-
-svc := c.MustResolve(gas.TypePtr[*myservice.Service]()).(*myservice.Service)
+svc := c.MustResolve[*myservice.Service]()
 ```
-
-Both forms hit the same registrations and return the same instances.
 
 ### Container methods
 
@@ -311,7 +300,7 @@ Both forms hit the same registrations and return the same instances.
 | `BuildAll() error`                     | Validate lifetimes, topo-sort, eagerly resolve all singletons |
 | `NewScope() *Scope`                    | Create a scoped resolution context                            |
 | `EachInstance(fn func(reflect.Value))` | Iterate all built singleton instances                         |
-| `CanResolve(t reflect.Type) bool`      | Check if a type can be resolved                               |
+| `CanResolve[T any]() bool`             | Check if `T` can be resolved; builds nothing                  |
 
 **Captive dependency validation:** `BuildAll()` rejects singletons that depend
 on scoped or transient services — this would "capture" a short-lived instance
@@ -355,9 +344,14 @@ registered earlier (see **Kill switch**).
 ### Registering routes
 
 ```go
-router.Handle(service, method, path string, handler any, middleware ...Middleware)
-router.NotFound(service string, handler any)
+router.Handle(service Service, method, path string, handler any, middleware ...Middleware)
+router.NotFound(service Service, handler any)
 ```
+
+The owner is the `gas.Service` itself, not its name: pass `s` from inside a
+service. Ownership is tracked by `service.Name()`. `nil` means "no owning
+service"; such registrations are owned by the root router (`gas/router`), on
+sub-routers too.
 
 The `handler` parameter accepts either `http.HandlerFunc` /
 `func(http.ResponseWriter, *http.Request)` (passed through directly), or a
@@ -392,7 +386,7 @@ gas.MiddlewareByName(name string) Middleware                                  //
 gas.MiddlewareFunc(fn func(http.Handler) http.Handler) Middleware             // anonymous inline
 gas.MiddlewareFuncWithName(name string, fn func(http.Handler) http.Handler) Middleware // named inline (appears in route map)
 
-router.Register(service, name string, mw func(http.Handler) http.Handler)    // register named middleware
+router.Register(service Service, name string, mw func(http.Handler) http.Handler) // register named middleware
 router.Use(middleware ...Middleware)                                           // apply globally
 router.UseMiddlewareByName(name string)
 router.UseMiddlewareFunc(fn func(http.Handler) http.Handler)
@@ -424,8 +418,10 @@ registered in that block, not to sibling blocks on the same pattern.
 
 ### Kill switch
 
-`Worker.CloseService(name)` tears a service down at runtime; the App wires it
-to `Router.RemoveByService(name)`. **Everything the service registered is
+`Worker.CloseService[T]()` tears down the service registered under `T` at
+runtime; the App wires it to `Router.RemoveByService(service)`. `T` must be the
+exact type the service was registered under (no interface matching), and the
+service must already be built. **Everything the service registered is
 replaced with a static 503 `service_unavailable` response** in the unified
 error shape:
 
@@ -437,15 +433,15 @@ error shape:
 So a route guarded by a killed service's middleware stops serving:
 
 ```go
-router.Register("auth", "require-auth", requireAuth)   // owned by "auth"
+router.Register(authSvc, "require-auth", requireAuth)  // owned by authSvc
 
 router.Route("/api", func(sub *gas.Router) {
     sub.Use(gas.MiddlewareByName("require-auth"))
-    sub.Handle("billing", "GET", "/invoices", handler) // owned by "billing"
+    sub.Handle(billingSvc, "GET", "/invoices", handler) // owned by billingSvc
 })
 
-worker.CloseService("auth")
-// GET /api/invoices -> 503, even though "billing" is still running.
+worker.CloseService[*auth.Service]()
+// GET /api/invoices -> 503, even though billing is still running.
 ```
 
 The middleware is **disabled, never skipped**: a teardown can never drop an
@@ -457,7 +453,7 @@ Ownership is only tracked for names passed to `Register`. An inline
 `MiddlewareFunc` (and `MiddlewareFuncWithName`, which carries its own func) has
 no owner and survives any teardown.
 
-`RestartService(name)` reverses it: re-registering the name re-arms the
+`RestartService[T]()` reverses it: re-registering the name re-arms the
 middleware everywhere, and re-registering the routes brings them back.
 
 ### Deferred registration
@@ -472,7 +468,7 @@ during `Init()`. The App calls `Seal()` automatically after all services init.
 |-----------------------------------------|--------------------------------------------------------------------|
 | `Mux() chi.Router`                      | Underlying Chi router                                              |
 | `Seal()`                                | Flush deferred middleware then routes                              |
-| `RemoveByService(service string)`       | Kill switch: 503 for the service's routes **and for its named middleware everywhere it is used** |
+| `RemoveByService(service Service)`      | Kill switch: 503 for the service's routes **and for its named middleware everywhere it is used** |
 | `SetErrorHandler(h ErrorHandler)`       | Set error handler for DI-aware handlers                            |
 | `Routes() map[string][]RegisteredRoute` | Snapshot of registered routes by service                           |
 | `NamedMiddleware() map[string]string`   | Named middleware registry (name → service)                         |
@@ -632,27 +628,35 @@ if errors.Is(err, auth.ErrCredentialsExpired) {
 
 ## EventBus
 
-Typed publish/subscribe messaging between services. Always prefer the generic
-functions over the low-level string-based methods.
+Typed publish/subscribe messaging between services. An event is a **type**,
+not a value: embed `gas.Event[Payload]` to bind the event to its payload.
+`Emit`, `Subscribe` and `SubscribeWithOwner` are generic methods on `*EventBus`
+that take the event type as their only explicit type argument and infer the
+payload, so a mismatched payload or handler does not compile. Subscriptions are
+keyed by the event type, so two events never collide even with the same payload.
 
 ```go
 // Define a typed event
-var UserCreated = gas.Event[UserCreatedPayload]{Name: "user:created"}
+type UserCreated struct{ gas.Event[UserCreatedPayload] }
 
-// Emit (concurrent dispatch, returns *sync.WaitGroup)
-gas.Emit[T](bus *EventBus, event Event[T], data T) *sync.WaitGroup
+// Emit (concurrent dispatch, returns *sync.WaitGroup; never nil)
+bus.Emit[UserCreated](UserCreatedPayload{ID: id}).Wait()
 
 // Subscribe — always use SubscribeWithOwner from a service so that
 // CloseService can clean up subscriptions (via EventBus.RemoveByService).
 // Bare Subscribe has no ownership tracking and should only be used outside
 // of services.
-gas.Subscribe[T](bus *EventBus, event Event[T], handler func(T))
-gas.SubscribeWithOwner[T](bus *EventBus, service string, event Event[T], handler func(T))
+bus.Subscribe[UserCreated](func(p UserCreatedPayload) { ... })
+bus.SubscribeWithOwner[UserCreated](s, func(p UserCreatedPayload) { ... }) // s is the gas.Service
+bus.RemoveByService(s)
 ```
+
+Handlers run concurrently, each on its own goroutine; a panicking handler
+takes the process down unless it recovers itself.
 
 ### System Events
 
-| Event                              | Payload                               | Fired When                                      |
+| Event (type)                       | Payload                               | Fired When                                      |
 |------------------------------------|---------------------------------------|-------------------------------------------------|
 | `gas.SystemServiceClosed`          | `{ServiceName string}`                | Service killed via `CloseService`               |
 | `gas.SystemServiceInitialized`     | `{ServiceName string}`                | Service finishes `Init`                         |
@@ -746,16 +750,16 @@ func (s *Service) Name() string { return "myservice" }
 
 func (s *Service) Init() error {
 	// DI-aware handler — db is resolved per-request from the scoped container.
-	s.router.Handle(s.Name(), "GET", "/hello", s.handleHello)
+	s.router.Handle(s, "GET", "/hello", s.handleHello)
 
 	// Classic http.HandlerFunc works too.
-	s.router.Handle(s.Name(), "GET", "/health", func(w http.ResponseWriter, r *http.Request) {
+	s.router.Handle(s, "GET", "/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
 	// Always use SubscribeWithOwner from a service (not bare Subscribe)
 	// so CloseService can clean up this subscription.
-	gas.SubscribeWithOwner(s.bus, s.Name(), gas.SystemServiceClosed,
+	s.bus.SubscribeWithOwner[gas.SystemServiceClosed](s,
 		func(payload gas.SystemServiceClosedPayload) {
 			// handle another service being closed
 		})

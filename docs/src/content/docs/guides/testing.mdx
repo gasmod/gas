@@ -58,7 +58,7 @@ background job, make one yourself:
 scope := container.NewScope()
 defer scope.Close() // calls Close on every scoped Service resolved here
 
-svc := gas.MustResolve[*MyScopedService](scope)
+svc := scope.MustResolve[*MyScopedService]()
 ```
 
 To run code that expects a request scope, attach one to a context with

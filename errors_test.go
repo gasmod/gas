@@ -341,7 +341,7 @@ func TestDefaultErrorHandler_RendersGasError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	app.Router().Handle("test", "GET", "/missing", func(gas.Context) error {
+	app.Router().Handle(nil, "GET", "/missing", func(gas.Context) error {
 		return gas.NotFound("user not found").WithCause(errors.New("sql: no rows in result set"))
 	})
 
@@ -372,7 +372,7 @@ func TestDefaultErrorHandler_CollapsesPanic(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	app.Router().Handle("test", "GET", "/boom", func(gas.Context) error {
+	app.Router().Handle(nil, "GET", "/boom", func(gas.Context) error {
 		panic("kaboom")
 	})
 
@@ -408,7 +408,7 @@ func TestDefaultErrorHandler_CollapsesResolutionFailure(t *testing.T) {
 
 	// Registered after InitServices, so boot-time validation does not reject it
 	// and the resolution failure happens per-request instead.
-	app.Router().Handle("test", "GET", "/dep", func(gas.Context, *unregisteredDep) error {
+	app.Router().Handle(nil, "GET", "/dep", func(gas.Context, *unregisteredDep) error {
 		return nil
 	})
 
@@ -491,7 +491,7 @@ func TestDefaultErrorHandler_LogSeverityByStatus(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			app.Router().Handle("test", "GET", "/e", func(gas.Context) error {
+			app.Router().Handle(nil, "GET", "/e", func(gas.Context) error {
 				return tt.err
 			})
 
@@ -718,13 +718,15 @@ func TestValidationMessages(t *testing.T) {
 func TestTornDownRoute_UsesUnifiedShape(t *testing.T) {
 	t.Parallel()
 
+	auth := &testService{name: "auth"}
+
 	newTornDownRouter := func() *gas.Router {
 		router := gas.NewRouter()
-		router.Handle("auth", "GET", "/auth/me", func(w http.ResponseWriter, _ *http.Request) {
+		router.Handle(auth, "GET", "/auth/me", func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		})
 		router.Seal()
-		router.RemoveByService("auth")
+		router.RemoveByService(auth)
 		return router
 	}
 

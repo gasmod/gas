@@ -11,14 +11,9 @@ type NopLogger struct{}
 
 var _ Logger = (*NopLogger)(nil)
 
-// NopLoggerCtor defines a constructor function that returns a nop-logger implementing the Logger interface.
-type NopLoggerCtor func() *NopLogger
-
-// NewNopLogger returns a NopLoggerCtor that constructs a nop-logger implementing the Logger interface.
-func NewNopLogger() NopLoggerCtor {
-	return func() *NopLogger {
-		return nopLogger
-	}
+// NewNopLogger returns a constructor that constructs a nop-logger implementing the Logger interface.
+func NewNopLogger() func() *NopLogger {
+	return func() *NopLogger { return nopLogger }
 }
 
 // Trace creates a no-op log event for a trace-level message and silently discards it.
@@ -40,14 +35,10 @@ func (l *NopLogger) Error(string) LogEvent { return nopLogEvent }
 func (l *NopLogger) Flush() {}
 
 // With creates a new LoggerContext for deriving a sub-logger with persistent fields across log events.
-func (l *NopLogger) With() LoggerContext {
-	return nopLoggerContext
-}
+func (l *NopLogger) With() LoggerContext { return nopLoggerContext }
 
 // SetBaseFields returns a no-op MutableLoggerContext associated with the NopLogger instance.
-func (l *NopLogger) SetBaseFields() MutableLoggerContext {
-	return nopMutableLoggerContext
-}
+func (l *NopLogger) SetBaseFields() MutableLoggerContext { return nopMutableLoggerContext }
 
 var nopLoggerContext = &NopLoggerContext{}
 

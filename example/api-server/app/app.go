@@ -39,39 +39,39 @@ func New() *gas.App {
 		log.Fatalf("failed to load config: %s\n", err)
 	}
 
-	app := gas.NewApp(
-		// --- Infrastructure ---
+	app := gas.NewApp()
 
-		gas.WithServiceInstance[gas.ConfigProvider](cfg),
+	// --- Infrastructure ---
 
-		gas.WithSingletonService[gas.Logger](gaslog.NewZeroLogLogger()),
-		gas.WithScopedService[RequestLogger](requestLogger),
+	app.RegisterServiceInstance[gas.ConfigProvider](cfg)
 
-		gas.WithSingletonService[gas.DatabaseProvider](database.New()),
-		gas.WithSingletonService[*migrate.Service](migrate.New()),
-		gas.WithSingletonService[gas.CacheProvider](cache.New()),
-		gas.WithSingletonService[gas.StorageProvider](storage.New()),
-		gas.WithSingletonService[gas.JobQueueProvider](queue.New()),
-		gas.WithServiceInstance[gas.TemplateProvider](template.NewStore()),
-		gas.WithSingletonService[gas.EmailProvider](email.New()),
+	app.RegisterSingletonService[gas.Logger](gaslog.NewZeroLogLogger())
+	app.RegisterScopedService[RequestLogger](requestLogger)
 
-		// --- Auth ---
+	app.RegisterSingletonService[gas.DatabaseProvider](database.New())
+	app.RegisterSingletonService[*migrate.Service](migrate.New())
+	app.RegisterSingletonService[gas.CacheProvider](cache.New())
+	app.RegisterSingletonService[gas.StorageProvider](storage.New())
+	app.RegisterSingletonService[gas.JobQueueProvider](queue.New())
+	app.RegisterServiceInstance[gas.TemplateProvider](template.NewStore())
+	app.RegisterSingletonService[gas.EmailProvider](email.New())
 
-		// JWT and API key services are registered as singletons. They
-		// manage their own config binding and (for apikey) migrations.
-		gas.WithSingletonService[*jwt.Service](jwt.New()),
-		gas.WithSingletonService[*apikey.Service](apikey.New()),
+	// --- Auth ---
 
-		// --- Application services ---
+	// JWT and API key services are registered as singletons. They
+	// manage their own config binding and (for apikey) migrations.
+	app.RegisterSingletonService[*jwt.Service](jwt.New())
+	app.RegisterSingletonService[*apikey.Service](apikey.New())
 
-		gas.WithSingletonService[*auth.Service](auth.New),
-		gas.WithSingletonService[*files.Service](files.New),
-		gas.WithSingletonService[*shares.Service](shares.New),
+	// --- Application services ---
 
-		// --- HTTP ---
+	app.RegisterSingletonService[*auth.Service](auth.New)
+	app.RegisterSingletonService[*files.Service](files.New)
+	app.RegisterSingletonService[*shares.Service](shares.New)
 
-		gas.WithErrorHandler(errorHandler),
-	)
+	// --- HTTP ---
+
+	app.Router().SetErrorHandler(errorHandler)
 
 	// Global middleware: security headers + request logging.
 	app.Router().Use(

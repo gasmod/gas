@@ -100,7 +100,7 @@ func (s *Store) Init() error {
 		return fmt.Errorf("gas/template/db: unsupported driver: %q", s.db.Driver())
 	}
 
-	s.migrationMgr.Register(s.Name(), gas.Migration{
+	s.migrationMgr.Register(s, gas.Migration{
 		Version:     "20260322235959",
 		Description: "create templates table",
 		Up:          up,

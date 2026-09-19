@@ -65,7 +65,7 @@ func (s *Service) Name() string { return "auth" }
 func (s *Service) Init() error {
 	// Register migrations for the users table. API key and JWT services
 	// register their own internal migrations automatically.
-	if err := s.mgr.RegisterFS(s.Name(), migrationsFS); err != nil {
+	if err := s.mgr.RegisterFS(s, migrationsFS); err != nil {
 		return fmt.Errorf("registering auth migrations: %w", err)
 	}
 
@@ -84,16 +84,16 @@ func (s *Service) Init() error {
 	))
 
 	// Public routes — no auth required.
-	s.router.Handle(s.Name(), http.MethodPost, "/api/auth/register", s.handleRegister)
-	s.router.Handle(s.Name(), http.MethodPost, "/api/auth/login", s.handleLogin)
+	s.router.Handle(s, http.MethodPost, "/api/auth/register", s.handleRegister)
+	s.router.Handle(s, http.MethodPost, "/api/auth/login", s.handleLogin)
 
 	// Protected routes — require valid JWT or API key.
 	s.router.Group(func(sub *gas.Router) {
 		sub.UseMiddlewareFunc(authMiddleware)
 
-		sub.Handle(s.Name(), http.MethodPost, "/api/auth/api-keys", s.handleCreateAPIKey)
-		sub.Handle(s.Name(), http.MethodGet, "/api/auth/api-keys", s.handleListAPIKeys)
-		sub.Handle(s.Name(), http.MethodDelete, "/api/auth/api-keys/{id}", s.handleDeleteAPIKey)
+		sub.Handle(s, http.MethodPost, "/api/auth/api-keys", s.handleCreateAPIKey)
+		sub.Handle(s, http.MethodGet, "/api/auth/api-keys", s.handleListAPIKeys)
+		sub.Handle(s, http.MethodDelete, "/api/auth/api-keys/{id}", s.handleDeleteAPIKey)
 	})
 
 	return nil

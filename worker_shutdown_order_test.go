@@ -182,18 +182,18 @@ func TestScopeClosesInReverseResolutionOrder(t *testing.T) {
 		log := &ordLog{}
 		c := gas.NewServiceContainer()
 
-		gas.RegisterCtor[*ordService[ordTag0]](c, func() *ordService[ordTag0] {
+		c.RegisterService[*ordService[ordTag0]](func() *ordService[ordTag0] {
 			return &ordService[ordTag0]{log: log, name: "S0"}
 		}, gas.ServiceLifetimeScoped)
-		gas.RegisterCtor[*ordService[ordTag1]](c, func(*ordService[ordTag0]) *ordService[ordTag1] {
+		c.RegisterService[*ordService[ordTag1]](func(*ordService[ordTag0]) *ordService[ordTag1] {
 			return &ordService[ordTag1]{log: log, name: "S1"}
 		}, gas.ServiceLifetimeScoped)
-		gas.RegisterCtor[*ordService[ordTag2]](c, func(*ordService[ordTag1]) *ordService[ordTag2] {
+		c.RegisterService[*ordService[ordTag2]](func(*ordService[ordTag1]) *ordService[ordTag2] {
 			return &ordService[ordTag2]{log: log, name: "S2"}
 		}, gas.ServiceLifetimeScoped)
 
 		scope := c.NewScope()
-		if _, err := gas.Resolve[*ordService[ordTag2]](scope); err != nil {
+		if _, err := scope.Resolve[*ordService[ordTag2]](); err != nil {
 			t.Fatalf("run %d: resolve: %v", run, err)
 		}
 		if err := scope.Close(); err != nil {

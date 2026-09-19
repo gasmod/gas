@@ -32,10 +32,8 @@ func TestWorkerLifecycle(t *testing.T) {
 	// database.WithConnector makes gas/database open the pool via
 	// sql.OpenDB(connector), so Driver and DSN are not required and Init's
 	// connectivity check never leaves the process.
-	w.RegisterSingletonService(gas.TypePtr[gas.DatabaseProvider](),
-		database.New(database.WithConnector(conn)))
-	w.RegisterSingletonService(gas.TypePtr[gas.JobQueueProvider](),
-		func() gas.JobQueueProvider { return queue })
+	w.RegisterSingletonService[gas.DatabaseProvider](database.New(database.WithConnector(conn)))
+	w.RegisterSingletonService[gas.JobQueueProvider](func() gas.JobQueueProvider { return queue })
 
 	if err := w.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -49,7 +47,7 @@ func TestWorkerLifecycle(t *testing.T) {
 	})
 
 	// Exactly what cmd/main.go does after Start.
-	h := gas.MustResolve[*app.Handler](w.ServiceContainer())
+	h := w.ServiceContainer().MustResolve[*app.Handler]()
 
 	resp, err := h.Handle(context.Background(), sqsEvent(orderRecord("msg-1", "order-1", "cust-1", 500)))
 	if err != nil {

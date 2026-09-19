@@ -1,19 +1,19 @@
 module github.com/gasmod/gas/example/api-server
 
-go 1.26.1
+go 1.27
 
 require (
-	github.com/gasmod/gas v0.4.6
-	github.com/gasmod/gas/auth v0.4.6
-	github.com/gasmod/gas/cache v0.4.6
-	github.com/gasmod/gas/config v0.4.6
-	github.com/gasmod/gas/database v0.4.6
-	github.com/gasmod/gas/email v0.4.6
-	github.com/gasmod/gas/log v0.4.6
-	github.com/gasmod/gas/migrate v0.4.6
-	github.com/gasmod/gas/queue v0.4.6
-	github.com/gasmod/gas/storage v0.4.6
-	github.com/gasmod/gas/template v0.4.6
+	github.com/gasmod/gas v0.5.0
+	github.com/gasmod/gas/auth v0.5.0
+	github.com/gasmod/gas/cache v0.5.0
+	github.com/gasmod/gas/config v0.5.0
+	github.com/gasmod/gas/database v0.5.0
+	github.com/gasmod/gas/email v0.5.0
+	github.com/gasmod/gas/log v0.5.0
+	github.com/gasmod/gas/migrate v0.5.0
+	github.com/gasmod/gas/queue v0.5.0
+	github.com/gasmod/gas/storage v0.5.0
+	github.com/gasmod/gas/template v0.5.0
 	github.com/google/uuid v1.6.0
 	golang.org/x/crypto v0.57.0
 )
@@ -21,10 +21,10 @@ require (
 require (
 	github.com/aws/aws-sdk-go-v2 v1.47.0 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.20 // indirect
-	github.com/aws/aws-sdk-go-v2/config v1.33.4 // indirect
-	github.com/aws/aws-sdk-go-v2/credentials v1.20.4 // indirect
+	github.com/aws/aws-sdk-go-v2/config v1.33.5 // indirect
+	github.com/aws/aws-sdk-go-v2/credentials v1.20.5 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.20.0 // indirect
-	github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.4.6 // indirect
+	github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.4.7 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.5.3 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.8.3 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.5.3 // indirect
@@ -38,8 +38,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.52.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.38.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.43.0 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sts v1.50.0 // indirect
-	github.com/aws/smithy-go v1.28.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sts v1.51.0 // indirect
+	github.com/aws/smithy-go v1.28.2 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.15 // indirect
 	github.com/go-chi/chi/v5 v5.3.2 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect

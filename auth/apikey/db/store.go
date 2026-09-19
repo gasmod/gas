@@ -63,30 +63,30 @@ func New() func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager) *Store {
 }
 
 // Init selects the correct sqlc adapter and registers migrations.
-func (s *Store) Init(serviceName string) error {
+func (s *Store) Init(service gas.Service) error {
 	sqlDB := s.db.DB()
 	if sqlDB == nil {
-		return fmt.Errorf("%s: database not initialized", serviceName)
+		return fmt.Errorf("%s: database not initialized", service.Name())
 	}
 
 	switch s.db.Driver() {
 	case "postgres", "pgx":
-		if err := s.migMgr.RegisterFS(serviceName, migrationsPostgres); err != nil {
-			return fmt.Errorf("%s: register migrations: %w", serviceName, err)
+		if err := s.migMgr.RegisterFS(service, migrationsPostgres); err != nil {
+			return fmt.Errorf("%s: register migrations: %w", service.Name(), err)
 		}
 		s.q = newPostgresAdapter(pgdb.New(sqlDB))
 	case "mysql":
-		if err := s.migMgr.RegisterFS(serviceName, migrationsMySQL); err != nil {
-			return fmt.Errorf("%s: register migrations: %w", serviceName, err)
+		if err := s.migMgr.RegisterFS(service, migrationsMySQL); err != nil {
+			return fmt.Errorf("%s: register migrations: %w", service.Name(), err)
 		}
 		s.q = newMySQLAdapter(mydb.New(sqlDB))
 	case "sqlite", "sqlite3":
-		if err := s.migMgr.RegisterFS(serviceName, migrationsSQLite); err != nil {
-			return fmt.Errorf("%s: register migrations: %w", serviceName, err)
+		if err := s.migMgr.RegisterFS(service, migrationsSQLite); err != nil {
+			return fmt.Errorf("%s: register migrations: %w", service.Name(), err)
 		}
 		s.q = newSQLiteAdapter(litedb.New(sqlDB))
 	default:
-		return fmt.Errorf("%s: unsupported driver: %q", serviceName, s.db.Driver())
+		return fmt.Errorf("%s: unsupported driver: %q", service.Name(), s.db.Driver())
 	}
 
 	return nil
