@@ -3,7 +3,7 @@ module github.com/gasmod/gas/example/lambda-worker
 go 1.27
 
 require (
-	github.com/aws/aws-lambda-go v1.55.0
+	github.com/aws/aws-lambda-go v1.55.1
 	github.com/gasmod/gas v0.5.1
 	github.com/gasmod/gas/config v0.5.1
 	github.com/gasmod/gas/database v0.5.1
