@@ -10,7 +10,7 @@ import (
 	cache "github.com/gasmod/gas/cache"
 )
 
-func newTestService(t *testing.T, opts ...Option) *Service {
+func newTestService(t *testing.T, _ ...Option) *Service {
 	t.Helper()
 
 	cfg := DefaultConfig()

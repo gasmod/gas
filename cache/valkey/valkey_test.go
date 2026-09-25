@@ -24,8 +24,8 @@ func TestConfigValidate(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
 		modify  func(*Config)
+		name    string
 		wantErr bool
 	}{
 		{

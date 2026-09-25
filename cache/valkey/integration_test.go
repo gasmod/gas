@@ -18,7 +18,7 @@ import (
 	vk "github.com/gasmod/gas/cache/valkey"
 )
 
-// newTestService spins up a Valkey container and returns an initialised
+// newTestService spins up a Valkey container and returns an initialized
 // *vk.Service. Container and service are cleaned up via t.Cleanup.
 func newTestService(t *testing.T) *vk.Service {
 	t.Helper()
@@ -153,8 +153,8 @@ func TestIntegration_Exists(t *testing.T) {
 		t.Error("Exists = true before Set, want false")
 	}
 
-	if err := svc.Set(ctx, key, []byte("val"), 0); err != nil {
-		t.Fatalf("Set: %v", err)
+	if sErr := svc.Set(ctx, key, []byte("val"), 0); sErr != nil {
+		t.Fatalf("Set: %v", sErr)
 	}
 
 	exists, err = svc.Exists(ctx, key)
@@ -271,7 +271,7 @@ func TestIntegration_BinaryValueWithNullBytes(t *testing.T) {
 	}
 }
 
-// Empty value — edge case that some serialisation layers mishandle as nil/missing.
+// Empty value — edge case that some serialization layers mishandle as nil/missing.
 func TestIntegration_EmptyValue(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -525,7 +525,7 @@ func TestIntegration_NegativeTTL(t *testing.T) {
 // Adversarial: context cancellation
 // ---------------------------------------------------------------------------
 
-// Cancelled context must not hang — it should return promptly with an error.
+// Canceled context must not hang — it should return promptly with an error.
 func TestIntegration_CancelledContext(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -549,7 +549,7 @@ func TestIntegration_CancelledContext(t *testing.T) {
 	case <-done:
 		// ok
 	case <-time.After(5 * time.Second):
-		t.Fatal("operations with cancelled context hung for >5s")
+		t.Fatal("operations with canceled context hung for >5s")
 	}
 }
 
@@ -797,8 +797,8 @@ func TestIntegration_ExistsConsistentWithGet(t *testing.T) {
 	}
 
 	// Now delete and verify both agree.
-	if err := svc.Delete(ctx, key); err != nil {
-		t.Fatalf("Delete: %v", err)
+	if dErr := svc.Delete(ctx, key); dErr != nil {
+		t.Fatalf("Delete: %v", dErr)
 	}
 
 	exists, err = svc.Exists(ctx, key)
