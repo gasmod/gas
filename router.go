@@ -435,6 +435,36 @@ func (r *Router) Handle(service Service, method, path string, handler any, middl
 	r.applyOp(op)
 }
 
+// Get registers a GET route via Handle, which also serves HEAD on the same path.
+func (r *Router) Get(service Service, path string, handler any, middleware ...Middleware) {
+	r.Handle(service, http.MethodGet, path, handler, middleware...)
+}
+
+// Head registers a HEAD route via Handle.
+func (r *Router) Head(service Service, path string, handler any, middleware ...Middleware) {
+	r.Handle(service, http.MethodHead, path, handler, middleware...)
+}
+
+// Post registers a POST route via Handle.
+func (r *Router) Post(service Service, path string, handler any, middleware ...Middleware) {
+	r.Handle(service, http.MethodPost, path, handler, middleware...)
+}
+
+// Put registers a PUT route via Handle.
+func (r *Router) Put(service Service, path string, handler any, middleware ...Middleware) {
+	r.Handle(service, http.MethodPut, path, handler, middleware...)
+}
+
+// Patch registers a PATCH route via Handle.
+func (r *Router) Patch(service Service, path string, handler any, middleware ...Middleware) {
+	r.Handle(service, http.MethodPatch, path, handler, middleware...)
+}
+
+// Delete registers a DELETE route via Handle.
+func (r *Router) Delete(service Service, path string, handler any, middleware ...Middleware) {
+	r.Handle(service, http.MethodDelete, path, handler, middleware...)
+}
+
 func (r *Router) recordBookkeeping(service Service, method, path string, middlewareNames []string) {
 	allMiddlewareNames := make([]string, 0, len(r.scopeMiddleware)+len(middlewareNames))
 	allMiddlewareNames = append(allMiddlewareNames, r.scopeMiddleware...)

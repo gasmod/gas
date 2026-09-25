@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gasmod/gas/config"
+	"github.com/gasmod/gas/config/providers"
 )
 
 // DatabaseProvider abstracts database access. Implemented by gas/database
@@ -270,4 +271,6 @@ type ConfigProvider interface {
 	Get(key string) any
 	Find(key string) (value any, exist bool)
 	Values() map[string]any
+	LoadProvider(p providers.Provider) error
+	LoadProviderContext(ctx context.Context, p providers.Provider) error
 }
