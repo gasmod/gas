@@ -1,4 +1,4 @@
-.PHONY: help test test-coverage build lint fmt
+.PHONY: help test test-coverage build lint fmt mod-update test-all build-all lint-all fmt-all mod-update-all verify-all
 
 MODS := $(patsubst %/,%,$(dir $(shell find . -name Makefile -type f)))
 
@@ -24,9 +24,6 @@ lint: ## Run linters
 
 fmt: ## Format code
 	golangci-lint fmt
-
-vet: ## Run go vet
-	go vet ./...
 
 # Module Update
 
@@ -66,10 +63,7 @@ lint-all: ## Run make lint across all modules
 fmt-all: ## Run make fmt across all modules
 	$(call run_all,fmt)
 
-vet-all: ## Run make vet across all modules
-	$(call run_all,vet)
-
 mod-update-all: ## Run mod-update across all modules
 	$(call run_all,mod-update)
 
-verify-all: build-all lint-all vet-all test-all
+verify-all: build-all lint-all test-all

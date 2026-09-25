@@ -23,9 +23,6 @@ lint: ## Run linters
 fmt: ## Format code
 	golangci-lint fmt
 
-vet: ## Run go vet
-	go vet ./...
-
 # Module Update
 
 mod-update: ## Update go modules
