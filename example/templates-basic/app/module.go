@@ -26,7 +26,7 @@ func (m *Module) Name() string {
 
 // Init registers the index route and the custom NotFound handler.
 func (m *Module) Init() error {
-	m.router.Handle(m, http.MethodGet, "/", m.handleIndex)
+	m.router.Get(m, "/", m.handleIndex)
 	m.router.NotFound(m, m.handleNotFound)
 
 	return nil

@@ -84,16 +84,16 @@ func (s *Service) Init() error {
 	))
 
 	// Public routes — no auth required.
-	s.router.Handle(s, http.MethodPost, "/api/auth/register", s.handleRegister)
-	s.router.Handle(s, http.MethodPost, "/api/auth/login", s.handleLogin)
+	s.router.Post(s, "/api/auth/register", s.handleRegister)
+	s.router.Post(s, "/api/auth/login", s.handleLogin)
 
 	// Protected routes — require valid JWT or API key.
 	s.router.Group(func(sub *gas.Router) {
 		sub.UseMiddlewareFunc(authMiddleware)
 
-		sub.Handle(s, http.MethodPost, "/api/auth/api-keys", s.handleCreateAPIKey)
-		sub.Handle(s, http.MethodGet, "/api/auth/api-keys", s.handleListAPIKeys)
-		sub.Handle(s, http.MethodDelete, "/api/auth/api-keys/{id}", s.handleDeleteAPIKey)
+		sub.Post(s, "/api/auth/api-keys", s.handleCreateAPIKey)
+		sub.Get(s, "/api/auth/api-keys", s.handleListAPIKeys)
+		sub.Delete(s, "/api/auth/api-keys/{id}", s.handleDeleteAPIKey)
 	})
 
 	return nil

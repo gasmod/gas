@@ -54,14 +54,14 @@ func (m *NotesModule) Init() error {
 
 	// All note routes live under /notes using Route().
 	m.router.Route("/notes", func(sub *gas.Router) {
-		sub.Handle(m, http.MethodGet, "/", m.handleList)
-		sub.Handle(m, http.MethodGet, "/{slug}", m.handleShow)
+		sub.Get(m, "/", m.handleList)
+		sub.Get(m, "/{slug}", m.handleShow)
 
 		// Group() for write endpoints — applies inline middleware to a subset of routes.
 		sub.Group(func(write *gas.Router) {
 			// Apply the named "json-content-type" middleware only to write routes.
 			write.Use(gas.MiddlewareByName("json-content-type"))
-			write.Handle(m, http.MethodPost, "/", m.handleCreate)
+			write.Post(m, "/", m.handleCreate)
 		})
 	})
 

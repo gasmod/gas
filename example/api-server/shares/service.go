@@ -89,11 +89,11 @@ func (s *Service) Init() error {
 	// Protected routes — require authentication.
 	s.router.Group(func(sub *gas.Router) {
 		sub.UseMiddlewareFunc(s.auth.Middleware())
-		sub.Handle(s, http.MethodPost, "/api/files/{id}/share", s.handleCreateShare)
+		sub.Post(s, "/api/files/{id}/share", s.handleCreateShare)
 	})
 
 	// Public route — access shared file by token.
-	s.router.Handle(s, http.MethodGet, "/api/shares/{token}", s.handleGetShare)
+	s.router.Get(s, "/api/shares/{token}", s.handleGetShare)
 
 	return nil
 }

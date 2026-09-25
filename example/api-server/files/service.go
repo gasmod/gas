@@ -76,11 +76,11 @@ func (s *Service) Init() error {
 	s.router.Group(func(sub *gas.Router) {
 		sub.UseMiddlewareFunc(s.auth.Middleware())
 
-		sub.Handle(s, http.MethodPost, "/api/files", s.handleUpload)
-		sub.Handle(s, http.MethodGet, "/api/files", s.handleList)
-		sub.Handle(s, http.MethodGet, "/api/files/{id}", s.handleGet)
-		sub.Handle(s, http.MethodGet, "/api/files/{id}/download", s.handleDownload)
-		sub.Handle(s, http.MethodDelete, "/api/files/{id}", s.handleDelete)
+		sub.Post(s, "/api/files", s.handleUpload)
+		sub.Get(s, "/api/files", s.handleList)
+		sub.Get(s, "/api/files/{id}", s.handleGet)
+		sub.Get(s, "/api/files/{id}/download", s.handleDownload)
+		sub.Delete(s, "/api/files/{id}", s.handleDelete)
 	})
 
 	return nil
