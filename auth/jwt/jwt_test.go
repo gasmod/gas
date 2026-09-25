@@ -186,10 +186,10 @@ func TestConfigValidation(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSignVerifyHS256(t *testing.T) {
-	const secret = "my-test-secret-key-for-hs256!!!!"
+	const k = "my-test-secret-key-for-hs256!!!!"
 
 	t.Run("round-trip with custom claims", func(t *testing.T) {
-		svc := newHS256Service(t, secret)
+		svc := newHS256Service(t, k)
 		customClaims := map[string]any{
 			"role":  "admin",
 			"email": "user@example.com",
@@ -208,7 +208,7 @@ func TestSignVerifyHS256(t *testing.T) {
 	})
 
 	t.Run("verify expired token returns ErrTokenExpired", func(t *testing.T) {
-		svc := newHS256Service(t, secret)
+		svc := newHS256Service(t, k)
 		token, err := svc.SignWithExpiry("user-123", nil, -1*time.Hour)
 		require.NoError(t, err)
 
@@ -223,7 +223,7 @@ func TestSignVerifyHS256(t *testing.T) {
 	})
 
 	t.Run("verify with wrong signing key rejects", func(t *testing.T) {
-		svc1 := newHS256Service(t, secret)
+		svc1 := newHS256Service(t, k)
 		svc2 := newHS256Service(t, "different-secret-key-for-test32b!")
 
 		token, err := svc1.Sign("user-123", nil)
@@ -234,7 +234,7 @@ func TestSignVerifyHS256(t *testing.T) {
 	})
 
 	t.Run("sign with nil claims does not panic", func(t *testing.T) {
-		svc := newHS256Service(t, secret)
+		svc := newHS256Service(t, k)
 		token, err := svc.Sign("user-456", nil)
 		require.NoError(t, err)
 		require.NotEmpty(t, token)
@@ -245,7 +245,7 @@ func TestSignVerifyHS256(t *testing.T) {
 	})
 
 	t.Run("custom claims must not overwrite standard claims", func(t *testing.T) {
-		svc := newHS256Service(t, secret)
+		svc := newHS256Service(t, k)
 		evilClaims := map[string]any{
 			"sub": "evil",
 			"exp": gojwt.NewNumericDate(time.Now().Add(100 * 365 * 24 * time.Hour)),
@@ -263,7 +263,7 @@ func TestSignVerifyHS256(t *testing.T) {
 	})
 
 	t.Run("SignWithExpiry with zero duration expires immediately", func(t *testing.T) {
-		svc := newHS256Service(t, secret)
+		svc := newHS256Service(t, k)
 		token, err := svc.SignWithExpiry("user-123", nil, 0)
 		require.NoError(t, err)
 
@@ -281,7 +281,7 @@ func TestSignVerifyHS256(t *testing.T) {
 	})
 
 	t.Run("SignWithExpiry with negative duration is already expired", func(t *testing.T) {
-		svc := newHS256Service(t, secret)
+		svc := newHS256Service(t, k)
 		token, err := svc.SignWithExpiry("user-123", nil, -5*time.Minute)
 		require.NoError(t, err)
 
@@ -296,19 +296,19 @@ func TestSignVerifyHS256(t *testing.T) {
 	})
 
 	t.Run("verify empty string errors", func(t *testing.T) {
-		svc := newHS256Service(t, secret)
+		svc := newHS256Service(t, k)
 		_, err := svc.Verify("")
 		require.Error(t, err)
 	})
 
 	t.Run("verify garbage string errors", func(t *testing.T) {
-		svc := newHS256Service(t, secret)
+		svc := newHS256Service(t, k)
 		_, err := svc.Verify("this-is-not-a-jwt")
 		require.Error(t, err)
 	})
 
 	t.Run("verify valid base64 but invalid JWT errors", func(t *testing.T) {
-		svc := newHS256Service(t, secret)
+		svc := newHS256Service(t, k)
 		b64 := base64.RawURLEncoding.EncodeToString([]byte("not-jwt-header"))
 		fakeToken := b64 + "." + b64 + "." + b64
 		_, err := svc.Verify(fakeToken)
@@ -458,9 +458,8 @@ func TestIssuerAudience(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestAuthenticate(t *testing.T) {
-	//nolint:gosec // test-only HMAC key
-	const secret = "auth-secret-key-for-testing-32b!"
-	svc := newHS256Service(t, secret)
+	const k = "auth-secret-key-for-testing-32b!"
+	svc := newHS256Service(t, k)
 
 	validToken, err := svc.Sign("auth-user", map[string]any{"role": "member"})
 	require.NoError(t, err)

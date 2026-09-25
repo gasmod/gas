@@ -269,7 +269,7 @@ func TestMultipleOptions(t *testing.T) {
 func TestOptionsFunctionalPattern(t *testing.T) {
 	t.Run("options are functions", func(t *testing.T) {
 		// Verify that options are actually functions
-		var option EnvOption = WithEnvVarName("TEST")
+		option := WithEnvVarName("TEST")
 
 		extension := &Extension{
 			envVarName: "ORIGINAL",

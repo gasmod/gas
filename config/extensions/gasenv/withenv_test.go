@@ -113,7 +113,9 @@ func TestWithGasEnv_IntegrationWithGasConfig(t *testing.T) {
 			t.Error("Bound environment should not be development")
 		}
 	})
+}
 
+func TestWithGasEnv_ConditionalConfiguration(t *testing.T) {
 	t.Run("environment field can be used for conditional configuration", func(t *testing.T) {
 		type AppConfig struct {
 			WithGasEnv
@@ -125,24 +127,28 @@ func TestWithGasEnv_IntegrationWithGasConfig(t *testing.T) {
 		}
 
 		tests := []struct {
-			name        string
-			envValue    string
-			expectedEnv Environment
+			name      string
+			envValue  string
+			wantHost  string
+			wantDebug bool
 		}{
 			{
-				name:        "development environment",
-				envValue:    "development",
-				expectedEnv: Development,
+				name:      "development environment",
+				envValue:  "development",
+				wantHost:  "localhost",
+				wantDebug: true,
 			},
 			{
-				name:        "production environment",
-				envValue:    "production",
-				expectedEnv: Production,
+				name:      "production environment",
+				envValue:  "production",
+				wantHost:  "prod-db.example.com",
+				wantDebug: false,
 			},
 			{
-				name:        "testing environment",
-				envValue:    "testing",
-				expectedEnv: Testing,
+				name:      "testing environment",
+				envValue:  "testing",
+				wantHost:  "localhost",
+				wantDebug: true,
 			},
 		}
 
@@ -175,23 +181,12 @@ func TestWithGasEnv_IntegrationWithGasConfig(t *testing.T) {
 				}
 
 				// Verify the conditional logic worked
-				if tt.expectedEnv == Production {
-					if config.Debug {
-						t.Error("Debug should be false in production")
-					}
-					if config.Database.Host != "prod-db.example.com" {
-						t.Errorf(
-							"Production host = %v, want prod-db.example.com",
-							config.Database.Host,
-						)
-					}
-				} else {
-					if !config.Debug {
-						t.Error("Debug should be true in development-like environments")
-					}
-					if config.Database.Host != "localhost" {
-						t.Errorf("Development host = %v, want localhost", config.Database.Host)
-					}
+				if config.Debug != tt.wantDebug {
+					t.Errorf("Debug = %v, want %v", config.Debug, tt.wantDebug)
+				}
+
+				if config.Database.Host != tt.wantHost {
+					t.Errorf("Database host = %v, want %v", config.Database.Host, tt.wantHost)
 				}
 			})
 		}
