@@ -16,6 +16,7 @@
 package configtest
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -30,14 +31,16 @@ var _ providers.Provider = (*staticProvider)(nil)
 // Fn field if set, otherwise returns the zero value. All calls are recorded
 // in the Calls slice for assertions.
 type MockConfig struct {
-	SetDefaultFn  func(key string, value any)
-	SetDefaultsFn func(values any) error
-	SetFn         func(key string, value any)
-	BindFn        func(dest any, options ...config.BindOption) error
-	GetFn         func(key string) any
-	FindFn        func(key string) (any, bool)
-	ValuesFn      func() map[string]any
-	Calls         []Call
+	SetDefaultFn          func(key string, value any)
+	SetDefaultsFn         func(values any) error
+	SetFn                 func(key string, value any)
+	BindFn                func(dest any, options ...config.BindOption) error
+	GetFn                 func(key string) any
+	FindFn                func(key string) (any, bool)
+	ValuesFn              func() map[string]any
+	LoadProviderFn        func(p providers.Provider) error
+	LoadProviderContextFn func(ctx context.Context, p providers.Provider) error
+	Calls                 []Call
 
 	mu sync.Mutex
 }
@@ -115,6 +118,24 @@ func (m *MockConfig) Values() map[string]any {
 	return nil
 }
 
+// LoadProvider loads configuration from the provided provider and records the call. Delegates to LoadProviderFn if set.
+func (m *MockConfig) LoadProvider(p providers.Provider) error {
+	m.record("LoadProvider", p)
+	if m.LoadProviderFn != nil {
+		return m.LoadProviderFn(p)
+	}
+	return nil
+}
+
+// LoadProviderContext records the call and delegates to LoadProviderContextFn if set, otherwise returns nil error.
+func (m *MockConfig) LoadProviderContext(ctx context.Context, p providers.Provider) error {
+	m.record("LoadProviderContext", p)
+	if m.LoadProviderContextFn != nil {
+		return m.LoadProviderContextFn(ctx, p)
+	}
+	return nil
+}
+
 // Reset clears all recorded calls.
 func (m *MockConfig) Reset() {
 	m.mu.Lock()
@@ -151,13 +172,15 @@ func NewMockConfigWithValues(values map[string]any) (*MockConfig, error) {
 	}
 
 	m := &MockConfig{
-		SetDefaultFn:  c.SetDefault,
-		SetDefaultsFn: c.SetDefaults,
-		SetFn:         c.Set,
-		BindFn:        c.Bind,
-		GetFn:         c.Get,
-		FindFn:        c.Find,
-		ValuesFn:      c.Values,
+		SetDefaultFn:          c.SetDefault,
+		SetDefaultsFn:         c.SetDefaults,
+		SetFn:                 c.Set,
+		BindFn:                c.Bind,
+		GetFn:                 c.Get,
+		FindFn:                c.Find,
+		ValuesFn:              c.Values,
+		LoadProviderFn:        c.LoadProvider,
+		LoadProviderContextFn: c.LoadProviderContext,
 	}
 	return m, nil
 }

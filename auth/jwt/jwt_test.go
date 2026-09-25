@@ -16,29 +16,13 @@ import (
 	"time"
 
 	"github.com/gasmod/gas"
-	auth "github.com/gasmod/gas/auth"
+	"github.com/gasmod/gas/auth"
 	jwtpkg "github.com/gasmod/gas/auth/jwt"
-	config "github.com/gasmod/gas/config"
+	"github.com/gasmod/gas/config/configtest"
 	gojwt "github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// ---------------------------------------------------------------------------
-// Mock ConfigProvider
-// ---------------------------------------------------------------------------
-
-type mockConfigProvider struct{}
-
-func (m *mockConfigProvider) SetDefault(_ string, _ any)               {}
-func (m *mockConfigProvider) SetDefaults(_ any) error                  { return nil }
-func (m *mockConfigProvider) Set(_ string, _ any)                      {}
-func (m *mockConfigProvider) Get(_ string) any                         { return nil }
-func (m *mockConfigProvider) Find(_ string) (any, bool)                { return nil, false }
-func (m *mockConfigProvider) Values() map[string]any                   { return nil }
-func (m *mockConfigProvider) Bind(_ any, _ ...config.BindOption) error { return nil }
-
-var _ gas.ConfigProvider = (*mockConfigProvider)(nil)
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -57,7 +41,7 @@ func newHS256Service(t *testing.T, key string, opts ...func(*jwtpkg.Config)) *jw
 	for _, fn := range opts {
 		fn(cfg)
 	}
-	svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&mockConfigProvider{}, gas.NewNopLogger()())
+	svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, gas.NewNopLogger()())
 	require.NoError(t, svc.Init())
 	return svc
 }
@@ -104,7 +88,7 @@ func newRS256Service(t *testing.T, opts ...func(*jwtpkg.Config)) *jwtpkg.Service
 	for _, fn := range opts {
 		fn(cfg)
 	}
-	svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&mockConfigProvider{}, gas.NewNopLogger()())
+	svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, gas.NewNopLogger()())
 	require.NoError(t, svc.Init())
 	return svc
 }
@@ -328,7 +312,7 @@ func TestSignVerifyHS256(t *testing.T) {
 				Expiry: 15 * time.Minute,
 			},
 		}
-		svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&mockConfigProvider{}, gas.NewNopLogger()())
+		svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, gas.NewNopLogger()())
 
 		err := svc.Init()
 		require.Error(t, err)
@@ -541,7 +525,7 @@ func TestRSAKeyLoading(t *testing.T) {
 				Expiry:         15 * time.Minute,
 			},
 		}
-		svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&mockConfigProvider{}, gas.NewNopLogger()())
+		svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, gas.NewNopLogger()())
 		err := svc.Init()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "load public key")
@@ -559,7 +543,7 @@ func TestRSAKeyLoading(t *testing.T) {
 				Expiry:        15 * time.Minute,
 			},
 		}
-		svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&mockConfigProvider{}, gas.NewNopLogger()())
+		svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, gas.NewNopLogger()())
 		err := svc.Init()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "decode PEM")
@@ -579,7 +563,7 @@ func TestRSAKeyLoading(t *testing.T) {
 				Expiry:         15 * time.Minute,
 			},
 		}
-		svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&mockConfigProvider{}, gas.NewNopLogger()())
+		svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, gas.NewNopLogger()())
 		err := svc.Init()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "decode PEM")
