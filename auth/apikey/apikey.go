@@ -242,23 +242,14 @@ func (s *Service) Generate(
 
 	id := uuid.New().String()
 
-	if scopes == nil {
-		scopes = []string{}
+	scopes, err = s.normalizeScopes(scopes)
+	if err != nil {
+		return "", nil, err
 	}
 
-	for _, scope := range scopes {
-		if strings.Contains(scope, ",") {
-			return "", nil, fmt.Errorf("%s: scope %q must not contain commas", s.Name(), scope)
-		}
-	}
-
-	metadataJSON := []byte("{}")
-	if len(o.metadata) > 0 {
-		b, jsErr := json.Marshal(o.metadata)
-		if jsErr != nil {
-			return "", nil, fmt.Errorf("%s: marshal metadata: %w", s.Name(), jsErr)
-		}
-		metadataJSON = b
+	metadataJSON, err := s.marshalMetadata(o.metadata)
+	if err != nil {
+		return "", nil, err
 	}
 
 	createdAt := time.Now()
@@ -290,6 +281,32 @@ func (s *Service) Generate(
 		ExpiresAt: o.expiresAt,
 		CreatedAt: createdAt,
 	}, nil
+}
+
+// normalizeScopes returns scopes with nil replaced by an empty slice, and
+// rejects any scope containing a comma.
+func (s *Service) normalizeScopes(scopes []string) ([]string, error) {
+	if scopes == nil {
+		return []string{}, nil
+	}
+	for _, scope := range scopes {
+		if strings.Contains(scope, ",") {
+			return nil, fmt.Errorf("%s: scope %q must not contain commas", s.Name(), scope)
+		}
+	}
+	return scopes, nil
+}
+
+// marshalMetadata encodes metadata as JSON, returning "{}" when it is empty.
+func (s *Service) marshalMetadata(metadata map[string]any) ([]byte, error) {
+	if len(metadata) == 0 {
+		return []byte("{}"), nil
+	}
+	b, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, fmt.Errorf("%s: marshal metadata: %w", s.Name(), err)
+	}
+	return b, nil
 }
 
 // ListOption customizes a call to Service.List.

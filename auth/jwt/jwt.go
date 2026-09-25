@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -103,6 +104,21 @@ func (s *Service) Init() error {
 		return fmt.Errorf("%s: %w", s.Name(), err)
 	}
 
+	if err := s.initKeys(); err != nil {
+		return err
+	}
+
+	if s.signingKey == nil {
+		return errors.New("jwt: signing key not configured")
+	}
+
+	s.logger.Info("service initialized").Send()
+	return nil
+}
+
+// initKeys sets the signing method and loads the signing and verification
+// keys for the configured algorithm.
+func (s *Service) initKeys() error {
 	switch s.cfg.JWT.SigningMethod {
 	case "HS256":
 		s.signingMethod = jwt.SigningMethodHS256
@@ -125,12 +141,6 @@ func (s *Service) Init() error {
 			s.signingKey = privKey
 		}
 	}
-
-	if s.signingKey == nil {
-		return errors.New("jwt: signing key not configured")
-	}
-
-	s.logger.Info("service initialized").Send()
 	return nil
 }
 
@@ -139,7 +149,7 @@ func (s *Service) Close() error { return nil }
 
 // Authenticate reads a Bearer token from the Authorization header, verifies
 // it, and returns a principal with scheme "jwt".
-func (s *Service) Authenticate(ctx context.Context, r *http.Request) (gas.Principal, error) {
+func (s *Service) Authenticate(_ context.Context, r *http.Request) (gas.Principal, error) {
 	header := r.Header.Get("Authorization")
 	if header == "" {
 		return nil, auth.ErrUnauthenticated
@@ -245,12 +255,24 @@ func extractClaims(mapClaims jwt.MapClaims) *TokenClaims {
 		CustomClaims: make(map[string]any),
 	}
 
-	// Extract standard claims.
+	extractStandardClaims(mapClaims, tc)
+
+	// Remaining claims go into CustomClaims.
 	standardKeys := map[string]bool{
 		"sub": true, "jti": true, "iss": true, "aud": true,
 		"exp": true, "iat": true, "nbf": true,
 	}
+	for k, v := range mapClaims {
+		if !standardKeys[k] {
+			tc.CustomClaims[k] = v
+		}
+	}
 
+	return tc
+}
+
+// extractStandardClaims copies the registered claims from mapClaims into tc.
+func extractStandardClaims(mapClaims jwt.MapClaims, tc *TokenClaims) {
 	if sub, _ := mapClaims["sub"].(string); sub != "" {
 		tc.Subject = sub
 	}
@@ -270,19 +292,10 @@ func extractClaims(mapClaims jwt.MapClaims) *TokenClaims {
 	if aud, err := mapClaims.GetAudience(); err == nil {
 		tc.Audience = aud
 	}
-
-	// Remaining claims go into CustomClaims.
-	for k, v := range mapClaims {
-		if !standardKeys[k] {
-			tc.CustomClaims[k] = v
-		}
-	}
-
-	return tc
 }
 
 func loadRSAPublicKey(path string) (*rsa.PublicKey, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return nil, fmt.Errorf("jwt: read public key: %w", err)
 	}
@@ -306,7 +319,7 @@ func loadRSAPublicKey(path string) (*rsa.PublicKey, error) {
 }
 
 func loadRSAPrivateKey(path string) (*rsa.PrivateKey, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return nil, fmt.Errorf("jwt: read private key: %w", err)
 	}

@@ -24,7 +24,7 @@ import (
 // Helpers
 // ---------------------------------------------------------------------------
 
-func setupAPIKeyService(t *testing.T, opts ...apikey.Option) *apikey.Service {
+func setupAPIKeyService(t *testing.T) *apikey.Service {
 	t.Helper()
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -34,8 +34,7 @@ func setupAPIKeyService(t *testing.T, opts ...apikey.Option) *apikey.Service {
 	migMgr := pg.MigrationManager()
 
 	cfg := apikey.DefaultConfig()
-	allOpts := append([]apikey.Option{apikey.WithConfig(cfg)}, opts...)
-	svc := apikey.New(allOpts...)(pg.Provider(), logger, migMgr, nil)
+	svc := apikey.New(apikey.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
 
 	require.NoError(t, svc.Init())
 	require.NoError(t, migMgr.RunPending())

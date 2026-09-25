@@ -46,8 +46,16 @@ func TestSQLiteTimeParsing_MalformedTimestamp(t *testing.T) {
 	require.NoError(t, err)
 
 	// This session should authenticate successfully.
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.AddCookie(&http.Cookie{Name: "session_id", Value: "valid-sess"})
+	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+	req.AddCookie(
+		&http.Cookie{
+			Name:     "session_id",
+			Value:    "valid-sess",
+			Secure:   true,
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+		},
+	)
 	principal, err := svc.Authenticate(context.Background(), req)
 	require.NoError(t, err)
 	assert.Equal(t, "user-1", principal.Subject())
@@ -72,8 +80,16 @@ func TestSQLiteTimeParsing_MalformedTimestamp(t *testing.T) {
 
 	// This session has a future expiry but parseSQLiteTime will return zero time
 	// because RFC3339 doesn't match "2006-01-02 15:04:05".
-	req2 := httptest.NewRequest(http.MethodGet, "/", nil)
-	req2.AddCookie(&http.Cookie{Name: "session_id", Value: "bad-sess"})
+	req2 := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+	req2.AddCookie(
+		&http.Cookie{
+			Name:     "session_id",
+			Value:    "bad-sess",
+			Secure:   true,
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+		},
+	)
 	_, err = svc.Authenticate(context.Background(), req2)
 
 	// The session should be valid (expires 24h from now), but because parseSQLiteTime
@@ -110,8 +126,16 @@ func TestSQLiteTimeParsing_TruncatedTimestamp(t *testing.T) {
 		"trunc-sess", "user-3", "{}", "127.0.0.1", "test", validCreated, "2099-01-01", validCreated)
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.AddCookie(&http.Cookie{Name: "session_id", Value: "trunc-sess"})
+	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+	req.AddCookie(
+		&http.Cookie{
+			Name:     "session_id",
+			Value:    "trunc-sess",
+			Secure:   true,
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+		},
+	)
 	_, err = svc.Authenticate(context.Background(), req)
 
 	// "2099-01-01" doesn't parse with "2006-01-02 15:04:05" layout, so parseSQLiteTime
@@ -180,7 +204,7 @@ func TestSessionStoresArbitrarilyLongUserAgent(t *testing.T) {
 	for i := range longUA {
 		longUA[i] = 'A'
 	}
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 	req.Header.Set("User-Agent", string(longUA))
 
 	sess, err := svc.Create(context.Background(), "user-ua", gas.BasePrincipalMetadata{}, req)
@@ -234,7 +258,7 @@ func TestSessionNoRotationAPI(t *testing.T) {
 	}
 	svc := setupSessionService(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 	sess, err := svc.Create(
 		context.Background(),
 		"user-rotate",
@@ -258,14 +282,26 @@ func TestSessionNoRotationAPI(t *testing.T) {
 	require.NoError(t, err)
 
 	// The old session should be invalid.
-	authReq := httptest.NewRequest(http.MethodGet, "/", nil)
-	authReq.AddCookie(&http.Cookie{Name: "session_id", Value: sess.ID})
+	authReq := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+	authReq.AddCookie(&http.Cookie{
+		Name: "session_id", Value: sess.ID, Secure: true,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
 	_, err = svc.Authenticate(context.Background(), authReq)
 	assert.Error(t, err, "old session should be revoked")
 
 	// The new session should work.
-	authReq2 := httptest.NewRequest(http.MethodGet, "/", nil)
-	authReq2.AddCookie(&http.Cookie{Name: "session_id", Value: newSess.ID})
+	authReq2 := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+	authReq2.AddCookie(
+		&http.Cookie{
+			Name:     "session_id",
+			Value:    newSess.ID,
+			Secure:   true,
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+		},
+	)
 	p, err := svc.Authenticate(context.Background(), authReq2)
 	require.NoError(t, err)
 	assert.Equal(t, "admin", p.Metadata().Value("role"))

@@ -37,13 +37,13 @@ func TestBasePrincipal(t *testing.T) {
 	t.Run("unicode emoji and null-byte round-trip correctly", func(t *testing.T) {
 		subject := "user-\U0001F600-\x00-end"
 		scheme := "\U0001F525fire\U0001F525"
-		credentialID := "cred\x00with\x00nulls"
+		cid := "cred\x00with\x00nulls"
 
-		p := auth.NewPrincipal(subject, scheme, credentialID, nil)
+		p := auth.NewPrincipal(subject, scheme, cid, nil)
 
 		assert.Equal(t, subject, p.Subject())
 		assert.Equal(t, scheme, p.Scheme())
-		assert.Equal(t, credentialID, p.CredentialID())
+		assert.Equal(t, cid, p.CredentialID())
 	})
 
 	t.Run("metadata mutation after construction is visible through principal", func(t *testing.T) {

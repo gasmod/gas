@@ -19,7 +19,7 @@ import (
 // Helpers
 // ---------------------------------------------------------------------------
 
-func setupTokenService(t *testing.T, opts ...token.Option) *token.Service {
+func setupTokenService(t *testing.T) *token.Service {
 	t.Helper()
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -31,8 +31,7 @@ func setupTokenService(t *testing.T, opts ...token.Option) *token.Service {
 	cfg := token.DefaultConfig()
 	cfg.Token.CleanupInterval = 0 // disable background cleanup by default
 
-	allOpts := append([]token.Option{token.WithConfig(cfg)}, opts...)
-	svc := token.New(allOpts...)(pg.Provider(), logger, migMgr, nil)
+	svc := token.New(token.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
 
 	require.NoError(t, svc.Init())
 	require.NoError(t, migMgr.RunPending())

@@ -341,10 +341,10 @@ func TestSignVerifyHS256(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestAlgorithmConfusion(t *testing.T) {
-	const secret = "hmac-secret-key-for-testing-32b!"
+	const k = "hmac-secret-key-for-testing-32b!"
 
 	t.Run("token with alg none is rejected", func(t *testing.T) {
-		svc := newHS256Service(t, secret)
+		svc := newHS256Service(t, k)
 
 		// Craft a token with alg "none".
 		token := gojwt.NewWithClaims(gojwt.SigningMethodNone, gojwt.MapClaims{
@@ -359,7 +359,7 @@ func TestAlgorithmConfusion(t *testing.T) {
 	})
 
 	t.Run("HS256 token verified with different key is rejected", func(t *testing.T) {
-		svc := newHS256Service(t, secret)
+		svc := newHS256Service(t, k)
 
 		// Sign with a different key using the raw library.
 		otherKey := []byte("other-secret")
@@ -393,10 +393,10 @@ func TestAlgorithmConfusion(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestIssuerAudience(t *testing.T) {
-	const secret = "iss-aud-secret-for-testing-32b!!"
+	const k = "iss-aud-secret-for-testing-32b!!"
 
 	t.Run("sign with issuer configured includes iss claim", func(t *testing.T) {
-		svc := newHS256Service(t, secret, func(cfg *jwtpkg.Config) {
+		svc := newHS256Service(t, k, func(cfg *jwtpkg.Config) {
 			cfg.JWT.Issuer = "my-app"
 		})
 
@@ -409,10 +409,10 @@ func TestIssuerAudience(t *testing.T) {
 	})
 
 	t.Run("verify with issuer mismatch rejects", func(t *testing.T) {
-		signer := newHS256Service(t, secret, func(cfg *jwtpkg.Config) {
+		signer := newHS256Service(t, k, func(cfg *jwtpkg.Config) {
 			cfg.JWT.Issuer = "app-A"
 		})
-		verifier := newHS256Service(t, secret, func(cfg *jwtpkg.Config) {
+		verifier := newHS256Service(t, k, func(cfg *jwtpkg.Config) {
 			cfg.JWT.Issuer = "app-B"
 		})
 
@@ -424,7 +424,7 @@ func TestIssuerAudience(t *testing.T) {
 	})
 
 	t.Run("sign with audience configured includes aud claim", func(t *testing.T) {
-		svc := newHS256Service(t, secret, func(cfg *jwtpkg.Config) {
+		svc := newHS256Service(t, k, func(cfg *jwtpkg.Config) {
 			cfg.JWT.Audience = "my-api"
 		})
 
@@ -438,10 +438,10 @@ func TestIssuerAudience(t *testing.T) {
 	})
 
 	t.Run("verify with audience mismatch rejects", func(t *testing.T) {
-		signer := newHS256Service(t, secret, func(cfg *jwtpkg.Config) {
+		signer := newHS256Service(t, k, func(cfg *jwtpkg.Config) {
 			cfg.JWT.Audience = "api-A"
 		})
-		verifier := newHS256Service(t, secret, func(cfg *jwtpkg.Config) {
+		verifier := newHS256Service(t, k, func(cfg *jwtpkg.Config) {
 			cfg.JWT.Audience = "api-B"
 		})
 
@@ -458,6 +458,7 @@ func TestIssuerAudience(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestAuthenticate(t *testing.T) {
+	//nolint:gosec // test-only HMAC key
 	const secret = "auth-secret-key-for-testing-32b!"
 	svc := newHS256Service(t, secret)
 

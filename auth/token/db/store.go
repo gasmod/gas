@@ -1,3 +1,5 @@
+// Package db provides the database-backed single-use token store with
+// PostgreSQL, MySQL, and SQLite adapters over sqlc-generated queries.
 package db
 
 import (

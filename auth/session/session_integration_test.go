@@ -24,7 +24,7 @@ import (
 // Helpers
 // ---------------------------------------------------------------------------
 
-func setupSessionService(t *testing.T, opts ...session.Option) *session.Service {
+func setupSessionService(t *testing.T) *session.Service {
 	t.Helper()
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -37,8 +37,7 @@ func setupSessionService(t *testing.T, opts ...session.Option) *session.Service 
 	cfg.Session.CleanupInterval = 0  // disable background cleanup by default
 	cfg.Session.CookieSecure = false // tests run without TLS
 
-	allOpts := append([]session.Option{session.WithConfig(cfg)}, opts...)
-	svc := session.New(allOpts...)(pg.Provider(), logger, migMgr, nil)
+	svc := session.New(session.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
 
 	require.NoError(t, svc.Init())
 	require.NoError(t, migMgr.RunPending())
@@ -82,7 +81,15 @@ func createSession(t *testing.T, svc *session.Service, subject string) *session.
 
 func authenticateWithCookie(svc *session.Service, sessionID string) (gas.Principal, error) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.AddCookie(&http.Cookie{Name: "session_id", Value: sessionID})
+	req.AddCookie(
+		&http.Cookie{
+			Name:     "session_id",
+			Value:    sessionID,
+			Secure:   true,
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+		},
+	)
 	return svc.Authenticate(context.Background(), req)
 }
 
@@ -119,7 +126,15 @@ func TestSessionAuthenticateEmptyCookie(t *testing.T) {
 	svc := setupSessionService(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.AddCookie(&http.Cookie{Name: "session_id", Value: ""})
+	req.AddCookie(
+		&http.Cookie{
+			Name:     "session_id",
+			Value:    "",
+			Secure:   true,
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+		},
+	)
 	_, err := svc.Authenticate(context.Background(), req)
 	assert.ErrorIs(t, err, auth.ErrUnauthenticated)
 }
