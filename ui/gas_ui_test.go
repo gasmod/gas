@@ -25,8 +25,8 @@ import (
 
 // testProvider is a minimal gas.TemplateProvider backed by an in-memory map.
 type testProvider struct {
-	mu        sync.RWMutex
 	templates map[string][]byte
+	mu        sync.RWMutex
 }
 
 var _ gas.TemplateProvider = (*testProvider)(nil)
@@ -300,7 +300,7 @@ func TestEngine_DevModeRebuilds(t *testing.T) {
 	}
 
 	// Update the template via the provider.
-	_ = tp.Register(nil, "page.html", []byte("<p>v2</p>"))
+	_ = tp.Register(context.TODO(), "page.html", []byte("<p>v2</p>"))
 
 	// Render again — dev mode should pick up the change.
 	w = httptest.NewRecorder()
@@ -380,38 +380,13 @@ func TestFuncMap_Dict(t *testing.T) {
 	}
 }
 
-func TestFuncMap_Safe(t *testing.T) {
-	tp := newTestProvider(map[string]string{
-		"test.html": `{{safe "<b>bold</b>"}}`,
-	})
-
-	e := ui.NewEngine(
-		tp,
-		ui.DefaultFuncMap(gasenv.Development),
-		"base",
-		false,
-		gas.NewNopLogger()(),
-	)
-	if err := e.Build(); err != nil {
-		t.Fatal(err)
-	}
-
-	w := httptest.NewRecorder()
-	if err := e.Render(w, "test", nil); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(w.Body.String(), "<b>bold</b>") {
-		t.Fatalf("safe func should not escape HTML: %s", w.Body.String())
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Static handler
 // ---------------------------------------------------------------------------
 
 func TestStaticHandler(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "style.css"), []byte("body{}"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "style.css"), []byte("body{}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -432,7 +407,7 @@ func TestStaticHandler(t *testing.T) {
 func TestStaticHandler_DirectoryListingBlocked(t *testing.T) {
 	dir := t.TempDir()
 	sub := filepath.Join(dir, "sub")
-	if err := os.MkdirAll(sub, 0o755); err != nil {
+	if err := os.MkdirAll(sub, 0o750); err != nil {
 		t.Fatal(err)
 	}
 

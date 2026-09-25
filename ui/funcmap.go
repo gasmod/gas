@@ -3,25 +3,26 @@ package ui
 import (
 	"encoding/json"
 	"html/template"
+	"maps"
 	"strings"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
-
-	env "github.com/gasmod/gas/config/extensions/gasenv"
+	"github.com/gasmod/gas/config/extensions/gasenv"
 )
 
-var uiBuildID = uuid.NewString()
+var uiBuildID = uuid.New().String()
 
-// DefaultFuncMap returns the template functions available in every template.
-func DefaultFuncMap(e env.Environment) template.FuncMap {
+func merge(funcMaps ...template.FuncMap) template.FuncMap {
+	res := make(template.FuncMap)
+	for _, m := range funcMaps {
+		maps.Copy(res, m)
+	}
+	return res
+}
+
+func strFns() template.FuncMap {
 	return template.FuncMap{
-		// Markup safety — use when you trust the source.
-		"safe":     func(s string) template.HTML { return template.HTML(s) },         //nolint:gosec // intentional
-		"safeAttr": func(s string) template.HTMLAttr { return template.HTMLAttr(s) }, //nolint:gosec // intentional
-		"safeURL":  func(s string) template.URL { return template.URL(s) },           //nolint:gosec // intentional
-
-		// Strings.
 		"upper":     strings.ToUpper,
 		"lower":     strings.ToLower,
 		"title":     strings.ToTitle,
@@ -32,15 +33,17 @@ func DefaultFuncMap(e env.Environment) template.FuncMap {
 		"replace":   strings.ReplaceAll,
 		"join":      strings.Join,
 		"split":     strings.Split,
-
 		"truncate": func(n int, s string) string {
 			if len(s) <= n {
 				return s
 			}
 			return s[:n] + "..."
 		},
+	}
+}
 
-		// Time.
+func timeFns() template.FuncMap {
+	return template.FuncMap{
 		"now": time.Now,
 		"formatTime": func(layout string, t time.Time) string {
 			return t.Format(layout)
@@ -51,12 +54,18 @@ func DefaultFuncMap(e env.Environment) template.FuncMap {
 			}
 			return t.Format(layout)
 		},
+	}
+}
 
-		// Arithmetic.
+func mathFns() template.FuncMap {
+	return template.FuncMap{
 		"add": func(a, b int) int { return a + b },
 		"sub": func(a, b int) int { return a - b },
+	}
+}
 
-		// Collections — extremely useful for passing data to partials.
+func collFns() template.FuncMap {
+	return template.FuncMap{
 		"dict": func(pairs ...any) map[string]any {
 			m := make(map[string]any, len(pairs)/2)
 			for i := 0; i+1 < len(pairs); i += 2 {
@@ -67,8 +76,11 @@ func DefaultFuncMap(e env.Environment) template.FuncMap {
 			return m
 		},
 		"list": func(items ...any) []any { return items },
+	}
+}
 
-		// Serialization.
+func jsonFns() template.FuncMap {
+	return template.FuncMap{
 		"json": func(val any) json.RawMessage {
 			data, err := json.Marshal(val)
 			if err != nil {
@@ -76,12 +88,31 @@ func DefaultFuncMap(e env.Environment) template.FuncMap {
 			}
 			return data
 		},
+	}
+}
 
+func buildFns(env gasenv.Environment) template.FuncMap {
+	return template.FuncMap{
+		"env": func() gasenv.Environment {
+			return env
+		},
 		"buildId": func() string {
-			if e.IsDevelopmentLike() {
-				return "dev-" + uuid.NewString()
+			if env.IsDevelopmentLike() {
+				return "dev-" + uuid.New().String()
 			}
 			return uiBuildID
 		},
 	}
+}
+
+// DefaultFuncMap returns the template functions available in every template.
+func DefaultFuncMap(env gasenv.Environment) template.FuncMap {
+	return merge(
+		strFns(),
+		timeFns(),
+		mathFns(),
+		collFns(),
+		jsonFns(),
+		buildFns(env),
+	)
 }

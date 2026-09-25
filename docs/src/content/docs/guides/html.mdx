@@ -75,10 +75,9 @@ what an HTMX swap wants. Same template, two entry points:
 
 ## Template functions
 
-Built in: `safe`, `safeAttr`, `safeURL`, `upper`, `lower`, `title`, `trimSpace`,
-`contains`, `hasPrefix`, `hasSuffix`, `replace`, `join`, `split`, `truncate`,
-`now`, `formatTime`, `formatTimePtr`, `add`, `sub`, `dict`, `list`, `json`, and
-`buildId`.
+Built in: `upper`, `lower`, `title`, `trimSpace`, `contains`, `hasPrefix`,
+`hasSuffix`, `replace`, `join`, `split`, `truncate`, `now`, `formatTime`,
+`formatTimePtr`, `add`, `sub`, `dict`, `list`, `json`, `env`, and `buildId`.
 
 `dict` is the one you will use most, since it is how a partial gets arbitrary
 data: `{{template "user-card" dict "Name" .UserName "Role" "admin"}}`.
