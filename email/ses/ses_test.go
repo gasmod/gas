@@ -9,7 +9,7 @@ import (
 	awsses "github.com/aws/aws-sdk-go-v2/service/ses"
 
 	"github.com/gasmod/gas"
-	email "github.com/gasmod/gas/email"
+	"github.com/gasmod/gas/email"
 )
 
 // --- mock SES client ---
@@ -60,9 +60,6 @@ func validConfig() *Config {
 
 func newTestService(t *testing.T, mock *mockSESClient, tmpl gas.TemplateProvider) *Service {
 	t.Helper()
-	if tmpl == nil {
-		tmpl = &mockTemplateProvider{}
-	}
 	ctor := New(WithConfig(validConfig()), WithClient(mock))
 	svc := ctor(tmpl, nil, gas.NewNopLogger()())
 	if err := svc.Init(); err != nil {
@@ -89,12 +86,20 @@ func TestConfigValidate(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
 		modify  func(*Config)
+		name    string
 		wantErr bool
 	}{
-		{name: "valid", modify: func(_ *Config) {}, wantErr: false},
-		{name: "empty region", modify: func(c *Config) { c.Email.Region = "" }, wantErr: true},
+		{
+			name:    "valid",
+			modify:  func(_ *Config) {},
+			wantErr: false,
+		},
+		{
+			name:    "empty region",
+			modify:  func(c *Config) { c.Email.Region = "" },
+			wantErr: true,
+		},
 		{
 			name:    "empty from email",
 			modify:  func(c *Config) { c.Email.FromEmail = "" },
@@ -138,7 +143,7 @@ func TestInitWithInvalidConfig(t *testing.T) {
 
 func TestClientReturnsNilForMock(t *testing.T) {
 	t.Parallel()
-	svc := newTestService(t, &mockSESClient{}, nil)
+	svc := newTestService(t, &mockSESClient{}, &mockTemplateProvider{})
 	if svc.Client() != nil {
 		t.Error("Client() should return nil for mock sesClient")
 	}
@@ -271,7 +276,7 @@ func TestSendWithCcBcc(t *testing.T) {
 
 func TestSendClosed(t *testing.T) {
 	t.Parallel()
-	svc := newTestService(t, &mockSESClient{}, nil)
+	svc := newTestService(t, &mockSESClient{}, &mockTemplateProvider{})
 	_ = svc.Close()
 
 	err := svc.Send(context.Background(), &gas.Email{To: []string{"x@x.com"}})
@@ -345,9 +350,7 @@ func TestSendFromTemplate(t *testing.T) {
 		HTMLTemplate:    "welcome-html",
 		TextTemplate:    "welcome-text",
 		Data:            map[string]string{"Name": "Alice"},
-		Email: gas.Email{
-			To: []string{"alice@example.com"},
-		},
+		To:              []string{"alice@example.com"},
 	})
 	if err != nil {
 		t.Fatalf("SendFromTemplate() error = %v", err)
@@ -395,11 +398,9 @@ func TestSendFromTemplatePartial(t *testing.T) {
 	// Only HTMLTemplate set; subject and text provided directly
 	err := svc.SendFromTemplate(context.Background(), &gas.TemplatedEmail{
 		HTMLTemplate: "body-html",
-		Email: gas.Email{
-			To:       []string{"user@example.com"},
-			Subject:  "Static Subject",
-			TextBody: "Static text",
-		},
+		To:           []string{"user@example.com"},
+		Subject:      "Static Subject",
+		TextBody:     "Static text",
 	})
 	if err != nil {
 		t.Fatalf("SendFromTemplate() error = %v", err)
@@ -418,12 +419,12 @@ func TestSendFromTemplatePartial(t *testing.T) {
 
 func TestSendFromTemplateClosed(t *testing.T) {
 	t.Parallel()
-	svc := newTestService(t, &mockSESClient{}, nil)
+	svc := newTestService(t, &mockSESClient{}, &mockTemplateProvider{})
 	_ = svc.Close()
 
 	err := svc.SendFromTemplate(context.Background(), &gas.TemplatedEmail{
 		HTMLTemplate: "test",
-		Email:        gas.Email{To: []string{"x@x.com"}},
+		To:           []string{"x@x.com"},
 	})
 	if !errors.Is(err, email.ErrClosed) {
 		t.Errorf("got %v, want ErrClosed", err)
@@ -449,7 +450,7 @@ func TestSendFromTemplateGetError(t *testing.T) {
 
 	err := svc.SendFromTemplate(context.Background(), &gas.TemplatedEmail{
 		HTMLTemplate: "missing",
-		Email:        gas.Email{To: []string{"x@x.com"}},
+		To:           []string{"x@x.com"},
 	})
 	if err == nil {
 		t.Error("SendFromTemplate() should fail when template Get fails")
@@ -475,7 +476,7 @@ func TestSendFromTemplateParseError(t *testing.T) {
 
 	err := svc.SendFromTemplate(context.Background(), &gas.TemplatedEmail{
 		HTMLTemplate: "bad",
-		Email:        gas.Email{To: []string{"x@x.com"}},
+		To:           []string{"x@x.com"},
 	})
 	if err == nil {
 		t.Error("SendFromTemplate() should fail on template parse error")
@@ -486,7 +487,7 @@ func TestSendFromTemplateParseError(t *testing.T) {
 
 func TestCheckReady(t *testing.T) {
 	t.Parallel()
-	svc := newTestService(t, &mockSESClient{}, nil)
+	svc := newTestService(t, &mockSESClient{}, &mockTemplateProvider{})
 
 	if err := svc.CheckReady(context.Background()); err != nil {
 		t.Errorf("CheckReady() before close = %v, want nil", err)
