@@ -150,7 +150,7 @@ func (s *Service) CheckReady(ctx context.Context) error {
 		return storage.ErrClosed
 	}
 	if s.client == nil {
-		return fmt.Errorf("%s: not initialized", s.Name())
+		return fmt.Errorf("%s: %w", s.Name(), storage.ErrNotInitialized)
 	}
 	bucket := s.cfg.Storage.Bucket
 	if bucket == "" {

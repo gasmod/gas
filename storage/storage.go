@@ -2,8 +2,10 @@ package storage
 
 import "errors"
 
-// Sentinel errors returned by StorageProvider implementations.
 var (
+	// ErrNotInitialized is returned when a storage operation is attempted before the storage service is initialized.
+	ErrNotInitialized = errors.New("storage: not initialized")
+
 	// ErrKeyNotFound is returned by Download or Head when the
 	// requested key does not exist.
 	ErrKeyNotFound = errors.New("storage: key not found")
