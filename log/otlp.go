@@ -3,6 +3,7 @@ package log
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"strconv"
 	"time"
@@ -85,7 +86,11 @@ func (m *OTLPMarshaler) Marshal(records []Record) ([]byte, error) {
 			LogRecords: logRecords,
 		}},
 	}}}
-	return json.Marshal(req)
+	js, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal OTLP logs request: %w", err)
+	}
+	return js, nil
 }
 
 func toOTLPRecord(r Record) otlpLogRecord {
@@ -96,7 +101,7 @@ func toOTLPRecord(r Record) otlpLogRecord {
 	return otlpLogRecord{
 		TimeUnixNano:   strconv.FormatInt(r.Time.UnixNano(), 10),
 		SeverityText:   r.Level.String(),
-		Body:           &otlpAnyValue{StringValue: strPtr(r.Message)},
+		Body:           &otlpAnyValue{StringValue: new(r.Message)},
 		Attributes:     attrs,
 		SeverityNumber: severityNumber(r.Level),
 	}
@@ -117,30 +122,30 @@ func severityNumber(level slog.Level) int {
 }
 
 // anyValue converts an slog value into an OTLP AnyValue.
+//
+//nolint:cyclop // intentionally complex
 func anyValue(v slog.Value) *otlpAnyValue {
 	switch v.Kind() {
 	case slog.KindString:
-		return &otlpAnyValue{StringValue: strPtr(v.String())}
+		return &otlpAnyValue{StringValue: new(v.String())}
 	case slog.KindInt64:
-		return &otlpAnyValue{IntValue: strPtr(strconv.FormatInt(v.Int64(), 10))}
+		return &otlpAnyValue{IntValue: new(strconv.FormatInt(v.Int64(), 10))}
 	case slog.KindUint64:
-		return &otlpAnyValue{IntValue: strPtr(strconv.FormatUint(v.Uint64(), 10))}
+		return &otlpAnyValue{IntValue: new(strconv.FormatUint(v.Uint64(), 10))}
 	case slog.KindFloat64:
-		f := v.Float64()
-		return &otlpAnyValue{DoubleValue: &f}
+		return &otlpAnyValue{DoubleValue: new(v.Float64())}
 	case slog.KindBool:
-		b := v.Bool()
-		return &otlpAnyValue{BoolValue: &b}
+		return &otlpAnyValue{BoolValue: new(v.Bool())}
 	case slog.KindDuration:
-		return &otlpAnyValue{StringValue: strPtr(v.Duration().String())}
+		return &otlpAnyValue{StringValue: new(v.Duration().String())}
 	case slog.KindTime:
-		return &otlpAnyValue{StringValue: strPtr(v.Time().Format(time.RFC3339Nano))}
+		return &otlpAnyValue{StringValue: new(v.Time().Format(time.RFC3339Nano))}
 	case slog.KindGroup:
 		return &otlpAnyValue{KvlistValue: &otlpKvList{Values: kvList(v.Group())}}
 	case slog.KindLogValuer:
 		return anyValue(v.Resolve())
 	default:
-		return &otlpAnyValue{StringValue: strPtr(v.String())}
+		return &otlpAnyValue{StringValue: new(v.String())}
 	}
 }
 
@@ -153,10 +158,8 @@ func kvList(attrs []slog.Attr) []otlpKeyValue {
 }
 
 func stringKV(key, value string) otlpKeyValue {
-	return otlpKeyValue{Key: key, Value: &otlpAnyValue{StringValue: strPtr(value)}}
+	return otlpKeyValue{Key: key, Value: &otlpAnyValue{StringValue: new(value)}}
 }
-
-func strPtr(s string) *string { return &s }
 
 // OTLP/HTTP JSON wire structs (the subset we emit).
 

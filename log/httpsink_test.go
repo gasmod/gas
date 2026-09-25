@@ -13,8 +13,8 @@ import (
 
 // captureMarshaler records the batches it is asked to marshal.
 type captureMarshaler struct {
-	mu      sync.Mutex
 	batches [][]Record
+	mu      sync.Mutex
 }
 
 func (m *captureMarshaler) Marshal(records []Record) ([]byte, error) {

@@ -18,9 +18,9 @@ import (
 
 // recordingServer captures the request bodies and headers it receives.
 type recordingServer struct {
-	mu      sync.Mutex
-	bodies  [][]byte
 	headers []http.Header
+	bodies  [][]byte
+	mu      sync.Mutex
 }
 
 func (r *recordingServer) handler() http.HandlerFunc {
