@@ -61,8 +61,18 @@ func testGreetRoutes(t *testing.T, srv *httptest.Server) {
 	}{
 		{"index", "/", http.StatusOK, "Hello, world!"},
 		{"greet uses the default greeting", "/greet/ada", http.StatusOK, "Hello, ada!"},
-		{"greet honours the greeting query param", "/greet/ada?greeting=Howdy", http.StatusOK, "Howdy, ada!"},
-		{"unknown path hits the custom NotFound handler", "/nope", http.StatusNotFound, "nothing here"},
+		{
+			"greet honours the greeting query param",
+			"/greet/ada?greeting=Howdy",
+			http.StatusOK,
+			"Howdy, ada!",
+		},
+		{
+			"unknown path hits the custom NotFound handler",
+			"/nope",
+			http.StatusNotFound,
+			"nothing here",
+		},
 	}
 
 	for _, tt := range tests {
@@ -132,7 +142,10 @@ func testTransientRequestID(t *testing.T, srv *httptest.Server) {
 		t.Error("GET /json request_id is empty, want a generated ID")
 	}
 	if first["request_id"] == second["request_id"] {
-		t.Errorf("both requests got request_id %q, want a fresh ID per resolution", first["request_id"])
+		t.Errorf(
+			"both requests got request_id %q, want a fresh ID per resolution",
+			first["request_id"],
+		)
 	}
 }
 
@@ -255,7 +268,13 @@ func decodeJSONMap(t *testing.T, srv *httptest.Server, path string) map[string]s
 
 	resp, body := getRaw(t, srv, path)
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("GET %s status = %d, want %d (body %q)", path, resp.StatusCode, http.StatusOK, body)
+		t.Fatalf(
+			"GET %s status = %d, want %d (body %q)",
+			path,
+			resp.StatusCode,
+			http.StatusOK,
+			body,
+		)
 	}
 
 	out := map[string]string{}

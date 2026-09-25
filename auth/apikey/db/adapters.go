@@ -69,7 +69,11 @@ func (a *postgresAdapter) insertKey(ctx context.Context, p InsertKeyParams) erro
 	return nil
 }
 
-func (a *postgresAdapter) softDeleteKeyByID(ctx context.Context, id string, deletedAt time.Time) error {
+func (a *postgresAdapter) softDeleteKeyByID(
+	ctx context.Context,
+	id string,
+	deletedAt time.Time,
+) error {
 	err := a.q.SoftDeleteKeyByID(ctx, &pgdb.SoftDeleteKeyByIDParams{
 		ID:        id,
 		DeletedAt: sql.NullTime{Time: deletedAt, Valid: true},
@@ -80,7 +84,11 @@ func (a *postgresAdapter) softDeleteKeyByID(ctx context.Context, id string, dele
 	return nil
 }
 
-func (a *postgresAdapter) softDeleteKeysBySubject(ctx context.Context, subject string, deletedAt time.Time) error {
+func (a *postgresAdapter) softDeleteKeysBySubject(
+	ctx context.Context,
+	subject string,
+	deletedAt time.Time,
+) error {
 	err := a.q.SoftDeleteKeysBySubject(ctx, &pgdb.SoftDeleteKeysBySubjectParams{
 		Subject:   subject,
 		DeletedAt: sql.NullTime{Time: deletedAt, Valid: true},
@@ -115,7 +123,10 @@ func (a *postgresAdapter) listKeysBySubject(ctx context.Context, subject string)
 	return pgKeyRowsToList(rows), nil
 }
 
-func (a *postgresAdapter) listAllKeysBySubject(ctx context.Context, subject string) ([]keyRow, error) {
+func (a *postgresAdapter) listAllKeysBySubject(
+	ctx context.Context,
+	subject string,
+) ([]keyRow, error) {
 	rows, err := a.q.ListAllKeysBySubject(ctx, subject)
 	if err != nil {
 		return nil, fmt.Errorf("postgresAdapter: %w", err)
@@ -210,7 +221,11 @@ func (a *mysqlAdapter) insertKey(ctx context.Context, p InsertKeyParams) error {
 	return nil
 }
 
-func (a *mysqlAdapter) softDeleteKeyByID(ctx context.Context, id string, deletedAt time.Time) error {
+func (a *mysqlAdapter) softDeleteKeyByID(
+	ctx context.Context,
+	id string,
+	deletedAt time.Time,
+) error {
 	err := a.q.SoftDeleteKeyByID(ctx, &mydb.SoftDeleteKeyByIDParams{
 		ID:        id,
 		DeletedAt: sql.NullTime{Time: deletedAt, Valid: true},
@@ -221,7 +236,11 @@ func (a *mysqlAdapter) softDeleteKeyByID(ctx context.Context, id string, deleted
 	return nil
 }
 
-func (a *mysqlAdapter) softDeleteKeysBySubject(ctx context.Context, subject string, deletedAt time.Time) error {
+func (a *mysqlAdapter) softDeleteKeysBySubject(
+	ctx context.Context,
+	subject string,
+	deletedAt time.Time,
+) error {
 	err := a.q.SoftDeleteKeysBySubject(ctx, &mydb.SoftDeleteKeysBySubjectParams{
 		Subject:   subject,
 		DeletedAt: sql.NullTime{Time: deletedAt, Valid: true},
@@ -354,7 +373,11 @@ func (a *sqliteAdapter) insertKey(ctx context.Context, p InsertKeyParams) error 
 	return nil
 }
 
-func (a *sqliteAdapter) softDeleteKeyByID(ctx context.Context, id string, deletedAt time.Time) error {
+func (a *sqliteAdapter) softDeleteKeyByID(
+	ctx context.Context,
+	id string,
+	deletedAt time.Time,
+) error {
 	err := a.q.SoftDeleteKeyByID(ctx, &litedb.SoftDeleteKeyByIDParams{
 		ID:        id,
 		DeletedAt: new(formatSQLiteTime(deletedAt)),
@@ -365,7 +388,11 @@ func (a *sqliteAdapter) softDeleteKeyByID(ctx context.Context, id string, delete
 	return nil
 }
 
-func (a *sqliteAdapter) softDeleteKeysBySubject(ctx context.Context, subject string, deletedAt time.Time) error {
+func (a *sqliteAdapter) softDeleteKeysBySubject(
+	ctx context.Context,
+	subject string,
+	deletedAt time.Time,
+) error {
 	err := a.q.SoftDeleteKeysBySubject(ctx, &litedb.SoftDeleteKeysBySubjectParams{
 		Subject:   subject,
 		DeletedAt: new(formatSQLiteTime(deletedAt)),
@@ -400,7 +427,10 @@ func (a *sqliteAdapter) listKeysBySubject(ctx context.Context, subject string) (
 	return sqliteKeyRowsToList(rows)
 }
 
-func (a *sqliteAdapter) listAllKeysBySubject(ctx context.Context, subject string) ([]keyRow, error) {
+func (a *sqliteAdapter) listAllKeysBySubject(
+	ctx context.Context,
+	subject string,
+) ([]keyRow, error) {
 	rows, err := a.q.ListAllKeysBySubject(ctx, subject)
 	if err != nil {
 		return nil, fmt.Errorf("sqliteAdapter: %w", err)

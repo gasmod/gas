@@ -7,11 +7,10 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awssm "github.com/aws/aws-sdk-go-v2/service/secretsmanager"
-
-	"github.com/gasmod/gas/config/providers/secretsmanager"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/gasmod/gas/config/providers/secretsmanager"
 )
 
 // mockAPI serves canned secrets and records calls.
@@ -22,7 +21,11 @@ type mockAPI struct {
 	calls   []string
 }
 
-func (m *mockAPI) GetSecretValue(ctx context.Context, in *awssm.GetSecretValueInput, _ ...func(*awssm.Options)) (*awssm.GetSecretValueOutput, error) {
+func (m *mockAPI) GetSecretValue(
+	ctx context.Context,
+	in *awssm.GetSecretValueInput,
+	_ ...func(*awssm.Options),
+) (*awssm.GetSecretValueOutput, error) {
 	m.gotCtx = ctx
 	name := aws.ToString(in.SecretId)
 	m.calls = append(m.calls, name)

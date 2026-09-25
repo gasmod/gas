@@ -12,12 +12,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/gasmod/gas"
 	auth "github.com/gasmod/gas/auth"
 	"github.com/gasmod/gas/auth/apikey/db"
 	"github.com/gasmod/gas/auth/internal/cryptoutil"
-
-	"github.com/google/uuid"
 )
 
 const serviceName = "gas/auth/apikey"
@@ -38,10 +38,12 @@ type Service struct {
 	customConfigProvided bool
 }
 
-var _ gas.Service = (*Service)(nil)
-var _ gas.Authenticator = (*Service)(nil)
-var _ gas.PrincipalRevoker = (*Service)(nil)
-var _ Provider = (*Service)(nil)
+var (
+	_ gas.Service          = (*Service)(nil)
+	_ gas.Authenticator    = (*Service)(nil)
+	_ gas.PrincipalRevoker = (*Service)(nil)
+	_ Provider             = (*Service)(nil)
+)
 
 // Option configures a Service.
 type Option func(*Service)
@@ -55,7 +57,9 @@ func WithConfig(cfg *Config) Option {
 }
 
 // New captures options and returns a DI-injectable constructor.
-func New(opts ...Option) func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager, gas.ConfigProvider) *Service {
+func New(
+	opts ...Option,
+) func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager, gas.ConfigProvider) *Service {
 	return func(dbProv gas.DatabaseProvider, logger gas.Logger, migMgr gas.MigrationManager, cfgProvider gas.ConfigProvider) *Service {
 		s := &Service{
 			cfg:         DefaultConfig(),
@@ -216,7 +220,12 @@ func WithExpiresAt(t time.Time) GenerateOption {
 
 // Generate creates a new API key for the given subject, stores its hash in
 // the database, and returns the full key exactly once along with its record ID.
-func (s *Service) Generate(ctx context.Context, subject, name string, scopes []string, opts ...GenerateOption) (key string, info *KeyInfo, err error) {
+func (s *Service) Generate(
+	ctx context.Context,
+	subject, name string,
+	scopes []string,
+	opts ...GenerateOption,
+) (key string, info *KeyInfo, err error) {
 	var o generateOptions
 	for _, opt := range opts {
 		opt(&o)

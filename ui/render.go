@@ -43,7 +43,13 @@ type namedContent struct {
 }
 
 // NewEngine creates a template engine backed by a [gas.TemplateProvider].
-func NewEngine(provider gas.TemplateProvider, funcMap template.FuncMap, layout string, devMode bool, logger gas.Logger) *Engine {
+func NewEngine(
+	provider gas.TemplateProvider,
+	funcMap template.FuncMap,
+	layout string,
+	devMode bool,
+	logger gas.Logger,
+) *Engine {
 	if layout == "" {
 		layout = "base"
 	}

@@ -11,15 +11,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gasmod/gas"
-	storage "github.com/gasmod/gas/storage"
-	s3svc "github.com/gasmod/gas/storage/s3"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/wait"
-
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/wait"
+
+	"github.com/gasmod/gas"
+	storage "github.com/gasmod/gas/storage"
+	s3svc "github.com/gasmod/gas/storage/s3"
 )
 
 const testBucket = "test-bucket"
@@ -252,7 +252,12 @@ func TestIntegration_Head(t *testing.T) {
 
 	key := "head-file.txt"
 	data := []byte("head me")
-	if err := svc.Upload(ctx, key, bytes.NewReader(data), gas.WithContentType("text/plain")); err != nil {
+	if err := svc.Upload(
+		ctx,
+		key,
+		bytes.NewReader(data),
+		gas.WithContentType("text/plain"),
+	); err != nil {
 		t.Fatalf("Upload: %v", err)
 	}
 
@@ -597,7 +602,14 @@ func TestIntegration_ClosedService(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	if err := svc.Upload(ctx, "any", bytes.NewReader([]byte("v"))); !errors.Is(err, storage.ErrClosed) {
+	if err := svc.Upload(
+		ctx,
+		"any",
+		bytes.NewReader([]byte("v")),
+	); !errors.Is(
+		err,
+		storage.ErrClosed,
+	) {
 		t.Errorf("Upload after Close error = %v, want %v", err, storage.ErrClosed)
 	}
 	if _, err := svc.Download(ctx, "any"); !errors.Is(err, storage.ErrClosed) {
@@ -606,7 +618,14 @@ func TestIntegration_ClosedService(t *testing.T) {
 	if err := svc.Delete(ctx, "any"); !errors.Is(err, storage.ErrClosed) {
 		t.Errorf("Delete after Close error = %v, want %v", err, storage.ErrClosed)
 	}
-	if _, err := svc.PresignDownloadURL(ctx, "any", time.Minute); !errors.Is(err, storage.ErrClosed) {
+	if _, err := svc.PresignDownloadURL(
+		ctx,
+		"any",
+		time.Minute,
+	); !errors.Is(
+		err,
+		storage.ErrClosed,
+	) {
 		t.Errorf("PresignDownloadURL after Close error = %v, want %v", err, storage.ErrClosed)
 	}
 	if _, err := svc.PresignUploadURL(ctx, "any", time.Minute); !errors.Is(err, storage.ErrClosed) {

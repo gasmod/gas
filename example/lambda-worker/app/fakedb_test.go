@@ -72,7 +72,11 @@ type fakeConn struct {
 	connector *fakeConnector
 }
 
-func (c *fakeConn) ExecContext(_ context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+func (c *fakeConn) ExecContext(
+	_ context.Context,
+	query string,
+	args []driver.NamedValue,
+) (driver.Result, error) {
 	if err := c.connector.record(query, args); err != nil {
 		return nil, err
 	}

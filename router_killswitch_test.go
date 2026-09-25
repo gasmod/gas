@@ -78,7 +78,13 @@ func TestKillSwitchDisablesMiddlewareOnSubRouterRoute(t *testing.T) {
 	router := gas.NewRouter()
 	router.Register(auth, "require-auth", ksPassthrough)
 	router.Group(func(sub *gas.Router) {
-		sub.Handle(billing, http.MethodGet, "/invoices", ksHandler, gas.MiddlewareByName("require-auth"))
+		sub.Handle(
+			billing,
+			http.MethodGet,
+			"/invoices",
+			ksHandler,
+			gas.MiddlewareByName("require-auth"),
+		)
 	})
 	router.Seal()
 
@@ -111,7 +117,13 @@ func TestKillSwitchDisablesMiddlewareOnTopLevelRoute(t *testing.T) {
 			next.ServeHTTP(w, r)
 		})
 	})
-	router.Handle(billing, http.MethodGet, "/invoices", ksHandler, gas.MiddlewareByName("require-auth"))
+	router.Handle(
+		billing,
+		http.MethodGet,
+		"/invoices",
+		ksHandler,
+		gas.MiddlewareByName("require-auth"),
+	)
 	router.Seal()
 
 	if got := ksStatus(t, router, "/invoices"); got != http.StatusOK || ran != 1 {

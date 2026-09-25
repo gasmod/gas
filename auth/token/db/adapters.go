@@ -22,7 +22,11 @@ func newPostgresAdapter(q *pgdb.Queries) *postgresAdapter {
 	return &postgresAdapter{q: q}
 }
 
-func (a *postgresAdapter) insertToken(ctx context.Context, id, subject, tokenHash, purpose string, createdAt, expiresAt time.Time) error {
+func (a *postgresAdapter) insertToken(
+	ctx context.Context,
+	id, subject, tokenHash, purpose string,
+	createdAt, expiresAt time.Time,
+) error {
 	//nolint:wrapcheck // wrapped by caller
 	return a.q.InsertToken(ctx, &pgdb.InsertTokenParams{
 		ID:        id,
@@ -39,7 +43,10 @@ func (a *postgresAdapter) deleteTokenByHash(ctx context.Context, tokenHash strin
 	return a.q.DeleteTokenByHash(ctx, tokenHash)
 }
 
-func (a *postgresAdapter) deleteTokensBySubjectPurpose(ctx context.Context, subject, purpose string) error {
+func (a *postgresAdapter) deleteTokensBySubjectPurpose(
+	ctx context.Context,
+	subject, purpose string,
+) error {
 	//nolint:wrapcheck // wrapped by caller
 	return a.q.DeleteTokensBySubjectPurpose(ctx, &pgdb.DeleteTokensBySubjectPurposeParams{
 		Subject: subject,
@@ -47,12 +54,18 @@ func (a *postgresAdapter) deleteTokensBySubjectPurpose(ctx context.Context, subj
 	})
 }
 
-func (a *postgresAdapter) deleteExpiredTokens(ctx context.Context, before time.Time) (int64, error) {
+func (a *postgresAdapter) deleteExpiredTokens(
+	ctx context.Context,
+	before time.Time,
+) (int64, error) {
 	//nolint:wrapcheck // wrapped by caller
 	return a.q.DeleteExpiredTokens(ctx, before)
 }
 
-func (a *postgresAdapter) consumeTokenByHash(ctx context.Context, tokenHash string) (*tokenRow, error) {
+func (a *postgresAdapter) consumeTokenByHash(
+	ctx context.Context,
+	tokenHash string,
+) (*tokenRow, error) {
 	r, err := a.q.ConsumeTokenByHash(ctx, tokenHash)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -84,7 +97,11 @@ func newMySQLAdapter(db *sql.DB, q *mydb.Queries) *mysqlAdapter {
 	return &mysqlAdapter{db: db, q: q}
 }
 
-func (a *mysqlAdapter) insertToken(ctx context.Context, id, subject, tokenHash, purpose string, createdAt, expiresAt time.Time) error {
+func (a *mysqlAdapter) insertToken(
+	ctx context.Context,
+	id, subject, tokenHash, purpose string,
+	createdAt, expiresAt time.Time,
+) error {
 	//nolint:wrapcheck // wrapped by caller
 	return a.q.InsertToken(ctx, &mydb.InsertTokenParams{
 		ID:        id,
@@ -101,7 +118,10 @@ func (a *mysqlAdapter) deleteTokenByHash(ctx context.Context, tokenHash string) 
 	return a.q.DeleteTokenByHash(ctx, tokenHash)
 }
 
-func (a *mysqlAdapter) deleteTokensBySubjectPurpose(ctx context.Context, subject, purpose string) error {
+func (a *mysqlAdapter) deleteTokensBySubjectPurpose(
+	ctx context.Context,
+	subject, purpose string,
+) error {
 	//nolint:wrapcheck // wrapped by caller
 	return a.q.DeleteTokensBySubjectPurpose(ctx, &mydb.DeleteTokensBySubjectPurposeParams{
 		Subject: subject,
@@ -114,7 +134,10 @@ func (a *mysqlAdapter) deleteExpiredTokens(ctx context.Context, before time.Time
 	return a.q.DeleteExpiredTokens(ctx, before)
 }
 
-func (a *mysqlAdapter) consumeTokenByHash(ctx context.Context, tokenHash string) (*tokenRow, error) {
+func (a *mysqlAdapter) consumeTokenByHash(
+	ctx context.Context,
+	tokenHash string,
+) (*tokenRow, error) {
 	tx, err := a.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
@@ -161,7 +184,11 @@ func newSQLiteAdapter(q *litedb.Queries) *sqliteAdapter {
 	return &sqliteAdapter{q: q}
 }
 
-func (a *sqliteAdapter) insertToken(ctx context.Context, id, subject, tokenHash, purpose string, createdAt, expiresAt time.Time) error {
+func (a *sqliteAdapter) insertToken(
+	ctx context.Context,
+	id, subject, tokenHash, purpose string,
+	createdAt, expiresAt time.Time,
+) error {
 	//nolint:wrapcheck // wrapped by caller
 	return a.q.InsertToken(ctx, &litedb.InsertTokenParams{
 		ID:        id,
@@ -178,7 +205,10 @@ func (a *sqliteAdapter) deleteTokenByHash(ctx context.Context, tokenHash string)
 	return a.q.DeleteTokenByHash(ctx, tokenHash)
 }
 
-func (a *sqliteAdapter) deleteTokensBySubjectPurpose(ctx context.Context, subject, purpose string) error {
+func (a *sqliteAdapter) deleteTokensBySubjectPurpose(
+	ctx context.Context,
+	subject, purpose string,
+) error {
 	//nolint:wrapcheck // wrapped by caller
 	return a.q.DeleteTokensBySubjectPurpose(ctx, &litedb.DeleteTokensBySubjectPurposeParams{
 		Subject: subject,
@@ -191,7 +221,10 @@ func (a *sqliteAdapter) deleteExpiredTokens(ctx context.Context, before time.Tim
 	return a.q.DeleteExpiredTokens(ctx, formatSQLiteTime(before))
 }
 
-func (a *sqliteAdapter) consumeTokenByHash(ctx context.Context, tokenHash string) (*tokenRow, error) {
+func (a *sqliteAdapter) consumeTokenByHash(
+	ctx context.Context,
+	tokenHash string,
+) (*tokenRow, error) {
 	r, err := a.q.ConsumeTokenByHash(ctx, tokenHash)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

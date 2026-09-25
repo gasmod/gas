@@ -207,7 +207,12 @@ func (s *sender) post(batch []Record) {
 		s.report(fmt.Errorf("marshal log batch: %w", err))
 		return
 	}
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, s.endpoint, bytes.NewReader(body)) //nolint:gosec // endpoint is operator-configured, not user input
+	req, err := http.NewRequestWithContext(
+		context.Background(),
+		http.MethodPost,
+		s.endpoint,
+		bytes.NewReader(body),
+	) //nolint:gosec // endpoint is operator-configured, not user input
 	if err != nil {
 		s.report(fmt.Errorf("build log request: %w", err))
 		return

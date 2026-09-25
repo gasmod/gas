@@ -49,9 +49,11 @@ type Service struct {
 	closed atomic.Bool
 }
 
-var _ gas.Service = (*Service)(nil)
-var _ gas.StorageProvider = (*Service)(nil)
-var _ gas.ReadyReporter = (*Service)(nil)
+var (
+	_ gas.Service         = (*Service)(nil)
+	_ gas.StorageProvider = (*Service)(nil)
+	_ gas.ReadyReporter   = (*Service)(nil)
+)
 
 // Option configures a Service.
 type Option func(*Service)
@@ -102,7 +104,12 @@ func (s *Service) Close() error {
 }
 
 // Upload writes an object and its metadata under the bucket directory.
-func (s *Service) Upload(ctx context.Context, key string, data io.Reader, opts ...gas.StorageOption) (err error) {
+func (s *Service) Upload(
+	ctx context.Context,
+	key string,
+	data io.Reader,
+	opts ...gas.StorageOption,
+) (err error) {
 	if sErr := s.CheckReady(ctx); sErr != nil {
 		return sErr
 	}
@@ -164,7 +171,11 @@ func (s *Service) Upload(ctx context.Context, key string, data io.Reader, opts .
 }
 
 // Download opens an object for reading. The caller must close the returned Body.
-func (s *Service) Download(ctx context.Context, key string, opts ...gas.StorageOption) (*gas.StorageObject, error) {
+func (s *Service) Download(
+	ctx context.Context,
+	key string,
+	opts ...gas.StorageOption,
+) (*gas.StorageObject, error) {
 	if err := s.CheckReady(ctx); err != nil {
 		return nil, err
 	}
@@ -244,7 +255,10 @@ func (s *Service) Delete(ctx context.Context, key string, opts ...gas.StorageOpt
 		return fmt.Errorf("%s: delete %q: %w", s.Name(), key, err)
 	}
 
-	if err = s.root.Remove(s.resolveMetadataFilename(name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if err = s.root.Remove(
+		s.resolveMetadataFilename(name),
+	); err != nil &&
+		!errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("%s: delete %q: %w", s.Name(), key, err)
 	}
 
@@ -252,7 +266,11 @@ func (s *Service) Delete(ctx context.Context, key string, opts ...gas.StorageOpt
 }
 
 // Head returns object metadata without opening the object for reading.
-func (s *Service) Head(ctx context.Context, key string, opts ...gas.StorageOption) (*gas.ObjectInfo, error) {
+func (s *Service) Head(
+	ctx context.Context,
+	key string,
+	opts ...gas.StorageOption,
+) (*gas.ObjectInfo, error) {
 	if err := s.CheckReady(ctx); err != nil {
 		return nil, err
 	}
@@ -298,7 +316,12 @@ func (s *Service) Head(ctx context.Context, key string, opts ...gas.StorageOptio
 }
 
 // PresignDownloadURL returns a download URL for the object from the configured Presigner.
-func (s *Service) PresignDownloadURL(ctx context.Context, key string, ttl time.Duration, opts ...gas.StorageOption) (string, error) {
+func (s *Service) PresignDownloadURL(
+	ctx context.Context,
+	key string,
+	ttl time.Duration,
+	opts ...gas.StorageOption,
+) (string, error) {
 	if err := s.CheckReady(ctx); err != nil {
 		return "", err
 	}
@@ -326,7 +349,12 @@ func (s *Service) PresignDownloadURL(ctx context.Context, key string, ttl time.D
 }
 
 // PresignUploadURL returns an upload URL for the object from the configured Presigner.
-func (s *Service) PresignUploadURL(ctx context.Context, key string, ttl time.Duration, opts ...gas.StorageOption) (string, error) {
+func (s *Service) PresignUploadURL(
+	ctx context.Context,
+	key string,
+	ttl time.Duration,
+	opts ...gas.StorageOption,
+) (string, error) {
 	if err := s.CheckReady(ctx); err != nil {
 		return "", err
 	}

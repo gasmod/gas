@@ -9,7 +9,7 @@ import (
 	"io/fs"
 
 	"github.com/gasmod/gas"
-	template "github.com/gasmod/gas/template"
+	"github.com/gasmod/gas/template"
 	mydb "github.com/gasmod/gas/template/db/mysql"
 	pgdb "github.com/gasmod/gas/template/db/postgres"
 	litedb "github.com/gasmod/gas/template/db/sqlite"
@@ -45,8 +45,10 @@ type Store struct {
 	namespace    string
 }
 
-var _ gas.TemplateProvider = (*Store)(nil)
-var _ gas.Service = (*Store)(nil)
+var (
+	_ gas.TemplateProvider = (*Store)(nil)
+	_ gas.Service          = (*Store)(nil)
+)
 
 // Option configures a Store.
 type Option func(*Store)

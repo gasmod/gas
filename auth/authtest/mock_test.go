@@ -8,11 +8,12 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/gasmod/gas"
 	auth "github.com/gasmod/gas/auth"
 	"github.com/gasmod/gas/auth/authtest"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestMockAuthenticator_NilFn(t *testing.T) {

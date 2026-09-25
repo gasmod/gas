@@ -7,14 +7,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/gasmod/gas"
-	queue "github.com/gasmod/gas/queue"
-
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awssqs "github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
+
+	"github.com/gasmod/gas"
+	queue "github.com/gasmod/gas/queue"
 )
 
 const serviceName = "gas/queue/sqs"
@@ -22,10 +22,26 @@ const serviceName = "gas/queue/sqs"
 // sqsClient is the subset of the AWS SQS client API used by this service.
 // The real *sqs.Client satisfies this interface.
 type sqsClient interface {
-	SendMessage(ctx context.Context, params *awssqs.SendMessageInput, optFns ...func(*awssqs.Options)) (*awssqs.SendMessageOutput, error)
-	ReceiveMessage(ctx context.Context, params *awssqs.ReceiveMessageInput, optFns ...func(*awssqs.Options)) (*awssqs.ReceiveMessageOutput, error)
-	DeleteMessage(ctx context.Context, params *awssqs.DeleteMessageInput, optFns ...func(*awssqs.Options)) (*awssqs.DeleteMessageOutput, error)
-	ChangeMessageVisibility(ctx context.Context, params *awssqs.ChangeMessageVisibilityInput, optFns ...func(*awssqs.Options)) (*awssqs.ChangeMessageVisibilityOutput, error)
+	SendMessage(
+		ctx context.Context,
+		params *awssqs.SendMessageInput,
+		optFns ...func(*awssqs.Options),
+	) (*awssqs.SendMessageOutput, error)
+	ReceiveMessage(
+		ctx context.Context,
+		params *awssqs.ReceiveMessageInput,
+		optFns ...func(*awssqs.Options),
+	) (*awssqs.ReceiveMessageOutput, error)
+	DeleteMessage(
+		ctx context.Context,
+		params *awssqs.DeleteMessageInput,
+		optFns ...func(*awssqs.Options),
+	) (*awssqs.DeleteMessageOutput, error)
+	ChangeMessageVisibility(
+		ctx context.Context,
+		params *awssqs.ChangeMessageVisibilityInput,
+		optFns ...func(*awssqs.Options),
+	) (*awssqs.ChangeMessageVisibilityOutput, error)
 }
 
 // Service is an SQS-backed queue implementing gas.Service and
@@ -41,9 +57,11 @@ type Service struct {
 	closed               atomic.Bool
 }
 
-var _ gas.Service = (*Service)(nil)
-var _ gas.JobQueueProvider = (*Service)(nil)
-var _ gas.ReadyReporter = (*Service)(nil)
+var (
+	_ gas.Service          = (*Service)(nil)
+	_ gas.JobQueueProvider = (*Service)(nil)
+	_ gas.ReadyReporter    = (*Service)(nil)
+)
 
 // Client returns the underlying *sqs.Client for advanced operations
 // beyond the JobQueueProvider interface (e.g. CreateQueue, PurgeQueue,
@@ -169,7 +187,12 @@ func (s *Service) Close() error {
 }
 
 // Enqueue sends a message to the specified SQS queue.
-func (s *Service) Enqueue(ctx context.Context, queueURL string, payload []byte, opts ...gas.EnqueueOption) error {
+func (s *Service) Enqueue(
+	ctx context.Context,
+	queueURL string,
+	payload []byte,
+	opts ...gas.EnqueueOption,
+) error {
 	if s.closed.Load() {
 		return queue.ErrClosed
 	}
@@ -207,7 +230,12 @@ func (s *Service) Enqueue(ctx context.Context, queueURL string, payload []byte, 
 }
 
 // Dequeue receives messages from the specified SQS queue.
-func (s *Service) Dequeue(ctx context.Context, queueURL string, maxMessages int, wait time.Duration) ([]gas.Job, error) {
+func (s *Service) Dequeue(
+	ctx context.Context,
+	queueURL string,
+	maxMessages int,
+	wait time.Duration,
+) ([]gas.Job, error) {
 	if s.closed.Load() {
 		return nil, queue.ErrClosed
 	}
@@ -218,12 +246,14 @@ func (s *Service) Dequeue(ctx context.Context, queueURL string, maxMessages int,
 	}
 
 	input := &awssqs.ReceiveMessageInput{
-		QueueUrl:                    &queueURL,
-		MaxNumberOfMessages:         maxNumMessages,
-		WaitTimeSeconds:             waitSeconds,
-		VisibilityTimeout:           visibilityTimeout,
-		MessageAttributeNames:       []string{"All"},
-		MessageSystemAttributeNames: []types.MessageSystemAttributeName{types.MessageSystemAttributeNameAll},
+		QueueUrl:              &queueURL,
+		MaxNumberOfMessages:   maxNumMessages,
+		WaitTimeSeconds:       waitSeconds,
+		VisibilityTimeout:     visibilityTimeout,
+		MessageAttributeNames: []string{"All"},
+		MessageSystemAttributeNames: []types.MessageSystemAttributeName{
+			types.MessageSystemAttributeNameAll,
+		},
 	}
 
 	out, err := s.client.ReceiveMessage(ctx, input)
@@ -258,7 +288,10 @@ func (s *Service) Dequeue(ctx context.Context, queueURL string, maxMessages int,
 	return jobs, nil
 }
 
-func (s *Service) receiveMessageParams(maxMessages int, wait time.Duration) (maxNumMessages, waitSeconds, visibilityTimeout int32, err error) {
+func (s *Service) receiveMessageParams(
+	maxMessages int,
+	wait time.Duration,
+) (maxNumMessages, waitSeconds, visibilityTimeout int32, err error) {
 	// Clamp maxMessages to SQS limits (1-10).
 	if maxMessages < 1 {
 		maxMessages = 1

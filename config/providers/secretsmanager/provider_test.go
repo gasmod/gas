@@ -4,11 +4,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gasmod/gas/config/providers"
-	"github.com/gasmod/gas/config/providers/secretsmanager"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/gasmod/gas/config/providers"
+	"github.com/gasmod/gas/config/providers/secretsmanager"
 )
 
 func TestProvider_Name(t *testing.T) {

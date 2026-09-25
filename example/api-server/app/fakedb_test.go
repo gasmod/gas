@@ -83,7 +83,11 @@ type fakeConn struct {
 	connector *fakeConnector
 }
 
-func (c *fakeConn) ExecContext(_ context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+func (c *fakeConn) ExecContext(
+	_ context.Context,
+	query string,
+	args []driver.NamedValue,
+) (driver.Result, error) {
 	if err := c.connector.record(query, args); err != nil {
 		return nil, err
 	}
@@ -93,7 +97,11 @@ func (c *fakeConn) ExecContext(_ context.Context, query string, args []driver.Na
 // QueryContext returns an empty result set, so sqlc ":one" queries surface a
 // genuine sql.ErrNoRows and the services take their real not-found branches
 // rather than an incidental driver error.
-func (c *fakeConn) QueryContext(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+func (c *fakeConn) QueryContext(
+	_ context.Context,
+	query string,
+	args []driver.NamedValue,
+) (driver.Rows, error) {
 	if err := c.connector.record(query, args); err != nil {
 		return nil, err
 	}

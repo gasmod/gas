@@ -30,7 +30,10 @@ type MockAuthenticator struct {
 var _ gas.Authenticator = (*MockAuthenticator)(nil)
 
 // Authenticate delegates to AuthenticateFn if set, otherwise returns zero values.
-func (m *MockAuthenticator) Authenticate(ctx context.Context, r *http.Request) (gas.Principal, error) {
+func (m *MockAuthenticator) Authenticate(
+	ctx context.Context,
+	r *http.Request,
+) (gas.Principal, error) {
 	m.mu.Lock()
 	m.Calls = append(m.Calls, Call{Method: "Authenticate", Args: []any{ctx, r}})
 	m.mu.Unlock()
@@ -76,9 +79,16 @@ type MockAuthorizer struct {
 var _ gas.Authorizer = (*MockAuthorizer)(nil)
 
 // Authorize delegates to AuthorizeFn if set, otherwise returns nil.
-func (m *MockAuthorizer) Authorize(ctx context.Context, principal gas.Principal, action, resource string) error {
+func (m *MockAuthorizer) Authorize(
+	ctx context.Context,
+	principal gas.Principal,
+	action, resource string,
+) error {
 	m.mu.Lock()
-	m.Calls = append(m.Calls, Call{Method: "Authorize", Args: []any{ctx, principal, action, resource}})
+	m.Calls = append(
+		m.Calls,
+		Call{Method: "Authorize", Args: []any{ctx, principal, action, resource}},
+	)
 	m.mu.Unlock()
 
 	if m.AuthorizeFn != nil {

@@ -7,9 +7,10 @@ import (
 	"testing"
 	"testing/fstest"
 
+	_ "modernc.org/sqlite"
+
 	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/database"
-	_ "modernc.org/sqlite"
 )
 
 // Compile-time interface checks.
@@ -506,10 +507,14 @@ func TestRegisterFS(t *testing.T) {
 	s, db := newTestService(t)
 
 	fsys := fstest.MapFS{
-		"20250216001_create_accounts.up.sql":   {Data: []byte("CREATE TABLE accounts (id INTEGER PRIMARY KEY, name TEXT)")},
+		"20250216001_create_accounts.up.sql": {
+			Data: []byte("CREATE TABLE accounts (id INTEGER PRIMARY KEY, name TEXT)"),
+		},
 		"20250216001_create_accounts.down.sql": {Data: []byte("DROP TABLE accounts")},
-		"20250216002_create_orders.up.sql":     {Data: []byte("CREATE TABLE orders (id INTEGER PRIMARY KEY, total INTEGER)")},
-		"20250216002_create_orders.down.sql":   {Data: []byte("DROP TABLE orders")},
+		"20250216002_create_orders.up.sql": {
+			Data: []byte("CREATE TABLE orders (id INTEGER PRIMARY KEY, total INTEGER)"),
+		},
+		"20250216002_create_orders.down.sql": {Data: []byte("DROP TABLE orders")},
 	}
 
 	if err := s.RegisterFS(modFs, fsys); err != nil {

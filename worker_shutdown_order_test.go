@@ -28,18 +28,20 @@ import (
 // The chain below is S0 <- S1 <- ... <- S5 (each depends on the previous), so
 // the only correct close order is S5, S4, S3, S2, S1, S0.
 
-type ordTag0 struct{}
-type ordTag1 struct{}
-type ordTag2 struct{}
-type ordTag3 struct{}
-type ordTag4 struct{}
-type ordTag5 struct{}
+type (
+	ordTag0 struct{}
+	ordTag1 struct{}
+	ordTag2 struct{}
+	ordTag3 struct{}
+	ordTag4 struct{}
+	ordTag5 struct{}
+)
 
 // ordLog records init and close calls in the order they happen.
 type ordLog struct {
-	mu     sync.Mutex
 	inits  []string
 	closes []string
+	mu     sync.Mutex
 }
 
 func (l *ordLog) init(name string) {
@@ -77,21 +79,31 @@ func newOrdWorker(log *ordLog) *gas.Worker {
 		gas.WithSingletonService[*ordService[ordTag0]](func() *ordService[ordTag0] {
 			return &ordService[ordTag0]{log: log, name: "S0"}
 		}),
-		gas.WithSingletonService[*ordService[ordTag1]](func(*ordService[ordTag0]) *ordService[ordTag1] {
-			return &ordService[ordTag1]{log: log, name: "S1"}
-		}),
-		gas.WithSingletonService[*ordService[ordTag2]](func(*ordService[ordTag1]) *ordService[ordTag2] {
-			return &ordService[ordTag2]{log: log, name: "S2"}
-		}),
-		gas.WithSingletonService[*ordService[ordTag3]](func(*ordService[ordTag2]) *ordService[ordTag3] {
-			return &ordService[ordTag3]{log: log, name: "S3"}
-		}),
-		gas.WithSingletonService[*ordService[ordTag4]](func(*ordService[ordTag3]) *ordService[ordTag4] {
-			return &ordService[ordTag4]{log: log, name: "S4"}
-		}),
-		gas.WithSingletonService[*ordService[ordTag5]](func(*ordService[ordTag4]) *ordService[ordTag5] {
-			return &ordService[ordTag5]{log: log, name: "S5"}
-		}),
+		gas.WithSingletonService[*ordService[ordTag1]](
+			func(*ordService[ordTag0]) *ordService[ordTag1] {
+				return &ordService[ordTag1]{log: log, name: "S1"}
+			},
+		),
+		gas.WithSingletonService[*ordService[ordTag2]](
+			func(*ordService[ordTag1]) *ordService[ordTag2] {
+				return &ordService[ordTag2]{log: log, name: "S2"}
+			},
+		),
+		gas.WithSingletonService[*ordService[ordTag3]](
+			func(*ordService[ordTag2]) *ordService[ordTag3] {
+				return &ordService[ordTag3]{log: log, name: "S3"}
+			},
+		),
+		gas.WithSingletonService[*ordService[ordTag4]](
+			func(*ordService[ordTag3]) *ordService[ordTag4] {
+				return &ordService[ordTag4]{log: log, name: "S4"}
+			},
+		),
+		gas.WithSingletonService[*ordService[ordTag5]](
+			func(*ordService[ordTag4]) *ordService[ordTag5] {
+				return &ordService[ordTag5]{log: log, name: "S5"}
+			},
+		),
 	)
 }
 

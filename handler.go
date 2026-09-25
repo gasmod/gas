@@ -66,17 +66,29 @@ func adaptHandler(
 	}
 
 	if handlerType.NumIn() < 1 {
-		panic(fmt.Errorf("gas: handler must accept gas.Context as first parameter, got 0 parameters"))
+		panic(
+			fmt.Errorf("gas: handler must accept gas.Context as first parameter, got 0 parameters"),
+		)
 	}
 
 	ctxType := reflect.TypeFor[Context]()
 	if handlerType.In(0) != ctxType {
-		panic(fmt.Errorf("gas: handler first parameter must be gas.Context, got %v", handlerType.In(0)))
+		panic(
+			fmt.Errorf(
+				"gas: handler first parameter must be gas.Context, got %v",
+				handlerType.In(0),
+			),
+		)
 	}
 
 	errType := reflect.TypeFor[error]()
 	if handlerType.NumOut() != 1 || !handlerType.Out(0).Implements(errType) {
-		panic(fmt.Errorf("gas: handler must return exactly one value of type error, got %v", handlerType))
+		panic(
+			fmt.Errorf(
+				"gas: handler must return exactly one value of type error, got %v",
+				handlerType,
+			),
+		)
 	}
 
 	depTypes := make([]reflect.Type, handlerType.NumIn()-1)

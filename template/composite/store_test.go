@@ -143,7 +143,11 @@ func TestRegisterFSDelegatesToWritable(t *testing.T) {
 	// Non-.html files should be skipped.
 	_, err = writable.Get(context.Background(), "readme.md")
 	if !errors.Is(err, template.ErrTemplateNotFound) {
-		t.Errorf("writable.Get(context.Background(),readme.md) error = %v, want %v", err, template.ErrTemplateNotFound)
+		t.Errorf(
+			"writable.Get(context.Background(),readme.md) error = %v, want %v",
+			err,
+			template.ErrTemplateNotFound,
+		)
 	}
 }
 

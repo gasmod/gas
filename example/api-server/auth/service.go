@@ -14,7 +14,6 @@ import (
 	gasauth "github.com/gasmod/gas/auth"
 	"github.com/gasmod/gas/auth/apikey"
 	"github.com/gasmod/gas/auth/jwt"
-
 	"github.com/gasmod/gas/example/api-server/db"
 )
 
@@ -118,12 +117,12 @@ func (s *Service) Middleware() func(http.Handler) http.Handler {
 // --- Request/Response types ---
 
 type registerRequest struct {
-	Email    string `json:"email" validate:"required,email"`
+	Email    string `json:"email"    validate:"required,email"`
 	Password string `json:"password" validate:"required,min=8"`
 }
 
 type loginRequest struct {
-	Email    string `json:"email" validate:"required,email"`
+	Email    string `json:"email"    validate:"required,email"`
 	Password string `json:"password" validate:"required"`
 }
 
@@ -187,7 +186,10 @@ func (s *Service) handleLogin(ctx gas.Context) error {
 		return &apiError{Status: http.StatusUnauthorized, Message: "invalid credentials"}
 	}
 
-	if cmpErr := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); cmpErr != nil {
+	if cmpErr := bcrypt.CompareHashAndPassword(
+		[]byte(user.PasswordHash),
+		[]byte(req.Password),
+	); cmpErr != nil {
 		return &apiError{Status: http.StatusUnauthorized, Message: "invalid credentials"}
 	}
 

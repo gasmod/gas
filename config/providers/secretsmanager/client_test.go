@@ -4,10 +4,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gasmod/gas/config/providers/secretsmanager"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/gasmod/gas/config/providers/secretsmanager"
 )
 
 // TestLoad_BuildsClientFromOptions exercises real client construction against

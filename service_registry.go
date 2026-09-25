@@ -107,7 +107,12 @@ func (c *ServiceContainer) RegisterService[T any](ctor any, lifetime ServiceLife
 	if lifetime == ServiceLifetimeTransient {
 		svcType := reflect.TypeFor[Service]()
 		if t.Implements(svcType) || (t.Kind() == reflect.Pointer && t.Implements(svcType)) {
-			panic(fmt.Sprintf("gas: transient service %v implements Service; use Singleton or Scoped lifetime instead", t))
+			panic(
+				fmt.Sprintf(
+					"gas: transient service %v implements Service; use Singleton or Scoped lifetime instead",
+					t,
+				),
+			)
 		}
 	}
 	c.registrations[t] = registration{ctor: ctor, lifetime: lifetime}
@@ -330,7 +335,10 @@ func (c *ServiceContainer) resolveType(t reflect.Type) (reflect.Value, error) {
 		return c.invoke(t, c)
 
 	case ServiceLifetimeScoped:
-		return reflect.Value{}, fmt.Errorf("scoped service %v cannot be resolved outside a scope; use container.NewScope()", t)
+		return reflect.Value{}, fmt.Errorf(
+			"scoped service %v cannot be resolved outside a scope; use container.NewScope()",
+			t,
+		)
 	}
 
 	return reflect.Value{}, fmt.Errorf("unknown lifetime for %v", t)
@@ -459,14 +467,9 @@ func (c *ServiceContainer) invoke(t reflect.Type, r Resolver) (reflect.Value, er
 	ctorVal := reflect.ValueOf(reg.ctor)
 	ctorType := ctorVal.Type()
 
-	args := make([]reflect.Value, ctorType.NumIn())
-	for i := range args {
-		dep := ctorType.In(i)
-		resolved, err := r.resolveType(dep)
-		if err != nil {
-			return reflect.Value{}, fmt.Errorf("resolving dep %v for %v: %w", dep, t, err)
-		}
-		args[i] = resolved
+	args, err := c.resolveCtorArgs(ctorType, t, r)
+	if err != nil {
+		return reflect.Value{}, err
 	}
 
 	results := ctorVal.Call(args)
@@ -501,6 +504,22 @@ func (c *ServiceContainer) invoke(t reflect.Type, r Resolver) (reflect.Value, er
 	return result, nil
 }
 
+func (c *ServiceContainer) resolveCtorArgs(
+	ctor, t reflect.Type,
+	r Resolver,
+) ([]reflect.Value, error) {
+	args := make([]reflect.Value, ctor.NumIn())
+	for i := range args {
+		dep := ctor.In(i)
+		resolved, err := r.resolveType(dep)
+		if err != nil {
+			return nil, fmt.Errorf("resolving dep %v for %v: %w", dep, t, err)
+		}
+		args[i] = resolved
+	}
+	return args, nil
+}
+
 // --- internal: validation ---
 
 // validateLifetimes checks for captive dependency violations:
@@ -521,12 +540,14 @@ func (c *ServiceContainer) validateLifetimes() error {
 				continue // will fail at build time with a clearer message
 			}
 
-			if reg.lifetime == ServiceLifetimeSingleton && depReg.lifetime == ServiceLifetimeScoped {
+			if reg.lifetime == ServiceLifetimeSingleton &&
+				depReg.lifetime == ServiceLifetimeScoped {
 				return fmt.Errorf(
 					"captive dependency: singleton %v depends on scoped %v", t, dep,
 				)
 			}
-			if reg.lifetime == ServiceLifetimeSingleton && depReg.lifetime == ServiceLifetimeTransient {
+			if reg.lifetime == ServiceLifetimeSingleton &&
+				depReg.lifetime == ServiceLifetimeTransient {
 				return fmt.Errorf(
 					"captive dependency: singleton %v depends on transient %v", t, dep,
 				)
@@ -573,8 +594,8 @@ func (c *ServiceContainer) topoSort() ([]reflect.Type, error) {
 	deps := make(map[reflect.Type][]reflect.Type)
 	for t, reg := range c.registrations {
 		ctorType := reflect.TypeOf(reg.ctor)
-		for i := 0; i < ctorType.NumIn(); i++ {
-			deps[t] = append(deps[t], ctorType.In(i))
+		for in := range ctorType.Ins() {
+			deps[t] = append(deps[t], in)
 		}
 	}
 
@@ -598,6 +619,19 @@ func (c *ServiceContainer) topoSort() ([]reflect.Type, error) {
 		}
 	}
 
+	order := c.topoSortOrder(queue, deps, inDegree)
+
+	if len(order) != len(c.registrations) {
+		return nil, fmt.Errorf("circular dependency detected")
+	}
+	return order, nil
+}
+
+func (c *ServiceContainer) topoSortOrder(
+	queue []reflect.Type,
+	deps map[reflect.Type][]reflect.Type,
+	inDegree map[reflect.Type]int,
+) []reflect.Type {
 	var order []reflect.Type
 	for len(queue) > 0 {
 		curr := queue[0]
@@ -615,11 +649,7 @@ func (c *ServiceContainer) topoSort() ([]reflect.Type, error) {
 			}
 		}
 	}
-
-	if len(order) != len(c.registrations) {
-		return nil, fmt.Errorf("circular dependency detected")
-	}
-	return order, nil
+	return order
 }
 
 // --- internal: constructor shape enforcement ---
@@ -644,32 +674,85 @@ var errorType = reflect.TypeFor[error]()
 // error return to add one to.
 func validateCtorShape(t reflect.Type, ctor any) {
 	ct := reflect.TypeOf(ctor)
-	if ct == nil || ct.Kind() != reflect.Func {
+	if !isFunc(ct) {
 		panic(fmt.Sprintf("gas: constructor for %v is %v, want a function", t, ctorTypeName(ct)))
 	}
 
 	// invoke builds exactly NumIn arguments and calls with them, so a variadic
 	// tail would be passed as a single slice argument rather than expanded.
 	if ct.IsVariadic() {
-		panic(fmt.Sprintf("gas: constructor %v for %v is variadic; dependencies must be declared as fixed parameters", ct, t))
+		panic(
+			fmt.Sprintf(
+				"gas: constructor %v for %v is variadic; dependencies must be declared as fixed parameters",
+				ct,
+				t,
+			),
+		)
 	}
 
-	if ct.NumOut() != 1 && ct.NumOut() != 2 {
-		panic(fmt.Sprintf(
-			"gas: constructor %v for %v returns %d values; want (%v) or (%v, error)",
-			ct, t, ct.NumOut(), t, t,
-		))
+	if !isValidCtorNumOut(ct) {
+		panic(
+			fmt.Sprintf(
+				"gas: constructor %v for %v returns %d values; want (%v) or (%v, error)",
+				ct,
+				t,
+				ct.NumOut(),
+				t,
+				t,
+			),
+		)
 	}
 
 	// t is commonly an interface registered against a constructor returning a
 	// concrete pointer, which is not assignable but does implement it. invoke
 	// converts that case, so accept exactly what it can handle.
-	if out := ct.Out(0); !out.AssignableTo(t) && (t.Kind() != reflect.Interface || !out.Implements(t)) {
-		panic(fmt.Sprintf("gas: constructor %v returns %v, which is not assignable to %v", ct, out, t))
+	if out, valid := isValidCtorReturnType(t, ct); !valid {
+		panic(
+			fmt.Sprintf(
+				"gas: constructor %v returns %v, which is not assignable to %v",
+				ct,
+				out,
+				t,
+			),
+		)
 	}
 
-	if ct.NumOut() == 2 && !ct.Out(1).Implements(errorType) {
-		panic(fmt.Sprintf("gas: constructor %v for %v has second result %v; want error", ct, t, ct.Out(1)))
+	if !isValidCtorErrorReturnType(ct) {
+		panic(
+			fmt.Sprintf(
+				"gas: constructor %v for %v has second result %v; want error",
+				ct,
+				t,
+				ct.Out(1),
+			),
+		)
+	}
+}
+
+func isFunc(t reflect.Type) bool {
+	return t != nil && t.Kind() == reflect.Func
+}
+
+func isValidCtorNumOut(t reflect.Type) bool {
+	switch {
+	case t.NumOut() == 1 || t.NumOut() == 2:
+		return true
+	default:
+		return false
+	}
+}
+
+func isValidCtorReturnType(t, ct reflect.Type) (reflect.Type, bool) {
+	out := ct.Out(0)
+	return out, out.AssignableTo(t) || (t.Kind() == reflect.Interface && out.Implements(t))
+}
+
+func isValidCtorErrorReturnType(t reflect.Type) bool {
+	switch {
+	case t.NumOut() == 2:
+		return t.Out(1).Implements(errorType)
+	default:
+		return true
 	}
 }
 
@@ -753,7 +836,9 @@ func validateServiceShape(t reflect.Type) error {
 		if ptr := reflect.PointerTo(t); ptr.Implements(serviceType) {
 			return fmt.Errorf(
 				"gas: %v does not implement gas.Service because its methods are declared on *%v; register it as *%v",
-				t, t, t,
+				t,
+				t,
+				t,
 			)
 		}
 	}

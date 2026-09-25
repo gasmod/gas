@@ -16,7 +16,11 @@ type tokenRow struct {
 // querier abstracts the sqlc-generated query methods across dialects.
 // Unexported — consumers interact with Store, not this interface.
 type querier interface {
-	insertToken(ctx context.Context, id, subject, tokenHash, purpose string, createdAt, expiresAt time.Time) error
+	insertToken(
+		ctx context.Context,
+		id, subject, tokenHash, purpose string,
+		createdAt, expiresAt time.Time,
+	) error
 	deleteTokenByHash(ctx context.Context, tokenHash string) (int64, error)
 	deleteTokensBySubjectPurpose(ctx context.Context, subject, purpose string) error
 	deleteExpiredTokens(ctx context.Context, before time.Time) (int64, error)

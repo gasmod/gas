@@ -52,7 +52,10 @@ func NewHandler(
 }
 
 // Handle processes SQS events. Each SQS record is an independent message.
-func (h *Handler) Handle(ctx context.Context, event events.SQSEvent) (events.SQSEventResponse, error) {
+func (h *Handler) Handle(
+	ctx context.Context,
+	event events.SQSEvent,
+) (events.SQSEventResponse, error) {
 	var failures []events.SQSBatchItemFailure
 
 	for i := range event.Records {

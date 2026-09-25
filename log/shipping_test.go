@@ -143,7 +143,12 @@ func TestShippingLogger_LocalTee(t *testing.T) {
 }
 
 func TestShippingLogger_ImplementsService(t *testing.T) {
-	logger := NewShippingLogger("http://example.invalid", NewOTLPMarshaler(), WithoutLocalHandler(), WithName("central-logs"))()
+	logger := NewShippingLogger(
+		"http://example.invalid",
+		NewOTLPMarshaler(),
+		WithoutLocalHandler(),
+		WithName("central-logs"),
+	)()
 	defer func() { _ = logger.Close() }()
 
 	var svc gas.Service = logger

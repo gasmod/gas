@@ -8,10 +8,10 @@ import (
 	"testing"
 	"testing/fstest"
 
+	_ "modernc.org/sqlite"
+
 	"github.com/gasmod/gas"
 	template "github.com/gasmod/gas/template"
-
-	_ "modernc.org/sqlite"
 )
 
 // ---------------------------------------------------------------------------
@@ -388,7 +388,13 @@ func TestClose(t *testing.T) {
 
 func TestWithNamespace(t *testing.T) {
 	t.Parallel()
-	s := NewStore(WithNamespace("custom"))(&mockDB{db: nil, driver: "sqlite"}, nopLog, nopMigrationMgr)
+	s := NewStore(
+		WithNamespace("custom"),
+	)(
+		&mockDB{db: nil, driver: "sqlite"},
+		nopLog,
+		nopMigrationMgr,
+	)
 	if s.namespace != "custom" {
 		t.Errorf("namespace = %q, want %q", s.namespace, "custom")
 	}
@@ -588,7 +594,11 @@ func TestE2E_NamespaceIsolation(t *testing.T) {
 
 	_, err = nsA.Get(context.Background(), "page.html")
 	if !errors.Is(err, template.ErrTemplateNotFound) {
-		t.Errorf("nsA.Get(context.Background(),) after delete: error = %v, want %v", err, template.ErrTemplateNotFound)
+		t.Errorf(
+			"nsA.Get(context.Background(),) after delete: error = %v, want %v",
+			err,
+			template.ErrTemplateNotFound,
+		)
 	}
 
 	gotB2, err := nsB.Get(context.Background(), "page.html")
@@ -620,7 +630,11 @@ func TestE2E_RegisterFS(t *testing.T) {
 		t.Fatalf("List() error: %v", err)
 	}
 	if len(names) != 3 {
-		t.Fatalf("List() returned %d names, want 3 (non-.html should be skipped); got %v", len(names), names)
+		t.Fatalf(
+			"List() returned %d names, want 3 (non-.html should be skipped); got %v",
+			len(names),
+			names,
+		)
 	}
 
 	got, err := s.Get(context.Background(), "layouts/base.html")

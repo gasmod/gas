@@ -87,7 +87,11 @@ func (t *fakeTx) Commit() error   { return t.behavior.commitErr }
 func (t *fakeTx) Rollback() error { return t.behavior.rollbackErr }
 
 // newFakeService wires a service onto the fake driver via WithConnector.
-func newFakeService(t *testing.T, b *fakeBehavior, tune ...func(*database.Config)) *database.Service {
+func newFakeService(
+	t *testing.T,
+	b *fakeBehavior,
+	tune ...func(*database.Config),
+) *database.Service {
 	t.Helper()
 
 	cfg := database.DefaultConfig()

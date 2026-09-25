@@ -7,10 +7,11 @@ import (
 	"testing/fstest"
 	"time"
 
-	config "github.com/gasmod/gas/config"
-	"github.com/gasmod/gas/config/providers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	config "github.com/gasmod/gas/config"
+	"github.com/gasmod/gas/config/providers"
 )
 
 // mockProvider is a mock implementation of the Provider interface for testing.
@@ -918,7 +919,10 @@ func TestConfig_LoadProvider_SameNameOverrides(t *testing.T) {
 	require.NoError(t, cfg.Load())
 
 	// Reusing a name is allowed: the later values win on the keys they define.
-	require.NoError(t, cfg.LoadProvider(&mockProvider{name: "mock", data: map[string]any{"key": "other"}}))
+	require.NoError(
+		t,
+		cfg.LoadProvider(&mockProvider{name: "mock", data: map[string]any{"key": "other"}}),
+	)
 	assert.Equal(t, "other", cfg.Get("key"))
 	assert.Equal(t, "yes", cfg.Get("kept"))
 }
@@ -964,7 +968,9 @@ func TestConfig_WithProvider_SameNameOverrides(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.New(
-		config.WithProvider(&mockProvider{name: "dup", data: map[string]any{"key": "first", "kept": "yes"}}),
+		config.WithProvider(
+			&mockProvider{name: "dup", data: map[string]any{"key": "first", "kept": "yes"}},
+		),
 		config.WithProvider(&mockProvider{name: "dup", data: map[string]any{"key": "second"}}),
 	)
 

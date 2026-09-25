@@ -172,10 +172,11 @@ func TestDIHandler_BackwardCompat_HandlerFunc(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	app.Router().Handle(nil, "GET", "/compat", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("compat"))
-	}))
+	app.Router().
+		Handle(nil, "GET", "/compat", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("compat"))
+		}))
 
 	rr := httptest.NewRecorder()
 	app.Router().ServeHTTP(rr, httptest.NewRequest("GET", "/compat", nil))

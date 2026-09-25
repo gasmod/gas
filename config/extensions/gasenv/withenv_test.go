@@ -180,7 +180,10 @@ func TestWithGasEnv_IntegrationWithGasConfig(t *testing.T) {
 						t.Error("Debug should be false in production")
 					}
 					if config.Database.Host != "prod-db.example.com" {
-						t.Errorf("Production host = %v, want prod-db.example.com", config.Database.Host)
+						t.Errorf(
+							"Production host = %v, want prod-db.example.com",
+							config.Database.Host,
+						)
 					}
 				} else {
 					if !config.Debug {
@@ -261,7 +264,12 @@ func TestWithGasEnv_SwitchStatements(t *testing.T) {
 
 			expectedSetup := string(env) + " setup"
 			if config.Setup != expectedSetup {
-				t.Errorf("Switch statement failed for %v: got %v, want %v", env, config.Setup, expectedSetup)
+				t.Errorf(
+					"Switch statement failed for %v: got %v, want %v",
+					env,
+					config.Setup,
+					expectedSetup,
+				)
 			}
 		}
 	})
@@ -291,7 +299,11 @@ func TestWithGasEnv_ComparisonWithExtension(t *testing.T) {
 
 		// Extension and embedded environment should match
 		if extension.Current() != config.GasEnv {
-			t.Errorf("Extension environment %v != embedded environment %v", extension.Current(), config.GasEnv)
+			t.Errorf(
+				"Extension environment %v != embedded environment %v",
+				extension.Current(),
+				config.GasEnv,
+			)
 		}
 
 		// Both should report the same environment checks

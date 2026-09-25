@@ -47,9 +47,11 @@ func (s *reporterService[K]) Close() error                        { return nil }
 func (s *reporterService[K]) CheckHealth(_ context.Context) error { return s.healthErr }
 func (s *reporterService[K]) CheckReady(_ context.Context) error  { return s.readyErr }
 
-type tagA struct{}
-type tagB struct{}
-type tagC struct{}
+type (
+	tagA struct{}
+	tagB struct{}
+	tagC struct{}
+)
 
 // healthOnlyService implements HealthReporter but not ReadyReporter.
 type healthOnlyService[K any] struct {

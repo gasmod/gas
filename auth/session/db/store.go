@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/gasmod/gas"
-	auth "github.com/gasmod/gas/auth"
+	"github.com/gasmod/gas/auth"
 	mydb "github.com/gasmod/gas/auth/session/db/mysql"
 	pgdb "github.com/gasmod/gas/auth/session/db/postgres"
 	litedb "github.com/gasmod/gas/auth/session/db/sqlite"
@@ -137,14 +137,28 @@ func (s *Store) InsertSession(ctx context.Context, sess *Session) error {
 		return fmt.Errorf("%s: marshal metadata: %w", serviceName, err)
 	}
 
-	if err := s.q.insertSession(ctx, sess.ID, sess.Subject, string(metaJSON), sess.IPAddress, sess.UserAgent, sess.CreatedAt, sess.ExpiresAt, sess.LastActive); err != nil {
+	if err := s.q.insertSession(
+		ctx,
+		sess.ID,
+		sess.Subject,
+		string(metaJSON),
+		sess.IPAddress,
+		sess.UserAgent,
+		sess.CreatedAt,
+		sess.ExpiresAt,
+		sess.LastActive,
+	); err != nil {
 		return fmt.Errorf("%s: insert session: %w", serviceName, err)
 	}
 	return nil
 }
 
 // ExtendSession updates the expiry and last active time.
-func (s *Store) ExtendSession(ctx context.Context, id string, expiresAt, lastActive time.Time) error {
+func (s *Store) ExtendSession(
+	ctx context.Context,
+	id string,
+	expiresAt, lastActive time.Time,
+) error {
 	if err := s.q.extendSession(ctx, id, expiresAt, lastActive); err != nil {
 		return fmt.Errorf("%s: extend session: %w", serviceName, err)
 	}

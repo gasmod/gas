@@ -3,8 +3,9 @@ package maputils_test
 import (
 	"testing"
 
-	"github.com/gasmod/gas/config/internal/maputils"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/gasmod/gas/config/internal/maputils"
 )
 
 func TestFindNestedMap(t *testing.T) {

@@ -3,10 +3,10 @@ package providers_test
 import (
 	"testing"
 
-	"github.com/gasmod/gas/config/providers"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/gasmod/gas/config/providers"
 )
 
 func TestEnvProvider_DefaultOptions(t *testing.T) {

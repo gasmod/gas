@@ -14,9 +14,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/gasmod/gas"
 	auth "github.com/gasmod/gas/auth"
-	"github.com/golang-jwt/jwt/v5"
 )
 
 const serviceName = "gas/auth/jwt"
@@ -46,9 +47,11 @@ type Service struct {
 	customConfigProvided bool
 }
 
-var _ gas.Service = (*Service)(nil)
-var _ gas.Authenticator = (*Service)(nil)
-var _ Provider = (*Service)(nil)
+var (
+	_ gas.Service       = (*Service)(nil)
+	_ gas.Authenticator = (*Service)(nil)
+	_ Provider          = (*Service)(nil)
+)
 
 // Option configures a Service.
 type Option func(*Service)
@@ -177,7 +180,11 @@ func (s *Service) Sign(subject string, claims map[string]any) (string, error) {
 
 // SignWithExpiry creates a signed JWT with the given subject, custom claims,
 // and explicit expiry duration.
-func (s *Service) SignWithExpiry(subject string, claims map[string]any, expiry time.Duration) (string, error) {
+func (s *Service) SignWithExpiry(
+	subject string,
+	claims map[string]any,
+	expiry time.Duration,
+) (string, error) {
 	mapClaims := jwt.MapClaims{}
 
 	// set custom claims first so they don't override standard claims

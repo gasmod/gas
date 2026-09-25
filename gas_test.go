@@ -33,8 +33,10 @@ type testUserPayload struct {
 	Email string
 }
 
-type testEvent struct{ gas.Event[struct{}] }
-type testInc struct{ gas.Event[struct{}] }
+type (
+	testEvent struct{ gas.Event[struct{}] }
+	testInc   struct{ gas.Event[struct{}] }
+)
 
 // ---------------------------------------------------------------------------
 // Router.Register (middleware registry) tests
@@ -67,7 +69,13 @@ func TestRouter_RegisterAndResolve(t *testing.T) {
 func TestRouter_HandleUnknownNamedMiddleware(t *testing.T) {
 	router := gas.NewRouter()
 	assertPanics(t, "unregistered middleware", func() {
-		router.Handle(nil, "GET", "/test", func(w http.ResponseWriter, r *http.Request) {}, gas.MiddlewareByName("nonexistent"))
+		router.Handle(
+			nil,
+			"GET",
+			"/test",
+			func(w http.ResponseWriter, r *http.Request) {},
+			gas.MiddlewareByName("nonexistent"),
+		)
 	})
 }
 
@@ -85,14 +93,32 @@ func TestRouter_RemoveByService_RemovesMiddleware(t *testing.T) {
 
 	// Auth middleware should be gone — Handle should panic.
 	assertPanics(t, "require-auth", func() {
-		router.Handle(test, "GET", "/a", func(w http.ResponseWriter, r *http.Request) {}, gas.MiddlewareByName("require-auth"))
+		router.Handle(
+			test,
+			"GET",
+			"/a",
+			func(w http.ResponseWriter, r *http.Request) {},
+			gas.MiddlewareByName("require-auth"),
+		)
 	})
 	assertPanics(t, "rate-limit", func() {
-		router.Handle(test, "GET", "/b", func(w http.ResponseWriter, r *http.Request) {}, gas.MiddlewareByName("rate-limit"))
+		router.Handle(
+			test,
+			"GET",
+			"/b",
+			func(w http.ResponseWriter, r *http.Request) {},
+			gas.MiddlewareByName("rate-limit"),
+		)
 	})
 
 	// Billing middleware should still exist — no panic.
-	router.Handle(test, "GET", "/c", func(w http.ResponseWriter, r *http.Request) {}, gas.MiddlewareByName("billing-mw"))
+	router.Handle(
+		test,
+		"GET",
+		"/c",
+		func(w http.ResponseWriter, r *http.Request) {},
+		gas.MiddlewareByName("billing-mw"),
+	)
 	router.Seal()
 }
 
@@ -274,7 +300,13 @@ func TestRouter_HandleWithFuncMiddleware(t *testing.T) {
 func TestRouter_HandleUnknownMiddleware(t *testing.T) {
 	router := gas.NewRouter()
 	assertPanics(t, "unknown middleware", func() {
-		router.Handle(nil, "GET", "/test", func(w http.ResponseWriter, r *http.Request) {}, gas.MiddlewareByName("nonexistent"))
+		router.Handle(
+			nil,
+			"GET",
+			"/test",
+			func(w http.ResponseWriter, r *http.Request) {},
+			gas.MiddlewareByName("nonexistent"),
+		)
 	})
 }
 
@@ -963,9 +995,11 @@ func TestApp_RestartService(t *testing.T) {
 
 	// Track restart event.
 	var restartedName string
-	app.EventBus().Subscribe[gas.SystemServiceInitialized](func(data gas.SystemServiceInitializedPayload) {
-		restartedName = data.ServiceName
-	})
+	app.EventBus().Subscribe[gas.SystemServiceInitialized](
+		func(data gas.SystemServiceInitializedPayload) {
+			restartedName = data.ServiceName
+		},
+	)
 
 	// Restart.
 	if err := app.RestartService[*testService](); err != nil {
@@ -1022,7 +1056,10 @@ func TestApp_InitFailure(t *testing.T) {
 	failing := &testService{name: "bad-svc", initErr: fmt.Errorf("init failed")}
 
 	app := gas.NewApp(
-		gas.WithService[*testService](func() *testService { return failing }, gas.ServiceLifetimeSingleton),
+		gas.WithService[*testService](
+			func() *testService { return failing },
+			gas.ServiceLifetimeSingleton,
+		),
 	)
 
 	err := app.InitServices()
@@ -1033,14 +1070,10 @@ func TestApp_InitFailure(t *testing.T) {
 
 func TestApp_ActiveServices(t *testing.T) {
 	svc1 := &testService{name: "svc-a"}
-	svc2 := &testService{name: "svc-b"}
 
 	app := gas.NewApp(
 		gas.WithServiceInstance[*testService](svc1),
 	)
-	// Register svc2 under a different type to avoid collision.
-	// For simplicity, just test with one instance.
-	_ = svc2
 
 	if err := app.InitServices(); err != nil {
 		t.Fatal(err)
@@ -1131,8 +1164,8 @@ func TestScopedService_PerRequestLifecycle(t *testing.T) {
 		t.Fatal("expected same instance within a single scope")
 	}
 
-	if err := scope1.Close(); err != nil {
-		t.Fatal(err)
+	if s1Err := scope1.Close(); s1Err != nil {
+		t.Fatal(s1Err)
 	}
 	if !rl1.closed {
 		t.Fatal("expected requestLogger to be closed after scope1.Close()")
@@ -1153,8 +1186,8 @@ func TestScopedService_PerRequestLifecycle(t *testing.T) {
 	}
 	rl2.Log("request 2: only line")
 
-	if err := scope2.Close(); err != nil {
-		t.Fatal(err)
+	if s2Err := scope2.Close(); s2Err != nil {
+		t.Fatal(s2Err)
 	}
 	if len(rl2.lines) != 1 {
 		t.Fatalf("expected 1 log line in scope2, got %d", len(rl2.lines))

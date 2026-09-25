@@ -15,23 +15,48 @@ func newSlogLogger(logger *slog.Logger) *slogLogger {
 }
 
 func (l *slogLogger) Trace(msg string) LogEvent {
-	return &slogLogEvent{logger: l.logger, lvl: slog.LevelDebug, msg: msg, attrs: make([]slog.Attr, 0)}
+	return &slogLogEvent{
+		logger: l.logger,
+		lvl:    slog.LevelDebug,
+		msg:    msg,
+		attrs:  make([]slog.Attr, 0),
+	}
 }
 
 func (l *slogLogger) Debug(msg string) LogEvent {
-	return &slogLogEvent{logger: l.logger, lvl: slog.LevelDebug, msg: msg, attrs: make([]slog.Attr, 0)}
+	return &slogLogEvent{
+		logger: l.logger,
+		lvl:    slog.LevelDebug,
+		msg:    msg,
+		attrs:  make([]slog.Attr, 0),
+	}
 }
 
 func (l *slogLogger) Info(msg string) LogEvent {
-	return &slogLogEvent{logger: l.logger, lvl: slog.LevelInfo, msg: msg, attrs: make([]slog.Attr, 0)}
+	return &slogLogEvent{
+		logger: l.logger,
+		lvl:    slog.LevelInfo,
+		msg:    msg,
+		attrs:  make([]slog.Attr, 0),
+	}
 }
 
 func (l *slogLogger) Warn(msg string) LogEvent {
-	return &slogLogEvent{logger: l.logger, lvl: slog.LevelWarn, msg: msg, attrs: make([]slog.Attr, 0)}
+	return &slogLogEvent{
+		logger: l.logger,
+		lvl:    slog.LevelWarn,
+		msg:    msg,
+		attrs:  make([]slog.Attr, 0),
+	}
 }
 
 func (l *slogLogger) Error(msg string) LogEvent {
-	return &slogLogEvent{logger: l.logger, lvl: slog.LevelError, msg: msg, attrs: make([]slog.Attr, 0)}
+	return &slogLogEvent{
+		logger: l.logger,
+		lvl:    slog.LevelError,
+		msg:    msg,
+		attrs:  make([]slog.Attr, 0),
+	}
 }
 
 func (l *slogLogger) Flush() {}

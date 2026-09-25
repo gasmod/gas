@@ -40,10 +40,10 @@ func (a *App) logRouteMapDev(services []string, routes map[string][]RegisteredRo
 	a.getLogger().Info(b.String()).Send()
 }
 
-func formatRouteTable(services []string, routes map[string][]RegisteredRoute) (table, separator string) {
-	// ── Compute column widths ───────────────────────────────────
-	maxMethod, maxPath := 0, 0
-	total := 0
+func computeColumnWidths(
+	services []string,
+	routes map[string][]RegisteredRoute,
+) (maxMethod, maxPath, total int) {
 	for _, svc := range services {
 		for _, rt := range routes[svc] {
 			if len(rt.Method) > maxMethod {
@@ -55,6 +55,15 @@ func formatRouteTable(services []string, routes map[string][]RegisteredRoute) (t
 		}
 		total += len(routes[svc])
 	}
+	return
+}
+
+func formatRouteTable(
+	services []string,
+	routes map[string][]RegisteredRoute,
+) (table, separator string) {
+	// ── Compute column widths ───────────────────────────────────
+	maxMethod, maxPath, total := computeColumnWidths(services, routes)
 
 	rowFmt := fmt.Sprintf("      %%-%ds  %%-%ds", maxMethod, maxPath)
 

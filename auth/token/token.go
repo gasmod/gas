@@ -11,11 +11,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/auth/internal/cryptoutil"
 	"github.com/gasmod/gas/auth/token/db"
-
-	"github.com/google/uuid"
 )
 
 const serviceName = "gas/auth/token"
@@ -42,8 +42,10 @@ type Service struct {
 	customConfigProvided bool
 }
 
-var _ gas.Service = (*Service)(nil)
-var _ Provider = (*Service)(nil)
+var (
+	_ gas.Service = (*Service)(nil)
+	_ Provider    = (*Service)(nil)
+)
 
 // Option configures a Service.
 type Option func(*Service)
@@ -57,7 +59,9 @@ func WithConfig(cfg *Config) Option {
 }
 
 // New captures options and returns a DI-injectable constructor.
-func New(opts ...Option) func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager, gas.ConfigProvider) *Service {
+func New(
+	opts ...Option,
+) func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager, gas.ConfigProvider) *Service {
 	return func(dbProv gas.DatabaseProvider, logger gas.Logger, migMgr gas.MigrationManager, cfgProvider gas.ConfigProvider) *Service {
 		s := &Service{
 			cfg:         DefaultConfig(),
@@ -111,7 +115,11 @@ func (s *Service) Close() error {
 
 // Issue generates a random token, stores its hash with purpose, subject, and
 // expiry, and returns the raw token. If ttl is 0, DefaultTTL is used.
-func (s *Service) Issue(ctx context.Context, subject, purpose string, ttl time.Duration) (string, error) {
+func (s *Service) Issue(
+	ctx context.Context,
+	subject, purpose string,
+	ttl time.Duration,
+) (string, error) {
 	if ttl == 0 {
 		ttl = s.cfg.Token.DefaultTTL
 	}
@@ -127,7 +135,15 @@ func (s *Service) Issue(ctx context.Context, subject, purpose string, ttl time.D
 	now := time.Now()
 	expiresAt := now.Add(ttl)
 
-	if insErr := s.store.InsertToken(ctx, id, subject, tokenHash, purpose, now, expiresAt); insErr != nil {
+	if insErr := s.store.InsertToken(
+		ctx,
+		id,
+		subject,
+		tokenHash,
+		purpose,
+		now,
+		expiresAt,
+	); insErr != nil {
 		return "", fmt.Errorf("%s: issue token: %w", s.Name(), insErr)
 	}
 
@@ -150,7 +166,10 @@ func (s *Service) Issue(ctx context.Context, subject, purpose string, ttl time.D
 // Trade-off: a bug that sends the wrong purpose string will silently consume
 // a valid token. This is the preferable failure mode — it surfaces the bug
 // immediately rather than masking cross-flow confusion.
-func (s *Service) Verify(ctx context.Context, rawToken, purpose string) (subject string, err error) {
+func (s *Service) Verify(
+	ctx context.Context,
+	rawToken, purpose string,
+) (subject string, err error) {
 	tokenHash := cryptoutil.SHA256Hex(rawToken)
 
 	record, tkErr := s.store.ConsumeTokenByHash(ctx, tokenHash)

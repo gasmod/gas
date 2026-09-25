@@ -145,7 +145,10 @@ func (s *Service) RunPending() error {
 		for i, d := range dirty {
 			versions[i] = d.Version
 		}
-		return fmt.Errorf("gas/migrate: dirty migrations block execution: %s", strings.Join(versions, ", "))
+		return fmt.Errorf(
+			"gas/migrate: dirty migrations block execution: %s",
+			strings.Join(versions, ", "),
+		)
 	}
 
 	applied, err := s.getAppliedMigrations(ctx)
@@ -167,7 +170,11 @@ func (s *Service) RunPending() error {
 			continue
 		}
 		if mErr := s.applyUp(ctx, migration); mErr != nil {
-			return fmt.Errorf("gas/migrate: failed to apply migration %s: %w", migration.Version, mErr)
+			return fmt.Errorf(
+				"gas/migrate: failed to apply migration %s: %w",
+				migration.Version,
+				mErr,
+			)
 		}
 	}
 
@@ -205,7 +212,10 @@ func (s *Service) Down(n int) error {
 		a := applied[i]
 		migration, ok := registered[a.Version]
 		if !ok {
-			return fmt.Errorf("gas/migrate: applied migration %s not found in registered migrations", a.Version)
+			return fmt.Errorf(
+				"gas/migrate: applied migration %s not found in registered migrations",
+				a.Version,
+			)
 		}
 		if err := s.applyDown(ctx, migration); err != nil {
 			return err
@@ -218,16 +228,34 @@ func (s *Service) Down(n int) error {
 func (s *Service) applyUp(ctx context.Context, migration gas.Migration) error {
 	tx, err := s.db.DB().BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
-		return fmt.Errorf("gas/migrate: failed to begin transaction for %s: %w", migration.Version, err)
+		return fmt.Errorf(
+			"gas/migrate: failed to begin transaction for %s: %w",
+			migration.Version,
+			err,
+		)
 	}
 
 	if _, err := tx.ExecContext(ctx, migration.Up); err != nil {
 		_ = tx.Rollback()
-		if markErr := s.markDirty(ctx, migration.Version, migration.Service.Name(), migration.Description); markErr != nil {
-			return fmt.Errorf("gas/migrate: migration %s failed: %w (also failed to mark dirty: %w)",
-				migration.Version, err, markErr)
+		if markErr := s.markDirty(
+			ctx,
+			migration.Version,
+			migration.Service.Name(),
+			migration.Description,
+		); markErr != nil {
+			return fmt.Errorf(
+				"gas/migrate: migration %s failed: %w (also failed to mark dirty: %w)",
+				migration.Version,
+				err,
+				markErr,
+			)
 		}
-		return fmt.Errorf("gas/migrate: migration %q (Version: %s) failed (marked dirty): %w", migration.Description, migration.Version, err)
+		return fmt.Errorf(
+			"gas/migrate: migration %q (Version: %s) failed (marked dirty): %w",
+			migration.Description,
+			migration.Version,
+			err,
+		)
 	}
 
 	// Record the migration as applied inside the same transaction as its DDL,
@@ -236,21 +264,54 @@ func (s *Service) applyUp(ctx context.Context, migration gas.Migration) error {
 	// the database is left unchanged — rather than schema-applied-but-unrecorded,
 	// which would re-run the non-idempotent DDL on the next pass and wedge the
 	// pipeline as dirty.
-	if err := s.markApplied(ctx, tx, migration.Version, migration.Service.Name(), migration.Description); err != nil {
+	if err := s.markApplied(
+		ctx,
+		tx,
+		migration.Version,
+		migration.Service.Name(),
+		migration.Description,
+	); err != nil {
 		_ = tx.Rollback()
-		if markErr := s.markDirty(ctx, migration.Version, migration.Service.Name(), migration.Description); markErr != nil {
-			return fmt.Errorf("gas/migrate: recording migration %s failed: %w (also failed to mark dirty: %w)",
-				migration.Version, err, markErr)
+		if markErr := s.markDirty(
+			ctx,
+			migration.Version,
+			migration.Service.Name(),
+			migration.Description,
+		); markErr != nil {
+			return fmt.Errorf(
+				"gas/migrate: recording migration %s failed: %w (also failed to mark dirty: %w)",
+				migration.Version,
+				err,
+				markErr,
+			)
 		}
-		return fmt.Errorf("gas/migrate: recording migration %q (Version: %s) failed (marked dirty): %w", migration.Description, migration.Version, err)
+		return fmt.Errorf(
+			"gas/migrate: recording migration %q (Version: %s) failed (marked dirty): %w",
+			migration.Description,
+			migration.Version,
+			err,
+		)
 	}
 
 	if err := tx.Commit(); err != nil {
-		if markErr := s.markDirty(ctx, migration.Version, migration.Service.Name(), migration.Description); markErr != nil {
-			return fmt.Errorf("gas/migrate: commit failed for %s: %w (also failed to mark dirty: %w)",
-				migration.Version, err, markErr)
+		if markErr := s.markDirty(
+			ctx,
+			migration.Version,
+			migration.Service.Name(),
+			migration.Description,
+		); markErr != nil {
+			return fmt.Errorf(
+				"gas/migrate: commit failed for %s: %w (also failed to mark dirty: %w)",
+				migration.Version,
+				err,
+				markErr,
+			)
 		}
-		return fmt.Errorf("gas/migrate: commit failed for %s (marked dirty): %w", migration.Version, err)
+		return fmt.Errorf(
+			"gas/migrate: commit failed for %s (marked dirty): %w",
+			migration.Version,
+			err,
+		)
 	}
 
 	return nil
@@ -259,7 +320,11 @@ func (s *Service) applyUp(ctx context.Context, migration gas.Migration) error {
 func (s *Service) applyDown(ctx context.Context, migration gas.Migration) error {
 	tx, err := s.db.DB().BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
-		return fmt.Errorf("gas/migrate: failed to begin transaction for down %s: %w", migration.Version, err)
+		return fmt.Errorf(
+			"gas/migrate: failed to begin transaction for down %s: %w",
+			migration.Version,
+			err,
+		)
 	}
 
 	if _, err := tx.ExecContext(ctx, migration.Down); err != nil {
@@ -288,8 +353,12 @@ func (s *Service) allMigrationsSorted() ([]gas.Migration, error) {
 	seen := make(map[string]string, len(all)) // version → service
 	for _, mig := range all {
 		if owner, ok := seen[mig.Version]; ok && owner != mig.Service.Name() {
-			return nil, fmt.Errorf("gas/migrate: duplicate migration version %q registered by services %q and %q",
-				mig.Version, owner, mig.Service.Name())
+			return nil, fmt.Errorf(
+				"gas/migrate: duplicate migration version %q registered by services %q and %q",
+				mig.Version,
+				owner,
+				mig.Service.Name(),
+			)
 		}
 		seen[mig.Version] = mig.Service.Name()
 	}
@@ -305,8 +374,12 @@ func (s *Service) migrationsByVersion() (map[string]gas.Migration, error) {
 	for _, migs := range s.migrations {
 		for _, mig := range migs {
 			if existing, ok := byVersion[mig.Version]; ok && existing.Service != mig.Service {
-				return nil, fmt.Errorf("gas/migrate: duplicate migration version %q registered by services %q and %q",
-					mig.Version, existing.Service, mig.Service)
+				return nil, fmt.Errorf(
+					"gas/migrate: duplicate migration version %q registered by services %q and %q",
+					mig.Version,
+					existing.Service,
+					mig.Service,
+				)
 			}
 			byVersion[mig.Version] = mig
 		}

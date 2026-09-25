@@ -3,10 +3,10 @@ package reflection_test
 import (
 	"testing"
 
-	"github.com/gasmod/gas/config/internal/reflection"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/gasmod/gas/config/internal/reflection"
 )
 
 func TestClone_MapWithNilValue(t *testing.T) {

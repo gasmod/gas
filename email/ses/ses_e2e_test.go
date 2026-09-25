@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gasmod/gas"
-	"github.com/gasmod/gas/email/ses"
-
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	"github.com/gasmod/gas"
+	"github.com/gasmod/gas/email/ses"
 )
 
 // stubTemplateProvider is a minimal gas.TemplateProvider for e2e tests.
@@ -30,7 +30,11 @@ func (s *stubTemplateProvider) Get(ctx context.Context, name string) ([]byte, er
 	return nil, errors.New("not found")
 }
 
-func (s *stubTemplateProvider) List(_ context.Context) ([]string, error)             { return nil, nil }
+func (s *stubTemplateProvider) List(
+	_ context.Context,
+) ([]string, error) {
+	return nil, nil
+}
 func (s *stubTemplateProvider) Register(_ context.Context, _ string, _ []byte) error { return nil }
 func (s *stubTemplateProvider) RegisterFS(_ context.Context, _ fs.FS) error          { return nil }
 
@@ -47,7 +51,9 @@ func startSESContainer(t *testing.T) string {
 			Image:        sesLocalImage,
 			ExposedPorts: []string{"8005/tcp"},
 			Cmd:          []string{"npx", "aws-ses-v2-local"},
-			WaitingFor:   wait.ForHTTP("/health-check").WithPort("8005/tcp").WithStartupTimeout(60 * time.Second),
+			WaitingFor: wait.ForHTTP("/health-check").
+				WithPort("8005/tcp").
+				WithStartupTimeout(60 * time.Second),
 		},
 		Started: true,
 	})

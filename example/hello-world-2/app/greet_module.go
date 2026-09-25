@@ -63,15 +63,21 @@ func (m *GreetModule) Init() error {
 	m.router.NotFound(m, m.handleNotFound)
 
 	// Subscribe to system events with ownership tracking.
-	m.eventBus.SubscribeWithOwner[gas.SystemAllServicesInitialized](m, func(_ gas.SystemAllServicesInitializedPayload) {
-		// This runs once at startup after all modules have been initialized.
-		m.logger.Info("all services initialized").Str("module", m.Name()).Send()
-	})
+	m.eventBus.SubscribeWithOwner[gas.SystemAllServicesInitialized](
+		m,
+		func(_ gas.SystemAllServicesInitializedPayload) {
+			// This runs once at startup after all modules have been initialized.
+			m.logger.Info("all services initialized").Str("module", m.Name()).Send()
+		},
+	)
 
-	m.eventBus.SubscribeWithOwner[gas.SystemServerShuttingDown](m, func(_ gas.SystemServerShuttingDownPayload) {
-		// This runs when the server is shutting down — useful for cleanup.
-		m.logger.Info("server shutting down").Str("module", m.Name()).Send()
-	})
+	m.eventBus.SubscribeWithOwner[gas.SystemServerShuttingDown](
+		m,
+		func(_ gas.SystemServerShuttingDownPayload) {
+			// This runs when the server is shutting down — useful for cleanup.
+			m.logger.Info("server shutting down").Str("module", m.Name()).Send()
+		},
+	)
 
 	return nil
 }

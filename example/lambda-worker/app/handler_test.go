@@ -27,7 +27,12 @@ func TestNewHandlerRequiresNotificationQueueURL(t *testing.T) {
 	}
 
 	conn := &fakeConnector{}
-	_, err = app.NewHandler(gas.NewNopLogger()(), &fakeDBProvider{db: conn.openDB()}, &queuetest.MockQueue{}, cfg)
+	_, err = app.NewHandler(
+		gas.NewNopLogger()(),
+		&fakeDBProvider{db: conn.openDB()},
+		&queuetest.MockQueue{},
+		cfg,
+	)
 	if err == nil {
 		t.Fatal("NewHandler succeeded with no notification_queue_url, want an error")
 	}
@@ -44,7 +49,10 @@ func TestHandleProcessesRecord(t *testing.T) {
 	queue := &queuetest.MockQueue{}
 	h := newHandler(t, conn, queue)
 
-	resp, err := h.Handle(context.Background(), sqsEvent(orderRecord("msg-1", "order-1", "cust-1", 250)))
+	resp, err := h.Handle(
+		context.Background(),
+		sqsEvent(orderRecord("msg-1", "order-1", "cust-1", 250)),
+	)
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
@@ -59,7 +67,15 @@ func TestHandleProcessesRecord(t *testing.T) {
 	if !strings.Contains(calls[0].query, "UPDATE orders SET status") {
 		t.Errorf("query = %q, want the order status update", calls[0].query)
 	}
-	if got, want := argStrings(calls[0]), []string{"processing", "order-1"}; !equalStrings(got, want) {
+	if got, want := argStrings(
+		calls[0],
+	), []string{
+		"processing",
+		"order-1",
+	}; !equalStrings(
+		got,
+		want,
+	) {
 		t.Errorf("query args = %v, want %v", got, want)
 	}
 
@@ -121,7 +137,10 @@ func TestHandleReportsFailures(t *testing.T) {
 		queue := &queuetest.MockQueue{}
 		h := newHandler(t, conn, queue)
 
-		resp, err := h.Handle(context.Background(), sqsEvent(orderRecord("msg-1", "order-1", "cust-1", 100)))
+		resp, err := h.Handle(
+			context.Background(),
+			sqsEvent(orderRecord("msg-1", "order-1", "cust-1", 100)),
+		)
 		if err != nil {
 			t.Fatalf("Handle: %v", err)
 		}
@@ -143,7 +162,10 @@ func TestHandleReportsFailures(t *testing.T) {
 		}
 		h := newHandler(t, conn, queue)
 
-		resp, err := h.Handle(context.Background(), sqsEvent(orderRecord("msg-1", "order-1", "cust-1", 100)))
+		resp, err := h.Handle(
+			context.Background(),
+			sqsEvent(orderRecord("msg-1", "order-1", "cust-1", 100)),
+		)
 		if err != nil {
 			t.Fatalf("Handle: %v", err)
 		}
@@ -152,7 +174,10 @@ func TestHandleReportsFailures(t *testing.T) {
 			t.Errorf("BatchItemFailures = %v, want [msg-1]", resp.BatchItemFailures)
 		}
 		if got := len(conn.execCalls()); got != 1 {
-			t.Errorf("executed %d statements, want 1 (the update ran before the enqueue failed)", got)
+			t.Errorf(
+				"executed %d statements, want 1 (the update ran before the enqueue failed)",
+				got,
+			)
 		}
 	})
 }

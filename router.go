@@ -363,7 +363,12 @@ func (r *Router) Route(pattern string, fn func(sub *Router)) {
 // directly (for MiddlewareFunc) and applied in order (outermost first).
 // Panics if a named middleware is not registered or if a DI-aware handler has an invalid signature.
 // When the router is unsealed, the registration is deferred until Seal().
-func (r *Router) Handle(service Service, method, path string, handler any, middleware ...Middleware) {
+func (r *Router) Handle(
+	service Service,
+	method, path string,
+	handler any,
+	middleware ...Middleware,
+) {
 	if service == nil {
 		service = r.root
 	}
@@ -377,17 +382,7 @@ func (r *Router) Handle(service Service, method, path string, handler any, middl
 	// unregistered one panics at the call site rather than at Seal.
 	middlewareSpecs := make([]Middleware, len(middleware))
 	copy(middlewareSpecs, middleware)
-	middlewareNames := make([]string, 0, len(middleware))
-	for _, m := range middleware {
-		if !r.isSub {
-			if err := r.validateMiddleware(m); err != nil {
-				panic(fmt.Errorf("gas: route %s %s: %w", method, path, err))
-			}
-		}
-		if m.name != "" {
-			middlewareNames = append(middlewareNames, m.name)
-		}
-	}
+	middlewareNames := r.middlewareNames(middleware, method, path)
 
 	var httpHandler http.HandlerFunc
 	switch h := handler.(type) {
@@ -397,7 +392,12 @@ func (r *Router) Handle(service Service, method, path string, handler any, middl
 		httpHandler = h
 	default:
 		var depTypes []reflect.Type
-		httpHandler, depTypes = adaptHandler(handler, func() ErrorHandler { return r.errorHandler }, r.validator, r.formDecoder)
+		httpHandler, depTypes = adaptHandler(
+			handler,
+			func() ErrorHandler { return r.errorHandler },
+			r.validator,
+			r.formDecoder,
+		)
 		// Boot-time DI validation is recorded once, not on rebuild replays.
 		if len(depTypes) > 0 && !*r.rebuilding {
 			*r.pendingHandlers = append(*r.pendingHandlers, pendingHandler{
@@ -409,7 +409,39 @@ func (r *Router) Handle(service Service, method, path string, handler any, middl
 		}
 	}
 
-	op := func() {
+	op := r.op(middlewareSpecs, method, path, httpHandler)
+
+	// Record bookkeeping once (skipped while replaying ops on a rebuild).
+	// Registering a service's route also clears any pending 503 overlay from a
+	// prior RemoveByService, so RestartService brings the routes back to life.
+	if !*r.rebuilding {
+		r.recordBookkeeping(service, method, path, middlewareNames)
+	}
+
+	r.applyOp(op)
+}
+
+func (r *Router) middlewareNames(middleware []Middleware, method, path string) []string {
+	middlewareNames := make([]string, 0, len(middleware))
+	for _, m := range middleware {
+		if !r.isSub {
+			if err := r.validateMiddleware(m); err != nil {
+				panic(fmt.Errorf("gas: route %s %s: %w", method, path, err))
+			}
+		}
+		if m.name != "" {
+			middlewareNames = append(middlewareNames, m.name)
+		}
+	}
+	return middlewareNames
+}
+
+func (r *Router) op(
+	middlewareSpecs []Middleware,
+	method, path string,
+	httpHandler http.HandlerFunc,
+) func() {
+	return func() {
 		middlewareFuncs := make([]func(http.Handler) http.Handler, 0, len(middlewareSpecs))
 		for _, m := range middlewareSpecs {
 			fn, err := r.buildMiddleware(m)
@@ -424,15 +456,6 @@ func (r *Router) Handle(service Service, method, path string, handler any, middl
 			chained.Method(http.MethodHead, path, httpHandler)
 		}
 	}
-
-	// Record bookkeeping once (skipped while replaying ops on a rebuild).
-	// Registering a service's route also clears any pending 503 overlay from a
-	// prior RemoveByService, so RestartService brings the routes back to life.
-	if !*r.rebuilding {
-		r.recordBookkeeping(service, method, path, middlewareNames)
-	}
-
-	r.applyOp(op)
 }
 
 // Get registers a GET route via Handle, which also serves HEAD on the same path.
@@ -500,7 +523,12 @@ func (r *Router) NotFound(service Service, handler any) {
 	defer r.mu.Unlock()
 
 	if r.notFoundHandlerService != "" {
-		panic(fmt.Errorf("gas: service %q already registered a not found handler", r.notFoundHandlerService))
+		panic(
+			fmt.Errorf(
+				"gas: service %q already registered a not found handler",
+				r.notFoundHandlerService,
+			),
+		)
 	}
 
 	r.notFoundHandlerService = service.Name()
@@ -512,7 +540,12 @@ func (r *Router) NotFound(service Service, handler any) {
 	case func(http.ResponseWriter, *http.Request):
 		httpHandler = h
 	default:
-		httpHandler, _ = adaptHandler(handler, func() ErrorHandler { return r.errorHandler }, r.validator, r.formDecoder)
+		httpHandler, _ = adaptHandler(
+			handler,
+			func() ErrorHandler { return r.errorHandler },
+			r.validator,
+			r.formDecoder,
+		)
 	}
 
 	if r.isSub {
@@ -587,7 +620,10 @@ func (r *Router) Routes() map[string][]RegisteredRoute {
 			}
 			mw := make([]string, len(rt.middleware))
 			copy(mw, rt.middleware)
-			exported = append(exported, RegisteredRoute{Method: rt.method, Path: rt.path, Middleware: mw})
+			exported = append(
+				exported,
+				RegisteredRoute{Method: rt.method, Path: rt.path, Middleware: mw},
+			)
 		}
 		if len(exported) > 0 {
 			out[svc] = exported

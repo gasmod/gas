@@ -8,14 +8,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/gasmod/gas"
-	storage "github.com/gasmod/gas/storage"
-
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+
+	"github.com/gasmod/gas"
+	storage "github.com/gasmod/gas/storage"
 )
 
 const serviceName = "gas/storage/s3"
@@ -34,9 +34,11 @@ type Service struct {
 	closed               atomic.Bool
 }
 
-var _ gas.Service = (*Service)(nil)
-var _ gas.StorageProvider = (*Service)(nil)
-var _ gas.ReadyReporter = (*Service)(nil)
+var (
+	_ gas.Service         = (*Service)(nil)
+	_ gas.StorageProvider = (*Service)(nil)
+	_ gas.ReadyReporter   = (*Service)(nil)
+)
 
 // Option configures a Service.
 type Option func(*Service)
@@ -159,7 +161,12 @@ func (s *Service) CheckReady(ctx context.Context) error {
 	if _, err := s.client.HeadBucket(ctx, &s3.HeadBucketInput{
 		Bucket: new(bucket),
 	}); err != nil {
-		return fmt.Errorf("%s: bucket %q not reachable (verify s3:ListBucket permission): %w", s.Name(), bucket, err)
+		return fmt.Errorf(
+			"%s: bucket %q not reachable (verify s3:ListBucket permission): %w",
+			s.Name(),
+			bucket,
+			err,
+		)
 	}
 	return nil
 }
@@ -184,7 +191,12 @@ func (s *Service) resolveBucket(bucket string) (string, error) {
 }
 
 // Upload uploads an object to S3.
-func (s *Service) Upload(ctx context.Context, key string, data io.Reader, opts ...gas.StorageOption) error {
+func (s *Service) Upload(
+	ctx context.Context,
+	key string,
+	data io.Reader,
+	opts ...gas.StorageOption,
+) error {
 	if s.closed.Load() {
 		return storage.ErrClosed
 	}
@@ -219,7 +231,11 @@ func (s *Service) Upload(ctx context.Context, key string, data io.Reader, opts .
 
 // Download downloads an object from S3. Returns storage.ErrKeyNotFound
 // if the key does not exist.
-func (s *Service) Download(ctx context.Context, key string, opts ...gas.StorageOption) (*gas.StorageObject, error) {
+func (s *Service) Download(
+	ctx context.Context,
+	key string,
+	opts ...gas.StorageOption,
+) (*gas.StorageObject, error) {
 	if s.closed.Load() {
 		return nil, storage.ErrClosed
 	}
@@ -281,7 +297,12 @@ func (s *Service) Delete(ctx context.Context, key string, opts ...gas.StorageOpt
 
 // PresignDownloadURL generates a presigned GET URL for the specified object key,
 // valid for the given expiry duration.
-func (s *Service) PresignDownloadURL(ctx context.Context, key string, expiry time.Duration, opts ...gas.StorageOption) (string, error) {
+func (s *Service) PresignDownloadURL(
+	ctx context.Context,
+	key string,
+	expiry time.Duration,
+	opts ...gas.StorageOption,
+) (string, error) {
 	if s.closed.Load() {
 		return "", storage.ErrClosed
 	}
@@ -304,7 +325,12 @@ func (s *Service) PresignDownloadURL(ctx context.Context, key string, expiry tim
 
 // PresignUploadURL generates a presigned PUT URL for the specified object key,
 // valid for the given expiry duration.
-func (s *Service) PresignUploadURL(ctx context.Context, key string, expiry time.Duration, opts ...gas.StorageOption) (string, error) {
+func (s *Service) PresignUploadURL(
+	ctx context.Context,
+	key string,
+	expiry time.Duration,
+	opts ...gas.StorageOption,
+) (string, error) {
 	if s.closed.Load() {
 		return "", storage.ErrClosed
 	}
@@ -335,7 +361,11 @@ func (s *Service) PresignUploadURL(ctx context.Context, key string, expiry time.
 
 // Head retrieves object metadata without downloading the body.
 // Returns storage.ErrKeyNotFound if the key does not exist.
-func (s *Service) Head(ctx context.Context, key string, opts ...gas.StorageOption) (*gas.ObjectInfo, error) {
+func (s *Service) Head(
+	ctx context.Context,
+	key string,
+	opts ...gas.StorageOption,
+) (*gas.ObjectInfo, error) {
 	if s.closed.Load() {
 		return nil, storage.ErrClosed
 	}

@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	env "github.com/gasmod/gas/config/extensions/gasenv"
-
 	"github.com/google/uuid"
+
+	env "github.com/gasmod/gas/config/extensions/gasenv"
 )
 
 var uiBuildID = uuid.NewString()

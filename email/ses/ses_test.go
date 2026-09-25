@@ -6,10 +6,10 @@ import (
 	"io/fs"
 	"testing"
 
+	awsses "github.com/aws/aws-sdk-go-v2/service/ses"
+
 	"github.com/gasmod/gas"
 	email "github.com/gasmod/gas/email"
-
-	awsses "github.com/aws/aws-sdk-go-v2/service/ses"
 )
 
 // --- mock SES client ---
@@ -18,7 +18,11 @@ type mockSESClient struct {
 	sendEmailFn func(ctx context.Context, params *awsses.SendEmailInput, optFns ...func(*awsses.Options)) (*awsses.SendEmailOutput, error)
 }
 
-func (m *mockSESClient) SendEmail(ctx context.Context, params *awsses.SendEmailInput, optFns ...func(*awsses.Options)) (*awsses.SendEmailOutput, error) {
+func (m *mockSESClient) SendEmail(
+	ctx context.Context,
+	params *awsses.SendEmailInput,
+	optFns ...func(*awsses.Options),
+) (*awsses.SendEmailOutput, error) {
 	return m.sendEmailFn(ctx, params, optFns...)
 }
 
@@ -35,7 +39,11 @@ func (m *mockTemplateProvider) Get(ctx context.Context, name string) ([]byte, er
 	return nil, errors.New("not found")
 }
 
-func (m *mockTemplateProvider) List(_ context.Context) ([]string, error)             { return nil, nil }
+func (m *mockTemplateProvider) List(
+	_ context.Context,
+) ([]string, error) {
+	return nil, nil
+}
 func (m *mockTemplateProvider) Register(_ context.Context, _ string, _ []byte) error { return nil }
 func (m *mockTemplateProvider) RegisterFS(_ context.Context, _ fs.FS) error          { return nil }
 
@@ -87,7 +95,11 @@ func TestConfigValidate(t *testing.T) {
 	}{
 		{name: "valid", modify: func(_ *Config) {}, wantErr: false},
 		{name: "empty region", modify: func(c *Config) { c.Email.Region = "" }, wantErr: true},
-		{name: "empty from email", modify: func(c *Config) { c.Email.FromEmail = "" }, wantErr: true},
+		{
+			name:    "empty from email",
+			modify:  func(c *Config) { c.Email.FromEmail = "" },
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -168,7 +180,8 @@ func TestSend(t *testing.T) {
 	if *captured.Source != "test@example.com" {
 		t.Errorf("Source = %q, want %q", *captured.Source, "test@example.com")
 	}
-	if len(captured.Destination.ToAddresses) != 1 || captured.Destination.ToAddresses[0] != "recipient@example.com" {
+	if len(captured.Destination.ToAddresses) != 1 ||
+		captured.Destination.ToAddresses[0] != "recipient@example.com" {
 		t.Errorf("ToAddresses = %v", captured.Destination.ToAddresses)
 	}
 	if *captured.Message.Subject.Data != "Test Subject" {
@@ -246,10 +259,12 @@ func TestSendWithCcBcc(t *testing.T) {
 		t.Fatalf("Send() error = %v", err)
 	}
 
-	if len(captured.Destination.CcAddresses) != 1 || captured.Destination.CcAddresses[0] != "cc@example.com" {
+	if len(captured.Destination.CcAddresses) != 1 ||
+		captured.Destination.CcAddresses[0] != "cc@example.com" {
 		t.Errorf("CcAddresses = %v", captured.Destination.CcAddresses)
 	}
-	if len(captured.Destination.BccAddresses) != 1 || captured.Destination.BccAddresses[0] != "bcc@example.com" {
+	if len(captured.Destination.BccAddresses) != 1 ||
+		captured.Destination.BccAddresses[0] != "bcc@example.com" {
 		t.Errorf("BccAddresses = %v", captured.Destination.BccAddresses)
 	}
 }

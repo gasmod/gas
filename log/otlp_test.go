@@ -87,7 +87,8 @@ func TestOTLPMarshaler_Shape(t *testing.T) {
 			res[a.Key] = *a.Value.StringValue
 		}
 	}
-	if res["service.name"] != "due-api" || res["service.version"] != "1.4.2" || res["host.name"] != "api-1" {
+	if res["service.name"] != "due-api" || res["service.version"] != "1.4.2" ||
+		res["host.name"] != "api-1" {
 		t.Errorf("resource attrs = %+v", res)
 	}
 	if rl.ScopeLogs[0].Scope.Name != "due-api" {

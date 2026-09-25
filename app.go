@@ -84,7 +84,10 @@ func NewApp(opts ...Option) *App {
 				if !w.serviceContainer.canResolveType(depType) {
 					return fmt.Errorf(
 						"gas: handler %s %s (service %q): dependency %v is not registered in the container",
-						ph.method, ph.path, ph.service.Name(), depType,
+						ph.method,
+						ph.path,
+						ph.service.Name(),
+						depType,
 					)
 				}
 			}

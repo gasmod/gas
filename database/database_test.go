@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
+	_ "modernc.org/sqlite"
+
 	"github.com/gasmod/gas"
 	database "github.com/gasmod/gas/database"
-
-	_ "modernc.org/sqlite"
 )
 
 // Compile-time interface checks.
@@ -229,7 +229,12 @@ func TestWithTx_Commit(t *testing.T) {
 	}
 
 	err = s.WithTx(ctx, nil, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, "INSERT INTO withtx_test (id, val) VALUES (?, ?)", 1, "committed")
+		_, err := tx.ExecContext(
+			ctx,
+			"INSERT INTO withtx_test (id, val) VALUES (?, ?)",
+			1,
+			"committed",
+		)
 		return err
 	})
 	if err != nil {
@@ -264,7 +269,12 @@ func TestWithTx_Rollback(t *testing.T) {
 	}
 
 	err = s.WithTx(ctx, nil, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, "INSERT INTO withtx_rb (id, val) VALUES (?, ?)", 1, "rolled-back")
+		_, err := tx.ExecContext(
+			ctx,
+			"INSERT INTO withtx_rb (id, val) VALUES (?, ?)",
+			1,
+			"rolled-back",
+		)
 		if err != nil {
 			return err
 		}
@@ -311,7 +321,12 @@ func TestWithTx_Panic(t *testing.T) {
 	}()
 
 	_ = s.WithTx(ctx, nil, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, "INSERT INTO withtx_panic (id, val) VALUES (?, ?)", 1, "panic-value")
+		_, err := tx.ExecContext(
+			ctx,
+			"INSERT INTO withtx_panic (id, val) VALUES (?, ?)",
+			1,
+			"panic-value",
+		)
 		if err != nil {
 			return err
 		}
@@ -451,7 +466,10 @@ func TestWithConnector(t *testing.T) {
 	}
 	t.Cleanup(func() { s.Close() })
 
-	if _, err := s.Exec(context.Background(), "CREATE TABLE conn_test (id INTEGER PRIMARY KEY)"); err != nil {
+	if _, err := s.Exec(
+		context.Background(),
+		"CREATE TABLE conn_test (id INTEGER PRIMARY KEY)",
+	); err != nil {
 		t.Fatalf("Exec through connector-backed DB: %v", err)
 	}
 }
@@ -540,14 +558,22 @@ func TestWithTx_FnCommitsThenReturnsNil(t *testing.T) {
 	s := newTestService(t)
 	ctx := context.Background()
 
-	if _, err := s.Exec(ctx, "CREATE TABLE withtx_dbl (id INTEGER PRIMARY KEY, val TEXT)"); err != nil {
+	if _, err := s.Exec(
+		ctx,
+		"CREATE TABLE withtx_dbl (id INTEGER PRIMARY KEY, val TEXT)",
+	); err != nil {
 		t.Fatalf("CREATE TABLE: %v", err)
 	}
 
 	// A callback that commits and then reports success leaves WithTx nothing
 	// to commit, so the redundant commit surfaces as sql.ErrTxDone.
 	err := s.WithTx(ctx, nil, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, "INSERT INTO withtx_dbl (id, val) VALUES (?, ?)", 1, "inner"); err != nil {
+		if _, err := tx.ExecContext(
+			ctx,
+			"INSERT INTO withtx_dbl (id, val) VALUES (?, ?)",
+			1,
+			"inner",
+		); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -571,13 +597,21 @@ func TestWithTx_FnRollsBackThenReturnsError(t *testing.T) {
 	s := newTestService(t)
 	ctx := context.Background()
 
-	if _, err := s.Exec(ctx, "CREATE TABLE withtx_self_rb (id INTEGER PRIMARY KEY, val TEXT)"); err != nil {
+	if _, err := s.Exec(
+		ctx,
+		"CREATE TABLE withtx_self_rb (id INTEGER PRIMARY KEY, val TEXT)",
+	); err != nil {
 		t.Fatalf("CREATE TABLE: %v", err)
 	}
 
 	sentinel := errors.New("failed after rolling back")
 	err := s.WithTx(ctx, nil, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, "INSERT INTO withtx_self_rb (id, val) VALUES (?, ?)", 1, "gone"); err != nil {
+		if _, err := tx.ExecContext(
+			ctx,
+			"INSERT INTO withtx_self_rb (id, val) VALUES (?, ?)",
+			1,
+			"gone",
+		); err != nil {
 			return err
 		}
 		if err := tx.Rollback(); err != nil {

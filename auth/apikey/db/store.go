@@ -155,7 +155,11 @@ func (s *Store) SoftDeleteKeyByID(ctx context.Context, id string, deletedAt time
 }
 
 // SoftDeleteKeysBySubject marks all API keys for a subject as deleted.
-func (s *Store) SoftDeleteKeysBySubject(ctx context.Context, subject string, deletedAt time.Time) error {
+func (s *Store) SoftDeleteKeysBySubject(
+	ctx context.Context,
+	subject string,
+	deletedAt time.Time,
+) error {
 	if err := s.q.softDeleteKeysBySubject(ctx, subject, deletedAt); err != nil {
 		return fmt.Errorf("%s: soft delete keys by subject: %w", serviceName, err)
 	}
@@ -180,7 +184,11 @@ func (s *Store) HardDeleteKeysBySubject(ctx context.Context, subject string) err
 
 // ListKeysBySubject returns non-sensitive info about keys for a subject. When
 // includeRevoked is true, soft-deleted keys are included in the result.
-func (s *Store) ListKeysBySubject(ctx context.Context, subject string, includeRevoked bool) ([]KeyInfo, error) {
+func (s *Store) ListKeysBySubject(
+	ctx context.Context,
+	subject string,
+	includeRevoked bool,
+) ([]KeyInfo, error) {
 	var (
 		rows []keyRow
 		err  error

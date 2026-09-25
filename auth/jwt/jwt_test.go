@@ -15,13 +15,14 @@ import (
 	"testing"
 	"time"
 
+	gojwt "github.com/golang-jwt/jwt/v5"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/auth"
 	jwtpkg "github.com/gasmod/gas/auth/jwt"
 	"github.com/gasmod/gas/config/configtest"
-	gojwt "github.com/golang-jwt/jwt/v5"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // ---------------------------------------------------------------------------
@@ -213,7 +214,12 @@ func TestSignVerifyHS256(t *testing.T) {
 
 		_, err = svc.Verify(token)
 		require.Error(t, err)
-		assert.True(t, errors.Is(err, gojwt.ErrTokenExpired), "expected ErrTokenExpired, got: %v", err)
+		assert.True(
+			t,
+			errors.Is(err, gojwt.ErrTokenExpired),
+			"expected ErrTokenExpired, got: %v",
+			err,
+		)
 	})
 
 	t.Run("verify with wrong signing key rejects", func(t *testing.T) {
@@ -266,7 +272,12 @@ func TestSignVerifyHS256(t *testing.T) {
 		time.Sleep(1 * time.Millisecond)
 		_, err = svc.Verify(token)
 		require.Error(t, err)
-		assert.True(t, errors.Is(err, gojwt.ErrTokenExpired), "expected ErrTokenExpired, got: %v", err)
+		assert.True(
+			t,
+			errors.Is(err, gojwt.ErrTokenExpired),
+			"expected ErrTokenExpired, got: %v",
+			err,
+		)
 	})
 
 	t.Run("SignWithExpiry with negative duration is already expired", func(t *testing.T) {
@@ -276,7 +287,12 @@ func TestSignVerifyHS256(t *testing.T) {
 
 		_, err = svc.Verify(token)
 		require.Error(t, err)
-		assert.True(t, errors.Is(err, gojwt.ErrTokenExpired), "expected ErrTokenExpired, got: %v", err)
+		assert.True(
+			t,
+			errors.Is(err, gojwt.ErrTokenExpired),
+			"expected ErrTokenExpired, got: %v",
+			err,
+		)
 	})
 
 	t.Run("verify empty string errors", func(t *testing.T) {
@@ -493,14 +509,17 @@ func TestAuthenticate(t *testing.T) {
 		assert.ErrorIs(t, err, auth.ErrUnauthenticated)
 	})
 
-	t.Run("valid Bearer token returns Principal with correct subject and scheme", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodGet, "/", nil)
-		r.Header.Set("Authorization", "Bearer "+validToken)
-		principal, err := svc.Authenticate(context.Background(), r)
-		require.NoError(t, err)
-		assert.Equal(t, "auth-user", principal.Subject())
-		assert.Equal(t, "jwt", principal.Scheme())
-	})
+	t.Run(
+		"valid Bearer token returns Principal with correct subject and scheme",
+		func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "/", nil)
+			r.Header.Set("Authorization", "Bearer "+validToken)
+			principal, err := svc.Authenticate(context.Background(), r)
+			require.NoError(t, err)
+			assert.Equal(t, "auth-user", principal.Subject())
+			assert.Equal(t, "jwt", principal.Scheme())
+		},
+	)
 
 	t.Run("expired Bearer token returns ErrCredentialsExpired", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, "/", nil)

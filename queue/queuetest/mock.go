@@ -44,7 +44,12 @@ func (m *MockQueue) record(method string, args ...any) {
 }
 
 // Enqueue records the call and delegates to EnqueueFn if set.
-func (m *MockQueue) Enqueue(ctx context.Context, queue string, payload []byte, opts ...gas.EnqueueOption) error {
+func (m *MockQueue) Enqueue(
+	ctx context.Context,
+	queue string,
+	payload []byte,
+	opts ...gas.EnqueueOption,
+) error {
 	m.record("Enqueue", queue, payload, opts)
 	if m.EnqueueFn != nil {
 		return m.EnqueueFn(ctx, queue, payload, opts...)
@@ -53,7 +58,12 @@ func (m *MockQueue) Enqueue(ctx context.Context, queue string, payload []byte, o
 }
 
 // Dequeue records the call and delegates to DequeueFn if set.
-func (m *MockQueue) Dequeue(ctx context.Context, queue string, maxMessages int, wait time.Duration) ([]gas.Job, error) {
+func (m *MockQueue) Dequeue(
+	ctx context.Context,
+	queue string,
+	maxMessages int,
+	wait time.Duration,
+) ([]gas.Job, error) {
 	m.record("Dequeue", queue, maxMessages, wait)
 	if m.DequeueFn != nil {
 		return m.DequeueFn(ctx, queue, maxMessages, wait)

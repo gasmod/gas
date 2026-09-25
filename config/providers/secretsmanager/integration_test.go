@@ -10,14 +10,13 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awssm "github.com/aws/aws-sdk-go-v2/service/secretsmanager"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	config "github.com/gasmod/gas/config"
 	"github.com/gasmod/gas/config/providers/secretsmanager"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // startLocalStack starts a LocalStack container and returns its endpoint.
@@ -85,7 +84,12 @@ func TestIntegration_LoadSecretsFromLocalStack(t *testing.T) {
 
 	endpoint := startLocalStack(t)
 
-	createSecret(t, endpoint, "myapp/config", `{"database": {"host": "db.internal"}, "api_key": "abc"}`)
+	createSecret(
+		t,
+		endpoint,
+		"myapp/config",
+		`{"database": {"host": "db.internal"}, "api_key": "abc"}`,
+	)
 	createSecret(t, endpoint, "myapp/db-pass", "hunter2")
 
 	p := secretsmanager.NewProvider(

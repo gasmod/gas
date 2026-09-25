@@ -4,10 +4,10 @@ package log
 import (
 	"time"
 
-	"github.com/gasmod/gas"
-
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+
+	"github.com/gasmod/gas"
 )
 
 // ZeroLogLogger adapts a [zerolog.Logger] to the gas.Logger interface.
@@ -125,7 +125,10 @@ func (c *ZeroLogMutableLoggerContext) Err(key string, val error) gas.MutableLogg
 }
 
 // Duration adds a duration field with the specified key and value to the logging context and returns the updated context.
-func (c *ZeroLogMutableLoggerContext) Duration(key string, val time.Duration) gas.MutableLoggerContext {
+func (c *ZeroLogMutableLoggerContext) Duration(
+	key string,
+	val time.Duration,
+) gas.MutableLoggerContext {
 	c.ctx = c.ctx.Dur(key, val)
 	return c
 }

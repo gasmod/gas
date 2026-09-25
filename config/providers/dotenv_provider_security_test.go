@@ -5,10 +5,10 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/gasmod/gas/config/providers"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/gasmod/gas/config/providers"
 )
 
 // TestDotEnvProvider_DoesNotMirrorToProcessEnvByDefault guards against a

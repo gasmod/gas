@@ -198,7 +198,9 @@ func (w *Worker) RestartService[T Service]() error {
 
 	w.mu.Unlock()
 
-	w.eventBus.Emit[SystemServiceInitialized](SystemServiceInitializedPayload{ServiceName: name}).Wait()
+	w.eventBus.Emit[SystemServiceInitialized](
+		SystemServiceInitializedPayload{ServiceName: name},
+	).Wait()
 
 	w.getLogger().Info("service restarted").Str("service", name).Send()
 	return nil

@@ -7,11 +7,12 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/gasmod/gas"
 	auth "github.com/gasmod/gas/auth"
 	"github.com/gasmod/gas/auth/authtest"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestMiddleware(t *testing.T) {
@@ -87,81 +88,90 @@ func TestMiddleware(t *testing.T) {
 		assert.Equal(t, http.StatusUnauthorized, rec.Code)
 	})
 
-	t.Run("401 response body is exactly Unauthorized with newline and no internal details", func(t *testing.T) {
-		mock := &authtest.MockAuthenticator{
-			AuthenticateFn: func(_ context.Context, _ *http.Request) (gas.Principal, error) {
-				return nil, auth.ErrUnauthenticated
-			},
-		}
+	t.Run(
+		"401 response body is exactly Unauthorized with newline and no internal details",
+		func(t *testing.T) {
+			mock := &authtest.MockAuthenticator{
+				AuthenticateFn: func(_ context.Context, _ *http.Request) (gas.Principal, error) {
+					return nil, auth.ErrUnauthenticated
+				},
+			}
 
-		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			t.Fatal("next handler should not be called")
-		})
+			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				t.Fatal("next handler should not be called")
+			})
 
-		handler := auth.Middleware(mock)(next)
-		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		rec := httptest.NewRecorder()
+			handler := auth.Middleware(mock)(next)
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			rec := httptest.NewRecorder()
 
-		handler.ServeHTTP(rec, req)
+			handler.ServeHTTP(rec, req)
 
-		assert.Equal(t, "Unauthorized\n", rec.Body.String())
-	})
+			assert.Equal(t, "Unauthorized\n", rec.Body.String())
+		},
+	)
 
-	t.Run("auth returns nil principal and nil error calls next with nil principal in context", func(t *testing.T) {
-		mock := &authtest.MockAuthenticator{
-			// AuthenticateFn is nil, so returns (nil, nil)
-		}
+	t.Run(
+		"auth returns nil principal and nil error calls next with nil principal in context",
+		func(t *testing.T) {
+			mock := &authtest.MockAuthenticator{
+				// AuthenticateFn is nil, so returns (nil, nil)
+			}
 
-		var called int32
-		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			atomic.AddInt32(&called, 1)
-			p := gas.PrincipalFromContext(r.Context())
-			assert.Nil(t, p)
-			w.WriteHeader(http.StatusOK)
-		})
+			var called int32
+			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				atomic.AddInt32(&called, 1)
+				p := gas.PrincipalFromContext(r.Context())
+				assert.Nil(t, p)
+				w.WriteHeader(http.StatusOK)
+			})
 
-		handler := auth.Middleware(mock)(next)
-		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		rec := httptest.NewRecorder()
+			handler := auth.Middleware(mock)(next)
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			rec := httptest.NewRecorder()
 
-		handler.ServeHTTP(rec, req)
+			handler.ServeHTTP(rec, req)
 
-		assert.Equal(t, http.StatusOK, rec.Code)
-		assert.Equal(t, int32(1), atomic.LoadInt32(&called))
-	})
+			assert.Equal(t, http.StatusOK, rec.Code)
+			assert.Equal(t, int32(1), atomic.LoadInt32(&called))
+		},
+	)
 
-	t.Run("WithOnError receives the authentication error and controls the response", func(t *testing.T) {
-		mock := &authtest.MockAuthenticator{
-			AuthenticateFn: func(_ context.Context, _ *http.Request) (gas.Principal, error) {
-				return nil, auth.ErrCredentialsExpired
-			},
-		}
+	t.Run(
+		"WithOnError receives the authentication error and controls the response",
+		func(t *testing.T) {
+			mock := &authtest.MockAuthenticator{
+				AuthenticateFn: func(_ context.Context, _ *http.Request) (gas.Principal, error) {
+					return nil, auth.ErrCredentialsExpired
+				},
+			}
 
-		var receivedErr error
-		onError := func(w http.ResponseWriter, _ *http.Request, err error) {
-			receivedErr = err
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"error":"credentials expired"}`))
-		}
+			var receivedErr error
+			onError := func(w http.ResponseWriter, _ *http.Request, err error) {
+				receivedErr = err
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"error":"credentials expired"}`))
+			}
 
-		var called int32
-		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			atomic.AddInt32(&called, 1)
-		})
+			var called int32
+			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				atomic.AddInt32(&called, 1)
+			})
 
-		handler := auth.Middleware(mock, auth.WithOnError(onError))(next)
-		req := httptest.NewRequest(http.MethodGet, "/protected", nil)
-		rec := httptest.NewRecorder()
+			handler := auth.Middleware(mock, auth.WithOnError(onError))(next)
+			req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+			rec := httptest.NewRecorder()
 
-		handler.ServeHTTP(rec, req)
+			handler.ServeHTTP(rec, req)
 
-		assert.Equal(t, http.StatusUnauthorized, rec.Code)
-		assert.Equal(t, int32(0), atomic.LoadInt32(&called))
-		assert.ErrorIs(t, receivedErr, auth.ErrCredentialsExpired)
-		assert.Equal(t, "application/json", rec.Result().Header.Get("Content-Type"))
-		assert.Equal(t, `{"error":"credentials expired"}`, rec.Body.String())
-	})
+			assert.Equal(t, http.StatusUnauthorized, rec.Code)
+			assert.Equal(t, int32(0), atomic.LoadInt32(&called))
+			assert.ErrorIs(t, receivedErr, auth.ErrCredentialsExpired)
+			assert.Equal(t, "application/json", rec.Result().Header.Get("Content-Type"))
+			assert.Equal(t, `{"error":"credentials expired"}`, rec.Body.String())
+		},
+	)
 
 	t.Run("401 response Content-Type is text/plain charset=utf-8", func(t *testing.T) {
 		mock := &authtest.MockAuthenticator{

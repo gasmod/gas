@@ -39,8 +39,14 @@ func TestServiceContainer_CaptiveDependency(t *testing.T) {
 		type SvcScoped struct{}
 		type SvcSingleton struct{}
 
-		c.RegisterService[*SvcScoped](func() *SvcScoped { return &SvcScoped{} }, gas.ServiceLifetimeScoped)
-		c.RegisterService[*SvcSingleton](func(s *SvcScoped) *SvcSingleton { return &SvcSingleton{} }, gas.ServiceLifetimeSingleton)
+		c.RegisterService[*SvcScoped](
+			func() *SvcScoped { return &SvcScoped{} },
+			gas.ServiceLifetimeScoped,
+		)
+		c.RegisterService[*SvcSingleton](
+			func(s *SvcScoped) *SvcSingleton { return &SvcSingleton{} },
+			gas.ServiceLifetimeSingleton,
+		)
 
 		err := c.BuildAll()
 		if err == nil {
@@ -56,8 +62,14 @@ func TestServiceContainer_CaptiveDependency(t *testing.T) {
 		type SvcTransient struct{}
 		type SvcSingleton struct{}
 
-		c.RegisterService[*SvcTransient](func() *SvcTransient { return &SvcTransient{} }, gas.ServiceLifetimeTransient)
-		c.RegisterService[*SvcSingleton](func(s *SvcTransient) *SvcSingleton { return &SvcSingleton{} }, gas.ServiceLifetimeSingleton)
+		c.RegisterService[*SvcTransient](
+			func() *SvcTransient { return &SvcTransient{} },
+			gas.ServiceLifetimeTransient,
+		)
+		c.RegisterService[*SvcSingleton](
+			func(s *SvcTransient) *SvcSingleton { return &SvcSingleton{} },
+			gas.ServiceLifetimeSingleton,
+		)
 
 		err := c.BuildAll()
 		if err == nil {
@@ -101,7 +113,13 @@ func TestRouter_Handle_PanicOnMissingNamedMiddleware(t *testing.T) {
 	}()
 
 	// Handle calls resolveMiddleware immediately, even if unsealed
-	router.Handle(svc, "GET", "/", func(ctx gas.Context) error { return nil }, gas.MiddlewareByName("missing"))
+	router.Handle(
+		svc,
+		"GET",
+		"/",
+		func(ctx gas.Context) error { return nil },
+		gas.MiddlewareByName("missing"),
+	)
 }
 
 // ---------------------------------------------------------------------------
@@ -200,7 +218,11 @@ func TestContext_BindForm_InvalidDest(t *testing.T) {
 }
 
 func TestContext_JSON_SerializationError(t *testing.T) {
-	ctx := gas.NewContext(context.Background(), httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
+	ctx := gas.NewContext(
+		context.Background(),
+		httptest.NewRecorder(),
+		httptest.NewRequest("GET", "/", nil),
+	)
 	// Unsupported type (channel)
 	err := ctx.JSON(http.StatusOK, make(chan int))
 	if err == nil {
@@ -209,7 +231,11 @@ func TestContext_JSON_SerializationError(t *testing.T) {
 }
 
 func TestContext_XML_SerializationError(t *testing.T) {
-	ctx := gas.NewContext(context.Background(), httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
+	ctx := gas.NewContext(
+		context.Background(),
+		httptest.NewRecorder(),
+		httptest.NewRequest("GET", "/", nil),
+	)
 	// Unsupported type (channel)
 	err := ctx.XML(http.StatusOK, make(chan int))
 	if err == nil {

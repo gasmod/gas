@@ -116,8 +116,20 @@ func (s *Store) ConsumeTokenByHash(ctx context.Context, tokenHash string) (*Toke
 }
 
 // InsertToken stores a new token record.
-func (s *Store) InsertToken(ctx context.Context, id, subject, tokenHash, purpose string, createdAt, expiresAt time.Time) error {
-	if err := s.q.insertToken(ctx, id, subject, tokenHash, purpose, createdAt, expiresAt); err != nil {
+func (s *Store) InsertToken(
+	ctx context.Context,
+	id, subject, tokenHash, purpose string,
+	createdAt, expiresAt time.Time,
+) error {
+	if err := s.q.insertToken(
+		ctx,
+		id,
+		subject,
+		tokenHash,
+		purpose,
+		createdAt,
+		expiresAt,
+	); err != nil {
 		return fmt.Errorf("%s: insert token: %w", serviceName, err)
 	}
 	return nil

@@ -9,6 +9,7 @@ import (
 	"log"
 
 	"github.com/aws/aws-lambda-go/lambda"
+
 	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/example/lambda-worker/app"
 )

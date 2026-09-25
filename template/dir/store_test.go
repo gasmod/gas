@@ -20,10 +20,18 @@ func newTestDir(t *testing.T) string {
 	if err := os.MkdirAll(layoutsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(layoutsDir, "base.html"), []byte("<html>base</html>"), 0o644); err != nil {
+	if err := os.WriteFile(
+		filepath.Join(layoutsDir, "base.html"),
+		[]byte("<html>base</html>"),
+		0o644,
+	); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "home.html"), []byte("<h1>Home</h1>"), 0o644); err != nil {
+	if err := os.WriteFile(
+		filepath.Join(dir, "home.html"),
+		[]byte("<h1>Home</h1>"),
+		0o644,
+	); err != nil {
 		t.Fatal(err)
 	}
 	// Non-HTML file should be ignored.

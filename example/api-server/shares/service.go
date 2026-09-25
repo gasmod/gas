@@ -104,7 +104,7 @@ func (s *Service) Close() error { return nil }
 // --- Request/Response types ---
 
 type createShareRequest struct {
-	RecipientEmail string `json:"recipient_email" validate:"required,email"`
+	RecipientEmail string `json:"recipient_email"  validate:"required,email"`
 	ExpiresInHours int    `json:"expires_in_hours" validate:"omitempty,min=1,max=720"`
 }
 
@@ -143,7 +143,10 @@ func (s *Service) handleCreateShare(ctx gas.Context) error {
 
 	var req createShareRequest
 	if bindErr := ctx.BindJSON(&req); bindErr != nil {
-		return &apiError{Status: http.StatusBadRequest, Message: "invalid request: " + bindErr.Error()}
+		return &apiError{
+			Status:  http.StatusBadRequest,
+			Message: "invalid request: " + bindErr.Error(),
+		}
 	}
 
 	// Verify the file exists and belongs to the user.

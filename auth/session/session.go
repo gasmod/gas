@@ -32,10 +32,12 @@ type Service struct {
 	customConfigProvided bool
 }
 
-var _ gas.Service = (*Service)(nil)
-var _ gas.Authenticator = (*Service)(nil)
-var _ gas.PrincipalRevoker = (*Service)(nil)
-var _ Provider = (*Service)(nil)
+var (
+	_ gas.Service          = (*Service)(nil)
+	_ gas.Authenticator    = (*Service)(nil)
+	_ gas.PrincipalRevoker = (*Service)(nil)
+	_ Provider             = (*Service)(nil)
+)
 
 // Option configures a Service.
 type Option func(*Service)
@@ -49,7 +51,9 @@ func WithConfig(cfg *Config) Option {
 }
 
 // New captures options and returns a DI-injectable constructor.
-func New(opts ...Option) func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager, gas.ConfigProvider) *Service {
+func New(
+	opts ...Option,
+) func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager, gas.ConfigProvider) *Service {
 	return func(dbProv gas.DatabaseProvider, logger gas.Logger, migMgr gas.MigrationManager, cfgProvider gas.ConfigProvider) *Service {
 		s := &Service{
 			cfg:         DefaultConfig(),
@@ -165,7 +169,12 @@ func (s *Service) RevokeAllByScheme(ctx context.Context, subject, scheme string)
 // Create generates a cryptographically random session ID, stores the session
 // in the database, and returns it. The caller is responsible for calling
 // SetCookie afterward. The *http.Request is used to capture IP and user agent.
-func (s *Service) Create(ctx context.Context, subject string, meta gas.BasePrincipalMetadata, r *http.Request) (*Session, error) {
+func (s *Service) Create(
+	ctx context.Context,
+	subject string,
+	meta gas.BasePrincipalMetadata,
+	r *http.Request,
+) (*Session, error) {
 	id, err := cryptoutil.RandomString(32)
 	if err != nil {
 		return nil, fmt.Errorf("%s: generate session id: %w", s.Name(), err)
@@ -268,7 +277,8 @@ func (s *Service) verifySecureCookieOptions() {
 	if !s.cfg.Session.CookieHTTPOnly {
 		s.logger.Warn("cookie missing or has insecure 'HttpOnly' attribute").Send()
 	}
-	if s.cfg.Session.CookieSameSite != http.SameSiteStrictMode && s.cfg.Session.CookieSameSite != http.SameSiteLaxMode {
+	if s.cfg.Session.CookieSameSite != http.SameSiteStrictMode &&
+		s.cfg.Session.CookieSameSite != http.SameSiteLaxMode {
 		s.logger.Warn("cookie missing or has insecure 'SameSite' attribute").Send()
 	}
 }

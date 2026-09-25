@@ -10,11 +10,11 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/go-playground/validator/v10"
+
 	"github.com/gasmod/gas/config/internal/maputils"
 	"github.com/gasmod/gas/config/internal/reflection"
 	"github.com/gasmod/gas/config/providers"
-
-	"github.com/go-playground/validator/v10"
 )
 
 var (

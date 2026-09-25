@@ -152,7 +152,11 @@ var (
 
 // buildShipping resolves options and constructs the sender, its shipping
 // handler, and the composed handler that tees local logging with delivery.
-func buildShipping(endpoint string, marshaler Marshaler, opts []ShippingOption) (composed slog.Handler, ship *Handler, cfg shippingConfig) {
+func buildShipping(
+	endpoint string,
+	marshaler Marshaler,
+	opts []ShippingOption,
+) (composed slog.Handler, ship *Handler, cfg shippingConfig) {
 	cfg = defaultShippingConfig()
 	for _, opt := range opts {
 		opt(&cfg)
@@ -172,7 +176,11 @@ func buildShipping(endpoint string, marshaler Marshaler, opts []ShippingOption) 
 //
 // The same options as [NewShippingLogger] apply. Call Close (typically on
 // shutdown) to flush buffered records and stop the delivery goroutine.
-func NewShippingHandler(endpoint string, marshaler Marshaler, opts ...ShippingOption) (slog.Handler, io.Closer) {
+func NewShippingHandler(
+	endpoint string,
+	marshaler Marshaler,
+	opts ...ShippingOption,
+) (slog.Handler, io.Closer) {
 	composed, ship, _ := buildShipping(endpoint, marshaler, opts)
 	return composed, closerFunc(ship.sender.close)
 }
@@ -180,7 +188,11 @@ func NewShippingHandler(endpoint string, marshaler Marshaler, opts ...ShippingOp
 // NewShippingLogger returns a constructor for a logger that ships records to
 // endpoint using marshaler. By default it also logs JSON to stderr; use
 // [WithoutLocalHandler] or [WithLocalHandler] to change that.
-func NewShippingLogger(endpoint string, marshaler Marshaler, opts ...ShippingOption) ShippingLoggerCtor {
+func NewShippingLogger(
+	endpoint string,
+	marshaler Marshaler,
+	opts ...ShippingOption,
+) ShippingLoggerCtor {
 	return func() *ShippingLogger {
 		composed, ship, cfg := buildShipping(endpoint, marshaler, opts)
 		return &ShippingLogger{

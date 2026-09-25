@@ -17,5 +17,7 @@ var (
 	// ErrBucketRequired is returned when an operation is invoked without a
 	// bucket configured on the service and without gas.InBucket() supplied
 	// in the call options.
-	ErrBucketRequired = errors.New("storage: bucket required (set Storage.Bucket or pass gas.InBucket())")
+	ErrBucketRequired = errors.New(
+		"storage: bucket required (set Storage.Bucket or pass gas.InBucket())",
+	)
 )

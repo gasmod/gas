@@ -37,7 +37,11 @@ func (a *postgresAdapter) getSession(ctx context.Context, id string) (*sessionRo
 	}, nil
 }
 
-func (a *postgresAdapter) insertSession(ctx context.Context, id, subject, metadata, ipAddress, userAgent string, createdAt, expiresAt, lastActive time.Time) error {
+func (a *postgresAdapter) insertSession(
+	ctx context.Context,
+	id, subject, metadata, ipAddress, userAgent string,
+	createdAt, expiresAt, lastActive time.Time,
+) error {
 	//nolint:wrapcheck // wrapped by caller
 	return a.q.InsertSession(ctx, &pgdb.InsertSessionParams{
 		ID:         id,
@@ -51,7 +55,11 @@ func (a *postgresAdapter) insertSession(ctx context.Context, id, subject, metada
 	})
 }
 
-func (a *postgresAdapter) extendSession(ctx context.Context, id string, expiresAt, lastActive time.Time) error {
+func (a *postgresAdapter) extendSession(
+	ctx context.Context,
+	id string,
+	expiresAt, lastActive time.Time,
+) error {
 	//nolint:wrapcheck // wrapped by caller
 	return a.q.ExtendSession(ctx, &pgdb.ExtendSessionParams{
 		ID:         id,
@@ -70,7 +78,10 @@ func (a *postgresAdapter) deleteSessionsBySubject(ctx context.Context, subject s
 	return a.q.DeleteSessionsBySubject(ctx, subject)
 }
 
-func (a *postgresAdapter) deleteExpiredSessions(ctx context.Context, before time.Time) (int64, error) {
+func (a *postgresAdapter) deleteExpiredSessions(
+	ctx context.Context,
+	before time.Time,
+) (int64, error) {
 	//nolint:wrapcheck // wrapped by caller
 	return a.q.DeleteExpiredSessions(ctx, before)
 }
@@ -103,7 +114,11 @@ func (a *mysqlAdapter) getSession(ctx context.Context, id string) (*sessionRow, 
 	}, nil
 }
 
-func (a *mysqlAdapter) insertSession(ctx context.Context, id, subject, metadata, ipAddress, userAgent string, createdAt, expiresAt, lastActive time.Time) error {
+func (a *mysqlAdapter) insertSession(
+	ctx context.Context,
+	id, subject, metadata, ipAddress, userAgent string,
+	createdAt, expiresAt, lastActive time.Time,
+) error {
 	//nolint:wrapcheck // wrapped by caller
 	return a.q.InsertSession(ctx, &mydb.InsertSessionParams{
 		ID:         id,
@@ -117,7 +132,11 @@ func (a *mysqlAdapter) insertSession(ctx context.Context, id, subject, metadata,
 	})
 }
 
-func (a *mysqlAdapter) extendSession(ctx context.Context, id string, expiresAt, lastActive time.Time) error {
+func (a *mysqlAdapter) extendSession(
+	ctx context.Context,
+	id string,
+	expiresAt, lastActive time.Time,
+) error {
 	//nolint:wrapcheck // wrapped by caller
 	return a.q.ExtendSession(ctx, &mydb.ExtendSessionParams{
 		ExpiresAt:  expiresAt,
@@ -169,7 +188,11 @@ func (a *sqliteAdapter) getSession(ctx context.Context, id string) (*sessionRow,
 	}, nil
 }
 
-func (a *sqliteAdapter) insertSession(ctx context.Context, id, subject, metadata, ipAddress, userAgent string, createdAt, expiresAt, lastActive time.Time) error {
+func (a *sqliteAdapter) insertSession(
+	ctx context.Context,
+	id, subject, metadata, ipAddress, userAgent string,
+	createdAt, expiresAt, lastActive time.Time,
+) error {
 	//nolint:wrapcheck // wrapped by caller
 	return a.q.InsertSession(ctx, &litedb.InsertSessionParams{
 		ID:         id,
@@ -183,7 +206,11 @@ func (a *sqliteAdapter) insertSession(ctx context.Context, id, subject, metadata
 	})
 }
 
-func (a *sqliteAdapter) extendSession(ctx context.Context, id string, expiresAt, lastActive time.Time) error {
+func (a *sqliteAdapter) extendSession(
+	ctx context.Context,
+	id string,
+	expiresAt, lastActive time.Time,
+) error {
 	//nolint:wrapcheck // wrapped by caller
 	return a.q.ExtendSession(ctx, &litedb.ExtendSessionParams{
 		ExpiresAt:  formatSQLiteTime(expiresAt),
@@ -202,7 +229,10 @@ func (a *sqliteAdapter) deleteSessionsBySubject(ctx context.Context, subject str
 	return a.q.DeleteSessionsBySubject(ctx, subject)
 }
 
-func (a *sqliteAdapter) deleteExpiredSessions(ctx context.Context, before time.Time) (int64, error) {
+func (a *sqliteAdapter) deleteExpiredSessions(
+	ctx context.Context,
+	before time.Time,
+) (int64, error) {
 	//nolint:wrapcheck // wrapped by caller
 	return a.q.DeleteExpiredSessions(ctx, formatSQLiteTime(before))
 }

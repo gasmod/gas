@@ -7,10 +7,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/valkey-io/valkey-go"
+
 	"github.com/gasmod/gas"
 	cache "github.com/gasmod/gas/cache"
-
-	"github.com/valkey-io/valkey-go"
 )
 
 const serviceName = "gas/cache/valkey"
@@ -27,10 +27,12 @@ type Service struct {
 	closed               atomic.Bool
 }
 
-var _ gas.Service = (*Service)(nil)
-var _ gas.CacheProvider = (*Service)(nil)
-var _ gas.HealthReporter = (*Service)(nil)
-var _ gas.ReadyReporter = (*Service)(nil)
+var (
+	_ gas.Service        = (*Service)(nil)
+	_ gas.CacheProvider  = (*Service)(nil)
+	_ gas.HealthReporter = (*Service)(nil)
+	_ gas.ReadyReporter  = (*Service)(nil)
+)
 
 // Option configures a Service.
 type Option func(*Service)

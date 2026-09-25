@@ -132,7 +132,12 @@ func (s *Service) handleUpload(ctx gas.Context) error {
 
 	// Upload to S3 with explicit content type so downloads serve the
 	// correct MIME type without needing to guess from the key.
-	if uploadErr := s.storage.Upload(ctx, storageKey, file, gas.WithContentType(contentType)); uploadErr != nil {
+	if uploadErr := s.storage.Upload(
+		ctx,
+		storageKey,
+		file,
+		gas.WithContentType(contentType),
+	); uploadErr != nil {
 		return fmt.Errorf("upload to storage: %w", uploadErr)
 	}
 

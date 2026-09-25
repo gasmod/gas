@@ -10,11 +10,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/wait"
+
 	"github.com/gasmod/gas"
 	cache "github.com/gasmod/gas/cache"
 	vk "github.com/gasmod/gas/cache/valkey"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 // newTestService spins up a Valkey container and returns an initialised
@@ -27,7 +28,8 @@ func newTestService(t *testing.T) *vk.Service {
 	req := testcontainers.ContainerRequest{
 		Image:        "valkey/valkey:8",
 		ExposedPorts: []string{"6379/tcp"},
-		WaitingFor:   wait.ForLog("Ready to accept connections").WithStartupTimeout(30 * time.Second),
+		WaitingFor: wait.ForLog("Ready to accept connections").
+			WithStartupTimeout(30 * time.Second),
 	}
 
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{

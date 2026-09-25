@@ -40,8 +40,10 @@ type Worker struct {
 	initOnce sync.Once
 }
 
-var _ HealthProvider = (*Worker)(nil)
-var _ ReadyProvider = (*Worker)(nil)
+var (
+	_ HealthProvider = (*Worker)(nil)
+	_ ReadyProvider  = (*Worker)(nil)
+)
 
 // NewWorker creates a Worker with the given options. Only WorkerOption values
 // are applied; passing an AppOption panics.

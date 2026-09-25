@@ -55,7 +55,12 @@ func main() {
 // Middleware turns a request into a gas.Principal and stores it on the
 // context. Chain tries each authenticator in order, so one route group can
 // accept a JWT, a session cookie, or an API key.
-func protect(router *gas.Router, jwtSvc *jwt.Service, sessSvc *session.Service, keySvc *apikey.Service) {
+func protect(
+	router *gas.Router,
+	jwtSvc *jwt.Service,
+	sessSvc *session.Service,
+	keySvc *apikey.Service,
+) {
 	chain := auth.Chain{jwtSvc, sessSvc, keySvc}
 
 	router.Route("/api", func(sub *gas.Router) {

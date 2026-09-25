@@ -9,13 +9,13 @@ import (
 	"sync/atomic"
 	texttemplate "text/template"
 
-	"github.com/gasmod/gas"
-	email "github.com/gasmod/gas/email"
-
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awsses "github.com/aws/aws-sdk-go-v2/service/ses"
 	"github.com/aws/aws-sdk-go-v2/service/ses/types"
+
+	"github.com/gasmod/gas"
+	email "github.com/gasmod/gas/email"
 )
 
 const serviceName = "gas/email/ses"
@@ -23,7 +23,11 @@ const serviceName = "gas/email/ses"
 // sesClient is the subset of the AWS SES client API used by this service.
 // The real *ses.Client satisfies this interface.
 type sesClient interface {
-	SendEmail(ctx context.Context, params *awsses.SendEmailInput, optFns ...func(*awsses.Options)) (*awsses.SendEmailOutput, error)
+	SendEmail(
+		ctx context.Context,
+		params *awsses.SendEmailInput,
+		optFns ...func(*awsses.Options),
+	) (*awsses.SendEmailOutput, error)
 }
 
 // Service is an SES-backed email sender implementing gas.Service and
@@ -40,9 +44,11 @@ type Service struct {
 	closed               atomic.Bool
 }
 
-var _ gas.Service = (*Service)(nil)
-var _ gas.EmailProvider = (*Service)(nil)
-var _ gas.ReadyReporter = (*Service)(nil)
+var (
+	_ gas.Service       = (*Service)(nil)
+	_ gas.EmailProvider = (*Service)(nil)
+	_ gas.ReadyReporter = (*Service)(nil)
+)
 
 // Client returns the underlying *ses.Client for advanced operations
 // beyond the EmailProvider interface. Returns nil if a custom sesClient
@@ -89,7 +95,9 @@ func New(opts ...Option) func(gas.TemplateProvider, gas.ConfigProvider, gas.Logg
 }
 
 // NewWithCustomProvider creates a new Service instance with a custom TemplateProvider and optional configurations.
-func NewWithCustomProvider[T gas.TemplateProvider](opts ...Option) func(T, gas.ConfigProvider, gas.Logger) *Service {
+func NewWithCustomProvider[T gas.TemplateProvider](
+	opts ...Option,
+) func(T, gas.ConfigProvider, gas.Logger) *Service {
 	return func(templates T, cfgProvider gas.ConfigProvider, logger gas.Logger) *Service {
 		s := &Service{
 			cfg:         DefaultConfig(),
@@ -241,7 +249,12 @@ func (s *Service) SendFromTemplate(ctx context.Context, msg *gas.TemplatedEmail)
 	if msg.SubjectTemplate != "" {
 		rendered, err := s.renderText(ctx, msg.SubjectTemplate, msg.Data)
 		if err != nil {
-			return fmt.Errorf("%s: render subject template %q: %w", s.Name(), msg.SubjectTemplate, err)
+			return fmt.Errorf(
+				"%s: render subject template %q: %w",
+				s.Name(),
+				msg.SubjectTemplate,
+				err,
+			)
 		}
 		msg.Subject = rendered
 	}

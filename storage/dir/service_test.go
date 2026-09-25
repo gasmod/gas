@@ -163,10 +163,26 @@ func TestClose_RejectsOperations(t *testing.T) {
 	if err := svc.Delete(ctx, "k", b); !errors.Is(err, storage.ErrClosed) {
 		t.Errorf("Delete = %v, want ErrClosed", err)
 	}
-	if _, err := svc.PresignDownloadURL(ctx, "k", time.Minute, b); !errors.Is(err, storage.ErrClosed) {
+	if _, err := svc.PresignDownloadURL(
+		ctx,
+		"k",
+		time.Minute,
+		b,
+	); !errors.Is(
+		err,
+		storage.ErrClosed,
+	) {
 		t.Errorf("PresignDownloadURL = %v, want ErrClosed", err)
 	}
-	if _, err := svc.PresignUploadURL(ctx, "k", time.Minute, b); !errors.Is(err, storage.ErrClosed) {
+	if _, err := svc.PresignUploadURL(
+		ctx,
+		"k",
+		time.Minute,
+		b,
+	); !errors.Is(
+		err,
+		storage.ErrClosed,
+	) {
 		t.Errorf("PresignUploadURL = %v, want ErrClosed", err)
 	}
 }
@@ -309,7 +325,14 @@ func TestUpload_ReaderErrorLeavesNoFiles(t *testing.T) {
 			if names := listDir(t, filepath.Join(path, testBucket)); len(names) != 0 {
 				t.Errorf("leftover files: %v", names)
 			}
-			if _, err := svc.Head(context.Background(), "k", gas.InBucket(testBucket)); !errors.Is(err, storage.ErrKeyNotFound) {
+			if _, err := svc.Head(
+				context.Background(),
+				"k",
+				gas.InBucket(testBucket),
+			); !errors.Is(
+				err,
+				storage.ErrKeyNotFound,
+			) {
 				t.Errorf("Head = %v, want ErrKeyNotFound", err)
 			}
 		})
@@ -366,7 +389,14 @@ func TestBucketRequired(t *testing.T) {
 	svc, _ := newTestService(t)
 	ctx := context.Background()
 
-	if err := svc.Upload(ctx, "k", strings.NewReader("x")); !errors.Is(err, storage.ErrBucketRequired) {
+	if err := svc.Upload(
+		ctx,
+		"k",
+		strings.NewReader("x"),
+	); !errors.Is(
+		err,
+		storage.ErrBucketRequired,
+	) {
 		t.Errorf("Upload = %v, want ErrBucketRequired", err)
 	}
 	if _, err := svc.Download(ctx, "k"); !errors.Is(err, storage.ErrBucketRequired) {
@@ -403,7 +433,15 @@ func TestInvalidPath(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b := gas.InBucket(tt.bucket)
-			if err := svc.Upload(ctx, tt.key, strings.NewReader("x"), b); !errors.Is(err, dir.ErrInvalidPath) {
+			if err := svc.Upload(
+				ctx,
+				tt.key,
+				strings.NewReader("x"),
+				b,
+			); !errors.Is(
+				err,
+				dir.ErrInvalidPath,
+			) {
 				t.Errorf("Upload = %v, want ErrInvalidPath", err)
 			}
 			if _, err := svc.Download(ctx, tt.key, b); !errors.Is(err, dir.ErrInvalidPath) {
@@ -415,10 +453,26 @@ func TestInvalidPath(t *testing.T) {
 			if err := svc.Delete(ctx, tt.key, b); !errors.Is(err, dir.ErrInvalidPath) {
 				t.Errorf("Delete = %v, want ErrInvalidPath", err)
 			}
-			if _, err := svc.PresignDownloadURL(ctx, tt.key, time.Minute, b); !errors.Is(err, dir.ErrInvalidPath) {
+			if _, err := svc.PresignDownloadURL(
+				ctx,
+				tt.key,
+				time.Minute,
+				b,
+			); !errors.Is(
+				err,
+				dir.ErrInvalidPath,
+			) {
 				t.Errorf("PresignDownloadURL = %v, want ErrInvalidPath", err)
 			}
-			if _, err := svc.PresignUploadURL(ctx, tt.key, time.Minute, b); !errors.Is(err, dir.ErrInvalidPath) {
+			if _, err := svc.PresignUploadURL(
+				ctx,
+				tt.key,
+				time.Minute,
+				b,
+			); !errors.Is(
+				err,
+				dir.ErrInvalidPath,
+			) {
 				t.Errorf("PresignUploadURL = %v, want ErrInvalidPath", err)
 			}
 		})
@@ -494,10 +548,26 @@ func TestPresign_NoPresigner(t *testing.T) {
 	ctx := context.Background()
 	b := gas.InBucket(testBucket)
 
-	if _, err := svc.PresignDownloadURL(ctx, "k", time.Minute, b); !errors.Is(err, dir.ErrNoPresigner) {
+	if _, err := svc.PresignDownloadURL(
+		ctx,
+		"k",
+		time.Minute,
+		b,
+	); !errors.Is(
+		err,
+		dir.ErrNoPresigner,
+	) {
 		t.Errorf("PresignDownloadURL = %v, want ErrNoPresigner", err)
 	}
-	if _, err := svc.PresignUploadURL(ctx, "k", time.Minute, b); !errors.Is(err, dir.ErrNoPresigner) {
+	if _, err := svc.PresignUploadURL(
+		ctx,
+		"k",
+		time.Minute,
+		b,
+	); !errors.Is(
+		err,
+		dir.ErrNoPresigner,
+	) {
 		t.Errorf("PresignUploadURL = %v, want ErrNoPresigner", err)
 	}
 }
@@ -516,7 +586,15 @@ func TestPresign(t *testing.T) {
 		t.Errorf("PresignDownloadURL = %q, want %q", got, want)
 	}
 	if p.bucket != testBucket || p.key != "a/k" || p.ttl != time.Minute {
-		t.Errorf("presigner got (%q, %q, %v), want (%q, %q, %v)", p.bucket, p.key, p.ttl, testBucket, "a/k", time.Minute)
+		t.Errorf(
+			"presigner got (%q, %q, %v), want (%q, %q, %v)",
+			p.bucket,
+			p.key,
+			p.ttl,
+			testBucket,
+			"a/k",
+			time.Minute,
+		)
 	}
 
 	got, err = svc.PresignUploadURL(ctx, "a/k", time.Hour, b)

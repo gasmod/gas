@@ -31,9 +31,11 @@ type MockCache struct {
 	mu sync.Mutex
 }
 
-var _ gas.CacheProvider = (*MockCache)(nil)
-var _ gas.HealthReporter = (*MockCache)(nil)
-var _ gas.ReadyReporter = (*MockCache)(nil)
+var (
+	_ gas.CacheProvider  = (*MockCache)(nil)
+	_ gas.HealthReporter = (*MockCache)(nil)
+	_ gas.ReadyReporter  = (*MockCache)(nil)
+)
 
 // Call records a single method invocation on the mock.
 type Call struct {

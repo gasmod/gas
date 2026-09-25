@@ -8,11 +8,12 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/gasmod/gas"
 	auth "github.com/gasmod/gas/auth"
 	"github.com/gasmod/gas/auth/authtest"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestBasePrincipal(t *testing.T) {
@@ -83,7 +84,10 @@ func TestChain(t *testing.T) {
 	t.Run("empty chain returns ErrUnauthenticated", func(t *testing.T) {
 		chain := auth.Chain{}
 
-		principal, err := chain.Authenticate(context.Background(), httptest.NewRequest(http.MethodGet, "/", nil))
+		principal, err := chain.Authenticate(
+			context.Background(),
+			httptest.NewRequest(http.MethodGet, "/", nil),
+		)
 
 		assert.Nil(t, principal)
 		assert.ErrorIs(t, err, auth.ErrUnauthenticated)
@@ -98,7 +102,10 @@ func TestChain(t *testing.T) {
 		}
 		chain := auth.Chain{mock}
 
-		principal, err := chain.Authenticate(context.Background(), httptest.NewRequest(http.MethodGet, "/", nil))
+		principal, err := chain.Authenticate(
+			context.Background(),
+			httptest.NewRequest(http.MethodGet, "/", nil),
+		)
 
 		require.NoError(t, err)
 		assert.Equal(t, expected, principal)
@@ -114,7 +121,10 @@ func TestChain(t *testing.T) {
 		}
 		chain := auth.Chain{mock}
 
-		principal, err := chain.Authenticate(context.Background(), httptest.NewRequest(http.MethodGet, "/", nil))
+		principal, err := chain.Authenticate(
+			context.Background(),
+			httptest.NewRequest(http.MethodGet, "/", nil),
+		)
 
 		assert.Nil(t, principal)
 		assert.ErrorIs(t, err, specificErr)
@@ -141,7 +151,10 @@ func TestChain(t *testing.T) {
 		}
 		chain := auth.Chain{first, second, third}
 
-		principal, err := chain.Authenticate(context.Background(), httptest.NewRequest(http.MethodGet, "/", nil))
+		principal, err := chain.Authenticate(
+			context.Background(),
+			httptest.NewRequest(http.MethodGet, "/", nil),
+		)
 
 		require.NoError(t, err)
 		assert.Equal(t, expected, principal)
@@ -172,7 +185,10 @@ func TestChain(t *testing.T) {
 		}
 		chain := auth.Chain{first, second, third}
 
-		principal, err := chain.Authenticate(context.Background(), httptest.NewRequest(http.MethodGet, "/", nil))
+		principal, err := chain.Authenticate(
+			context.Background(),
+			httptest.NewRequest(http.MethodGet, "/", nil),
+		)
 
 		assert.Nil(t, principal)
 		assert.ErrorIs(t, err, errThird, "should return the last error, not the first")
@@ -192,7 +208,10 @@ func TestChain(t *testing.T) {
 		}
 		chain := auth.Chain{first, second}
 
-		principal, err := chain.Authenticate(context.Background(), httptest.NewRequest(http.MethodGet, "/", nil))
+		principal, err := chain.Authenticate(
+			context.Background(),
+			httptest.NewRequest(http.MethodGet, "/", nil),
+		)
 
 		require.NoError(t, err)
 		assert.Nil(t, principal, "nil principal with nil error is a valid success")
@@ -227,7 +246,10 @@ func TestChain(t *testing.T) {
 		}
 		chain := auth.Chain(authenticators)
 
-		principal, err := chain.Authenticate(context.Background(), httptest.NewRequest(http.MethodGet, "/", nil))
+		principal, err := chain.Authenticate(
+			context.Background(),
+			httptest.NewRequest(http.MethodGet, "/", nil),
+		)
 
 		assert.Nil(t, principal)
 		require.Error(t, err)
@@ -236,7 +258,13 @@ func TestChain(t *testing.T) {
 		// Verify every authenticator was called exactly once.
 		for i, a := range authenticators {
 			mock := a.(*authtest.MockAuthenticator)
-			assert.Equal(t, 1, mock.CallCount("Authenticate"), "authenticator %d should be called once", i)
+			assert.Equal(
+				t,
+				1,
+				mock.CallCount("Authenticate"),
+				"authenticator %d should be called once",
+				i,
+			)
 		}
 	})
 }

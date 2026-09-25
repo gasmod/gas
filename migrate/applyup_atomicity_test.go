@@ -63,7 +63,9 @@ func TestApplyUp_RecordingFailureRollsBackSchema(t *testing.T) {
 	// ...and because apply must be atomic with recording, the schema change
 	// must have been rolled back: the widgets table must not exist.
 	if tableExists(t, raw, "widgets") {
-		t.Fatal("widgets table exists after a failed recording: apply was not atomic with recording")
+		t.Fatal(
+			"widgets table exists after a failed recording: apply was not atomic with recording",
+		)
 	}
 }
 
@@ -71,8 +73,11 @@ func TestApplyUp_RecordingFailureRollsBackSchema(t *testing.T) {
 func tableExists(t *testing.T, raw *sql.DB, name string) bool {
 	t.Helper()
 	var n int
-	if err := raw.QueryRowContext(context.Background(),
-		"SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", name).Scan(&n); err != nil {
+	if err := raw.QueryRowContext(
+		context.Background(),
+		"SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?",
+		name,
+	).Scan(&n); err != nil {
 		t.Fatalf("check table existence: %v", err)
 	}
 	return n > 0

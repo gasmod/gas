@@ -35,7 +35,11 @@ const (
 // API is the subset of the AWS SecretsManager client used by the provider.
 // *secretsmanager.Client satisfies it; tests may inject a mock via WithClient.
 type API interface {
-	GetSecretValue(ctx context.Context, params *awssm.GetSecretValueInput, optFns ...func(*awssm.Options)) (*awssm.GetSecretValueOutput, error)
+	GetSecretValue(
+		ctx context.Context,
+		params *awssm.GetSecretValueInput,
+		optFns ...func(*awssm.Options),
+	) (*awssm.GetSecretValueOutput, error)
 }
 
 // secretRef is one registered secret. An empty key merges the secret's JSON

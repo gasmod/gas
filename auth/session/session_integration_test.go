@@ -11,12 +11,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/gasmod/gas"
 	auth "github.com/gasmod/gas/auth"
 	"github.com/gasmod/gas/auth/internal/testutil"
 	"github.com/gasmod/gas/auth/session"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // ---------------------------------------------------------------------------
@@ -68,7 +69,12 @@ func createSession(t *testing.T, svc *session.Service, subject string) *session.
 	req.RemoteAddr = "192.168.1.1:12345"
 	req.Header.Set("User-Agent", "test-agent/1.0")
 
-	sess, err := svc.Create(context.Background(), subject, gas.BasePrincipalMetadata{"role": "admin"}, req)
+	sess, err := svc.Create(
+		context.Background(),
+		subject,
+		gas.BasePrincipalMetadata{"role": "admin"},
+		req,
+	)
 	require.NoError(t, err)
 	require.NotNil(t, sess)
 	return sess

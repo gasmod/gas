@@ -162,7 +162,12 @@ func WithFormDecoder(d *schema.Decoder) ContextOption {
 //
 // The returned Context is installed as the request's own context, so
 // Request().Context() and the Context itself are the same value.
-func NewContext(parent context.Context, w http.ResponseWriter, r *http.Request, opts ...ContextOption) Context {
+func NewContext(
+	parent context.Context,
+	w http.ResponseWriter,
+	r *http.Request,
+	opts ...ContextOption,
+) Context {
 	if parent == nil {
 		panic("cannot create context from nil parent")
 	}
@@ -192,7 +197,10 @@ func (c *reqContext) Request() *http.Request { return c.r }
 func (c *reqContext) JSON(status int, v any) error {
 	c.w.Header().Set("Content-Type", "application/json")
 	c.w.WriteHeader(status)
-	return json.NewEncoder(c.w).Encode(v)
+	if err := json.NewEncoder(c.w).Encode(v); err != nil {
+		return fmt.Errorf("failed to encode JSON: %w", err)
+	}
+	return nil
 }
 
 // xmlWithContentType writes v as an XML document under the given content

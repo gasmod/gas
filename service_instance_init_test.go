@@ -19,8 +19,10 @@ import (
 // now enforced at registration (declaring Init or Close commits a type to the
 // whole interface), so it has to hold however the instance got there.
 
-type instTagA struct{}
-type instTagB struct{}
+type (
+	instTagA struct{}
+	instTagB struct{}
+)
 
 func TestServiceInstanceIsInitialized(t *testing.T) {
 	log := &ordLog{}
@@ -38,7 +40,8 @@ func TestServiceInstanceIsInitialized(t *testing.T) {
 	if got := strings.Join(inits, " "); got != "instance" {
 		t.Errorf("init calls = [%s], want [instance]", got)
 	}
-	if got := w.ActiveServices(); len(got) != 2 || !slices.Contains(got, "instance") { // 1 built-in (gas/eventbus) + "instance"
+	if got := w.ActiveServices(); len(got) != 2 ||
+		!slices.Contains(got, "instance") { // 1 built-in (gas/eventbus) + "instance"
 		t.Errorf("ActiveServices = %v, want [gas/eventbus, instance]", got)
 	}
 }

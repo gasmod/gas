@@ -8,17 +8,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/modules/postgres"
+	"github.com/testcontainers/testcontainers-go/wait"
+	// Registers the pure-Go "sqlite" driver used by SQLite-backed test helpers.
+	_ "modernc.org/sqlite"
+
 	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/config/configtest"
 	"github.com/gasmod/gas/database"
 	"github.com/gasmod/gas/migrate"
-
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
-
-	// Registers the pure-Go "sqlite" driver used by SQLite-backed test helpers.
-	_ "modernc.org/sqlite"
 )
 
 // ---------------------------------------------------------------------------

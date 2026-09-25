@@ -7,13 +7,13 @@ import (
 	"testing"
 	"time"
 
-	auth "github.com/gasmod/gas/auth"
-	"github.com/gasmod/gas/auth/internal/testutil"
-	"github.com/gasmod/gas/auth/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/gasmod/gas"
+	auth "github.com/gasmod/gas/auth"
+	"github.com/gasmod/gas/auth/internal/testutil"
+	"github.com/gasmod/gas/auth/session"
 )
 
 // ---------------------------------------------------------------------------
@@ -55,10 +55,19 @@ func TestSQLiteTimeParsing_MalformedTimestamp(t *testing.T) {
 	// Now insert a session with a MALFORMED timestamp (e.g., RFC3339 with timezone).
 	// This format doesn't match the expected "2006-01-02 15:04:05" layout.
 	malformedExpiry := time.Now().Add(24 * time.Hour).Format(time.RFC3339)
-	_, err = rawDB.Exec(`
+	_, err = rawDB.Exec(
+		`
 		INSERT INTO __gas_auth_sessions (id, subject, metadata, ip_address, user_agent, created_at, expires_at, last_active)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		"bad-sess", "user-2", "{}", "127.0.0.1", "test", validCreated, malformedExpiry, validCreated)
+		"bad-sess",
+		"user-2",
+		"{}",
+		"127.0.0.1",
+		"test",
+		validCreated,
+		malformedExpiry,
+		validCreated,
+	)
 	require.NoError(t, err)
 
 	// This session has a future expiry but parseSQLiteTime will return zero time
@@ -70,8 +79,12 @@ func TestSQLiteTimeParsing_MalformedTimestamp(t *testing.T) {
 	// The session should be valid (expires 24h from now), but because parseSQLiteTime
 	// silently returns zero time, the expiry is 0001-01-01 00:00:00, so
 	// time.Now().After(zeroTime) == true and the session appears expired.
-	assert.ErrorIs(t, err, auth.ErrCredentialsExpired,
-		"session with malformed timestamp is incorrectly treated as expired due to silent zero-time parse")
+	assert.ErrorIs(
+		t,
+		err,
+		auth.ErrCredentialsExpired,
+		"session with malformed timestamp is incorrectly treated as expired due to silent zero-time parse",
+	)
 }
 
 // TestSQLiteTimeParsing_TruncatedTimestamp shows the issue with truncated timestamps.
@@ -222,7 +235,12 @@ func TestSessionNoRotationAPI(t *testing.T) {
 	svc := setupSessionService(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	sess, err := svc.Create(context.Background(), "user-rotate", gas.BasePrincipalMetadata{"role": "user"}, req)
+	sess, err := svc.Create(
+		context.Background(),
+		"user-rotate",
+		gas.BasePrincipalMetadata{"role": "user"},
+		req,
+	)
 	require.NoError(t, err)
 
 	// Simulate privilege escalation: user logs in and becomes admin.
@@ -231,7 +249,12 @@ func TestSessionNoRotationAPI(t *testing.T) {
 	principal := auth.NewPrincipal("user-rotate", auth.SchemeSession, sess.ID, nil)
 	require.NoError(t, svc.Revoke(context.Background(), principal))
 
-	newSess, err := svc.Create(context.Background(), "user-rotate", gas.BasePrincipalMetadata{"role": "admin"}, req)
+	newSess, err := svc.Create(
+		context.Background(),
+		"user-rotate",
+		gas.BasePrincipalMetadata{"role": "admin"},
+		req,
+	)
 	require.NoError(t, err)
 
 	// The old session should be invalid.

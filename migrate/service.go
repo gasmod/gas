@@ -34,8 +34,10 @@ type Service struct {
 	mu         sync.Mutex
 }
 
-var _ gas.Service = (*Service)(nil)
-var _ gas.MigrationManager = (*Service)(nil)
+var (
+	_ gas.Service          = (*Service)(nil)
+	_ gas.MigrationManager = (*Service)(nil)
+)
 
 // New returns a DI-injectable constructor for the migration manager service.
 func New() func(gas.DatabaseProvider) *Service {
