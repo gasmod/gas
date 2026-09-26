@@ -57,7 +57,7 @@ func SafeOpen(filePath string) (*os.File, error) {
 		return nil, ErrConfigFileTooLarge
 	}
 
-	f, err := os.Open(absPath) //nolint:gosec // path is validated above
+	f, err := os.Open(filepath.Clean(absPath))
 	if err != nil {
 		return nil, fmt.Errorf("open file: %w", err)
 	}

@@ -18,9 +18,9 @@ import (
 
 // recordingServer captures the request bodies and headers it receives.
 type recordingServer struct {
-	mu      sync.Mutex
-	bodies  [][]byte
 	headers []http.Header
+	bodies  [][]byte
+	mu      sync.Mutex
 }
 
 func (r *recordingServer) handler() http.HandlerFunc {
@@ -143,7 +143,12 @@ func TestShippingLogger_LocalTee(t *testing.T) {
 }
 
 func TestShippingLogger_ImplementsService(t *testing.T) {
-	logger := NewShippingLogger("http://example.invalid", NewOTLPMarshaler(), WithoutLocalHandler(), WithName("central-logs"))()
+	logger := NewShippingLogger(
+		"http://example.invalid",
+		NewOTLPMarshaler(),
+		WithoutLocalHandler(),
+		WithName("central-logs"),
+	)()
 	defer func() { _ = logger.Close() }()
 
 	var svc gas.Service = logger

@@ -5,9 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gasmod/gas/config/internal/maputils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/gasmod/gas/config/internal/maputils"
 )
 
 func TestBind_EmbeddedStruct(t *testing.T) {
@@ -230,7 +231,12 @@ func TestBind_FixedSizeArrayWithFewerElements(t *testing.T) {
 		err = maputils.Bind(src, &dest)
 	})
 	require.NoError(t, err)
-	assert.Equal(t, [3]int{1, 2, 0}, dest.Ports, "missing elements must be zeroed, like slice binding replaces wholesale")
+	assert.Equal(
+		t,
+		[3]int{1, 2, 0},
+		dest.Ports,
+		"missing elements must be zeroed, like slice binding replaces wholesale",
+	)
 }
 
 func TestBind_FixedSizeArrayWithMoreElements(t *testing.T) {
@@ -249,7 +255,11 @@ func TestBind_FixedSizeArrayWithMoreElements(t *testing.T) {
 	require.NotPanics(t, func() {
 		err = maputils.Bind(src, &dest)
 	})
-	require.Error(t, err, "a source longer than the array must be reported, not panic or silently truncate")
+	require.Error(
+		t,
+		err,
+		"a source longer than the array must be reported, not panic or silently truncate",
+	)
 	assert.ErrorIs(t, err, maputils.ErrArrayTooSmall)
 	assert.Equal(t, [2]int{9, 9}, dest.Ports, "a failed bind must leave the destination untouched")
 }

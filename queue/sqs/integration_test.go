@@ -9,14 +9,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gasmod/gas"
-	"github.com/gasmod/gas/queue"
-
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	awssqs "github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	"github.com/gasmod/gas"
+	"github.com/gasmod/gas/queue"
 )
 
 // shared across all integration tests — one container per test run.
@@ -42,10 +42,13 @@ func setupElasticMQOnce(t *testing.T) string {
 			ExposedPorts: []string{"9324/tcp"},
 			WaitingFor:   wait.ForListeningPort("9324/tcp").WithStartupTimeout(60 * time.Second),
 		}
-		container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-			ContainerRequest: req,
-			Started:          true,
-		})
+		container, err := testcontainers.GenericContainer(
+			ctx,
+			testcontainers.GenericContainerRequest{
+				ContainerRequest: req,
+				Started:          true,
+			},
+		)
 		if err != nil {
 			sqsSetupErr = fmt.Errorf("start elasticmq: %w", err)
 			return
@@ -215,8 +218,8 @@ func TestIntegration_Ack(t *testing.T) {
 		t.Fatalf("got %d jobs, want 1", len(jobs))
 	}
 
-	if err := svc.Ack(ctx, queueURL, jobs[0]); err != nil {
-		t.Fatalf("Ack: %v", err)
+	if ackErr := svc.Ack(ctx, queueURL, jobs[0]); ackErr != nil {
+		t.Fatalf("Ack: %v", ackErr)
 	}
 
 	remaining, err := svc.Dequeue(ctx, queueURL, 10, time.Second)
@@ -248,8 +251,8 @@ func TestIntegration_Nack(t *testing.T) {
 		t.Fatalf("got %d jobs, want 1", len(jobs))
 	}
 
-	if err := svc.Nack(ctx, queueURL, jobs[0]); err != nil {
-		t.Fatalf("Nack: %v", err)
+	if nackErr := svc.Nack(ctx, queueURL, jobs[0]); nackErr != nil {
+		t.Fatalf("Nack: %v", nackErr)
 	}
 
 	redelivered, err := svc.Dequeue(ctx, queueURL, 1, 2*time.Second)
@@ -273,7 +276,12 @@ func TestIntegration_MessageAttributes(t *testing.T) {
 	ctx := context.Background()
 
 	attrs := map[string]string{"env": "staging", "priority": "high"}
-	if err := svc.Enqueue(ctx, queueURL, []byte("with-attrs"), gas.WithJobAttributes(attrs)); err != nil {
+	if err := svc.Enqueue(
+		ctx,
+		queueURL,
+		[]byte("with-attrs"),
+		gas.WithJobAttributes(attrs),
+	); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
 
@@ -320,10 +328,24 @@ func TestIntegration_Close(t *testing.T) {
 	if _, err := svc.Dequeue(ctx, queueURL, 1, time.Second); !errors.Is(err, queue.ErrClosed) {
 		t.Errorf("Dequeue after Close: got %v, want ErrClosed", err)
 	}
-	if err := svc.Ack(ctx, queueURL, gas.Job{ReceiptHandle: "x"}); !errors.Is(err, queue.ErrClosed) {
+	if err := svc.Ack(
+		ctx,
+		queueURL,
+		gas.Job{ReceiptHandle: "x"},
+	); !errors.Is(
+		err,
+		queue.ErrClosed,
+	) {
 		t.Errorf("Ack after Close: got %v, want ErrClosed", err)
 	}
-	if err := svc.Nack(ctx, queueURL, gas.Job{ReceiptHandle: "x"}); !errors.Is(err, queue.ErrClosed) {
+	if err := svc.Nack(
+		ctx,
+		queueURL,
+		gas.Job{ReceiptHandle: "x"},
+	); !errors.Is(
+		err,
+		queue.ErrClosed,
+	) {
 		t.Errorf("Nack after Close: got %v, want ErrClosed", err)
 	}
 }
@@ -381,7 +403,12 @@ func TestIntegration_DelaySeconds(t *testing.T) {
 	svc := newIntegrationService(t, endpoint)
 	ctx := context.Background()
 
-	if err := svc.Enqueue(ctx, queueURL, []byte("delayed"), gas.WithDelay(3*time.Second)); err != nil {
+	if err := svc.Enqueue(
+		ctx,
+		queueURL,
+		[]byte("delayed"),
+		gas.WithDelay(3*time.Second),
+	); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
 
@@ -719,12 +746,12 @@ func TestIntegration_ContextCancelled(t *testing.T) {
 
 	err := svc.Enqueue(ctx, queueURL, []byte("should-fail"))
 	if err == nil {
-		t.Fatal("Enqueue with cancelled context should fail")
+		t.Fatal("Enqueue with canceled context should fail")
 	}
 
 	_, err = svc.Dequeue(ctx, queueURL, 1, time.Second)
 	if err == nil {
-		t.Fatal("Dequeue with cancelled context should fail")
+		t.Fatal("Dequeue with canceled context should fail")
 	}
 }
 
@@ -748,8 +775,8 @@ func TestIntegration_NackThenAck(t *testing.T) {
 	if len(jobs) != 1 {
 		t.Fatalf("got %d jobs, want 1", len(jobs))
 	}
-	if err := svc.Nack(ctx, queueURL, jobs[0]); err != nil {
-		t.Fatalf("Nack: %v", err)
+	if nackErr := svc.Nack(ctx, queueURL, jobs[0]); nackErr != nil {
+		t.Fatalf("Nack: %v", nackErr)
 	}
 
 	// Second consume — ack it.
@@ -763,8 +790,8 @@ func TestIntegration_NackThenAck(t *testing.T) {
 	if string(jobs[0].Body) != "retry-me" {
 		t.Errorf("Body = %q, want %q", string(jobs[0].Body), "retry-me")
 	}
-	if err := svc.Ack(ctx, queueURL, jobs[0]); err != nil {
-		t.Fatalf("Ack: %v", err)
+	if ackErr := svc.Ack(ctx, queueURL, jobs[0]); ackErr != nil {
+		t.Fatalf("Ack: %v", ackErr)
 	}
 
 	// Should be gone now.

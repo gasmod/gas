@@ -82,7 +82,6 @@ func TestExtension_PreLoad(t *testing.T) {
 
 			// Call PreLoad
 			err := extension.PreLoad(context.Background(), cfg)
-
 			// Verify no error
 			if err != nil {
 				t.Errorf("Extension.PreLoad() error = %v, want nil", err)
@@ -90,13 +89,21 @@ func TestExtension_PreLoad(t *testing.T) {
 
 			// Verify current environment was set correctly
 			if extension.currentEnv != tt.expectedEnv {
-				t.Errorf("Extension.PreLoad() currentEnv = %v, want %v", extension.currentEnv, tt.expectedEnv)
+				t.Errorf(
+					"Extension.PreLoad() currentEnv = %v, want %v",
+					extension.currentEnv,
+					tt.expectedEnv,
+				)
 			}
 
 			// Verify config default was set
 			configValue := cfg.Get(extension.configKey)
 			if configValue != tt.expectedCfgKey {
-				t.Errorf("Extension.PreLoad() config value = %v, want %v", configValue, tt.expectedCfgKey)
+				t.Errorf(
+					"Extension.PreLoad() config value = %v, want %v",
+					configValue,
+					tt.expectedCfgKey,
+				)
 			}
 		})
 	}
@@ -177,7 +184,6 @@ func TestExtension_PostLoad(t *testing.T) {
 
 			// Call PostLoad
 			err := extension.PostLoad(context.Background(), cfg)
-
 			// Verify no error
 			if err != nil {
 				t.Errorf("Extension.PostLoad() error = %v, want nil", err)
@@ -185,13 +191,21 @@ func TestExtension_PostLoad(t *testing.T) {
 
 			// Verify current environment was updated
 			if extension.currentEnv != tt.expectedEnv {
-				t.Errorf("Extension.PostLoad() currentEnv = %v, want %v", extension.currentEnv, tt.expectedEnv)
+				t.Errorf(
+					"Extension.PostLoad() currentEnv = %v, want %v",
+					extension.currentEnv,
+					tt.expectedEnv,
+				)
 			}
 
 			// Verify config value was corrected if needed
 			configValue := cfg.Get(tt.configKey)
 			if configValue != tt.expectedCfgValue {
-				t.Errorf("Extension.PostLoad() config value = %v, want %v", configValue, tt.expectedCfgValue)
+				t.Errorf(
+					"Extension.PostLoad() config value = %v, want %v",
+					configValue,
+					tt.expectedCfgValue,
+				)
 			}
 		})
 	}
@@ -206,7 +220,6 @@ func TestExtension_PostLoad_NoEnvironmentChange(t *testing.T) {
 	cfg.Set(extension.configKey, "production")
 
 	err := extension.PostLoad(context.Background(), cfg)
-
 	if err != nil {
 		t.Errorf("Extension.PostLoad() error = %v, want nil", err)
 	}

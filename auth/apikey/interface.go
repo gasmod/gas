@@ -34,7 +34,12 @@ type Provider interface {
 	// KeyInfo record. The plaintext key is only available from this call; only
 	// its hash is persisted.
 	// Optional GenerateOption values (WithMetadata, WithTTL, WithExpiresAt) customize the key.
-	Generate(ctx context.Context, subject, name string, scopes []string, opts ...GenerateOption) (key string, info *KeyInfo, err error)
+	Generate(
+		ctx context.Context,
+		subject, name string,
+		scopes []string,
+		opts ...GenerateOption,
+	) (key string, info *KeyInfo, err error)
 	// List returns non-sensitive information about API keys for a subject. By
 	// default only active (non-revoked) keys are returned; pass
 	// WithIncludeRevoked to also include soft-deleted keys.

@@ -8,14 +8,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/gasmod/gas"
-	storage "github.com/gasmod/gas/storage"
-
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
+
+	"github.com/gasmod/gas"
+	storage "github.com/gasmod/gas/storage"
 )
 
 const serviceName = "gas/storage/s3"
@@ -34,9 +35,11 @@ type Service struct {
 	closed               atomic.Bool
 }
 
-var _ gas.Service = (*Service)(nil)
-var _ gas.StorageProvider = (*Service)(nil)
-var _ gas.ReadyReporter = (*Service)(nil)
+var (
+	_ gas.Service         = (*Service)(nil)
+	_ gas.StorageProvider = (*Service)(nil)
+	_ gas.ReadyReporter   = (*Service)(nil)
+)
 
 // Option configures a Service.
 type Option func(*Service)
@@ -150,7 +153,7 @@ func (s *Service) CheckReady(ctx context.Context) error {
 		return storage.ErrClosed
 	}
 	if s.client == nil {
-		return fmt.Errorf("%s: not initialized", s.Name())
+		return fmt.Errorf("%s: %w", s.Name(), storage.ErrNotInitialized)
 	}
 	bucket := s.cfg.Storage.Bucket
 	if bucket == "" {
@@ -159,7 +162,12 @@ func (s *Service) CheckReady(ctx context.Context) error {
 	if _, err := s.client.HeadBucket(ctx, &s3.HeadBucketInput{
 		Bucket: new(bucket),
 	}); err != nil {
-		return fmt.Errorf("%s: bucket %q not reachable (verify s3:ListBucket permission): %w", s.Name(), bucket, err)
+		return fmt.Errorf(
+			"%s: bucket %q not reachable (verify s3:ListBucket permission): %w",
+			s.Name(),
+			bucket,
+			err,
+		)
 	}
 	return nil
 }
@@ -183,8 +191,14 @@ func (s *Service) resolveBucket(bucket string) (string, error) {
 	return bucket, nil
 }
 
-// Upload uploads an object to S3.
-func (s *Service) Upload(ctx context.Context, key string, data io.Reader, opts ...gas.StorageOption) error {
+// Upload uploads an object to S3. Returns storage.ErrBucketNotFound if the
+// bucket does not exist.
+func (s *Service) Upload(
+	ctx context.Context,
+	key string,
+	data io.Reader,
+	opts ...gas.StorageOption,
+) error {
 	if s.closed.Load() {
 		return storage.ErrClosed
 	}
@@ -212,14 +226,22 @@ func (s *Service) Upload(ctx context.Context, key string, data io.Reader, opts .
 	// overall Content-Length. This also lifts PutObject's 5GB limit.
 	_, err = s.uploader.UploadObject(ctx, input)
 	if err != nil {
+		if isNoSuchBucket(err) {
+			return storage.ErrBucketNotFound
+		}
 		return fmt.Errorf("%s: upload %q: %w", s.Name(), key, err)
 	}
 	return nil
 }
 
 // Download downloads an object from S3. Returns storage.ErrKeyNotFound
-// if the key does not exist.
-func (s *Service) Download(ctx context.Context, key string, opts ...gas.StorageOption) (*gas.StorageObject, error) {
+// if the key does not exist, or storage.ErrBucketNotFound if the bucket does
+// not exist.
+func (s *Service) Download(
+	ctx context.Context,
+	key string,
+	opts ...gas.StorageOption,
+) (*gas.StorageObject, error) {
 	if s.closed.Load() {
 		return nil, storage.ErrClosed
 	}
@@ -237,6 +259,9 @@ func (s *Service) Download(ctx context.Context, key string, opts ...gas.StorageO
 	if err != nil {
 		if _, ok := errors.AsType[*types.NoSuchKey](err); ok {
 			return nil, storage.ErrKeyNotFound
+		}
+		if isNoSuchBucket(err) {
+			return nil, storage.ErrBucketNotFound
 		}
 		return nil, fmt.Errorf("%s: download %q: %w", s.Name(), key, err)
 	}
@@ -257,7 +282,8 @@ func (s *Service) Download(ctx context.Context, key string, opts ...gas.StorageO
 	return obj, nil
 }
 
-// Delete deletes an object from S3.
+// Delete deletes an object from S3. Deleting a missing key succeeds; returns
+// storage.ErrBucketNotFound if the bucket does not exist.
 func (s *Service) Delete(ctx context.Context, key string, opts ...gas.StorageOption) error {
 	if s.closed.Load() {
 		return storage.ErrClosed
@@ -274,6 +300,9 @@ func (s *Service) Delete(ctx context.Context, key string, opts ...gas.StorageOpt
 		Key:    new(key),
 	})
 	if err != nil {
+		if isNoSuchBucket(err) {
+			return storage.ErrBucketNotFound
+		}
 		return fmt.Errorf("%s: delete %q: %w", s.Name(), key, err)
 	}
 	return nil
@@ -281,7 +310,12 @@ func (s *Service) Delete(ctx context.Context, key string, opts ...gas.StorageOpt
 
 // PresignDownloadURL generates a presigned GET URL for the specified object key,
 // valid for the given expiry duration.
-func (s *Service) PresignDownloadURL(ctx context.Context, key string, expiry time.Duration, opts ...gas.StorageOption) (string, error) {
+func (s *Service) PresignDownloadURL(
+	ctx context.Context,
+	key string,
+	expiry time.Duration,
+	opts ...gas.StorageOption,
+) (string, error) {
 	if s.closed.Load() {
 		return "", storage.ErrClosed
 	}
@@ -304,7 +338,12 @@ func (s *Service) PresignDownloadURL(ctx context.Context, key string, expiry tim
 
 // PresignUploadURL generates a presigned PUT URL for the specified object key,
 // valid for the given expiry duration.
-func (s *Service) PresignUploadURL(ctx context.Context, key string, expiry time.Duration, opts ...gas.StorageOption) (string, error) {
+func (s *Service) PresignUploadURL(
+	ctx context.Context,
+	key string,
+	expiry time.Duration,
+	opts ...gas.StorageOption,
+) (string, error) {
 	if s.closed.Load() {
 		return "", storage.ErrClosed
 	}
@@ -334,8 +373,14 @@ func (s *Service) PresignUploadURL(ctx context.Context, key string, expiry time.
 }
 
 // Head retrieves object metadata without downloading the body.
-// Returns storage.ErrKeyNotFound if the key does not exist.
-func (s *Service) Head(ctx context.Context, key string, opts ...gas.StorageOption) (*gas.ObjectInfo, error) {
+// Returns storage.ErrKeyNotFound if the key does not exist. S3 answers a
+// HEAD request for a missing bucket with the same bodiless 404 as for a
+// missing key, so a missing bucket also reports storage.ErrKeyNotFound.
+func (s *Service) Head(
+	ctx context.Context,
+	key string,
+	opts ...gas.StorageOption,
+) (*gas.ObjectInfo, error) {
 	if s.closed.Load() {
 		return nil, storage.ErrClosed
 	}
@@ -377,4 +422,15 @@ func (s *Service) Head(ctx context.Context, key string, opts ...gas.StorageOptio
 // Client returns the underlying S3 client for advanced operations.
 func (s *Service) Client() *s3.Client {
 	return s.client
+}
+
+// isNoSuchBucket reports whether err is S3's NoSuchBucket error. The SDK only
+// models it as *types.NoSuchBucket for some operations; GetObject, PutObject
+// and DeleteObject surface it as a generic API error with that code.
+func isNoSuchBucket(err error) bool {
+	if _, ok := errors.AsType[*types.NoSuchBucket](err); ok {
+		return true
+	}
+	apiErr, ok := errors.AsType[smithy.APIError](err)
+	return ok && apiErr.ErrorCode() == "NoSuchBucket"
 }

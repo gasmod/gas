@@ -91,8 +91,9 @@ Implementations unpack options via `gas.ApplyStorageOptions(opts)`.
 The root `storage` package defines sentinel errors:
 
 ```go
-storage.ErrKeyNotFound // Download or Head returns this when the key does not exist
-storage.ErrClosed      // returned when an operation is attempted on a closed service
+storage.ErrKeyNotFound    // Download or Head returns this when the key does not exist
+storage.ErrBucketNotFound // Upload, Download, Delete or Head returns this when the bucket does not exist
+storage.ErrClosed         // returned when an operation is attempted on a closed service
 ```
 
 ## S3 Backend
@@ -139,16 +140,22 @@ Also implements `gas.ReadyReporter`:
 
 - **Upload:** Stores an object in S3 using `PutObject`. Honors
   `gas.WithContentType` and `gas.WithMetadata` options. Returns
+  `storage.ErrBucketNotFound` if the bucket does not exist, or
   `storage.ErrClosed` if the service is closed.
 - **Download:** Retrieves an object from S3 using `GetObject`. Returns a
   `*gas.StorageObject` with `Body`, `ContentType`, `Size`, and `Metadata`.
   Returns `storage.ErrKeyNotFound` if the key does not exist (detects
-  `types.NoSuchKey`). Returns `storage.ErrClosed` if the service is closed.
+  `types.NoSuchKey`), or `storage.ErrBucketNotFound` if the bucket does not
+  exist (detects the `NoSuchBucket` error code). Returns `storage.ErrClosed`
+  if the service is closed.
 - **Delete:** Removes an object from S3 using `DeleteObject`. Deleting a
-  non-existent key does not error. Returns `storage.ErrClosed` if closed.
+  non-existent key does not error. Returns `storage.ErrBucketNotFound` if the
+  bucket does not exist, or `storage.ErrClosed` if closed.
 - **Head:** Retrieves object metadata (content type, size, last modified,
   metadata) without downloading the body. Returns `storage.ErrKeyNotFound` if
-  the key does not exist. Returns `storage.ErrClosed` if the service is closed.
+  the key does not exist. S3 answers a HEAD for a missing bucket with the same
+  bodiless 404, so a missing bucket also returns `storage.ErrKeyNotFound`.
+  Returns `storage.ErrClosed` if the service is closed.
 - **PresignDownloadURL:** Generates a presigned GET URL valid for the given
   duration. Returns `storage.ErrClosed` if the service is closed.
 - **PresignUploadURL:** Generates a presigned PUT URL valid for the given

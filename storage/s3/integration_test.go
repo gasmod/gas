@@ -11,20 +11,20 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gasmod/gas"
-	storage "github.com/gasmod/gas/storage"
-	s3svc "github.com/gasmod/gas/storage/s3"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/wait"
-
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/wait"
+
+	"github.com/gasmod/gas"
+	storage "github.com/gasmod/gas/storage"
+	s3svc "github.com/gasmod/gas/storage/s3"
 )
 
 const testBucket = "test-bucket"
 
-// newTestService spins up a LocalStack container and returns an initialised
+// newTestService spins up a LocalStack container and returns an initialized
 // *s3svc.Service. Container and service are cleaned up via t.Cleanup.
 func newTestService(t *testing.T) *s3svc.Service {
 	t.Helper()
@@ -56,6 +56,14 @@ func newTestServiceWithEndpoint(t *testing.T) (*s3svc.Service, string) {
 	})
 
 	return svc, endpoint
+}
+
+// closeBody closes a downloaded object's body, failing the test on error.
+func closeBody(t *testing.T, obj *gas.StorageObject) {
+	t.Helper()
+	if err := obj.Body.Close(); err != nil {
+		t.Errorf("close body: %v", err)
+	}
 }
 
 func startLocalStack(t *testing.T) string {
@@ -148,7 +156,7 @@ func TestIntegration_UploadAndDownload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Download: %v", err)
 	}
-	defer obj.Body.Close()
+	defer closeBody(t, obj)
 
 	got, err := io.ReadAll(obj.Body)
 	if err != nil {
@@ -252,7 +260,12 @@ func TestIntegration_Head(t *testing.T) {
 
 	key := "head-file.txt"
 	data := []byte("head me")
-	if err := svc.Upload(ctx, key, bytes.NewReader(data), gas.WithContentType("text/plain")); err != nil {
+	if err := svc.Upload(
+		ctx,
+		key,
+		bytes.NewReader(data),
+		gas.WithContentType("text/plain"),
+	); err != nil {
 		t.Fatalf("Upload: %v", err)
 	}
 
@@ -285,6 +298,36 @@ func TestIntegration_HeadNotFound(t *testing.T) {
 	}
 }
 
+func TestIntegration_BucketNotFound(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	svc := newTestService(t)
+	ctx := context.Background()
+	b := gas.InBucket("missing-bucket-xyz")
+
+	err := svc.Upload(ctx, "k", bytes.NewReader([]byte("data")), b)
+	if !errors.Is(err, storage.ErrBucketNotFound) {
+		t.Errorf("Upload(missing bucket) error = %v, want %v", err, storage.ErrBucketNotFound)
+	}
+	_, err = svc.Download(ctx, "k", b)
+	if !errors.Is(err, storage.ErrBucketNotFound) {
+		t.Errorf("Download(missing bucket) error = %v, want %v", err, storage.ErrBucketNotFound)
+	}
+	err = svc.Delete(ctx, "k", b)
+	if !errors.Is(err, storage.ErrBucketNotFound) {
+		t.Errorf("Delete(missing bucket) error = %v, want %v", err, storage.ErrBucketNotFound)
+	}
+
+	// HEAD responses carry no error body, so a missing bucket is
+	// indistinguishable from a missing key.
+	_, err = svc.Head(ctx, "k", b)
+	if !errors.Is(err, storage.ErrKeyNotFound) {
+		t.Errorf("Head(missing bucket) error = %v, want %v", err, storage.ErrKeyNotFound)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Adversarial: binary and weird data
 // ---------------------------------------------------------------------------
@@ -307,7 +350,7 @@ func TestIntegration_BinaryData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Download: %v", err)
 	}
-	defer obj.Body.Close()
+	defer closeBody(t, obj)
 
 	got, err := io.ReadAll(obj.Body)
 	if err != nil {
@@ -334,7 +377,7 @@ func TestIntegration_EmptyFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Download empty: %v", err)
 	}
-	defer obj.Body.Close()
+	defer closeBody(t, obj)
 
 	got, err := io.ReadAll(obj.Body)
 	if err != nil {
@@ -364,7 +407,7 @@ func TestIntegration_LargeFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Download 1MB: %v", err)
 	}
-	defer obj.Body.Close()
+	defer closeBody(t, obj)
 
 	got, err := io.ReadAll(obj.Body)
 	if err != nil {
@@ -407,7 +450,7 @@ func TestIntegration_KeysWithSpecialChars(t *testing.T) {
 			continue
 		}
 		got, readErr := io.ReadAll(obj.Body)
-		obj.Body.Close()
+		closeBody(t, obj)
 		if readErr != nil {
 			t.Errorf("ReadAll(%q): %v", key, readErr)
 			continue
@@ -442,7 +485,7 @@ func TestIntegration_OverwriteKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Download: %v", err)
 	}
-	defer obj.Body.Close()
+	defer closeBody(t, obj)
 
 	got, err := io.ReadAll(obj.Body)
 	if err != nil {
@@ -489,7 +532,7 @@ func TestIntegration_DeleteThenReUpload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Download: %v", err)
 	}
-	defer obj.Body.Close()
+	defer closeBody(t, obj)
 
 	got, err := io.ReadAll(obj.Body)
 	if err != nil {
@@ -525,7 +568,7 @@ func TestIntegration_CancelledContext(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("operations with cancelled context hung for >5s")
+		t.Fatal("operations with canceled context hung for >5s")
 	}
 }
 
@@ -562,7 +605,7 @@ func TestIntegration_ConcurrentUploadDownload(t *testing.T) {
 				return
 			}
 			got, readErr := io.ReadAll(obj.Body)
-			obj.Body.Close()
+			closeBody(t, obj)
 			if readErr != nil {
 				errs <- fmt.Errorf("ReadAll %s: %w", key, readErr)
 				return
@@ -597,7 +640,14 @@ func TestIntegration_ClosedService(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	if err := svc.Upload(ctx, "any", bytes.NewReader([]byte("v"))); !errors.Is(err, storage.ErrClosed) {
+	if err := svc.Upload(
+		ctx,
+		"any",
+		bytes.NewReader([]byte("v")),
+	); !errors.Is(
+		err,
+		storage.ErrClosed,
+	) {
 		t.Errorf("Upload after Close error = %v, want %v", err, storage.ErrClosed)
 	}
 	if _, err := svc.Download(ctx, "any"); !errors.Is(err, storage.ErrClosed) {
@@ -606,7 +656,14 @@ func TestIntegration_ClosedService(t *testing.T) {
 	if err := svc.Delete(ctx, "any"); !errors.Is(err, storage.ErrClosed) {
 		t.Errorf("Delete after Close error = %v, want %v", err, storage.ErrClosed)
 	}
-	if _, err := svc.PresignDownloadURL(ctx, "any", time.Minute); !errors.Is(err, storage.ErrClosed) {
+	if _, err := svc.PresignDownloadURL(
+		ctx,
+		"any",
+		time.Minute,
+	); !errors.Is(
+		err,
+		storage.ErrClosed,
+	) {
 		t.Errorf("PresignDownloadURL after Close error = %v, want %v", err, storage.ErrClosed)
 	}
 	if _, err := svc.PresignUploadURL(ctx, "any", time.Minute); !errors.Is(err, storage.ErrClosed) {
@@ -728,8 +785,8 @@ func TestConfigValidate(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
 		modify  func(*s3svc.Config)
+		name    string
 		wantErr bool
 	}{
 		{

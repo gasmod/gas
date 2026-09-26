@@ -13,10 +13,10 @@ type decodedOTLP struct {
 	ResourceLogs []struct {
 		Resource struct {
 			Attributes []struct {
-				Key   string `json:"key"`
 				Value struct {
 					StringValue *string `json:"stringValue"`
 				} `json:"value"`
+				Key string `json:"key"`
 			} `json:"attributes"`
 		} `json:"resource"`
 		ScopeLogs []struct {
@@ -24,14 +24,12 @@ type decodedOTLP struct {
 				Name string `json:"name"`
 			} `json:"scope"`
 			LogRecords []struct {
-				TimeUnixNano   string `json:"timeUnixNano"`
-				SeverityNumber int    `json:"severityNumber"`
-				SeverityText   string `json:"severityText"`
-				Body           struct {
+				Body struct {
 					StringValue *string `json:"stringValue"`
 				} `json:"body"`
-				Attributes []struct {
-					Key   string `json:"key"`
+				TimeUnixNano string `json:"timeUnixNano"`
+				SeverityText string `json:"severityText"`
+				Attributes   []struct {
 					Value struct {
 						StringValue *string  `json:"stringValue"`
 						IntValue    *string  `json:"intValue"`
@@ -43,7 +41,9 @@ type decodedOTLP struct {
 							} `json:"values"`
 						} `json:"kvlistValue"`
 					} `json:"value"`
+					Key string `json:"key"`
 				} `json:"attributes"`
+				SeverityNumber int `json:"severityNumber"`
 			} `json:"logRecords"`
 		} `json:"scopeLogs"`
 	} `json:"resourceLogs"`
@@ -73,8 +73,8 @@ func TestOTLPMarshaler_Shape(t *testing.T) {
 	}
 
 	var out decodedOTLP
-	if err := json.Unmarshal(data, &out); err != nil {
-		t.Fatalf("unmarshal: %v", err)
+	if jsErr := json.Unmarshal(data, &out); jsErr != nil {
+		t.Fatalf("unmarshal: %v", jsErr)
 	}
 	if len(out.ResourceLogs) != 1 {
 		t.Fatalf("resourceLogs = %d", len(out.ResourceLogs))
@@ -87,7 +87,8 @@ func TestOTLPMarshaler_Shape(t *testing.T) {
 			res[a.Key] = *a.Value.StringValue
 		}
 	}
-	if res["service.name"] != "due-api" || res["service.version"] != "1.4.2" || res["host.name"] != "api-1" {
+	if res["service.name"] != "due-api" || res["service.version"] != "1.4.2" ||
+		res["host.name"] != "api-1" {
 		t.Errorf("resource attrs = %+v", res)
 	}
 	if rl.ScopeLogs[0].Scope.Name != "due-api" {

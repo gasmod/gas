@@ -16,8 +16,8 @@ func validConfig() *database.Config {
 
 func TestValidate(t *testing.T) {
 	tests := []struct {
-		name    string
 		mutate  func(*database.Config)
+		name    string
 		wantErr bool
 	}{
 		{

@@ -4,10 +4,10 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/gasmod/gas/config/providers"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/gasmod/gas/config/providers"
 )
 
 func TestJSONProvider_DefaultOptions(t *testing.T) {

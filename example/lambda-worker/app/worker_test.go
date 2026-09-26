@@ -49,7 +49,10 @@ func TestWorkerLifecycle(t *testing.T) {
 	// Exactly what cmd/main.go does after Start.
 	h := w.ServiceContainer().MustResolve[*app.Handler]()
 
-	resp, err := h.Handle(context.Background(), sqsEvent(orderRecord("msg-1", "order-1", "cust-1", 500)))
+	resp, err := h.Handle(
+		context.Background(),
+		sqsEvent(orderRecord("msg-1", "order-1", "cust-1", 500)),
+	)
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}

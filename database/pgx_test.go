@@ -8,11 +8,11 @@ import (
 	"os"
 	"testing"
 
-	"github.com/gasmod/gas"
-	"github.com/gasmod/gas/database"
-
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/gasmod/gas"
+	"github.com/gasmod/gas/database"
 )
 
 // postgresDSNEnv names the environment variable holding a live PostgreSQL
@@ -207,7 +207,7 @@ func TestPgx_WithPgxTxCommit(t *testing.T) {
 		t.Fatalf("WithPgxTx: %v", err)
 	}
 
-	if got := pgxValue(t, s, table, 1); got != "committed" {
+	if got := pgxValue(t, s, table); got != "committed" {
 		t.Errorf("val = %q, want committed", got)
 	}
 }
@@ -219,7 +219,12 @@ func TestPgx_WithPgxTxRollback(t *testing.T) {
 
 	sentinel := errors.New("trigger rollback")
 	err := s.WithPgxTx(ctx, nil, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, "INSERT INTO "+table+" (id, val) VALUES ($1, $2)", 1, "rolled-back"); err != nil {
+		if _, err := tx.Exec(
+			ctx,
+			"INSERT INTO "+table+" (id, val) VALUES ($1, $2)",
+			1,
+			"rolled-back",
+		); err != nil {
 			return err
 		}
 		return sentinel
@@ -228,7 +233,7 @@ func TestPgx_WithPgxTxRollback(t *testing.T) {
 		t.Fatalf("err = %v, want it to wrap the sentinel", err)
 	}
 
-	if got := pgxValue(t, s, table, 1); got != "" {
+	if got := pgxValue(t, s, table); got != "" {
 		t.Errorf("found %q after rollback, want no row", got)
 	}
 }
@@ -242,13 +247,18 @@ func TestPgx_WithPgxTxPanic(t *testing.T) {
 		if r := recover(); r == nil {
 			t.Fatal("expected panic to propagate")
 		}
-		if got := pgxValue(t, s, table, 1); got != "" {
+		if got := pgxValue(t, s, table); got != "" {
 			t.Errorf("found %q after panic rollback, want no row", got)
 		}
 	}()
 
 	_ = s.WithPgxTx(ctx, nil, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, "INSERT INTO "+table+" (id, val) VALUES ($1, $2)", 1, "panic-value"); err != nil {
+		if _, err := tx.Exec(
+			ctx,
+			"INSERT INTO "+table+" (id, val) VALUES ($1, $2)",
+			1,
+			"panic-value",
+		); err != nil {
 			return err
 		}
 		panic("test panic")
@@ -261,10 +271,15 @@ func TestPgx_WithPgxTxCanceledContext(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	err := s.WithPgxTx(ctx, nil, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, "INSERT INTO "+table+" (id, val) VALUES ($1, $2)", 1, "abandoned"); err != nil {
+		if _, err := tx.Exec(
+			ctx,
+			"INSERT INTO "+table+" (id, val) VALUES ($1, $2)",
+			1,
+			"abandoned",
+		); err != nil {
 			return err
 		}
-		// The commit runs on ctx, so cancelling here must fail it rather
+		// The commit runs on ctx, so canceling here must fail it rather
 		// than persist work the caller abandoned.
 		cancel()
 		return nil
@@ -273,7 +288,7 @@ func TestPgx_WithPgxTxCanceledContext(t *testing.T) {
 		t.Fatal("expected commit to fail on a canceled context")
 	}
 
-	if got := pgxValue(t, s, table, 1); got != "" {
+	if got := pgxValue(t, s, table); got != "" {
 		t.Errorf("found %q after a failed commit, want no row", got)
 	}
 }
@@ -287,14 +302,19 @@ func TestPgx_BeginPgxTxManual(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BeginPgxTx: %v", err)
 	}
-	if _, err := tx.Exec(ctx, "INSERT INTO "+table+" (id, val) VALUES ($1, $2)", 1, "manual"); err != nil {
+	if _, err := tx.Exec(
+		ctx,
+		"INSERT INTO "+table+" (id, val) VALUES ($1, $2)",
+		1,
+		"manual",
+	); err != nil {
 		t.Fatalf("INSERT in tx: %v", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
 
-	if got := pgxValue(t, s, table, 1); got != "manual" {
+	if got := pgxValue(t, s, table); got != "manual" {
 		t.Errorf("val = %q, want manual", got)
 	}
 }
@@ -306,30 +326,38 @@ func createPgxTable(t *testing.T, s *database.Service) string {
 
 	table := "gas_db_test_" + t.Name()
 	for i, r := range table {
-		if !('a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || '0' <= r && r <= '9' || r == '_') {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '_' {
 			table = table[:i] + "_" + table[i+1:]
 		}
 	}
 
 	ctx := context.Background()
-	if _, err := s.Exec(ctx, "CREATE TABLE "+table+" (id INTEGER PRIMARY KEY, val TEXT)"); err != nil {
+	if _, err := s.Exec(
+		ctx,
+		"CREATE TABLE "+table+" (id INTEGER PRIMARY KEY, val TEXT)",
+	); err != nil {
 		t.Fatalf("CREATE TABLE: %v", err)
 	}
 	t.Cleanup(func() {
 		//goland:noinspection SqlNoDataSourceInspection
-		if _, err := s.Exec(context.Background(), fmt.Sprintf("DROP TABLE IF EXISTS \"%s\"", table)); err != nil {
+		if _, err := s.Exec(
+			context.Background(),
+			fmt.Sprintf("DROP TABLE IF EXISTS \"%s\"", table),
+		); err != nil {
 			t.Errorf("DROP TABLE: %v", err)
 		}
 	})
 	return table
 }
 
-// pgxValue returns the val column for id, or "" when the row is absent.
-func pgxValue(t *testing.T, s *database.Service, table string, id int) string {
+// pgxValue returns the val column for row 1, or "" when the row is absent.
+func pgxValue(t *testing.T, s *database.Service, table string) string {
 	t.Helper()
 
 	var val string
-	err := s.DB().QueryRowContext(context.Background(), "SELECT val FROM "+table+" WHERE id = $1", id).Scan(&val)
+	err := s.DB().
+		QueryRowContext(context.Background(), "SELECT val FROM "+table+" WHERE id = $1", 1).
+		Scan(&val)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ""
 	}

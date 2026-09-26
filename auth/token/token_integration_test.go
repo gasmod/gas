@@ -8,17 +8,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gasmod/gas/auth/internal/testutil"
-	"github.com/gasmod/gas/auth/token"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/gasmod/gas/auth/internal/testutil"
+	"github.com/gasmod/gas/auth/token"
 )
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-func setupTokenService(t *testing.T, opts ...token.Option) *token.Service {
+func setupTokenService(t *testing.T) *token.Service {
 	t.Helper()
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -30,8 +31,7 @@ func setupTokenService(t *testing.T, opts ...token.Option) *token.Service {
 	cfg := token.DefaultConfig()
 	cfg.Token.CleanupInterval = 0 // disable background cleanup by default
 
-	allOpts := append([]token.Option{token.WithConfig(cfg)}, opts...)
-	svc := token.New(allOpts...)(pg.Provider(), logger, migMgr, nil)
+	svc := token.New(token.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
 
 	require.NoError(t, svc.Init())
 	require.NoError(t, migMgr.RunPending())
@@ -125,7 +125,12 @@ func TestTokenDefaultTTLUsedWhenZero(t *testing.T) {
 func TestTokenWrongPurposeConsumesToken(t *testing.T) {
 	svc := setupTokenService(t)
 
-	rawToken, err := svc.Issue(context.Background(), "user-purpose", "password-reset", 15*time.Minute)
+	rawToken, err := svc.Issue(
+		context.Background(),
+		"user-purpose",
+		"password-reset",
+		15*time.Minute,
+	)
 	require.NoError(t, err)
 
 	// Verify with wrong purpose → ErrTokenInvalid, and token is CONSUMED.
@@ -242,7 +247,12 @@ func TestTokenConcurrentReplayPrevention(t *testing.T) {
 	wg.Wait()
 
 	// Exactly 1 goroutine should succeed.
-	assert.Equal(t, int32(1), successCount.Load(), "only one verify should succeed for a single-use token")
+	assert.Equal(
+		t,
+		int32(1),
+		successCount.Load(),
+		"only one verify should succeed for a single-use token",
+	)
 }
 
 func TestTokenConcurrentIssueAndVerify(t *testing.T) {
@@ -257,7 +267,12 @@ func TestTokenConcurrentIssueAndVerify(t *testing.T) {
 	for i := range goroutines {
 		go func(idx int) {
 			defer wg.Done()
-			tok, issueErr := svc.Issue(context.Background(), fmt.Sprintf("user-%d", idx), "verify", 15*time.Minute)
+			tok, issueErr := svc.Issue(
+				context.Background(),
+				fmt.Sprintf("user-%d", idx),
+				"verify",
+				15*time.Minute,
+			)
 			require.NoError(t, issueErr)
 			tokens[idx] = tok
 		}(i)

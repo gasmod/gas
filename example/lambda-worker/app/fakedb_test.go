@@ -31,9 +31,9 @@ type execCall struct {
 // handler a real *sql.DB with no server behind it. gas/database exposes the
 // same seam in production code via database.WithConnector.
 type fakeConnector struct {
-	mu      sync.Mutex
-	calls   []execCall
 	execErr error
+	calls   []execCall
+	mu      sync.Mutex
 }
 
 // openDB wires the connector into a *sql.DB. sql.OpenDB is lazy, so no
@@ -72,7 +72,11 @@ type fakeConn struct {
 	connector *fakeConnector
 }
 
-func (c *fakeConn) ExecContext(_ context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+func (c *fakeConn) ExecContext(
+	_ context.Context,
+	query string,
+	args []driver.NamedValue,
+) (driver.Result, error) {
 	if err := c.connector.record(query, args); err != nil {
 		return nil, err
 	}

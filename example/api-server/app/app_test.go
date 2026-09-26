@@ -139,7 +139,12 @@ func TestProtectedRoutesRejectAnonymous(t *testing.T) {
 			resp, body := do(t, srv, rt.method, rt.path, "", "")
 
 			if resp.StatusCode != http.StatusUnauthorized {
-				t.Fatalf("status = %d, want %d (body %q)", resp.StatusCode, http.StatusUnauthorized, body)
+				t.Fatalf(
+					"status = %d, want %d (body %q)",
+					resp.StatusCode,
+					http.StatusUnauthorized,
+					body,
+				)
 			}
 			if got, want := decodeError(t, body), "unauthorized"; got != want {
 				t.Errorf("error = %q, want %q", got, want)
@@ -159,7 +164,11 @@ func TestProtectedRoutesRejectBadCredentials(t *testing.T) {
 		value  string
 	}{
 		{"malformed bearer token", "Authorization", "Bearer not-a-jwt"},
-		{"bearer token signed with another key", "Authorization", "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.wrong-signature"},
+		{
+			"bearer token signed with another key",
+			"Authorization",
+			"Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.wrong-signature",
+		},
 		{"unknown api key", "X-API-Key", "not-a-real-api-key"},
 	}
 
@@ -168,7 +177,12 @@ func TestProtectedRoutesRejectBadCredentials(t *testing.T) {
 			resp, body := do(t, srv, http.MethodGet, "/api/files", "", "", cr.header, cr.value)
 
 			if resp.StatusCode != http.StatusUnauthorized {
-				t.Fatalf("status = %d, want %d (body %q)", resp.StatusCode, http.StatusUnauthorized, body)
+				t.Fatalf(
+					"status = %d, want %d (body %q)",
+					resp.StatusCode,
+					http.StatusUnauthorized,
+					body,
+				)
 			}
 			if got, want := decodeError(t, body), "unauthorized"; got != want {
 				t.Errorf("error = %q, want %q", got, want)
@@ -206,7 +220,12 @@ func TestPublicRoutes(t *testing.T) {
 			"application/json", `{"email":"nobody@example.test","password":"correct-horse"}`)
 
 		if resp.StatusCode != http.StatusUnauthorized {
-			t.Fatalf("status = %d, want %d (body %q)", resp.StatusCode, http.StatusUnauthorized, body)
+			t.Fatalf(
+				"status = %d, want %d (body %q)",
+				resp.StatusCode,
+				http.StatusUnauthorized,
+				body,
+			)
 		}
 		if got, want := decodeError(t, body), "invalid credentials"; got != want {
 			t.Errorf("error = %q, want %q", got, want)
@@ -246,7 +265,19 @@ func TestSecurityHeaders(t *testing.T) {
 
 // --- helpers ---
 
-func do(t *testing.T, srv *httptest.Server, method, path, contentType, body string, headers ...string) (*http.Response, string) {
+// response holds the status and headers of an HTTP response whose body the
+// helper has already read and closed.
+type response struct {
+	Header     http.Header
+	StatusCode int
+}
+
+func do(
+	t *testing.T,
+	srv *httptest.Server,
+	method, path, contentType, body string,
+	headers ...string,
+) (response, string) {
 	t.Helper()
 
 	var reader io.Reader
@@ -275,7 +306,7 @@ func do(t *testing.T, srv *httptest.Server, method, path, contentType, body stri
 	if err != nil {
 		t.Fatalf("reading %s %s body: %v", method, path, err)
 	}
-	return resp, string(raw)
+	return response{Header: resp.Header, StatusCode: resp.StatusCode}, string(raw)
 }
 
 // decodeError pulls the "error" field out of the service's JSON error envelope.
@@ -295,8 +326,8 @@ func decodeError(t *testing.T, body string) string {
 // returns (nil, nil) from Get, which every caller reads as a hit, so a genuine
 // store is needed to tell hits from misses.
 type memCache struct {
-	mu     sync.Mutex
 	values map[string][]byte
+	mu     sync.Mutex
 }
 
 func newMemCache() *memCache { return &memCache{values: map[string][]byte{}} }

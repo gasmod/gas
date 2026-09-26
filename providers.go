@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gasmod/gas/config"
+	"github.com/gasmod/gas/config/providers"
 )
 
 // DatabaseProvider abstracts database access. Implemented by gas/database
@@ -100,7 +101,9 @@ func WithJobAttributes(attrs map[string]string) EnqueueOption {
 
 // ApplyEnqueueOptions resolves variadic EnqueueOption values into a concrete
 // enqueueOptions struct. Implementations call this inside their Enqueue method.
-func ApplyEnqueueOptions(opts []EnqueueOption) (delay time.Duration, groupID, dedupeID string, attrs map[string]string) {
+func ApplyEnqueueOptions(
+	opts []EnqueueOption,
+) (delay time.Duration, groupID, dedupeID string, attrs map[string]string) {
 	o := &enqueueOptions{}
 	for _, fn := range opts {
 		fn(o)
@@ -144,8 +147,18 @@ type StorageProvider interface {
 	Download(ctx context.Context, key string, opts ...StorageOption) (*StorageObject, error)
 	Delete(ctx context.Context, key string, opts ...StorageOption) error
 	Head(ctx context.Context, key string, opts ...StorageOption) (*ObjectInfo, error)
-	PresignDownloadURL(ctx context.Context, key string, expires time.Duration, opts ...StorageOption) (string, error)
-	PresignUploadURL(ctx context.Context, key string, expires time.Duration, opts ...StorageOption) (string, error)
+	PresignDownloadURL(
+		ctx context.Context,
+		key string,
+		expires time.Duration,
+		opts ...StorageOption,
+	) (string, error)
+	PresignUploadURL(
+		ctx context.Context,
+		key string,
+		expires time.Duration,
+		opts ...StorageOption,
+	) (string, error)
 }
 
 // StorageObject holds the response from a Download call, including the body
@@ -191,7 +204,9 @@ func WithMetadata(m map[string]string) StorageOption {
 
 // ApplyStorageOptions resolves variadic StorageOption values into their
 // individual fields. Implementations call this inside their methods.
-func ApplyStorageOptions(opts []StorageOption) (bucket, contentType string, metadata map[string]string) {
+func ApplyStorageOptions(
+	opts []StorageOption,
+) (bucket, contentType string, metadata map[string]string) {
 	o := &storageOptions{}
 	for _, fn := range opts {
 		fn(o)
@@ -222,7 +237,11 @@ type TemplateProvider interface {
 // TemplateProvider; UIProvider focuses on compilation and rendering.
 type UIProvider interface {
 	Render(w http.ResponseWriter, name string, data any) error
-	RenderFragment(w http.ResponseWriter, name string, data any) error // renders without layout wrapper, useful for HTMX
+	RenderFragment(
+		w http.ResponseWriter,
+		name string,
+		data any,
+	) error // renders without layout wrapper, useful for HTMX
 	RenderWithStatus(w http.ResponseWriter, status int, name string, data any) error
 	RegisterFuncs(funcs template.FuncMap)
 }
@@ -270,4 +289,6 @@ type ConfigProvider interface {
 	Get(key string) any
 	Find(key string) (value any, exist bool)
 	Values() map[string]any
+	LoadProvider(p providers.Provider) error
+	LoadProviderContext(ctx context.Context, p providers.Provider) error
 }

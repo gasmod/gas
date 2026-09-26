@@ -89,7 +89,10 @@ func TestRegisterCtor_AcceptsValidShapes(t *testing.T) {
 		{
 			name: "concrete type returning itself",
 			register: func(c *gas.ServiceContainer) {
-				c.RegisterService[*concreteGreeter](newConcreteGreeter, gas.ServiceLifetimeSingleton)
+				c.RegisterService[*concreteGreeter](
+					newConcreteGreeter,
+					gas.ServiceLifetimeSingleton,
+				)
 			},
 		},
 		{
@@ -165,7 +168,10 @@ func TestRegisterCtor_RejectsBadShapes(t *testing.T) {
 			name:  "non-function constructor",
 			wants: []string{"want a function"},
 			register: func(c *gas.ServiceContainer) {
-				c.RegisterService[*concreteGreeter](&concreteGreeter{}, gas.ServiceLifetimeSingleton)
+				c.RegisterService[*concreteGreeter](
+					&concreteGreeter{},
+					gas.ServiceLifetimeSingleton,
+				)
 			},
 		},
 		{
@@ -208,7 +214,10 @@ func TestRegisterCtor_RejectsBadShapes(t *testing.T) {
 			name:  "result does not implement the registered interface",
 			wants: []string{"not assignable to"},
 			register: func(c *gas.ServiceContainer) {
-				c.RegisterService[greeter](func() *unrelated { return &unrelated{} }, gas.ServiceLifetimeSingleton)
+				c.RegisterService[greeter](
+					func() *unrelated { return &unrelated{} },
+					gas.ServiceLifetimeSingleton,
+				)
 			},
 		},
 		{

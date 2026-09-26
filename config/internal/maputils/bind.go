@@ -291,19 +291,7 @@ func getAnyFromValue(rv reflect.Value) (any, error) {
 		}
 
 		return subM, nil
-	case reflect.Slice:
-		sl := make([]any, rv.Len())
-		for i := range rv.Len() {
-			val, err := getAnyFromValue(rv.Index(i))
-			if err != nil {
-				return nil, err
-			}
-
-			sl[i] = val
-		}
-
-		return sl, nil
-	case reflect.Array:
+	case reflect.Slice, reflect.Array:
 		arr := make([]any, rv.Len())
 		for i := range rv.Len() {
 			val, err := getAnyFromValue(rv.Index(i))
@@ -403,14 +391,7 @@ func isEmbeddedStruct(t reflect.Type) bool {
 }
 
 func setValue(dst reflect.Value, v any) error {
-	// handle pointer destination by allocating if nil
-	for dst.Kind() == reflect.Pointer {
-		if dst.IsNil() {
-			dst.Set(reflect.New(dst.Type().Elem()))
-		}
-
-		dst = dst.Elem()
-	}
+	dst = allocPointers(dst)
 
 	if !dst.CanSet() {
 		return ErrDestinationNotSettable
@@ -440,6 +421,19 @@ func setValue(dst reflect.Value, v any) error {
 	default:
 		return setBasicKind(dst, v)
 	}
+}
+
+// allocPointers dereferences pointer destinations, allocating any that are nil.
+func allocPointers(dst reflect.Value) reflect.Value {
+	for dst.Kind() == reflect.Pointer {
+		if dst.IsNil() {
+			dst.Set(reflect.New(dst.Type().Elem()))
+		}
+
+		dst = dst.Elem()
+	}
+
+	return dst
 }
 
 func setStructValue(dst reflect.Value, v any, srcVal reflect.Value) error {
@@ -647,52 +641,14 @@ func setBasicKind(dst reflect.Value, v any) error {
 
 		return nil
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		if dt := dst.Type(); dt.PkgPath() == "time" && dt.Name() == "Duration" {
-			i, err := toDuration(v)
-			if err != nil {
-				return err
-			}
-
-			dst.SetInt(int64(i))
-
-			return nil
-		}
-
-		i, err := toInt64(v)
-		if err != nil {
-			return err
-		}
-
-		if !withinIntRange(i, dst.Type().Bits()) {
-			return fmt.Errorf("%w %s: %d", ErrIntegerOverflow, dst.Type().Kind().String(), i)
-		}
-
-		dst.SetInt(i)
-
-		return nil
+		return setIntKind(dst, v)
 	case reflect.Uint,
 		reflect.Uint8,
 		reflect.Uint16,
 		reflect.Uint32,
 		reflect.Uint64,
 		reflect.Uintptr:
-		u, err := toUint64(v)
-		if err != nil {
-			return err
-		}
-
-		if !withinUintRange(u, dst.Type().Bits()) {
-			return fmt.Errorf(
-				"%w %s: %d",
-				ErrUnsignedIntegerOverflow,
-				dst.Type().Kind().String(),
-				u,
-			)
-		}
-
-		dst.SetUint(u)
-
-		return nil
+		return setUintKind(dst, v)
 	case reflect.Float32, reflect.Float64:
 		f, err := toFloat64(v)
 		if err != nil {
@@ -705,6 +661,52 @@ func setBasicKind(dst reflect.Value, v any) error {
 	default:
 		return fmt.Errorf("%w %s for value %T", ErrUnsupportedKind, dst.Kind().String(), v)
 	}
+}
+
+func setIntKind(dst reflect.Value, v any) error {
+	if dt := dst.Type(); dt.PkgPath() == "time" && dt.Name() == "Duration" {
+		i, err := toDuration(v)
+		if err != nil {
+			return err
+		}
+
+		dst.SetInt(int64(i))
+
+		return nil
+	}
+
+	i, err := toInt64(v)
+	if err != nil {
+		return err
+	}
+
+	if !withinIntRange(i, dst.Type().Bits()) {
+		return fmt.Errorf("%w %s: %d", ErrIntegerOverflow, dst.Type().Kind().String(), i)
+	}
+
+	dst.SetInt(i)
+
+	return nil
+}
+
+func setUintKind(dst reflect.Value, v any) error {
+	u, err := toUint64(v)
+	if err != nil {
+		return err
+	}
+
+	if !withinUintRange(u, dst.Type().Bits()) {
+		return fmt.Errorf(
+			"%w %s: %d",
+			ErrUnsignedIntegerOverflow,
+			dst.Type().Kind().String(),
+			u,
+		)
+	}
+
+	dst.SetUint(u)
+
+	return nil
 }
 
 // helpers for conversions.
@@ -836,35 +838,15 @@ func toUint64(val any) (uint64, error) {
 	case uint64:
 		return typ, nil
 	case int:
-		if typ < 0 {
-			return 0, fmt.Errorf("%w: %d", ErrNegativeIntCannotConvert, typ)
-		}
-
-		return uint64(typ), nil
+		return signedToUint64(typ, ErrNegativeIntCannotConvert)
 	case int8:
-		if typ < 0 {
-			return 0, fmt.Errorf("%w: %d", ErrNegativeInt8CannotConvert, typ)
-		}
-
-		return uint64(typ), nil
+		return signedToUint64(typ, ErrNegativeInt8CannotConvert)
 	case int16:
-		if typ < 0 {
-			return 0, fmt.Errorf("%w: %d", ErrNegativeInt16CannotConvert, typ)
-		}
-
-		return uint64(typ), nil
+		return signedToUint64(typ, ErrNegativeInt16CannotConvert)
 	case int32:
-		if typ < 0 {
-			return 0, fmt.Errorf("%w: %d", ErrNegativeInt32CannotConvert, typ)
-		}
-
-		return uint64(typ), nil
+		return signedToUint64(typ, ErrNegativeInt32CannotConvert)
 	case int64:
-		if typ < 0 {
-			return 0, fmt.Errorf("%w: %d", ErrNegativeInt64CannotConvert, typ)
-		}
-
-		return uint64(typ), nil
+		return signedToUint64(typ, ErrNegativeInt64CannotConvert)
 	case float64:
 		if typ < 0 {
 			return 0, fmt.Errorf("%w: %f", ErrNegativeFloatCannotConvert, typ)
@@ -881,6 +863,16 @@ func toUint64(val any) (uint64, error) {
 	default:
 		return 0, fmt.Errorf("%w %T", ErrCannotConvertToUint64, val)
 	}
+}
+
+// signedToUint64 converts a signed integer to uint64, returning errNegative
+// wrapped with the value when it is negative.
+func signedToUint64[T int | int8 | int16 | int32 | int64](v T, errNegative error) (uint64, error) {
+	if v < 0 {
+		return 0, fmt.Errorf("%w: %d", errNegative, v)
+	}
+
+	return uint64(v), nil
 }
 
 //nolint:cyclop // type switch with many cases is inherently complex

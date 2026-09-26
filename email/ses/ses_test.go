@@ -6,10 +6,10 @@ import (
 	"io/fs"
 	"testing"
 
-	"github.com/gasmod/gas"
-	email "github.com/gasmod/gas/email"
-
 	awsses "github.com/aws/aws-sdk-go-v2/service/ses"
+
+	"github.com/gasmod/gas"
+	"github.com/gasmod/gas/email"
 )
 
 // --- mock SES client ---
@@ -18,7 +18,11 @@ type mockSESClient struct {
 	sendEmailFn func(ctx context.Context, params *awsses.SendEmailInput, optFns ...func(*awsses.Options)) (*awsses.SendEmailOutput, error)
 }
 
-func (m *mockSESClient) SendEmail(ctx context.Context, params *awsses.SendEmailInput, optFns ...func(*awsses.Options)) (*awsses.SendEmailOutput, error) {
+func (m *mockSESClient) SendEmail(
+	ctx context.Context,
+	params *awsses.SendEmailInput,
+	optFns ...func(*awsses.Options),
+) (*awsses.SendEmailOutput, error) {
 	return m.sendEmailFn(ctx, params, optFns...)
 }
 
@@ -35,7 +39,11 @@ func (m *mockTemplateProvider) Get(ctx context.Context, name string) ([]byte, er
 	return nil, errors.New("not found")
 }
 
-func (m *mockTemplateProvider) List(_ context.Context) ([]string, error)             { return nil, nil }
+func (m *mockTemplateProvider) List(
+	_ context.Context,
+) ([]string, error) {
+	return nil, nil
+}
 func (m *mockTemplateProvider) Register(_ context.Context, _ string, _ []byte) error { return nil }
 func (m *mockTemplateProvider) RegisterFS(_ context.Context, _ fs.FS) error          { return nil }
 
@@ -52,9 +60,6 @@ func validConfig() *Config {
 
 func newTestService(t *testing.T, mock *mockSESClient, tmpl gas.TemplateProvider) *Service {
 	t.Helper()
-	if tmpl == nil {
-		tmpl = &mockTemplateProvider{}
-	}
 	ctor := New(WithConfig(validConfig()), WithClient(mock))
 	svc := ctor(tmpl, nil, gas.NewNopLogger()())
 	if err := svc.Init(); err != nil {
@@ -81,13 +86,25 @@ func TestConfigValidate(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
 		modify  func(*Config)
+		name    string
 		wantErr bool
 	}{
-		{name: "valid", modify: func(_ *Config) {}, wantErr: false},
-		{name: "empty region", modify: func(c *Config) { c.Email.Region = "" }, wantErr: true},
-		{name: "empty from email", modify: func(c *Config) { c.Email.FromEmail = "" }, wantErr: true},
+		{
+			name:    "valid",
+			modify:  func(_ *Config) {},
+			wantErr: false,
+		},
+		{
+			name:    "empty region",
+			modify:  func(c *Config) { c.Email.Region = "" },
+			wantErr: true,
+		},
+		{
+			name:    "empty from email",
+			modify:  func(c *Config) { c.Email.FromEmail = "" },
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -126,7 +143,7 @@ func TestInitWithInvalidConfig(t *testing.T) {
 
 func TestClientReturnsNilForMock(t *testing.T) {
 	t.Parallel()
-	svc := newTestService(t, &mockSESClient{}, nil)
+	svc := newTestService(t, &mockSESClient{}, &mockTemplateProvider{})
 	if svc.Client() != nil {
 		t.Error("Client() should return nil for mock sesClient")
 	}
@@ -168,7 +185,8 @@ func TestSend(t *testing.T) {
 	if *captured.Source != "test@example.com" {
 		t.Errorf("Source = %q, want %q", *captured.Source, "test@example.com")
 	}
-	if len(captured.Destination.ToAddresses) != 1 || captured.Destination.ToAddresses[0] != "recipient@example.com" {
+	if len(captured.Destination.ToAddresses) != 1 ||
+		captured.Destination.ToAddresses[0] != "recipient@example.com" {
 		t.Errorf("ToAddresses = %v", captured.Destination.ToAddresses)
 	}
 	if *captured.Message.Subject.Data != "Test Subject" {
@@ -246,17 +264,19 @@ func TestSendWithCcBcc(t *testing.T) {
 		t.Fatalf("Send() error = %v", err)
 	}
 
-	if len(captured.Destination.CcAddresses) != 1 || captured.Destination.CcAddresses[0] != "cc@example.com" {
+	if len(captured.Destination.CcAddresses) != 1 ||
+		captured.Destination.CcAddresses[0] != "cc@example.com" {
 		t.Errorf("CcAddresses = %v", captured.Destination.CcAddresses)
 	}
-	if len(captured.Destination.BccAddresses) != 1 || captured.Destination.BccAddresses[0] != "bcc@example.com" {
+	if len(captured.Destination.BccAddresses) != 1 ||
+		captured.Destination.BccAddresses[0] != "bcc@example.com" {
 		t.Errorf("BccAddresses = %v", captured.Destination.BccAddresses)
 	}
 }
 
 func TestSendClosed(t *testing.T) {
 	t.Parallel()
-	svc := newTestService(t, &mockSESClient{}, nil)
+	svc := newTestService(t, &mockSESClient{}, &mockTemplateProvider{})
 	_ = svc.Close()
 
 	err := svc.Send(context.Background(), &gas.Email{To: []string{"x@x.com"}})
@@ -330,9 +350,7 @@ func TestSendFromTemplate(t *testing.T) {
 		HTMLTemplate:    "welcome-html",
 		TextTemplate:    "welcome-text",
 		Data:            map[string]string{"Name": "Alice"},
-		Email: gas.Email{
-			To: []string{"alice@example.com"},
-		},
+		To:              []string{"alice@example.com"},
 	})
 	if err != nil {
 		t.Fatalf("SendFromTemplate() error = %v", err)
@@ -380,11 +398,9 @@ func TestSendFromTemplatePartial(t *testing.T) {
 	// Only HTMLTemplate set; subject and text provided directly
 	err := svc.SendFromTemplate(context.Background(), &gas.TemplatedEmail{
 		HTMLTemplate: "body-html",
-		Email: gas.Email{
-			To:       []string{"user@example.com"},
-			Subject:  "Static Subject",
-			TextBody: "Static text",
-		},
+		To:           []string{"user@example.com"},
+		Subject:      "Static Subject",
+		TextBody:     "Static text",
 	})
 	if err != nil {
 		t.Fatalf("SendFromTemplate() error = %v", err)
@@ -403,12 +419,12 @@ func TestSendFromTemplatePartial(t *testing.T) {
 
 func TestSendFromTemplateClosed(t *testing.T) {
 	t.Parallel()
-	svc := newTestService(t, &mockSESClient{}, nil)
+	svc := newTestService(t, &mockSESClient{}, &mockTemplateProvider{})
 	_ = svc.Close()
 
 	err := svc.SendFromTemplate(context.Background(), &gas.TemplatedEmail{
 		HTMLTemplate: "test",
-		Email:        gas.Email{To: []string{"x@x.com"}},
+		To:           []string{"x@x.com"},
 	})
 	if !errors.Is(err, email.ErrClosed) {
 		t.Errorf("got %v, want ErrClosed", err)
@@ -434,7 +450,7 @@ func TestSendFromTemplateGetError(t *testing.T) {
 
 	err := svc.SendFromTemplate(context.Background(), &gas.TemplatedEmail{
 		HTMLTemplate: "missing",
-		Email:        gas.Email{To: []string{"x@x.com"}},
+		To:           []string{"x@x.com"},
 	})
 	if err == nil {
 		t.Error("SendFromTemplate() should fail when template Get fails")
@@ -460,7 +476,7 @@ func TestSendFromTemplateParseError(t *testing.T) {
 
 	err := svc.SendFromTemplate(context.Background(), &gas.TemplatedEmail{
 		HTMLTemplate: "bad",
-		Email:        gas.Email{To: []string{"x@x.com"}},
+		To:           []string{"x@x.com"},
 	})
 	if err == nil {
 		t.Error("SendFromTemplate() should fail on template parse error")
@@ -471,7 +487,7 @@ func TestSendFromTemplateParseError(t *testing.T) {
 
 func TestCheckReady(t *testing.T) {
 	t.Parallel()
-	svc := newTestService(t, &mockSESClient{}, nil)
+	svc := newTestService(t, &mockSESClient{}, &mockTemplateProvider{})
 
 	if err := svc.CheckReady(context.Background()); err != nil {
 		t.Errorf("CheckReady() before close = %v, want nil", err)

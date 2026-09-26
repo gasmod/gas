@@ -74,19 +74,59 @@ func TestError_Constructors(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
 		err        *gas.Error
-		wantStatus int
+		name       string
 		wantCode   string
+		wantStatus int
 	}{
-		{"BadRequest", gas.BadRequest("m"), http.StatusBadRequest, gas.CodeBadRequest},
-		{"Unauthorized", gas.Unauthorized("m"), http.StatusUnauthorized, gas.CodeUnauthorized},
-		{"Forbidden", gas.Forbidden("m"), http.StatusForbidden, gas.CodeForbidden},
-		{"NotFound", gas.NotFound("m"), http.StatusNotFound, gas.CodeNotFound},
-		{"Conflict", gas.Conflict("m"), http.StatusConflict, gas.CodeConflict},
-		{"Unprocessable", gas.Unprocessable("m"), http.StatusUnprocessableEntity, gas.CodeValidationFailed},
-		{"TooManyRequests", gas.TooManyRequests("m"), http.StatusTooManyRequests, gas.CodeRateLimited},
-		{"Internal", gas.Internal("m"), http.StatusInternalServerError, gas.CodeInternal},
+		{
+			name:       "BadRequest",
+			err:        gas.BadRequest("m"),
+			wantStatus: http.StatusBadRequest,
+			wantCode:   gas.CodeBadRequest,
+		},
+		{
+			name:       "Unauthorized",
+			err:        gas.Unauthorized("m"),
+			wantStatus: http.StatusUnauthorized,
+			wantCode:   gas.CodeUnauthorized,
+		},
+		{
+			name:       "Forbidden",
+			err:        gas.Forbidden("m"),
+			wantStatus: http.StatusForbidden,
+			wantCode:   gas.CodeForbidden,
+		},
+		{
+			name:       "NotFound",
+			err:        gas.NotFound("m"),
+			wantStatus: http.StatusNotFound,
+			wantCode:   gas.CodeNotFound,
+		},
+		{
+			name:       "Conflict",
+			err:        gas.Conflict("m"),
+			wantStatus: http.StatusConflict,
+			wantCode:   gas.CodeConflict,
+		},
+		{
+			name:       "Unprocessable",
+			err:        gas.Unprocessable("m"),
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   gas.CodeValidationFailed,
+		},
+		{
+			name:       "TooManyRequests",
+			err:        gas.TooManyRequests("m"),
+			wantStatus: http.StatusTooManyRequests,
+			wantCode:   gas.CodeRateLimited,
+		},
+		{
+			name:       "Internal",
+			err:        gas.Internal("m"),
+			wantStatus: http.StatusInternalServerError,
+			wantCode:   gas.CodeInternal,
+		},
 	}
 
 	for _, tt := range tests {
@@ -174,13 +214,17 @@ func TestWantsJSON(t *testing.T) {
 		accept string
 		want   bool
 	}{
-		{"absent", "", true},
-		{"wildcard", "*/*", true},
-		{"json", "application/json", true},
-		{"html", "text/html", false},
-		{"browser", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", false},
-		{"both listed", "text/html,application/json", true},
-		{"mixed case", "TEXT/HTML", false},
+		{name: "absent", want: true},
+		{name: "wildcard", accept: "*/*", want: true},
+		{name: "json", accept: "application/json", want: true},
+		{name: "html", accept: "text/html", want: false},
+		{
+			name:   "browser",
+			accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+			want:   false,
+		},
+		{name: "both listed", accept: "text/html,application/json", want: true},
+		{name: "mixed case", accept: "TEXT/HTML", want: false},
 	}
 
 	for _, tt := range tests {
@@ -260,8 +304,8 @@ func TestWriteError_CollapsesUnknownErrors(t *testing.T) {
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/", nil)
 
-	secret := `pq: relation "internal_billing" does not exist`
-	if writeErr := gas.WriteError(rr, req, errors.New(secret)); writeErr != nil {
+	e := `pq: relation "internal_billing" does not exist`
+	if writeErr := gas.WriteError(rr, req, errors.New(e)); writeErr != nil {
 		t.Fatal(writeErr)
 	}
 
@@ -285,14 +329,28 @@ func TestWriteError_CoercesInvalidStatus(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name string
 		err  *gas.Error
+		name string
 		want int
 	}{
-		{"zero value", &gas.Error{Code: "custom", Message: "m"}, http.StatusInternalServerError},
-		{"too low", gas.NewError(42, "custom", "m"), http.StatusInternalServerError},
-		{"too high", gas.NewError(900, "custom", "m"), http.StatusInternalServerError},
-		{"valid", gas.NewError(418, "custom", "m"), http.StatusTeapot},
+		{
+			name: "zero value",
+			err:  &gas.Error{Code: "custom", Message: "m"},
+			want: http.StatusInternalServerError,
+		},
+		{
+			name: "too low",
+			err:  gas.NewError(42, "custom", "m"),
+			want: http.StatusInternalServerError,
+		},
+		{
+			name: "too high",
+			err:  gas.NewError(900, "custom", "m"),
+			want: http.StatusInternalServerError,
+		},
+		{
+			name: "valid", err: gas.NewError(418, "custom", "m"), want: http.StatusTeapot,
+		},
 	}
 
 	for _, tt := range tests {
@@ -436,8 +494,8 @@ func TestDefaultErrorHandler_CollapsesResolutionFailure(t *testing.T) {
 type recordingLogger struct {
 	gas.Logger
 
-	mu     sync.Mutex
 	levels []string
+	mu     sync.Mutex
 }
 
 func newRecordingLogger() *recordingLogger {
@@ -474,9 +532,15 @@ func TestDefaultErrorHandler_LogSeverityByStatus(t *testing.T) {
 		err       error
 		wantLevel string
 	}{
-		{"client error logs at warn", gas.NotFound("nope"), "warn"},
-		{"server error logs at error", gas.Internal("boom"), "error"},
-		{"unknown error logs at error", errors.New("raw"), "error"},
+		{
+			name: "client error logs at warn", err: gas.NotFound("nope"), wantLevel: "warn",
+		},
+		{
+			name: "server error logs at error", err: gas.Internal("boom"), wantLevel: "error",
+		},
+		{
+			name: "unknown error logs at error", err: errors.New("raw"), wantLevel: "error",
+		},
 	}
 
 	for _, tt := range tests {

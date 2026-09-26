@@ -22,7 +22,12 @@ type Provider interface {
 	// Create generates a cryptographically random session ID, stores the session
 	// in the database, and returns it. The caller is responsible for calling
 	// SetCookie afterward. The *http.Request is used to capture IP and user agent.
-	Create(ctx context.Context, subject string, meta gas.BasePrincipalMetadata, r *http.Request) (*Session, error)
+	Create(
+		ctx context.Context,
+		subject string,
+		meta gas.BasePrincipalMetadata,
+		r *http.Request,
+	) (*Session, error)
 	// SetCookie writes the session cookie to the response.
 	SetCookie(w http.ResponseWriter, session *Session)
 	// ClearCookie writes an expired cookie to the response, effectively removing it.

@@ -60,7 +60,11 @@ func (a *postgresAdapter) getDirtyMigrations(ctx context.Context) ([]appliedMigr
 	return out, nil
 }
 
-func (a *postgresAdapter) markMigrationApplied(ctx context.Context, tx *sql.Tx, version, service, description, migrateVersion, moduleVersion string) error {
+func (a *postgresAdapter) markMigrationApplied(
+	ctx context.Context,
+	tx *sql.Tx,
+	version, service, description, migrateVersion, moduleVersion string,
+) error {
 	//nolint:wrapcheck // wrapped by the caller
 	return a.q.WithTx(tx).MarkMigrationApplied(ctx, pgdb.MarkMigrationAppliedParams{
 		Version:        version,
@@ -71,7 +75,10 @@ func (a *postgresAdapter) markMigrationApplied(ctx context.Context, tx *sql.Tx, 
 	})
 }
 
-func (a *postgresAdapter) markMigrationDirty(ctx context.Context, version, service, description, migrateVersion, moduleVersion string) error {
+func (a *postgresAdapter) markMigrationDirty(
+	ctx context.Context,
+	version, service, description, migrateVersion, moduleVersion string,
+) error {
 	//nolint:wrapcheck // wrapped by the caller
 	return a.q.MarkMigrationDirty(ctx, pgdb.MarkMigrationDirtyParams{
 		Version:        version,
@@ -137,7 +144,11 @@ func (a *mysqlAdapter) getDirtyMigrations(ctx context.Context) ([]appliedMigrati
 	return out, nil
 }
 
-func (a *mysqlAdapter) markMigrationApplied(ctx context.Context, tx *sql.Tx, version, service, description, migrateVersion, moduleVersion string) error {
+func (a *mysqlAdapter) markMigrationApplied(
+	ctx context.Context,
+	tx *sql.Tx,
+	version, service, description, migrateVersion, moduleVersion string,
+) error {
 	//nolint:wrapcheck // wrapped by the caller
 	return a.q.WithTx(tx).MarkMigrationApplied(ctx, mydb.MarkMigrationAppliedParams{
 		Version:        version,
@@ -148,7 +159,10 @@ func (a *mysqlAdapter) markMigrationApplied(ctx context.Context, tx *sql.Tx, ver
 	})
 }
 
-func (a *mysqlAdapter) markMigrationDirty(ctx context.Context, version, service, description, migrateVersion, moduleVersion string) error {
+func (a *mysqlAdapter) markMigrationDirty(
+	ctx context.Context,
+	version, service, description, migrateVersion, moduleVersion string,
+) error {
 	//nolint:wrapcheck // wrapped by the caller
 	return a.q.MarkMigrationDirty(ctx, mydb.MarkMigrationDirtyParams{
 		Version:        version,
@@ -214,7 +228,11 @@ func (a *sqliteAdapter) getDirtyMigrations(ctx context.Context) ([]appliedMigrat
 	return out, nil
 }
 
-func (a *sqliteAdapter) markMigrationApplied(ctx context.Context, tx *sql.Tx, version, service, description, migrateVersion, moduleVersion string) error {
+func (a *sqliteAdapter) markMigrationApplied(
+	ctx context.Context,
+	tx *sql.Tx,
+	version, service, description, migrateVersion, moduleVersion string,
+) error {
 	//nolint:wrapcheck // wrapped by the caller
 	return a.q.WithTx(tx).MarkMigrationApplied(ctx, litedb.MarkMigrationAppliedParams{
 		Version:        version,
@@ -225,7 +243,10 @@ func (a *sqliteAdapter) markMigrationApplied(ctx context.Context, tx *sql.Tx, ve
 	})
 }
 
-func (a *sqliteAdapter) markMigrationDirty(ctx context.Context, version, service, description, migrateVersion, moduleVersion string) error {
+func (a *sqliteAdapter) markMigrationDirty(
+	ctx context.Context,
+	version, service, description, migrateVersion, moduleVersion string,
+) error {
 	//nolint:wrapcheck // wrapped by the caller
 	return a.q.MarkMigrationDirty(ctx, litedb.MarkMigrationDirtyParams{
 		Version:        version,

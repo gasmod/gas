@@ -5,10 +5,10 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/gasmod/gas/config/providers"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/gasmod/gas/config/providers"
 )
 
 // TestDotEnvProvider_DoesNotMirrorToProcessEnvByDefault guards against a
@@ -39,14 +39,14 @@ import (
 // parallel; it snapshots and restores every variable it touches.
 func TestDotEnvProvider_DoesNotMirrorToProcessEnvByDefault(t *testing.T) {
 	const (
-		secretKey = "GAS_DOTENV_LEAKED_SECRET"
+		key       = "GAS_DOTENV_LEAKED_SECRET"
 		injectKey = "PATH" // a security-relevant variable the .env should never control
 		evilPath  = "/tmp/attacker-controlled"
 	)
 
 	// Snapshot and restore the variables this test perturbs.
 	origPath, hadPath := os.LookupEnv(injectKey)
-	_, hadSecret := os.LookupEnv(secretKey)
+	_, hadSecret := os.LookupEnv(key)
 	t.Cleanup(func() {
 		if hadPath {
 			_ = os.Setenv(injectKey, origPath)
@@ -54,17 +54,17 @@ func TestDotEnvProvider_DoesNotMirrorToProcessEnvByDefault(t *testing.T) {
 			_ = os.Unsetenv(injectKey)
 		}
 		if !hadSecret {
-			_ = os.Unsetenv(secretKey)
+			_ = os.Unsetenv(key)
 		}
 	})
 
 	// Preconditions: the process env does not yet hold the .env's values.
 	require.NotEqual(t, evilPath, os.Getenv(injectKey))
-	require.Empty(t, os.Getenv(secretKey))
+	require.Empty(t, os.Getenv(key))
 
 	fsys := fstest.MapFS{
 		".env": &fstest.MapFile{Data: []byte(
-			secretKey + "=super-secret-db-password\n" +
+			key + "=super-secret-db-password\n" +
 				injectKey + "=" + evilPath + "\n",
 		)},
 	}
@@ -79,7 +79,7 @@ func TestDotEnvProvider_DoesNotMirrorToProcessEnvByDefault(t *testing.T) {
 	require.NoError(t, err)
 
 	// (1) The secret must NOT leak into the live process environment.
-	assert.Empty(t, os.Getenv(secretKey),
+	assert.Empty(t, os.Getenv(key),
 		"secret from .env was silently exported into the process environment via os.Setenv")
 
 	// (2) A .env entry must NOT overwrite PATH in the running process.
@@ -96,13 +96,13 @@ func TestDotEnvProvider_DoesNotMirrorToProcessEnvByDefault(t *testing.T) {
 // once a deny-list / no-overwrite guard protects such variables.
 func TestDotEnvProvider_AppendToOSEnvDoesNotOverwriteProtectedVars(t *testing.T) {
 	const (
-		secretKey = "GAS_DOTENV_OPTED_IN_VAR"
+		key       = "GAS_DOTENV_OPTED_IN_VAR"
 		injectKey = "PATH"
 		evilPath  = "/tmp/attacker-controlled"
 	)
 
 	origPath, hadPath := os.LookupEnv(injectKey)
-	_, hadSecret := os.LookupEnv(secretKey)
+	_, hadSecret := os.LookupEnv(key)
 	t.Cleanup(func() {
 		if hadPath {
 			_ = os.Setenv(injectKey, origPath)
@@ -110,7 +110,7 @@ func TestDotEnvProvider_AppendToOSEnvDoesNotOverwriteProtectedVars(t *testing.T)
 			_ = os.Unsetenv(injectKey)
 		}
 		if !hadSecret {
-			_ = os.Unsetenv(secretKey)
+			_ = os.Unsetenv(key)
 		}
 	})
 
@@ -118,7 +118,7 @@ func TestDotEnvProvider_AppendToOSEnvDoesNotOverwriteProtectedVars(t *testing.T)
 
 	fsys := fstest.MapFS{
 		".env": &fstest.MapFile{Data: []byte(
-			secretKey + "=ordinary-value\n" +
+			key + "=ordinary-value\n" +
 				injectKey + "=" + evilPath + "\n",
 		)},
 	}
@@ -134,7 +134,7 @@ func TestDotEnvProvider_AppendToOSEnvDoesNotOverwriteProtectedVars(t *testing.T)
 	require.NoError(t, err)
 
 	// An ordinary, non-protected var may be mirrored when explicitly opted in.
-	assert.Equal(t, "ordinary-value", os.Getenv(secretKey),
+	assert.Equal(t, "ordinary-value", os.Getenv(key),
 		"opted-in mirror should export ordinary .env vars")
 
 	// But a protected variable like PATH must never be overwritten.

@@ -58,7 +58,12 @@ func decodeSecret(ref secretRef, payload []byte) (map[string]any, error) {
 
 	if ref.key == "" {
 		if objErr != nil {
-			return nil, fmt.Errorf("%w %s: value is not a JSON object: %w", ErrSecretDecodeFailed, ref.name, objErr)
+			return nil, fmt.Errorf(
+				"%w %s: value is not a JSON object: %w",
+				ErrSecretDecodeFailed,
+				ref.name,
+				objErr,
+			)
 		}
 
 		return obj, nil

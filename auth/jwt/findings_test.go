@@ -4,10 +4,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gasmod/gas"
-	jwtpkg "github.com/gasmod/gas/auth/jwt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/gasmod/gas"
+	jwtpkg "github.com/gasmod/gas/auth/jwt"
+	"github.com/gasmod/gas/config/configtest"
 )
 
 // ---------------------------------------------------------------------------
@@ -63,7 +65,7 @@ func TestSignUsesValidatedExpiry_SignWithExpiryBypasses(t *testing.T) {
 
 	// But a running service with valid config still allows negative expiry via SignWithExpiry.
 	cfg.JWT.Expiry = 15 * time.Minute
-	svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&mockConfigProvider{}, gas.NewNopLogger()())
+	svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, gas.NewNopLogger()())
 	require.NoError(t, svc.Init())
 
 	_, err := svc.SignWithExpiry("user-1", nil, -1*time.Hour)

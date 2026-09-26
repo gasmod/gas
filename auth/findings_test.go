@@ -7,10 +7,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/gasmod/gas"
 	auth "github.com/gasmod/gas/auth"
 	"github.com/gasmod/gas/auth/authtest"
-	"github.com/stretchr/testify/assert"
 )
 
 // ---------------------------------------------------------------------------
@@ -35,7 +36,10 @@ func TestChainLosesExpiredError(t *testing.T) {
 	}
 	chain := auth.Chain{jwtAuth, sessionAuth}
 
-	_, err := chain.Authenticate(context.Background(), httptest.NewRequest(http.MethodGet, "/", nil))
+	_, err := chain.Authenticate(
+		context.Background(),
+		httptest.NewRequest(http.MethodGet, "/", nil),
+	)
 
 	// The caller sent an expired JWT. The most useful error is ErrCredentialsExpired
 	// so the client knows to refresh. But the chain returns only the last error.
@@ -59,7 +63,10 @@ func TestChainLosesRevokedError(t *testing.T) {
 	}
 	chain := auth.Chain{first, second}
 
-	_, err := chain.Authenticate(context.Background(), httptest.NewRequest(http.MethodGet, "/", nil))
+	_, err := chain.Authenticate(
+		context.Background(),
+		httptest.NewRequest(http.MethodGet, "/", nil),
+	)
 
 	assert.True(t, errors.Is(err, auth.ErrUnauthenticated),
 		"chain returns ErrUnauthenticated (the last error)")
@@ -74,9 +81,13 @@ func TestChainLosesRevokedError(t *testing.T) {
 func TestRequireSchemeGiveNoContextOnMismatch(t *testing.T) {
 	principal := auth.NewPrincipal("user-1", auth.SchemeSession, "sess-1", nil)
 
-	handler := auth.RequireScheme(auth.SchemeAPIKey)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
+	handler := auth.RequireScheme(
+		auth.SchemeAPIKey,
+	)(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}),
+	)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req = req.WithContext(gas.WithPrincipal(req.Context(), principal))

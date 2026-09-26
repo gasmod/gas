@@ -162,7 +162,10 @@ func (c *SlogMutableLoggerContext) Err(key string, val error) gas.MutableLoggerC
 }
 
 // Duration adds a duration attribute to the context with the specified key and value, returning the updated context.
-func (c *SlogMutableLoggerContext) Duration(key string, val time.Duration) gas.MutableLoggerContext {
+func (c *SlogMutableLoggerContext) Duration(
+	key string,
+	val time.Duration,
+) gas.MutableLoggerContext {
 	c.attrs = append(c.attrs, slog.Duration(key, val))
 	return c
 }

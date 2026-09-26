@@ -15,30 +15,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gasmod/gas"
-	auth "github.com/gasmod/gas/auth"
-	jwtpkg "github.com/gasmod/gas/auth/jwt"
-	config "github.com/gasmod/gas/config"
 	gojwt "github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/gasmod/gas"
+	"github.com/gasmod/gas/auth"
+	jwtpkg "github.com/gasmod/gas/auth/jwt"
+	"github.com/gasmod/gas/config/configtest"
 )
-
-// ---------------------------------------------------------------------------
-// Mock ConfigProvider
-// ---------------------------------------------------------------------------
-
-type mockConfigProvider struct{}
-
-func (m *mockConfigProvider) SetDefault(_ string, _ any)               {}
-func (m *mockConfigProvider) SetDefaults(_ any) error                  { return nil }
-func (m *mockConfigProvider) Set(_ string, _ any)                      {}
-func (m *mockConfigProvider) Get(_ string) any                         { return nil }
-func (m *mockConfigProvider) Find(_ string) (any, bool)                { return nil, false }
-func (m *mockConfigProvider) Values() map[string]any                   { return nil }
-func (m *mockConfigProvider) Bind(_ any, _ ...config.BindOption) error { return nil }
-
-var _ gas.ConfigProvider = (*mockConfigProvider)(nil)
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -57,7 +42,7 @@ func newHS256Service(t *testing.T, key string, opts ...func(*jwtpkg.Config)) *jw
 	for _, fn := range opts {
 		fn(cfg)
 	}
-	svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&mockConfigProvider{}, gas.NewNopLogger()())
+	svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, gas.NewNopLogger()())
 	require.NoError(t, svc.Init())
 	return svc
 }
@@ -104,7 +89,7 @@ func newRS256Service(t *testing.T, opts ...func(*jwtpkg.Config)) *jwtpkg.Service
 	for _, fn := range opts {
 		fn(cfg)
 	}
-	svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&mockConfigProvider{}, gas.NewNopLogger()())
+	svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, gas.NewNopLogger()())
 	require.NoError(t, svc.Init())
 	return svc
 }
@@ -201,10 +186,10 @@ func TestConfigValidation(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSignVerifyHS256(t *testing.T) {
-	const secret = "my-test-secret-key-for-hs256!!!!"
+	const k = "my-test-secret-key-for-hs256!!!!"
 
 	t.Run("round-trip with custom claims", func(t *testing.T) {
-		svc := newHS256Service(t, secret)
+		svc := newHS256Service(t, k)
 		customClaims := map[string]any{
 			"role":  "admin",
 			"email": "user@example.com",
@@ -223,17 +208,22 @@ func TestSignVerifyHS256(t *testing.T) {
 	})
 
 	t.Run("verify expired token returns ErrTokenExpired", func(t *testing.T) {
-		svc := newHS256Service(t, secret)
+		svc := newHS256Service(t, k)
 		token, err := svc.SignWithExpiry("user-123", nil, -1*time.Hour)
 		require.NoError(t, err)
 
 		_, err = svc.Verify(token)
 		require.Error(t, err)
-		assert.True(t, errors.Is(err, gojwt.ErrTokenExpired), "expected ErrTokenExpired, got: %v", err)
+		assert.True(
+			t,
+			errors.Is(err, gojwt.ErrTokenExpired),
+			"expected ErrTokenExpired, got: %v",
+			err,
+		)
 	})
 
 	t.Run("verify with wrong signing key rejects", func(t *testing.T) {
-		svc1 := newHS256Service(t, secret)
+		svc1 := newHS256Service(t, k)
 		svc2 := newHS256Service(t, "different-secret-key-for-test32b!")
 
 		token, err := svc1.Sign("user-123", nil)
@@ -244,7 +234,7 @@ func TestSignVerifyHS256(t *testing.T) {
 	})
 
 	t.Run("sign with nil claims does not panic", func(t *testing.T) {
-		svc := newHS256Service(t, secret)
+		svc := newHS256Service(t, k)
 		token, err := svc.Sign("user-456", nil)
 		require.NoError(t, err)
 		require.NotEmpty(t, token)
@@ -255,7 +245,7 @@ func TestSignVerifyHS256(t *testing.T) {
 	})
 
 	t.Run("custom claims must not overwrite standard claims", func(t *testing.T) {
-		svc := newHS256Service(t, secret)
+		svc := newHS256Service(t, k)
 		evilClaims := map[string]any{
 			"sub": "evil",
 			"exp": gojwt.NewNumericDate(time.Now().Add(100 * 365 * 24 * time.Hour)),
@@ -273,7 +263,7 @@ func TestSignVerifyHS256(t *testing.T) {
 	})
 
 	t.Run("SignWithExpiry with zero duration expires immediately", func(t *testing.T) {
-		svc := newHS256Service(t, secret)
+		svc := newHS256Service(t, k)
 		token, err := svc.SignWithExpiry("user-123", nil, 0)
 		require.NoError(t, err)
 
@@ -282,33 +272,43 @@ func TestSignVerifyHS256(t *testing.T) {
 		time.Sleep(1 * time.Millisecond)
 		_, err = svc.Verify(token)
 		require.Error(t, err)
-		assert.True(t, errors.Is(err, gojwt.ErrTokenExpired), "expected ErrTokenExpired, got: %v", err)
+		assert.True(
+			t,
+			errors.Is(err, gojwt.ErrTokenExpired),
+			"expected ErrTokenExpired, got: %v",
+			err,
+		)
 	})
 
 	t.Run("SignWithExpiry with negative duration is already expired", func(t *testing.T) {
-		svc := newHS256Service(t, secret)
+		svc := newHS256Service(t, k)
 		token, err := svc.SignWithExpiry("user-123", nil, -5*time.Minute)
 		require.NoError(t, err)
 
 		_, err = svc.Verify(token)
 		require.Error(t, err)
-		assert.True(t, errors.Is(err, gojwt.ErrTokenExpired), "expected ErrTokenExpired, got: %v", err)
+		assert.True(
+			t,
+			errors.Is(err, gojwt.ErrTokenExpired),
+			"expected ErrTokenExpired, got: %v",
+			err,
+		)
 	})
 
 	t.Run("verify empty string errors", func(t *testing.T) {
-		svc := newHS256Service(t, secret)
+		svc := newHS256Service(t, k)
 		_, err := svc.Verify("")
 		require.Error(t, err)
 	})
 
 	t.Run("verify garbage string errors", func(t *testing.T) {
-		svc := newHS256Service(t, secret)
+		svc := newHS256Service(t, k)
 		_, err := svc.Verify("this-is-not-a-jwt")
 		require.Error(t, err)
 	})
 
 	t.Run("verify valid base64 but invalid JWT errors", func(t *testing.T) {
-		svc := newHS256Service(t, secret)
+		svc := newHS256Service(t, k)
 		b64 := base64.RawURLEncoding.EncodeToString([]byte("not-jwt-header"))
 		fakeToken := b64 + "." + b64 + "." + b64
 		_, err := svc.Verify(fakeToken)
@@ -328,7 +328,7 @@ func TestSignVerifyHS256(t *testing.T) {
 				Expiry: 15 * time.Minute,
 			},
 		}
-		svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&mockConfigProvider{}, gas.NewNopLogger()())
+		svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, gas.NewNopLogger()())
 
 		err := svc.Init()
 		require.Error(t, err)
@@ -341,10 +341,10 @@ func TestSignVerifyHS256(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestAlgorithmConfusion(t *testing.T) {
-	const secret = "hmac-secret-key-for-testing-32b!"
+	const k = "hmac-secret-key-for-testing-32b!"
 
 	t.Run("token with alg none is rejected", func(t *testing.T) {
-		svc := newHS256Service(t, secret)
+		svc := newHS256Service(t, k)
 
 		// Craft a token with alg "none".
 		token := gojwt.NewWithClaims(gojwt.SigningMethodNone, gojwt.MapClaims{
@@ -359,7 +359,7 @@ func TestAlgorithmConfusion(t *testing.T) {
 	})
 
 	t.Run("HS256 token verified with different key is rejected", func(t *testing.T) {
-		svc := newHS256Service(t, secret)
+		svc := newHS256Service(t, k)
 
 		// Sign with a different key using the raw library.
 		otherKey := []byte("other-secret")
@@ -393,10 +393,10 @@ func TestAlgorithmConfusion(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestIssuerAudience(t *testing.T) {
-	const secret = "iss-aud-secret-for-testing-32b!!"
+	const k = "iss-aud-secret-for-testing-32b!!"
 
 	t.Run("sign with issuer configured includes iss claim", func(t *testing.T) {
-		svc := newHS256Service(t, secret, func(cfg *jwtpkg.Config) {
+		svc := newHS256Service(t, k, func(cfg *jwtpkg.Config) {
 			cfg.JWT.Issuer = "my-app"
 		})
 
@@ -409,10 +409,10 @@ func TestIssuerAudience(t *testing.T) {
 	})
 
 	t.Run("verify with issuer mismatch rejects", func(t *testing.T) {
-		signer := newHS256Service(t, secret, func(cfg *jwtpkg.Config) {
+		signer := newHS256Service(t, k, func(cfg *jwtpkg.Config) {
 			cfg.JWT.Issuer = "app-A"
 		})
-		verifier := newHS256Service(t, secret, func(cfg *jwtpkg.Config) {
+		verifier := newHS256Service(t, k, func(cfg *jwtpkg.Config) {
 			cfg.JWT.Issuer = "app-B"
 		})
 
@@ -424,7 +424,7 @@ func TestIssuerAudience(t *testing.T) {
 	})
 
 	t.Run("sign with audience configured includes aud claim", func(t *testing.T) {
-		svc := newHS256Service(t, secret, func(cfg *jwtpkg.Config) {
+		svc := newHS256Service(t, k, func(cfg *jwtpkg.Config) {
 			cfg.JWT.Audience = "my-api"
 		})
 
@@ -438,10 +438,10 @@ func TestIssuerAudience(t *testing.T) {
 	})
 
 	t.Run("verify with audience mismatch rejects", func(t *testing.T) {
-		signer := newHS256Service(t, secret, func(cfg *jwtpkg.Config) {
+		signer := newHS256Service(t, k, func(cfg *jwtpkg.Config) {
 			cfg.JWT.Audience = "api-A"
 		})
-		verifier := newHS256Service(t, secret, func(cfg *jwtpkg.Config) {
+		verifier := newHS256Service(t, k, func(cfg *jwtpkg.Config) {
 			cfg.JWT.Audience = "api-B"
 		})
 
@@ -458,8 +458,8 @@ func TestIssuerAudience(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestAuthenticate(t *testing.T) {
-	const secret = "auth-secret-key-for-testing-32b!"
-	svc := newHS256Service(t, secret)
+	const k = "auth-secret-key-for-testing-32b!"
+	svc := newHS256Service(t, k)
 
 	validToken, err := svc.Sign("auth-user", map[string]any{"role": "member"})
 	require.NoError(t, err)
@@ -509,14 +509,17 @@ func TestAuthenticate(t *testing.T) {
 		assert.ErrorIs(t, err, auth.ErrUnauthenticated)
 	})
 
-	t.Run("valid Bearer token returns Principal with correct subject and scheme", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodGet, "/", nil)
-		r.Header.Set("Authorization", "Bearer "+validToken)
-		principal, err := svc.Authenticate(context.Background(), r)
-		require.NoError(t, err)
-		assert.Equal(t, "auth-user", principal.Subject())
-		assert.Equal(t, "jwt", principal.Scheme())
-	})
+	t.Run(
+		"valid Bearer token returns Principal with correct subject and scheme",
+		func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "/", nil)
+			r.Header.Set("Authorization", "Bearer "+validToken)
+			principal, err := svc.Authenticate(context.Background(), r)
+			require.NoError(t, err)
+			assert.Equal(t, "auth-user", principal.Subject())
+			assert.Equal(t, "jwt", principal.Scheme())
+		},
+	)
 
 	t.Run("expired Bearer token returns ErrCredentialsExpired", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -541,7 +544,7 @@ func TestRSAKeyLoading(t *testing.T) {
 				Expiry:         15 * time.Minute,
 			},
 		}
-		svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&mockConfigProvider{}, gas.NewNopLogger()())
+		svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, gas.NewNopLogger()())
 		err := svc.Init()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "load public key")
@@ -559,7 +562,7 @@ func TestRSAKeyLoading(t *testing.T) {
 				Expiry:        15 * time.Minute,
 			},
 		}
-		svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&mockConfigProvider{}, gas.NewNopLogger()())
+		svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, gas.NewNopLogger()())
 		err := svc.Init()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "decode PEM")
@@ -579,7 +582,7 @@ func TestRSAKeyLoading(t *testing.T) {
 				Expiry:         15 * time.Minute,
 			},
 		}
-		svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&mockConfigProvider{}, gas.NewNopLogger()())
+		svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, gas.NewNopLogger()())
 		err := svc.Init()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "decode PEM")

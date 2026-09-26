@@ -3,9 +3,10 @@ package apikey_test
 import (
 	"testing"
 
-	"github.com/gasmod/gas/auth/apikey"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/gasmod/gas/auth/apikey"
 )
 
 func TestDefaultConfig_Validates(t *testing.T) {

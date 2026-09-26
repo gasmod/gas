@@ -7,13 +7,13 @@ import (
 	"testing"
 	"time"
 
-	auth "github.com/gasmod/gas/auth"
-	"github.com/gasmod/gas/auth/internal/testutil"
-	"github.com/gasmod/gas/auth/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/gasmod/gas"
+	auth "github.com/gasmod/gas/auth"
+	"github.com/gasmod/gas/auth/internal/testutil"
+	"github.com/gasmod/gas/auth/session"
 )
 
 // ---------------------------------------------------------------------------
@@ -46,8 +46,16 @@ func TestSQLiteTimeParsing_MalformedTimestamp(t *testing.T) {
 	require.NoError(t, err)
 
 	// This session should authenticate successfully.
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.AddCookie(&http.Cookie{Name: "session_id", Value: "valid-sess"})
+	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+	req.AddCookie(
+		&http.Cookie{
+			Name:     "session_id",
+			Value:    "valid-sess",
+			Secure:   true,
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+		},
+	)
 	principal, err := svc.Authenticate(context.Background(), req)
 	require.NoError(t, err)
 	assert.Equal(t, "user-1", principal.Subject())
@@ -55,23 +63,44 @@ func TestSQLiteTimeParsing_MalformedTimestamp(t *testing.T) {
 	// Now insert a session with a MALFORMED timestamp (e.g., RFC3339 with timezone).
 	// This format doesn't match the expected "2006-01-02 15:04:05" layout.
 	malformedExpiry := time.Now().Add(24 * time.Hour).Format(time.RFC3339)
-	_, err = rawDB.Exec(`
+	_, err = rawDB.Exec(
+		`
 		INSERT INTO __gas_auth_sessions (id, subject, metadata, ip_address, user_agent, created_at, expires_at, last_active)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		"bad-sess", "user-2", "{}", "127.0.0.1", "test", validCreated, malformedExpiry, validCreated)
+		"bad-sess",
+		"user-2",
+		"{}",
+		"127.0.0.1",
+		"test",
+		validCreated,
+		malformedExpiry,
+		validCreated,
+	)
 	require.NoError(t, err)
 
 	// This session has a future expiry but parseSQLiteTime will return zero time
 	// because RFC3339 doesn't match "2006-01-02 15:04:05".
-	req2 := httptest.NewRequest(http.MethodGet, "/", nil)
-	req2.AddCookie(&http.Cookie{Name: "session_id", Value: "bad-sess"})
+	req2 := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+	req2.AddCookie(
+		&http.Cookie{
+			Name:     "session_id",
+			Value:    "bad-sess",
+			Secure:   true,
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+		},
+	)
 	_, err = svc.Authenticate(context.Background(), req2)
 
 	// The session should be valid (expires 24h from now), but because parseSQLiteTime
 	// silently returns zero time, the expiry is 0001-01-01 00:00:00, so
 	// time.Now().After(zeroTime) == true and the session appears expired.
-	assert.ErrorIs(t, err, auth.ErrCredentialsExpired,
-		"session with malformed timestamp is incorrectly treated as expired due to silent zero-time parse")
+	assert.ErrorIs(
+		t,
+		err,
+		auth.ErrCredentialsExpired,
+		"session with malformed timestamp is incorrectly treated as expired due to silent zero-time parse",
+	)
 }
 
 // TestSQLiteTimeParsing_TruncatedTimestamp shows the issue with truncated timestamps.
@@ -97,8 +126,16 @@ func TestSQLiteTimeParsing_TruncatedTimestamp(t *testing.T) {
 		"trunc-sess", "user-3", "{}", "127.0.0.1", "test", validCreated, "2099-01-01", validCreated)
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.AddCookie(&http.Cookie{Name: "session_id", Value: "trunc-sess"})
+	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+	req.AddCookie(
+		&http.Cookie{
+			Name:     "session_id",
+			Value:    "trunc-sess",
+			Secure:   true,
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+		},
+	)
 	_, err = svc.Authenticate(context.Background(), req)
 
 	// "2099-01-01" doesn't parse with "2006-01-02 15:04:05" layout, so parseSQLiteTime
@@ -167,7 +204,7 @@ func TestSessionStoresArbitrarilyLongUserAgent(t *testing.T) {
 	for i := range longUA {
 		longUA[i] = 'A'
 	}
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 	req.Header.Set("User-Agent", string(longUA))
 
 	sess, err := svc.Create(context.Background(), "user-ua", gas.BasePrincipalMetadata{}, req)
@@ -221,8 +258,13 @@ func TestSessionNoRotationAPI(t *testing.T) {
 	}
 	svc := setupSessionService(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	sess, err := svc.Create(context.Background(), "user-rotate", gas.BasePrincipalMetadata{"role": "user"}, req)
+	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+	sess, err := svc.Create(
+		context.Background(),
+		"user-rotate",
+		gas.BasePrincipalMetadata{"role": "user"},
+		req,
+	)
 	require.NoError(t, err)
 
 	// Simulate privilege escalation: user logs in and becomes admin.
@@ -231,18 +273,35 @@ func TestSessionNoRotationAPI(t *testing.T) {
 	principal := auth.NewPrincipal("user-rotate", auth.SchemeSession, sess.ID, nil)
 	require.NoError(t, svc.Revoke(context.Background(), principal))
 
-	newSess, err := svc.Create(context.Background(), "user-rotate", gas.BasePrincipalMetadata{"role": "admin"}, req)
+	newSess, err := svc.Create(
+		context.Background(),
+		"user-rotate",
+		gas.BasePrincipalMetadata{"role": "admin"},
+		req,
+	)
 	require.NoError(t, err)
 
 	// The old session should be invalid.
-	authReq := httptest.NewRequest(http.MethodGet, "/", nil)
-	authReq.AddCookie(&http.Cookie{Name: "session_id", Value: sess.ID})
+	authReq := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+	authReq.AddCookie(&http.Cookie{
+		Name: "session_id", Value: sess.ID, Secure: true,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
 	_, err = svc.Authenticate(context.Background(), authReq)
 	assert.Error(t, err, "old session should be revoked")
 
 	// The new session should work.
-	authReq2 := httptest.NewRequest(http.MethodGet, "/", nil)
-	authReq2.AddCookie(&http.Cookie{Name: "session_id", Value: newSess.ID})
+	authReq2 := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+	authReq2.AddCookie(
+		&http.Cookie{
+			Name:     "session_id",
+			Value:    newSess.ID,
+			Secure:   true,
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+		},
+	)
 	p, err := svc.Authenticate(context.Background(), authReq2)
 	require.NoError(t, err)
 	assert.Equal(t, "admin", p.Metadata().Value("role"))

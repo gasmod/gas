@@ -8,11 +8,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/gasmod/gas/auth/internal/cryptoutil"
 	"github.com/gasmod/gas/auth/internal/testutil"
 	"github.com/gasmod/gas/auth/token"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // ---------------------------------------------------------------------------
@@ -35,7 +36,12 @@ func TestTokenVerifyRace_StressTest(t *testing.T) {
 	var totalDoubleVerifies int
 
 	for iter := range iterations {
-		rawToken, err := svc.Issue(context.Background(), fmt.Sprintf("user-%d", iter), "verify", 15*time.Minute)
+		rawToken, err := svc.Issue(
+			context.Background(),
+			fmt.Sprintf("user-%d", iter),
+			"verify",
+			15*time.Minute,
+		)
 		require.NoError(t, err)
 
 		var wg sync.WaitGroup
@@ -129,10 +135,12 @@ func TestTokenVerifyRace_SimulatedWithDirectSQL(t *testing.T) {
 
 	// Simulate two concurrent GETs — both see the token.
 	var subject1, subject2 string
-	err = db.QueryRow("SELECT subject FROM __gas_auth_tokens WHERE token_hash = $1", tokenHash).Scan(&subject1)
+	err = db.QueryRow("SELECT subject FROM __gas_auth_tokens WHERE token_hash = $1", tokenHash).
+		Scan(&subject1)
 	require.NoError(t, err, "first GET finds the token")
 
-	err = db.QueryRow("SELECT subject FROM __gas_auth_tokens WHERE token_hash = $1", tokenHash).Scan(&subject2)
+	err = db.QueryRow("SELECT subject FROM __gas_auth_tokens WHERE token_hash = $1", tokenHash).
+		Scan(&subject2)
 	require.NoError(t, err, "second GET also finds the token (race window)")
 
 	assert.Equal(t, "user-sim", subject1)
@@ -167,7 +175,12 @@ func TestTokenVerify_WrongPurposeConsumesToken(t *testing.T) {
 	}
 	svc := setupTokenService(t)
 
-	rawToken, err := svc.Issue(context.Background(), "user-purpose", "password-reset", 15*time.Minute)
+	rawToken, err := svc.Issue(
+		context.Background(),
+		"user-purpose",
+		"password-reset",
+		15*time.Minute,
+	)
 	require.NoError(t, err)
 
 	// Verify with wrong purpose — token is consumed but returns error.
@@ -210,14 +223,16 @@ func TestTokenCleanupRemovesExpired(t *testing.T) {
 
 	// Token exists initially.
 	var count int
-	err = db.QueryRow("SELECT COUNT(*) FROM __gas_auth_tokens WHERE token_hash = $1", tokenHash).Scan(&count)
+	err = db.QueryRow("SELECT COUNT(*) FROM __gas_auth_tokens WHERE token_hash = $1", tokenHash).
+		Scan(&count)
 	require.NoError(t, err)
 	assert.Equal(t, 1, count, "token exists before cleanup")
 
 	// Wait for token to expire and cleanup to run.
 	time.Sleep(500 * time.Millisecond)
 
-	err = db.QueryRow("SELECT COUNT(*) FROM __gas_auth_tokens WHERE token_hash = $1", tokenHash).Scan(&count)
+	err = db.QueryRow("SELECT COUNT(*) FROM __gas_auth_tokens WHERE token_hash = $1", tokenHash).
+		Scan(&count)
 	require.NoError(t, err)
 	assert.Equal(t, 0, count, "cleanup goroutine removed the expired token")
 }

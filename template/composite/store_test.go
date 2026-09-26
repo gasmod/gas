@@ -6,7 +6,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	template "github.com/gasmod/gas/template"
+	"github.com/gasmod/gas/template"
 	"github.com/gasmod/gas/template/memory"
 	"github.com/gasmod/gas/template/templatetest"
 )
@@ -14,7 +14,13 @@ import (
 func TestGetFromWritable(t *testing.T) {
 	t.Parallel()
 	writable := memory.NewStore()
-	writable.Register(context.Background(), "page.html", []byte("from writable"))
+	if err := writable.Register(
+		context.Background(),
+		"page.html",
+		[]byte("from writable"),
+	); err != nil {
+		t.Fatalf("writable.Register() error: %v", err)
+	}
 
 	s := NewStore(writable)
 
@@ -31,7 +37,13 @@ func TestGetFallsBackToReaders(t *testing.T) {
 	t.Parallel()
 	writable := memory.NewStore()
 	reader := memory.NewStore()
-	reader.Register(context.Background(), "fallback.html", []byte("from reader"))
+	if err := reader.Register(
+		context.Background(),
+		"fallback.html",
+		[]byte("from reader"),
+	); err != nil {
+		t.Fatalf("reader.Register() error: %v", err)
+	}
 
 	s := NewStore(writable, reader)
 
@@ -47,9 +59,21 @@ func TestGetFallsBackToReaders(t *testing.T) {
 func TestGetWritableTakesPrecedence(t *testing.T) {
 	t.Parallel()
 	writable := memory.NewStore()
-	writable.Register(context.Background(), "page.html", []byte("writable version"))
+	if err := writable.Register(
+		context.Background(),
+		"page.html",
+		[]byte("writable version"),
+	); err != nil {
+		t.Fatalf("writable.Register() error: %v", err)
+	}
 	reader := memory.NewStore()
-	reader.Register(context.Background(), "page.html", []byte("reader version"))
+	if err := reader.Register(
+		context.Background(),
+		"page.html",
+		[]byte("reader version"),
+	); err != nil {
+		t.Fatalf("reader.Register() error: %v", err)
+	}
 
 	s := NewStore(writable, reader)
 
@@ -76,12 +100,24 @@ func TestGetNotFound(t *testing.T) {
 func TestListMergesAll(t *testing.T) {
 	t.Parallel()
 	writable := memory.NewStore()
-	writable.Register(context.Background(), "a.html", []byte("a"))
-	writable.Register(context.Background(), "c.html", []byte("c"))
+	if err := writable.Register(context.Background(), "a.html", []byte("a")); err != nil {
+		t.Fatalf("writable.Register() error: %v", err)
+	}
+	if err := writable.Register(context.Background(), "c.html", []byte("c")); err != nil {
+		t.Fatalf("writable.Register() error: %v", err)
+	}
 
 	reader := memory.NewStore()
-	reader.Register(context.Background(), "b.html", []byte("b"))
-	reader.Register(context.Background(), "c.html", []byte("c-reader")) // duplicate
+	if err := reader.Register(context.Background(), "b.html", []byte("b")); err != nil {
+		t.Fatalf("reader.Register() error: %v", err)
+	}
+	if err := reader.Register(
+		context.Background(),
+		"c.html",
+		[]byte("c-reader"),
+	); err != nil { // duplicate
+		t.Fatalf("reader.Register() error: %v", err)
+	}
 
 	s := NewStore(writable, reader)
 
@@ -107,7 +143,9 @@ func TestRegisterDelegatesToWritable(t *testing.T) {
 	writable := memory.NewStore()
 	s := NewStore(writable)
 
-	s.Register(context.Background(), "new.html", []byte("new content"))
+	if err := s.Register(context.Background(), "new.html", []byte("new content")); err != nil {
+		t.Fatalf("s.Register() error: %v", err)
+	}
 
 	got, err := writable.Get(context.Background(), "new.html")
 	if err != nil {
@@ -143,7 +181,11 @@ func TestRegisterFSDelegatesToWritable(t *testing.T) {
 	// Non-.html files should be skipped.
 	_, err = writable.Get(context.Background(), "readme.md")
 	if !errors.Is(err, template.ErrTemplateNotFound) {
-		t.Errorf("writable.Get(context.Background(),readme.md) error = %v, want %v", err, template.ErrTemplateNotFound)
+		t.Errorf(
+			"writable.Get(context.Background(),readme.md) error = %v, want %v",
+			err,
+			template.ErrTemplateNotFound,
+		)
 	}
 }
 
@@ -152,7 +194,13 @@ func TestMultipleReadersFallbackOrder(t *testing.T) {
 	writable := memory.NewStore()
 	reader1 := memory.NewStore()
 	reader2 := memory.NewStore()
-	reader2.Register(context.Background(), "deep.html", []byte("from reader2"))
+	if err := reader2.Register(
+		context.Background(),
+		"deep.html",
+		[]byte("from reader2"),
+	); err != nil {
+		t.Fatalf("reader2.Register() error: %v", err)
+	}
 
 	s := NewStore(writable, reader1, reader2)
 
@@ -184,7 +232,9 @@ func TestListPartialErrorStillReturnsNames(t *testing.T) {
 	t.Parallel()
 	// Writable succeeds with names.
 	writable := memory.NewStore()
-	writable.Register(context.Background(), "a.html", []byte("a"))
+	if err := writable.Register(context.Background(), "a.html", []byte("a")); err != nil {
+		t.Fatalf("writable.Register() error: %v", err)
+	}
 
 	// Reader fails.
 	failReader := &templatetest.MockTemplate{

@@ -1,3 +1,5 @@
+// Package auth implements the api-server example's user registration, login,
+// JWT issuance, and API key management.
 package auth
 
 import (
@@ -14,7 +16,6 @@ import (
 	gasauth "github.com/gasmod/gas/auth"
 	"github.com/gasmod/gas/auth/apikey"
 	"github.com/gasmod/gas/auth/jwt"
-
 	"github.com/gasmod/gas/example/api-server/db"
 )
 
@@ -76,7 +77,7 @@ func (s *Service) Init() error {
 	// Auth middleware with JSON error responses instead of the default
 	// plain-text 401.
 	authMiddleware := gasauth.Middleware(chain, gasauth.WithOnError(
-		func(w http.ResponseWriter, r *http.Request, err error) {
+		func(w http.ResponseWriter, _ *http.Request, _ error) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
@@ -84,16 +85,16 @@ func (s *Service) Init() error {
 	))
 
 	// Public routes — no auth required.
-	s.router.Handle(s, http.MethodPost, "/api/auth/register", s.handleRegister)
-	s.router.Handle(s, http.MethodPost, "/api/auth/login", s.handleLogin)
+	s.router.Post(s, "/api/auth/register", s.handleRegister)
+	s.router.Post(s, "/api/auth/login", s.handleLogin)
 
 	// Protected routes — require valid JWT or API key.
 	s.router.Group(func(sub *gas.Router) {
 		sub.UseMiddlewareFunc(authMiddleware)
 
-		sub.Handle(s, http.MethodPost, "/api/auth/api-keys", s.handleCreateAPIKey)
-		sub.Handle(s, http.MethodGet, "/api/auth/api-keys", s.handleListAPIKeys)
-		sub.Handle(s, http.MethodDelete, "/api/auth/api-keys/{id}", s.handleDeleteAPIKey)
+		sub.Post(s, "/api/auth/api-keys", s.handleCreateAPIKey)
+		sub.Get(s, "/api/auth/api-keys", s.handleListAPIKeys)
+		sub.Delete(s, "/api/auth/api-keys/{id}", s.handleDeleteAPIKey)
 	})
 
 	return nil
@@ -107,7 +108,7 @@ func (s *Service) Close() error { return nil }
 func (s *Service) Middleware() func(http.Handler) http.Handler {
 	chain := gasauth.Chain{s.jwt, s.apikeys}
 	return gasauth.Middleware(chain, gasauth.WithOnError(
-		func(w http.ResponseWriter, r *http.Request, err error) {
+		func(w http.ResponseWriter, _ *http.Request, _ error) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
@@ -118,12 +119,12 @@ func (s *Service) Middleware() func(http.Handler) http.Handler {
 // --- Request/Response types ---
 
 type registerRequest struct {
-	Email    string `json:"email" validate:"required,email"`
+	Email    string `json:"email"    validate:"required,email"`
 	Password string `json:"password" validate:"required,min=8"`
 }
 
 type loginRequest struct {
-	Email    string `json:"email" validate:"required,email"`
+	Email    string `json:"email"    validate:"required,email"`
 	Password string `json:"password" validate:"required"`
 }
 
@@ -187,7 +188,10 @@ func (s *Service) handleLogin(ctx gas.Context) error {
 		return &apiError{Status: http.StatusUnauthorized, Message: "invalid credentials"}
 	}
 
-	if cmpErr := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); cmpErr != nil {
+	if cmpErr := bcrypt.CompareHashAndPassword(
+		[]byte(user.PasswordHash),
+		[]byte(req.Password),
+	); cmpErr != nil {
 		return &apiError{Status: http.StatusUnauthorized, Message: "invalid credentials"}
 	}
 

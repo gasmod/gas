@@ -33,8 +33,10 @@ type MockStorage struct {
 	mu sync.Mutex
 }
 
-var _ gas.StorageProvider = (*MockStorage)(nil)
-var _ gas.ReadyReporter = (*MockStorage)(nil)
+var (
+	_ gas.StorageProvider = (*MockStorage)(nil)
+	_ gas.ReadyReporter   = (*MockStorage)(nil)
+)
 
 // Call records a single method invocation on the mock.
 type Call struct {
@@ -49,7 +51,12 @@ func (m *MockStorage) record(method string, args ...any) {
 }
 
 // Upload records the call and delegates to UploadFn if set.
-func (m *MockStorage) Upload(ctx context.Context, key string, data io.Reader, opts ...gas.StorageOption) error {
+func (m *MockStorage) Upload(
+	ctx context.Context,
+	key string,
+	data io.Reader,
+	opts ...gas.StorageOption,
+) error {
 	m.record("Upload", key, data)
 	if m.UploadFn != nil {
 		return m.UploadFn(ctx, key, data, opts...)
@@ -58,7 +65,11 @@ func (m *MockStorage) Upload(ctx context.Context, key string, data io.Reader, op
 }
 
 // Download records the call and delegates to DownloadFn if set.
-func (m *MockStorage) Download(ctx context.Context, key string, opts ...gas.StorageOption) (*gas.StorageObject, error) {
+func (m *MockStorage) Download(
+	ctx context.Context,
+	key string,
+	opts ...gas.StorageOption,
+) (*gas.StorageObject, error) {
 	m.record("Download", key)
 	if m.DownloadFn != nil {
 		return m.DownloadFn(ctx, key, opts...)
@@ -76,7 +87,11 @@ func (m *MockStorage) Delete(ctx context.Context, key string, opts ...gas.Storag
 }
 
 // Head records the call and delegates to HeadFn if set.
-func (m *MockStorage) Head(ctx context.Context, key string, opts ...gas.StorageOption) (*gas.ObjectInfo, error) {
+func (m *MockStorage) Head(
+	ctx context.Context,
+	key string,
+	opts ...gas.StorageOption,
+) (*gas.ObjectInfo, error) {
 	m.record("Head", key)
 	if m.HeadFn != nil {
 		return m.HeadFn(ctx, key, opts...)
@@ -85,7 +100,12 @@ func (m *MockStorage) Head(ctx context.Context, key string, opts ...gas.StorageO
 }
 
 // PresignDownloadURL records the call and delegates to PresignDownloadURLFn if set.
-func (m *MockStorage) PresignDownloadURL(ctx context.Context, key string, expires time.Duration, opts ...gas.StorageOption) (string, error) {
+func (m *MockStorage) PresignDownloadURL(
+	ctx context.Context,
+	key string,
+	expires time.Duration,
+	opts ...gas.StorageOption,
+) (string, error) {
 	m.record("PresignDownloadURL", key, expires)
 	if m.PresignDownloadURLFn != nil {
 		return m.PresignDownloadURLFn(ctx, key, expires, opts...)
@@ -94,7 +114,12 @@ func (m *MockStorage) PresignDownloadURL(ctx context.Context, key string, expire
 }
 
 // PresignUploadURL records the call and delegates to PresignUploadURLFn if set.
-func (m *MockStorage) PresignUploadURL(ctx context.Context, key string, expires time.Duration, opts ...gas.StorageOption) (string, error) {
+func (m *MockStorage) PresignUploadURL(
+	ctx context.Context,
+	key string,
+	expires time.Duration,
+	opts ...gas.StorageOption,
+) (string, error) {
 	m.record("PresignUploadURL", key, expires)
 	if m.PresignUploadURLFn != nil {
 		return m.PresignUploadURLFn(ctx, key, expires, opts...)

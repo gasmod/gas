@@ -52,26 +52,32 @@ func (m *GreetModule) Init() error {
 	m.router.Use(gas.MiddlewareByName("request-logger"))
 
 	// Top-level routes.
-	m.router.Handle(m, http.MethodGet, "/", m.handleIndex)
-	m.router.Handle(m, http.MethodGet, "/greet/{name}", m.handleGreet)
-	m.router.Handle(m, http.MethodGet, "/json", m.handleJSON)
-	m.router.Handle(m, http.MethodGet, "/error", m.handleError)
-	m.router.Handle(m, http.MethodGet, "/panic", m.handlePanic)
-	m.router.Handle(m, http.MethodGet, "/abort", m.handleErrAbortHandler)
+	m.router.Get(m, "/", m.handleIndex)
+	m.router.Get(m, "/greet/{name}", m.handleGreet)
+	m.router.Get(m, "/json", m.handleJSON)
+	m.router.Get(m, "/error", m.handleError)
+	m.router.Get(m, "/panic", m.handlePanic)
+	m.router.Get(m, "/abort", m.handleErrAbortHandler)
 
 	// Custom 404 handler.
 	m.router.NotFound(m, m.handleNotFound)
 
 	// Subscribe to system events with ownership tracking.
-	m.eventBus.SubscribeWithOwner[gas.SystemAllServicesInitialized](m, func(_ gas.SystemAllServicesInitializedPayload) {
-		// This runs once at startup after all modules have been initialized.
-		m.logger.Info("all services initialized").Str("module", m.Name()).Send()
-	})
+	m.eventBus.SubscribeWithOwner[gas.SystemAllServicesInitialized](
+		m,
+		func(_ gas.SystemAllServicesInitializedPayload) {
+			// This runs once at startup after all modules have been initialized.
+			m.logger.Info("all services initialized").Str("module", m.Name()).Send()
+		},
+	)
 
-	m.eventBus.SubscribeWithOwner[gas.SystemServerShuttingDown](m, func(_ gas.SystemServerShuttingDownPayload) {
-		// This runs when the server is shutting down — useful for cleanup.
-		m.logger.Info("server shutting down").Str("module", m.Name()).Send()
-	})
+	m.eventBus.SubscribeWithOwner[gas.SystemServerShuttingDown](
+		m,
+		func(_ gas.SystemServerShuttingDownPayload) {
+			// This runs when the server is shutting down — useful for cleanup.
+			m.logger.Info("server shutting down").Str("module", m.Name()).Send()
+		},
+	)
 
 	return nil
 }

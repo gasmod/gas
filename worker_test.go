@@ -88,7 +88,10 @@ func TestWorker_StartAndShutdown(t *testing.T) {
 func TestWorker_Start_InitFailure(t *testing.T) {
 	svc := &testService{name: "bad-svc", initErr: fmt.Errorf("init failed")}
 	w := gas.NewWorker(
-		gas.WithService[*testService](func() *testService { return svc }, gas.ServiceLifetimeSingleton),
+		gas.WithService[*testService](
+			func() *testService { return svc },
+			gas.ServiceLifetimeSingleton,
+		),
 	)
 
 	err := w.Start()
@@ -196,9 +199,11 @@ func TestWorker_InitServices_EmitsAllServicesInitialized(t *testing.T) {
 	w := gas.NewWorker()
 
 	var emitted atomic.Bool
-	w.EventBus().Subscribe[gas.SystemAllServicesInitialized](func(_ gas.SystemAllServicesInitializedPayload) {
-		emitted.Store(true)
-	})
+	w.EventBus().Subscribe[gas.SystemAllServicesInitialized](
+		func(_ gas.SystemAllServicesInitializedPayload) {
+			emitted.Store(true)
+		},
+	)
 
 	if err := w.InitServices(); err != nil {
 		t.Fatal(err)
@@ -291,9 +296,11 @@ func TestWorker_RestartService(t *testing.T) {
 	}
 
 	var restartedName string
-	w.EventBus().Subscribe[gas.SystemServiceInitialized](func(data gas.SystemServiceInitializedPayload) {
-		restartedName = data.ServiceName
-	})
+	w.EventBus().Subscribe[gas.SystemServiceInitialized](
+		func(data gas.SystemServiceInitializedPayload) {
+			restartedName = data.ServiceName
+		},
+	)
 
 	if err := w.RestartService[*testService](); err != nil {
 		t.Fatal(err)
@@ -348,7 +355,8 @@ func TestWorker_ActiveServices(t *testing.T) {
 	}
 
 	names := w.ActiveServices()
-	if len(names) != 2 || !slices.Contains(names, "svc-a") { // 1 built-in service (gas/eventbus) + "svc-a"
+	if len(names) != 2 ||
+		!slices.Contains(names, "svc-a") { // 1 built-in service (gas/eventbus) + "svc-a"
 		t.Fatalf("expected 2 active services, got %d", len(names))
 	}
 }
@@ -481,8 +489,8 @@ func TestWorker_CheckHealth_ResolvableAsProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve HealthProvider: %v", err)
 	}
-	if err, ok := hp.CheckHealth(context.Background())["svc"]; !ok || err != nil {
-		t.Fatalf("expected svc=nil from HealthProvider, got ok=%v err=%v", ok, err)
+	if hErr, ok := hp.CheckHealth(context.Background())["svc"]; !ok || hErr != nil {
+		t.Fatalf("expected svc=nil from HealthProvider, got ok=%v err=%v", ok, hErr)
 	}
 
 	rp, err := w.ServiceContainer().Resolve[gas.ReadyProvider]()

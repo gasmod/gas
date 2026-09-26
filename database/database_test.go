@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
+	_ "modernc.org/sqlite"
+
 	"github.com/gasmod/gas"
 	database "github.com/gasmod/gas/database"
-
-	_ "modernc.org/sqlite"
 )
 
 // Compile-time interface checks.
@@ -34,7 +34,11 @@ func newTestService(t *testing.T) *database.Service {
 	if err := s.Init(); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
 	return s
 }
 
@@ -102,7 +106,7 @@ func TestQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Query: %v", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	if !rows.Next() {
 		t.Fatal("expected a row")
@@ -150,7 +154,9 @@ func TestExec(t *testing.T) {
 
 func TestQuery_Closed(t *testing.T) {
 	s := newTestService(t)
-	s.Close()
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
 
 	_, err := s.Query(context.Background(), "SELECT 1")
 	if err == nil {
@@ -160,7 +166,9 @@ func TestQuery_Closed(t *testing.T) {
 
 func TestExec_Closed(t *testing.T) {
 	s := newTestService(t)
-	s.Close()
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
 
 	_, err := s.Exec(context.Background(), "SELECT 1")
 	if err == nil {
@@ -187,15 +195,15 @@ func TestBeginTx(t *testing.T) {
 		t.Fatalf("INSERT in tx: %v", err)
 	}
 
-	if err := tx.Commit(); err != nil {
-		t.Fatalf("Commit: %v", err)
+	if cErr := tx.Commit(); cErr != nil {
+		t.Fatalf("Commit: %v", cErr)
 	}
 
 	rows, err := s.Query(ctx, "SELECT val FROM tx_test WHERE id = ?", 1)
 	if err != nil {
 		t.Fatalf("Query: %v", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	if !rows.Next() {
 		t.Fatal("expected a row after commit")
@@ -211,7 +219,9 @@ func TestBeginTx(t *testing.T) {
 
 func TestBeginTx_Closed(t *testing.T) {
 	s := newTestService(t)
-	s.Close()
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
 
 	_, err := s.BeginTx(context.Background(), nil)
 	if err == nil {
@@ -229,8 +239,13 @@ func TestWithTx_Commit(t *testing.T) {
 	}
 
 	err = s.WithTx(ctx, nil, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, "INSERT INTO withtx_test (id, val) VALUES (?, ?)", 1, "committed")
-		return err
+		_, execErr := tx.ExecContext(
+			ctx,
+			"INSERT INTO withtx_test (id, val) VALUES (?, ?)",
+			1,
+			"committed",
+		)
+		return execErr
 	})
 	if err != nil {
 		t.Fatalf("WithTx: %v", err)
@@ -240,7 +255,7 @@ func TestWithTx_Commit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Query: %v", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	if !rows.Next() {
 		t.Fatal("expected row after WithTx commit")
@@ -264,9 +279,14 @@ func TestWithTx_Rollback(t *testing.T) {
 	}
 
 	err = s.WithTx(ctx, nil, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, "INSERT INTO withtx_rb (id, val) VALUES (?, ?)", 1, "rolled-back")
-		if err != nil {
-			return err
+		_, execErr := tx.ExecContext(
+			ctx,
+			"INSERT INTO withtx_rb (id, val) VALUES (?, ?)",
+			1,
+			"rolled-back",
+		)
+		if execErr != nil {
+			return execErr
 		}
 		return sql.ErrNoRows // simulate an error to trigger rollback
 	})
@@ -278,7 +298,7 @@ func TestWithTx_Rollback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Query: %v", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	if rows.Next() {
 		t.Error("expected no rows after rollback")
@@ -304,14 +324,19 @@ func TestWithTx_Panic(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Query after panic: %v", err)
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 		if rows.Next() {
 			t.Error("expected no rows after panic rollback")
 		}
 	}()
 
 	_ = s.WithTx(ctx, nil, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, "INSERT INTO withtx_panic (id, val) VALUES (?, ?)", 1, "panic-value")
+		_, err := tx.ExecContext(
+			ctx,
+			"INSERT INTO withtx_panic (id, val) VALUES (?, ?)",
+			1,
+			"panic-value",
+		)
 		if err != nil {
 			return err
 		}
@@ -321,7 +346,9 @@ func TestWithTx_Panic(t *testing.T) {
 
 func TestWithTx_Closed(t *testing.T) {
 	s := newTestService(t)
-	s.Close()
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
 
 	err := s.WithTx(context.Background(), nil, func(_ *sql.Tx) error {
 		return nil
@@ -345,7 +372,9 @@ func TestCheckHealth(t *testing.T) {
 	}
 
 	// After Close: unhealthy.
-	s.Close()
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
 	if err := s.CheckHealth(context.Background()); err == nil {
 		t.Fatal("expected error after Close")
 	}
@@ -357,7 +386,9 @@ func TestCheckReady(t *testing.T) {
 		t.Fatalf("CheckReady: %v", err)
 	}
 
-	s.Close()
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
 	if err := s.CheckReady(context.Background()); err == nil {
 		t.Fatal("expected error after Close")
 	}
@@ -374,7 +405,11 @@ func TestInit_RetrySuccess(t *testing.T) {
 	if err := s.Init(); err != nil {
 		t.Fatalf("Init with retries enabled should succeed: %v", err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
 
 	if s.DB() == nil {
 		t.Fatal("DB() should not be nil")
@@ -434,7 +469,9 @@ func TestWithConnector(t *testing.T) {
 		t.Fatalf("sql.Open: %v", err)
 	}
 	drv := probe.Driver()
-	probe.Close()
+	if err := probe.Close(); err != nil {
+		t.Fatalf("close probe: %v", err)
+	}
 
 	// Driver and DSN are deliberately left unset: the connector supplies both.
 	cfg := database.DefaultConfig()
@@ -449,9 +486,16 @@ func TestWithConnector(t *testing.T) {
 	if err := s.Init(); err != nil {
 		t.Fatalf("Init with connector: %v", err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
 
-	if _, err := s.Exec(context.Background(), "CREATE TABLE conn_test (id INTEGER PRIMARY KEY)"); err != nil {
+	if _, err := s.Exec(
+		context.Background(),
+		"CREATE TABLE conn_test (id INTEGER PRIMARY KEY)",
+	); err != nil {
 		t.Fatalf("Exec through connector-backed DB: %v", err)
 	}
 }
@@ -513,7 +557,9 @@ func TestClose_Repeated(t *testing.T) {
 
 func TestPing_Closed(t *testing.T) {
 	s := newTestService(t)
-	s.Close()
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
 
 	if err := s.Ping(context.Background()); err == nil {
 		t.Fatal("expected error pinging a closed service")
@@ -540,14 +586,22 @@ func TestWithTx_FnCommitsThenReturnsNil(t *testing.T) {
 	s := newTestService(t)
 	ctx := context.Background()
 
-	if _, err := s.Exec(ctx, "CREATE TABLE withtx_dbl (id INTEGER PRIMARY KEY, val TEXT)"); err != nil {
+	if _, err := s.Exec(
+		ctx,
+		"CREATE TABLE withtx_dbl (id INTEGER PRIMARY KEY, val TEXT)",
+	); err != nil {
 		t.Fatalf("CREATE TABLE: %v", err)
 	}
 
 	// A callback that commits and then reports success leaves WithTx nothing
 	// to commit, so the redundant commit surfaces as sql.ErrTxDone.
 	err := s.WithTx(ctx, nil, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, "INSERT INTO withtx_dbl (id, val) VALUES (?, ?)", 1, "inner"); err != nil {
+		if _, err := tx.ExecContext(
+			ctx,
+			"INSERT INTO withtx_dbl (id, val) VALUES (?, ?)",
+			1,
+			"inner",
+		); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -561,7 +615,7 @@ func TestWithTx_FnCommitsThenReturnsNil(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Query: %v", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	if !rows.Next() {
 		t.Fatal("expected the row committed by fn to survive")
 	}
@@ -571,13 +625,21 @@ func TestWithTx_FnRollsBackThenReturnsError(t *testing.T) {
 	s := newTestService(t)
 	ctx := context.Background()
 
-	if _, err := s.Exec(ctx, "CREATE TABLE withtx_self_rb (id INTEGER PRIMARY KEY, val TEXT)"); err != nil {
+	if _, err := s.Exec(
+		ctx,
+		"CREATE TABLE withtx_self_rb (id INTEGER PRIMARY KEY, val TEXT)",
+	); err != nil {
 		t.Fatalf("CREATE TABLE: %v", err)
 	}
 
 	sentinel := errors.New("failed after rolling back")
 	err := s.WithTx(ctx, nil, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, "INSERT INTO withtx_self_rb (id, val) VALUES (?, ?)", 1, "gone"); err != nil {
+		if _, err := tx.ExecContext(
+			ctx,
+			"INSERT INTO withtx_self_rb (id, val) VALUES (?, ?)",
+			1,
+			"gone",
+		); err != nil {
 			return err
 		}
 		if err := tx.Rollback(); err != nil {
@@ -599,7 +661,7 @@ func TestWithTx_FnRollsBackThenReturnsError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Query: %v", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	if rows.Next() {
 		t.Error("expected no rows after the callback rolled back")
 	}

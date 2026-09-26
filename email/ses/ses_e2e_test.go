@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gasmod/gas"
-	"github.com/gasmod/gas/email/ses"
-
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	"github.com/gasmod/gas"
+	"github.com/gasmod/gas/email/ses"
 )
 
 // stubTemplateProvider is a minimal gas.TemplateProvider for e2e tests.
@@ -30,7 +30,11 @@ func (s *stubTemplateProvider) Get(ctx context.Context, name string) ([]byte, er
 	return nil, errors.New("not found")
 }
 
-func (s *stubTemplateProvider) List(_ context.Context) ([]string, error)             { return nil, nil }
+func (s *stubTemplateProvider) List(
+	_ context.Context,
+) ([]string, error) {
+	return nil, nil
+}
 func (s *stubTemplateProvider) Register(_ context.Context, _ string, _ []byte) error { return nil }
 func (s *stubTemplateProvider) RegisterFS(_ context.Context, _ fs.FS) error          { return nil }
 
@@ -43,20 +47,20 @@ func startSESContainer(t *testing.T) string {
 	ctx := context.Background()
 
 	ctr, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: testcontainers.ContainerRequest{
-			Image:        sesLocalImage,
-			ExposedPorts: []string{"8005/tcp"},
-			Cmd:          []string{"npx", "aws-ses-v2-local"},
-			WaitingFor:   wait.ForHTTP("/health-check").WithPort("8005/tcp").WithStartupTimeout(60 * time.Second),
-		},
+		Image:        sesLocalImage,
+		ExposedPorts: []string{"8005/tcp"},
+		Cmd:          []string{"npx", "aws-ses-v2-local"},
+		WaitingFor: wait.ForHTTP("/health-check").
+			WithPort("8005/tcp").
+			WithStartupTimeout(60 * time.Second),
 		Started: true,
 	})
 	if err != nil {
 		t.Fatalf("start ses container: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := ctr.Terminate(ctx); err != nil {
-			t.Logf("terminate ses container: %v", err)
+		if termErr := ctr.Terminate(ctx); termErr != nil {
+			t.Logf("terminate ses container: %v", termErr)
 		}
 	})
 
@@ -79,18 +83,18 @@ type storeResponse struct {
 
 // storeEmail represents a single email entry in the store.
 type storeEmail struct {
-	From        string   `json:"from"`
-	ReplyTo     []string `json:"replyTo"`
-	Subject     string   `json:"subject"`
+	Body struct {
+		Text string `json:"text"`
+		Html string `json:"html"`
+	} `json:"body"`
+	From        string `json:"from"`
+	Subject     string `json:"subject"`
 	Destination struct {
 		To  []string `json:"to"`
 		Cc  []string `json:"cc"`
 		Bcc []string `json:"bcc"`
 	} `json:"destination"`
-	Body struct {
-		Text string `json:"text"`
-		Html string `json:"html"`
-	} `json:"body"`
+	ReplyTo []string `json:"replyTo"`
 }
 
 func fetchStore(t *testing.T, baseURL string) []storeEmail {
@@ -100,7 +104,7 @@ func fetchStore(t *testing.T, baseURL string) []storeEmail {
 	if err != nil {
 		t.Fatalf("GET /store: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -108,8 +112,8 @@ func fetchStore(t *testing.T, baseURL string) []storeEmail {
 	}
 
 	var store storeResponse
-	if err := json.Unmarshal(body, &store); err != nil {
-		t.Fatalf("unmarshal /store response: %v\nbody: %s", err, body)
+	if jsErr := json.Unmarshal(body, &store); jsErr != nil {
+		t.Fatalf("unmarshal /store response: %v\nbody: %s", jsErr, body)
 	}
 	return store.Emails
 }
@@ -272,9 +276,7 @@ func TestE2E_SendFromTemplate(t *testing.T) {
 		HTMLTemplate:    "welcome-html",
 		TextTemplate:    "welcome-text",
 		Data:            map[string]string{"Name": "Alice"},
-		Email: gas.Email{
-			To: []string{"alice@example.com"},
-		},
+		To:              []string{"alice@example.com"},
 	})
 	if err != nil {
 		t.Fatalf("SendFromTemplate() error = %v", err)

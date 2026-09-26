@@ -58,7 +58,9 @@ func WithStaticFS(fsys fs.FS) Option { return func(s *Service) { s.staticFS = fs
 // returns a DI-injectable constructor that receives infrastructure deps.
 // The type parameter T allows users to provide a custom TemplateProvider
 // implementation so the DI container resolves the correct concrete type.
-func New[T gas.TemplateProvider](opts ...Option) func(T, *gas.Router, gas.ConfigProvider, gas.Logger) *Service {
+func New[T gas.TemplateProvider](
+	opts ...Option,
+) func(T, *gas.Router, gas.ConfigProvider, gas.Logger) *Service {
 	return func(tp T, router *gas.Router, cfgProvider gas.ConfigProvider, logger gas.Logger) *Service {
 		s := &Service{
 			templates:   tp,
@@ -124,7 +126,13 @@ func (s *Service) initEngine() {
 	for k, v := range s.cfg.FuncMap {
 		fm[k] = v
 	}
-	s.engine = NewEngine(s.templates, fm, s.cfg.UI.LayoutName, s.cfg.GasEnv.IsDevelopmentLike(), s.logger)
+	s.engine = NewEngine(
+		s.templates,
+		fm,
+		s.cfg.UI.LayoutName,
+		s.cfg.GasEnv.IsDevelopmentLike(),
+		s.logger,
+	)
 }
 
 // initStaticRoute registers the static file serving route with the router.

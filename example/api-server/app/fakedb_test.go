@@ -36,9 +36,9 @@ type execCall struct {
 // services a real *sql.DB with no server behind it. gas/database exposes the
 // same seam in production code via database.WithConnector.
 type fakeConnector struct {
-	mu      sync.Mutex
-	calls   []execCall
 	execErr error
+	calls   []execCall
+	mu      sync.Mutex
 }
 
 // openDB wires the connector into a *sql.DB. sql.OpenDB is lazy, so no
@@ -83,7 +83,11 @@ type fakeConn struct {
 	connector *fakeConnector
 }
 
-func (c *fakeConn) ExecContext(_ context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+func (c *fakeConn) ExecContext(
+	_ context.Context,
+	query string,
+	args []driver.NamedValue,
+) (driver.Result, error) {
 	if err := c.connector.record(query, args); err != nil {
 		return nil, err
 	}
@@ -93,7 +97,11 @@ func (c *fakeConn) ExecContext(_ context.Context, query string, args []driver.Na
 // QueryContext returns an empty result set, so sqlc ":one" queries surface a
 // genuine sql.ErrNoRows and the services take their real not-found branches
 // rather than an incidental driver error.
-func (c *fakeConn) QueryContext(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+func (c *fakeConn) QueryContext(
+	_ context.Context,
+	query string,
+	args []driver.NamedValue,
+) (driver.Rows, error) {
 	if err := c.connector.record(query, args); err != nil {
 		return nil, err
 	}

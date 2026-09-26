@@ -1,3 +1,5 @@
+// Package app contains the lambda-worker example: a gas.Worker that processes
+// SQS events in AWS Lambda.
 package app
 
 import (
@@ -52,7 +54,10 @@ func NewHandler(
 }
 
 // Handle processes SQS events. Each SQS record is an independent message.
-func (h *Handler) Handle(ctx context.Context, event events.SQSEvent) (events.SQSEventResponse, error) {
+func (h *Handler) Handle(
+	ctx context.Context,
+	event events.SQSEvent,
+) (events.SQSEventResponse, error) {
 	var failures []events.SQSBatchItemFailure
 
 	for i := range event.Records {

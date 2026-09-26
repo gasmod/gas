@@ -3,9 +3,9 @@ package env_test
 import (
 	"testing"
 
-	"github.com/gasmod/gas/config/internal/env"
-
 	"github.com/stretchr/testify/assert"
+
+	"github.com/gasmod/gas/config/internal/env"
 )
 
 func TestParseVariables_StandardNameDiscovery(t *testing.T) {

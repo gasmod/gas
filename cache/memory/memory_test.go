@@ -10,7 +10,7 @@ import (
 	cache "github.com/gasmod/gas/cache"
 )
 
-func newTestService(t *testing.T, opts ...Option) *Service {
+func newTestService(t *testing.T, _ ...Option) *Service {
 	t.Helper()
 
 	cfg := DefaultConfig()
@@ -251,6 +251,10 @@ func TestDefaultTTL(t *testing.T) {
 
 	_, err := svc.Get(ctx, "key1")
 	if !errors.Is(err, cache.ErrKeyNotFound) {
-		t.Errorf("Get() error = %v, want %v (DefaultTTL should have expired)", err, cache.ErrKeyNotFound)
+		t.Errorf(
+			"Get() error = %v, want %v (DefaultTTL should have expired)",
+			err,
+			cache.ErrKeyNotFound,
+		)
 	}
 }

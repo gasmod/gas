@@ -21,7 +21,11 @@ type sessionRow struct {
 // Unexported — consumers interact with Service, not this interface.
 type querier interface {
 	getSession(ctx context.Context, id string) (*sessionRow, error)
-	insertSession(ctx context.Context, id, subject, metadata, ipAddress, userAgent string, createdAt, expiresAt, lastActive time.Time) error
+	insertSession(
+		ctx context.Context,
+		id, subject, metadata, ipAddress, userAgent string,
+		createdAt, expiresAt, lastActive time.Time,
+	) error
 	extendSession(ctx context.Context, id string, expiresAt, lastActive time.Time) error
 	deleteSession(ctx context.Context, id string) error
 	deleteSessionsBySubject(ctx context.Context, subject string) error

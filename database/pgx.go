@@ -1,8 +1,9 @@
 package database
 
 import (
-	"github.com/gasmod/gas"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/gasmod/gas"
 )
 
 // PoolFrom returns the native pgxpool.Pool behind a gas.DatabaseProvider.

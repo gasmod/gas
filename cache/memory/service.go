@@ -39,8 +39,10 @@ type Service struct {
 	customConfigProvided bool
 }
 
-var _ gas.Service = (*Service)(nil)
-var _ gas.CacheProvider = (*Service)(nil)
+var (
+	_ gas.Service       = (*Service)(nil)
+	_ gas.CacheProvider = (*Service)(nil)
+)
 
 // Option configures a Service.
 type Option func(*Service)

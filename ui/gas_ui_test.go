@@ -25,8 +25,8 @@ import (
 
 // testProvider is a minimal gas.TemplateProvider backed by an in-memory map.
 type testProvider struct {
-	mu        sync.RWMutex
 	templates map[string][]byte
+	mu        sync.RWMutex
 }
 
 var _ gas.TemplateProvider = (*testProvider)(nil)
@@ -92,7 +92,13 @@ func TestEngine_RenderNoLayout(t *testing.T) {
 		"hello.html": "<h1>Hello, {{.Name}}!</h1>",
 	})
 
-	e := ui.NewEngine(tp, ui.DefaultFuncMap(gasenv.Development), "base", false, gas.NewNopLogger()())
+	e := ui.NewEngine(
+		tp,
+		ui.DefaultFuncMap(gasenv.Development),
+		"base",
+		false,
+		gas.NewNopLogger()(),
+	)
 	if err := e.Build(); err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +126,13 @@ func TestEngine_RenderWithLayout(t *testing.T) {
 		"home.html":         `{{define "content"}}<h1>Home: {{.Title}}</h1>{{end}}`,
 	})
 
-	e := ui.NewEngine(tp, ui.DefaultFuncMap(gasenv.Development), "base", false, gas.NewNopLogger()())
+	e := ui.NewEngine(
+		tp,
+		ui.DefaultFuncMap(gasenv.Development),
+		"base",
+		false,
+		gas.NewNopLogger()(),
+	)
 	if err := e.Build(); err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +161,13 @@ func TestEngine_RenderWithPartials(t *testing.T) {
 		"home.html":         `{{define "content"}}<main>{{.Body}}</main>{{end}}`,
 	})
 
-	e := ui.NewEngine(tp, ui.DefaultFuncMap(gasenv.Development), "base", false, gas.NewNopLogger()())
+	e := ui.NewEngine(
+		tp,
+		ui.DefaultFuncMap(gasenv.Development),
+		"base",
+		false,
+		gas.NewNopLogger()(),
+	)
 	if err := e.Build(); err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +195,13 @@ func TestEngine_RenderWithStatus(t *testing.T) {
 		"error.html": "<p>Not Found</p>",
 	})
 
-	e := ui.NewEngine(tp, ui.DefaultFuncMap(gasenv.Development), "base", false, gas.NewNopLogger()())
+	e := ui.NewEngine(
+		tp,
+		ui.DefaultFuncMap(gasenv.Development),
+		"base",
+		false,
+		gas.NewNopLogger()(),
+	)
 	if err := e.Build(); err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +225,13 @@ func TestEngine_RenderFragment(t *testing.T) {
 		"card.html":         `<div class="card">{{.Label}}</div>`,
 	})
 
-	e := ui.NewEngine(tp, ui.DefaultFuncMap(gasenv.Development), "base", false, gas.NewNopLogger()())
+	e := ui.NewEngine(
+		tp,
+		ui.DefaultFuncMap(gasenv.Development),
+		"base",
+		false,
+		gas.NewNopLogger()(),
+	)
 	if err := e.Build(); err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +258,13 @@ func TestEngine_RenderNotFound(t *testing.T) {
 		"home.html": "ok",
 	})
 
-	e := ui.NewEngine(tp, ui.DefaultFuncMap(gasenv.Development), "base", false, gas.NewNopLogger()())
+	e := ui.NewEngine(
+		tp,
+		ui.DefaultFuncMap(gasenv.Development),
+		"base",
+		false,
+		gas.NewNopLogger()(),
+	)
 	if err := e.Build(); err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +300,7 @@ func TestEngine_DevModeRebuilds(t *testing.T) {
 	}
 
 	// Update the template via the provider.
-	_ = tp.Register(nil, "page.html", []byte("<p>v2</p>"))
+	_ = tp.Register(context.TODO(), "page.html", []byte("<p>v2</p>"))
 
 	// Render again — dev mode should pick up the change.
 	w = httptest.NewRecorder()
@@ -287,7 +323,13 @@ func TestEngine_SubdirectoryPages(t *testing.T) {
 		"dashboard/settings.html": `{{define "content"}}settings{{end}}`,
 	})
 
-	e := ui.NewEngine(tp, ui.DefaultFuncMap(gasenv.Development), "base", false, gas.NewNopLogger()())
+	e := ui.NewEngine(
+		tp,
+		ui.DefaultFuncMap(gasenv.Development),
+		"base",
+		false,
+		gas.NewNopLogger()(),
+	)
 	if err := e.Build(); err != nil {
 		t.Fatal(err)
 	}
@@ -318,7 +360,13 @@ func TestFuncMap_Dict(t *testing.T) {
 		"test.html": `{{$d := dict "a" "1" "b" "2"}}{{$d.a}}-{{$d.b}}`,
 	})
 
-	e := ui.NewEngine(tp, ui.DefaultFuncMap(gasenv.Development), "base", false, gas.NewNopLogger()())
+	e := ui.NewEngine(
+		tp,
+		ui.DefaultFuncMap(gasenv.Development),
+		"base",
+		false,
+		gas.NewNopLogger()(),
+	)
 	if err := e.Build(); err != nil {
 		t.Fatal(err)
 	}
@@ -332,32 +380,13 @@ func TestFuncMap_Dict(t *testing.T) {
 	}
 }
 
-func TestFuncMap_Safe(t *testing.T) {
-	tp := newTestProvider(map[string]string{
-		"test.html": `{{safe "<b>bold</b>"}}`,
-	})
-
-	e := ui.NewEngine(tp, ui.DefaultFuncMap(gasenv.Development), "base", false, gas.NewNopLogger()())
-	if err := e.Build(); err != nil {
-		t.Fatal(err)
-	}
-
-	w := httptest.NewRecorder()
-	if err := e.Render(w, "test", nil); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(w.Body.String(), "<b>bold</b>") {
-		t.Fatalf("safe func should not escape HTML: %s", w.Body.String())
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Static handler
 // ---------------------------------------------------------------------------
 
 func TestStaticHandler(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "style.css"), []byte("body{}"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "style.css"), []byte("body{}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -378,7 +407,7 @@ func TestStaticHandler(t *testing.T) {
 func TestStaticHandler_DirectoryListingBlocked(t *testing.T) {
 	dir := t.TempDir()
 	sub := filepath.Join(dir, "sub")
-	if err := os.MkdirAll(sub, 0o755); err != nil {
+	if err := os.MkdirAll(sub, 0o750); err != nil {
 		t.Fatal(err)
 	}
 
@@ -403,7 +432,14 @@ func TestService_InitAndRender(t *testing.T) {
 		"index.html":        `{{define "content"}}<h1>{{.Greeting}}</h1>{{end}}`,
 	})
 
-	svc := ui.New[*testProvider](ui.WithConfig(ui.DefaultConfig()))(tp, nil, nil, gas.NewNopLogger()())
+	svc := ui.New[*testProvider](
+		ui.WithConfig(ui.DefaultConfig()),
+	)(
+		tp,
+		nil,
+		nil,
+		gas.NewNopLogger()(),
+	)
 	if err := svc.Init(); err != nil {
 		t.Fatal(err)
 	}
@@ -423,7 +459,14 @@ func TestService_ClosedReturns503(t *testing.T) {
 		"home.html": "ok",
 	})
 
-	svc := ui.New[*testProvider](ui.WithConfig(ui.DefaultConfig()))(tp, nil, nil, gas.NewNopLogger()())
+	svc := ui.New[*testProvider](
+		ui.WithConfig(ui.DefaultConfig()),
+	)(
+		tp,
+		nil,
+		nil,
+		gas.NewNopLogger()(),
+	)
 	if err := svc.Init(); err != nil {
 		t.Fatal(err)
 	}
@@ -446,7 +489,14 @@ func TestService_RegisterFuncs(t *testing.T) {
 		"page.html": `{{greet "World"}}`,
 	})
 
-	svc := ui.New[*testProvider](ui.WithConfig(ui.DefaultConfig()))(tp, nil, nil, gas.NewNopLogger()())
+	svc := ui.New[*testProvider](
+		ui.WithConfig(ui.DefaultConfig()),
+	)(
+		tp,
+		nil,
+		nil,
+		gas.NewNopLogger()(),
+	)
 	if err := svc.Init(); err != nil {
 		t.Fatal(err)
 	}
@@ -468,7 +518,14 @@ func TestService_RegisterFuncs(t *testing.T) {
 func TestService_CheckReady(t *testing.T) {
 	tp := newTestProvider(map[string]string{"home.html": "ok"})
 
-	svc := ui.New[*testProvider](ui.WithConfig(ui.DefaultConfig()))(tp, nil, nil, gas.NewNopLogger()())
+	svc := ui.New[*testProvider](
+		ui.WithConfig(ui.DefaultConfig()),
+	)(
+		tp,
+		nil,
+		nil,
+		gas.NewNopLogger()(),
+	)
 
 	// Not ready before Init — engine not yet built.
 	if err := svc.CheckReady(context.Background()); err == nil {

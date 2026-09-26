@@ -59,10 +59,17 @@ func explicitConfig() *database.Config {
 // panic. A rollback that itself fails is joined onto the returned error.
 func createUser(ctx context.Context, db gas.DatabaseProvider) error {
 	return db.WithTx(ctx, nil, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, "INSERT INTO users (email) VALUES ($1)", "a@example.com"); err != nil {
+		if _, err := tx.ExecContext(
+			ctx,
+			"INSERT INTO users (email) VALUES ($1)",
+			"a@example.com",
+		); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, "INSERT INTO profiles (user_id) VALUES (currval('users_id_seq'))")
+		_, err := tx.ExecContext(
+			ctx,
+			"INSERT INTO profiles (user_id) VALUES (currval('users_id_seq'))",
+		)
 		return err
 	})
 }

@@ -186,9 +186,6 @@ settings:
 
 | Function        | Signature                     | Description                                 |
 |-----------------|-------------------------------|---------------------------------------------|
-| `safe`          | `(string) HTML`               | Trusted HTML                                |
-| `safeAttr`      | `(string) HTMLAttr`           | Trusted attribute                           |
-| `safeURL`       | `(string) URL`                | Trusted URL                                 |
 | `upper`         | `(string) string`             | Uppercase                                   |
 | `lower`         | `(string) string`             | Lowercase                                   |
 | `title`         | `(string) string`             | Title case                                  |
@@ -208,6 +205,7 @@ settings:
 | `dict`          | `(pairs ...any) map`          | Create map from k/v pairs                   |
 | `list`          | `(items ...any) []any`        | Create slice                                |
 | `json`          | `(any) json.RawMessage`       | Marshal to JSON                             |
+| `env`           | `() gasenv.Environment`       | Environment passed to `DefaultFuncMap`      |
 | `buildId`       | `() string`                   | Stable build ID; fresh UUID per call in dev |
 
 `DefaultFuncMap` accepts an `env.Environment` to enable environment-aware

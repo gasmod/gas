@@ -17,17 +17,25 @@ func newTestDir(t *testing.T) string {
 
 	// Create template files.
 	layoutsDir := filepath.Join(dir, "layouts")
-	if err := os.MkdirAll(layoutsDir, 0o755); err != nil {
+	if err := os.MkdirAll(layoutsDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(layoutsDir, "base.html"), []byte("<html>base</html>"), 0o644); err != nil {
+	if err := os.WriteFile(
+		filepath.Join(layoutsDir, "base.html"),
+		[]byte("<html>base</html>"),
+		0o600,
+	); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "home.html"), []byte("<h1>Home</h1>"), 0o644); err != nil {
+	if err := os.WriteFile(
+		filepath.Join(dir, "home.html"),
+		[]byte("<h1>Home</h1>"),
+		0o600,
+	); err != nil {
 		t.Fatal(err)
 	}
 	// Non-HTML file should be ignored.
-	if err := os.WriteFile(filepath.Join(dir, "readme.md"), []byte("# Readme"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "readme.md"), []byte("# Readme"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return dir
@@ -54,7 +62,9 @@ func TestGetFromOverlay(t *testing.T) {
 	s := NewStore(dir)()
 	t.Cleanup(func() { _ = s.Close() })
 
-	s.Register(context.Background(), "custom.html", []byte("<p>Custom</p>"))
+	if err := s.Register(context.Background(), "custom.html", []byte("<p>Custom</p>")); err != nil {
+		t.Fatalf("s.Register() error: %v", err)
+	}
 
 	got, err := s.Get(context.Background(), "custom.html")
 	if err != nil {
@@ -71,7 +81,13 @@ func TestOverlayOverridesDisk(t *testing.T) {
 	s := NewStore(dir)()
 	t.Cleanup(func() { _ = s.Close() })
 
-	s.Register(context.Background(), "home.html", []byte("<h1>Overridden</h1>"))
+	if err := s.Register(
+		context.Background(),
+		"home.html",
+		[]byte("<h1>Overridden</h1>"),
+	); err != nil {
+		t.Fatalf("s.Register() error: %v", err)
+	}
 
 	got, err := s.Get(context.Background(), "home.html")
 	if err != nil {
@@ -100,7 +116,9 @@ func TestListMergesDiskAndOverlay(t *testing.T) {
 	s := NewStore(dir)()
 	t.Cleanup(func() { _ = s.Close() })
 
-	s.Register(context.Background(), "extra.html", []byte("extra"))
+	if err := s.Register(context.Background(), "extra.html", []byte("extra")); err != nil {
+		t.Fatalf("s.Register() error: %v", err)
+	}
 
 	names, err := s.List(context.Background())
 	if err != nil {
@@ -182,7 +200,9 @@ func TestListOnlyOverlay(t *testing.T) {
 	s := NewStore(dir)()
 	t.Cleanup(func() { _ = s.Close() })
 
-	s.Register(context.Background(), "overlay.html", []byte("overlay"))
+	if err := s.Register(context.Background(), "overlay.html", []byte("overlay")); err != nil {
+		t.Fatalf("s.Register() error: %v", err)
+	}
 
 	names, err := s.List(context.Background())
 	if err != nil {
@@ -225,7 +245,9 @@ func TestListDeduplicatesDiskAndOverlay(t *testing.T) {
 	t.Cleanup(func() { _ = s.Close() })
 
 	// Register an overlay with the same name as a disk file.
-	s.Register(context.Background(), "home.html", []byte("overlay home"))
+	if err := s.Register(context.Background(), "home.html", []byte("overlay home")); err != nil {
+		t.Fatalf("s.Register() error: %v", err)
+	}
 
 	names, err := s.List(context.Background())
 	if err != nil {

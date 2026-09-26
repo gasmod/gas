@@ -54,7 +54,11 @@ func (s *Service) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, er
 // rollback is joined onto fn's error. Any panic inside fn also triggers a
 // rollback, whose failure is logged rather than returned so the panic
 // propagates unchanged.
-func (s *Service) WithTx(ctx context.Context, opts *sql.TxOptions, fn func(*sql.Tx) error) (err error) {
+func (s *Service) WithTx(
+	ctx context.Context,
+	opts *sql.TxOptions,
+	fn func(*sql.Tx) error,
+) (err error) {
 	if s.closed.Load() {
 		return fmt.Errorf("%s: service is closed", s.Name())
 	}
@@ -95,7 +99,11 @@ func (s *Service) BeginPgxTx(ctx context.Context, opts *pgx.TxOptions) (pgx.Tx, 
 		return nil, fmt.Errorf("%s: service is closed", s.Name())
 	}
 	if s.pool == nil {
-		return nil, fmt.Errorf("%s: attempt to begin pgx transaction in non-pgx mode '%s'", s.Name(), s.cfg.Database.Mode)
+		return nil, fmt.Errorf(
+			"%s: attempt to begin pgx transaction in non-pgx mode '%s'",
+			s.Name(),
+			s.cfg.Database.Mode,
+		)
 	}
 
 	var txOpts pgx.TxOptions
@@ -119,7 +127,11 @@ func (s *Service) BeginPgxTx(ctx context.Context, opts *pgx.TxOptions) (pgx.Tx, 
 // ctx unchanged, so an already-canceled ctx fails the commit instead of
 // persisting work the caller abandoned. It returns an error when the
 // service is closed or is not running in ModePgx.
-func (s *Service) WithPgxTx(ctx context.Context, opts *pgx.TxOptions, fn func(pgx.Tx) error) (err error) {
+func (s *Service) WithPgxTx(
+	ctx context.Context,
+	opts *pgx.TxOptions,
+	fn func(pgx.Tx) error,
+) (err error) {
 	tx, err := s.BeginPgxTx(ctx, opts)
 	if err != nil {
 		return err

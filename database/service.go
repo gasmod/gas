@@ -9,10 +9,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/gasmod/gas"
-
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
+
+	"github.com/gasmod/gas"
 )
 
 const (
@@ -34,10 +34,12 @@ type Service struct {
 	closed               atomic.Bool
 }
 
-var _ gas.Service = (*Service)(nil)
-var _ gas.DatabaseProvider = (*Service)(nil)
-var _ gas.HealthReporter = (*Service)(nil)
-var _ gas.ReadyReporter = (*Service)(nil)
+var (
+	_ gas.Service          = (*Service)(nil)
+	_ gas.DatabaseProvider = (*Service)(nil)
+	_ gas.HealthReporter   = (*Service)(nil)
+	_ gas.ReadyReporter    = (*Service)(nil)
+)
 
 // Option configures a Service.
 type Option func(*Service)
@@ -182,7 +184,9 @@ func (s *Service) initSQL() error {
 
 	if err := db.PingContext(ctx); err != nil {
 		if cErr := db.Close(); cErr != nil {
-			s.logger.Error("failed to close database connection after failed ping").Err("error", cErr).Send()
+			s.logger.Error("failed to close database connection after failed ping").
+				Err("error", cErr).
+				Send()
 		}
 		s.logger.Error("failed to ping database connection").Err("error", err).Send()
 		return fmt.Errorf("%s: ping: %w", s.Name(), err)

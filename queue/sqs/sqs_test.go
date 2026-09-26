@@ -8,6 +8,7 @@ import (
 
 	awssqs "github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
+
 	"github.com/gasmod/gas"
 	queue "github.com/gasmod/gas/queue"
 )
@@ -21,19 +22,35 @@ type mockSQSClient struct {
 	changeMessageVisibilityFn func(ctx context.Context, params *awssqs.ChangeMessageVisibilityInput, optFns ...func(*awssqs.Options)) (*awssqs.ChangeMessageVisibilityOutput, error)
 }
 
-func (m *mockSQSClient) SendMessage(ctx context.Context, params *awssqs.SendMessageInput, optFns ...func(*awssqs.Options)) (*awssqs.SendMessageOutput, error) {
+func (m *mockSQSClient) SendMessage(
+	ctx context.Context,
+	params *awssqs.SendMessageInput,
+	optFns ...func(*awssqs.Options),
+) (*awssqs.SendMessageOutput, error) {
 	return m.sendMessageFn(ctx, params, optFns...)
 }
 
-func (m *mockSQSClient) ReceiveMessage(ctx context.Context, params *awssqs.ReceiveMessageInput, optFns ...func(*awssqs.Options)) (*awssqs.ReceiveMessageOutput, error) {
+func (m *mockSQSClient) ReceiveMessage(
+	ctx context.Context,
+	params *awssqs.ReceiveMessageInput,
+	optFns ...func(*awssqs.Options),
+) (*awssqs.ReceiveMessageOutput, error) {
 	return m.receiveMessageFn(ctx, params, optFns...)
 }
 
-func (m *mockSQSClient) DeleteMessage(ctx context.Context, params *awssqs.DeleteMessageInput, optFns ...func(*awssqs.Options)) (*awssqs.DeleteMessageOutput, error) {
+func (m *mockSQSClient) DeleteMessage(
+	ctx context.Context,
+	params *awssqs.DeleteMessageInput,
+	optFns ...func(*awssqs.Options),
+) (*awssqs.DeleteMessageOutput, error) {
 	return m.deleteMessageFn(ctx, params, optFns...)
 }
 
-func (m *mockSQSClient) ChangeMessageVisibility(ctx context.Context, params *awssqs.ChangeMessageVisibilityInput, optFns ...func(*awssqs.Options)) (*awssqs.ChangeMessageVisibilityOutput, error) {
+func (m *mockSQSClient) ChangeMessageVisibility(
+	ctx context.Context,
+	params *awssqs.ChangeMessageVisibilityInput,
+	optFns ...func(*awssqs.Options),
+) (*awssqs.ChangeMessageVisibilityOutput, error) {
 	return m.changeMessageVisibilityFn(ctx, params, optFns...)
 }
 
@@ -59,7 +76,11 @@ func TestDefaultConfig(t *testing.T) {
 		t.Errorf("Region = %q, want %q", cfg.Queue.Region, defaultRegion)
 	}
 	if cfg.Queue.VisibilityTimeout != defaultVisibilityTimeout {
-		t.Errorf("VisibilityTimeout = %v, want %v", cfg.Queue.VisibilityTimeout, defaultVisibilityTimeout)
+		t.Errorf(
+			"VisibilityTimeout = %v, want %v",
+			cfg.Queue.VisibilityTimeout,
+			defaultVisibilityTimeout,
+		)
 	}
 	if cfg.Queue.WaitTimeSeconds != defaultWaitTimeSeconds {
 		t.Errorf("WaitTimeSeconds = %d, want %d", cfg.Queue.WaitTimeSeconds, defaultWaitTimeSeconds)
@@ -70,15 +91,27 @@ func TestConfigValidate(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
 		modify  func(*Config)
+		name    string
 		wantErr bool
 	}{
 		{name: "valid defaults", modify: func(_ *Config) {}, wantErr: false},
 		{name: "empty region", modify: func(c *Config) { c.Queue.Region = "" }, wantErr: true},
-		{name: "wait too low", modify: func(c *Config) { c.Queue.WaitTimeSeconds = -1 }, wantErr: true},
-		{name: "wait too high", modify: func(c *Config) { c.Queue.WaitTimeSeconds = 21 }, wantErr: true},
-		{name: "negative visibility", modify: func(c *Config) { c.Queue.VisibilityTimeout = -1 }, wantErr: true},
+		{
+			name:    "wait too low",
+			modify:  func(c *Config) { c.Queue.WaitTimeSeconds = -1 },
+			wantErr: true,
+		},
+		{
+			name:    "wait too high",
+			modify:  func(c *Config) { c.Queue.WaitTimeSeconds = 21 },
+			wantErr: true,
+		},
+		{
+			name:    "negative visibility",
+			modify:  func(c *Config) { c.Queue.VisibilityTimeout = -1 },
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -108,7 +141,11 @@ func TestEnqueue(t *testing.T) {
 	}
 
 	svc := newTestService(t, mock)
-	err := svc.Enqueue(context.Background(), "https://sqs.us-east-1.amazonaws.com/123/test-queue", []byte(`{"task":"run"}`))
+	err := svc.Enqueue(
+		context.Background(),
+		"https://sqs.us-east-1.amazonaws.com/123/test-queue",
+		[]byte(`{"task":"run"}`),
+	)
 	if err != nil {
 		t.Fatalf("Enqueue() error = %v", err)
 	}

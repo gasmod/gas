@@ -32,7 +32,11 @@ func TestWithEnvVarName(t *testing.T) {
 			extension := NewExtension(WithEnvVarName(tt.envVarName))
 
 			if extension.envVarName != tt.envVarName {
-				t.Errorf("WithEnvVarName() envVarName = %v, want %v", extension.envVarName, tt.envVarName)
+				t.Errorf(
+					"WithEnvVarName() envVarName = %v, want %v",
+					extension.envVarName,
+					tt.envVarName,
+				)
 			}
 		})
 	}
@@ -70,12 +74,21 @@ func TestWithAllowedEnvs(t *testing.T) {
 			extension := NewExtension(WithAllowedEnvs(tt.allowedEnvs...))
 
 			if len(extension.allowedEnvs) != len(tt.allowedEnvs) {
-				t.Errorf("WithAllowedEnvs() length = %v, want %v", len(extension.allowedEnvs), len(tt.allowedEnvs))
+				t.Errorf(
+					"WithAllowedEnvs() length = %v, want %v",
+					len(extension.allowedEnvs),
+					len(tt.allowedEnvs),
+				)
 			}
 
 			for i, env := range tt.allowedEnvs {
 				if extension.allowedEnvs[i] != env {
-					t.Errorf("WithAllowedEnvs() allowedEnvs[%d] = %v, want %v", i, extension.allowedEnvs[i], env)
+					t.Errorf(
+						"WithAllowedEnvs() allowedEnvs[%d] = %v, want %v",
+						i,
+						extension.allowedEnvs[i],
+						env,
+					)
 				}
 			}
 		})
@@ -114,7 +127,11 @@ func TestWithDefault(t *testing.T) {
 			extension := NewExtension(WithDefault(tt.defaultEnv))
 
 			if extension.defaultEnv != tt.defaultEnv {
-				t.Errorf("WithDefault() defaultEnv = %v, want %v", extension.defaultEnv, tt.defaultEnv)
+				t.Errorf(
+					"WithDefault() defaultEnv = %v, want %v",
+					extension.defaultEnv,
+					tt.defaultEnv,
+				)
 			}
 		})
 	}
@@ -152,7 +169,11 @@ func TestWithConfigKey(t *testing.T) {
 			extension := NewExtension(WithConfigKey(tt.configKey))
 
 			if extension.configKey != tt.configKey {
-				t.Errorf("WithConfigKey() configKey = %v, want %v", extension.configKey, tt.configKey)
+				t.Errorf(
+					"WithConfigKey() configKey = %v, want %v",
+					extension.configKey,
+					tt.configKey,
+				)
 			}
 		})
 	}
@@ -185,12 +206,21 @@ func TestMultipleOptions(t *testing.T) {
 		}
 
 		if len(extension.allowedEnvs) != len(allowedEnvs) {
-			t.Errorf("Multiple options allowedEnvs length = %v, want %v", len(extension.allowedEnvs), len(allowedEnvs))
+			t.Errorf(
+				"Multiple options allowedEnvs length = %v, want %v",
+				len(extension.allowedEnvs),
+				len(allowedEnvs),
+			)
 		}
 
 		for i, env := range allowedEnvs {
 			if extension.allowedEnvs[i] != env {
-				t.Errorf("Multiple options allowedEnvs[%d] = %v, want %v", i, extension.allowedEnvs[i], env)
+				t.Errorf(
+					"Multiple options allowedEnvs[%d] = %v, want %v",
+					i,
+					extension.allowedEnvs[i],
+					env,
+				)
 			}
 		}
 	})
@@ -203,7 +233,10 @@ func TestMultipleOptions(t *testing.T) {
 		)
 
 		if extension.envVarName != "FINAL_ENV" {
-			t.Errorf("Last option should win, envVarName = %v, want FINAL_ENV", extension.envVarName)
+			t.Errorf(
+				"Last option should win, envVarName = %v, want FINAL_ENV",
+				extension.envVarName,
+			)
 		}
 	})
 
@@ -236,7 +269,7 @@ func TestMultipleOptions(t *testing.T) {
 func TestOptionsFunctionalPattern(t *testing.T) {
 	t.Run("options are functions", func(t *testing.T) {
 		// Verify that options are actually functions
-		var option EnvOption = WithEnvVarName("TEST")
+		option := WithEnvVarName("TEST")
 
 		extension := &Extension{
 			envVarName: "ORIGINAL",
@@ -246,7 +279,10 @@ func TestOptionsFunctionalPattern(t *testing.T) {
 		option(extension)
 
 		if extension.envVarName != "TEST" {
-			t.Errorf("Option function should modify extension, envVarName = %v, want TEST", extension.envVarName)
+			t.Errorf(
+				"Option function should modify extension, envVarName = %v, want TEST",
+				extension.envVarName,
+			)
 		}
 	})
 

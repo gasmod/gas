@@ -329,14 +329,20 @@ func WithCacheControlPathSuffixes(val []string) CacheControlOption {
 // WithCacheControlMaxAge appends a "max-age" directive with the given duration.
 func WithCacheControlMaxAge(val time.Duration) CacheControlOption {
 	return func(opt *CacheControlOptions) {
-		opt.cacheControlDirectives = append(opt.cacheControlDirectives, fmt.Sprintf("max-age=%d", int(val.Seconds())))
+		opt.cacheControlDirectives = append(
+			opt.cacheControlDirectives,
+			fmt.Sprintf("max-age=%d", int(val.Seconds())),
+		)
 	}
 }
 
 // WithCacheControlSMaxAge appends an "s-maxage" directive (shared/CDN cache max age).
 func WithCacheControlSMaxAge(val time.Duration) CacheControlOption {
 	return func(opt *CacheControlOptions) {
-		opt.cacheControlDirectives = append(opt.cacheControlDirectives, fmt.Sprintf("s-maxage=%d", int(val.Seconds())))
+		opt.cacheControlDirectives = append(
+			opt.cacheControlDirectives,
+			fmt.Sprintf("s-maxage=%d", int(val.Seconds())),
+		)
 	}
 }
 
@@ -406,14 +412,20 @@ func WithCacheControlImmutable() CacheControlOption {
 // WithCacheControlStaleWhileRevalidate appends a "stale-while-revalidate" directive.
 func WithCacheControlStaleWhileRevalidate(val time.Duration) CacheControlOption {
 	return func(opt *CacheControlOptions) {
-		opt.cacheControlDirectives = append(opt.cacheControlDirectives, fmt.Sprintf("stale-while-revalidate=%d", int(val.Seconds())))
+		opt.cacheControlDirectives = append(
+			opt.cacheControlDirectives,
+			fmt.Sprintf("stale-while-revalidate=%d", int(val.Seconds())),
+		)
 	}
 }
 
 // WithCacheControlStaleIfError appends a "stale-if-error" directive.
 func WithCacheControlStaleIfError(val time.Duration) CacheControlOption {
 	return func(opt *CacheControlOptions) {
-		opt.cacheControlDirectives = append(opt.cacheControlDirectives, fmt.Sprintf("stale-if-error=%d", int(val.Seconds())))
+		opt.cacheControlDirectives = append(
+			opt.cacheControlDirectives,
+			fmt.Sprintf("stale-if-error=%d", int(val.Seconds())),
+		)
 	}
 }
 

@@ -9,25 +9,46 @@ func TestNewExtension(t *testing.T) {
 		extension := NewExtension()
 
 		if extension.envVarName != DefaultEnvVarName {
-			t.Errorf("NewExtension() envVarName = %v, want %v", extension.envVarName, DefaultEnvVarName)
+			t.Errorf(
+				"NewExtension() envVarName = %v, want %v",
+				extension.envVarName,
+				DefaultEnvVarName,
+			)
 		}
 
 		if extension.defaultEnv != DefaultEnvironment {
-			t.Errorf("NewExtension() defaultEnv = %v, want %v", extension.defaultEnv, DefaultEnvironment)
+			t.Errorf(
+				"NewExtension() defaultEnv = %v, want %v",
+				extension.defaultEnv,
+				DefaultEnvironment,
+			)
 		}
 
 		if extension.configKey != DefaultConfigKey {
-			t.Errorf("NewExtension() configKey = %v, want %v", extension.configKey, DefaultConfigKey)
+			t.Errorf(
+				"NewExtension() configKey = %v, want %v",
+				extension.configKey,
+				DefaultConfigKey,
+			)
 		}
 
 		expectedEnvs := []Environment{Development, Testing, Staging, Production}
 		if len(extension.allowedEnvs) != len(expectedEnvs) {
-			t.Errorf("NewExtension() allowedEnvs length = %v, want %v", len(extension.allowedEnvs), len(expectedEnvs))
+			t.Errorf(
+				"NewExtension() allowedEnvs length = %v, want %v",
+				len(extension.allowedEnvs),
+				len(expectedEnvs),
+			)
 		}
 
 		for i, env := range expectedEnvs {
 			if extension.allowedEnvs[i] != env {
-				t.Errorf("NewExtension() allowedEnvs[%d] = %v, want %v", i, extension.allowedEnvs[i], env)
+				t.Errorf(
+					"NewExtension() allowedEnvs[%d] = %v, want %v",
+					i,
+					extension.allowedEnvs[i],
+					env,
+				)
 			}
 		}
 	})
@@ -46,24 +67,45 @@ func TestNewExtension(t *testing.T) {
 		)
 
 		if extension.envVarName != customEnvVar {
-			t.Errorf("NewExtension() with options envVarName = %v, want %v", extension.envVarName, customEnvVar)
+			t.Errorf(
+				"NewExtension() with options envVarName = %v, want %v",
+				extension.envVarName,
+				customEnvVar,
+			)
 		}
 
 		if extension.defaultEnv != customDefault {
-			t.Errorf("NewExtension() with options defaultEnv = %v, want %v", extension.defaultEnv, customDefault)
+			t.Errorf(
+				"NewExtension() with options defaultEnv = %v, want %v",
+				extension.defaultEnv,
+				customDefault,
+			)
 		}
 
 		if extension.configKey != customConfigKey {
-			t.Errorf("NewExtension() with options configKey = %v, want %v", extension.configKey, customConfigKey)
+			t.Errorf(
+				"NewExtension() with options configKey = %v, want %v",
+				extension.configKey,
+				customConfigKey,
+			)
 		}
 
 		if len(extension.allowedEnvs) != len(customAllowedEnvs) {
-			t.Errorf("NewExtension() with options allowedEnvs length = %v, want %v", len(extension.allowedEnvs), len(customAllowedEnvs))
+			t.Errorf(
+				"NewExtension() with options allowedEnvs length = %v, want %v",
+				len(extension.allowedEnvs),
+				len(customAllowedEnvs),
+			)
 		}
 
 		for i, env := range customAllowedEnvs {
 			if extension.allowedEnvs[i] != env {
-				t.Errorf("NewExtension() with options allowedEnvs[%d] = %v, want %v", i, extension.allowedEnvs[i], env)
+				t.Errorf(
+					"NewExtension() with options allowedEnvs[%d] = %v, want %v",
+					i,
+					extension.allowedEnvs[i],
+					env,
+				)
 			}
 		}
 	})

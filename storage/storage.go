@@ -2,11 +2,17 @@ package storage
 
 import "errors"
 
-// Sentinel errors returned by StorageProvider implementations.
 var (
+	// ErrNotInitialized is returned when a storage operation is attempted before the storage service is initialized.
+	ErrNotInitialized = errors.New("storage: not initialized")
+
 	// ErrKeyNotFound is returned by Download or Head when the
 	// requested key does not exist.
 	ErrKeyNotFound = errors.New("storage: key not found")
+
+	// ErrBucketNotFound is returned by Upload, Download, Delete or Head when
+	// the requested bucket does not exist.
+	ErrBucketNotFound = errors.New("storage: bucket not found")
 
 	// ErrClosed is returned when an operation is attempted on a closed
 	// storage service.
@@ -15,5 +21,7 @@ var (
 	// ErrBucketRequired is returned when an operation is invoked without a
 	// bucket configured on the service and without gas.InBucket() supplied
 	// in the call options.
-	ErrBucketRequired = errors.New("storage: bucket required (set Storage.Bucket or pass gas.InBucket())")
+	ErrBucketRequired = errors.New(
+		"storage: bucket required (set Storage.Bucket or pass gas.InBucket())",
+	)
 )

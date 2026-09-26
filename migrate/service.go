@@ -4,7 +4,6 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
-	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -34,8 +33,10 @@ type Service struct {
 	mu         sync.Mutex
 }
 
-var _ gas.Service = (*Service)(nil)
-var _ gas.MigrationManager = (*Service)(nil)
+var (
+	_ gas.Service          = (*Service)(nil)
+	_ gas.MigrationManager = (*Service)(nil)
+)
 
 // New returns a DI-injectable constructor for the migration manager service.
 func New() func(gas.DatabaseProvider) *Service {
@@ -104,21 +105,14 @@ func (s *Service) CheckReady(ctx context.Context) error {
 		return err
 	}
 	if len(dirty) > 0 {
-		versions := make([]string, len(dirty))
-		for i, d := range dirty {
-			versions[i] = d.Version
-		}
-		return fmt.Errorf("gas/migrate: dirty migrations: %s", strings.Join(versions, ", "))
+		return fmt.Errorf("gas/migrate: dirty migrations: %s", joinVersions(dirty))
 	}
 
 	applied, err := s.getAppliedMigrations(ctx)
 	if err != nil {
 		return err
 	}
-	appliedSet := make(map[string]struct{}, len(applied))
-	for _, a := range applied {
-		appliedSet[a.Version] = struct{}{}
-	}
+	appliedSet := versionSet(applied)
 
 	s.mu.Lock()
 	pending := 0

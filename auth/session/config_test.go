@@ -5,9 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gasmod/gas/auth/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/gasmod/gas/auth/session"
 )
 
 func TestDefaultConfig_Validates(t *testing.T) {
@@ -75,7 +76,11 @@ func TestConfig_Validate_CleanupTimeout_Zero(t *testing.T) {
 		err := cfg.Validate()
 
 		require.Error(t, err)
-		assert.Equal(t, "session: cleanup timeout must be positive when cleanup is enabled", err.Error())
+		assert.Equal(
+			t,
+			"session: cleanup timeout must be positive when cleanup is enabled",
+			err.Error(),
+		)
 	})
 }
 

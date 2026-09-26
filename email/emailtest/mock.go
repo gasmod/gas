@@ -27,8 +27,10 @@ type MockEmail struct {
 	mu sync.Mutex
 }
 
-var _ gas.EmailProvider = (*MockEmail)(nil)
-var _ gas.ReadyReporter = (*MockEmail)(nil)
+var (
+	_ gas.EmailProvider = (*MockEmail)(nil)
+	_ gas.ReadyReporter = (*MockEmail)(nil)
+)
 
 // Call records a single method invocation on the mock.
 type Call struct {

@@ -168,7 +168,8 @@ func TestRegisterRejectsServiceMissingInit(t *testing.T) {
 
 	err := w.InitServices()
 	requireErrContains(t, err, "nameAndClose", "missing Init() error")
-	if strings.Contains(err.Error(), "missing Name") || strings.Contains(err.Error(), "missing Close") {
+	if strings.Contains(err.Error(), "missing Name") ||
+		strings.Contains(err.Error(), "missing Close") {
 		t.Errorf("error should blame only Init: %v", err)
 	}
 }
@@ -193,8 +194,10 @@ func TestPlainDependenciesAreUnaffected(t *testing.T) {
 	}
 }
 
-type plainDep2 struct{}
-type plainDep3 struct{}
+type (
+	plainDep2 struct{}
+	plainDep3 struct{}
+)
 
 // A complete Service still initializes normally.
 func TestCompleteServiceStillInitializes(t *testing.T) {

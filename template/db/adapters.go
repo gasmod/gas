@@ -16,7 +16,10 @@ func newPostgresAdapter(q *pgdb.Queries) *postgresAdapter {
 	return &postgresAdapter{q: q}
 }
 
-func (a *postgresAdapter) getTemplateContent(ctx context.Context, namespace, name string) ([]byte, error) {
+func (a *postgresAdapter) getTemplateContent(
+	ctx context.Context,
+	namespace, name string,
+) ([]byte, error) {
 	//nolint:wrapcheck // wrapped in the Store
 	return a.q.GetTemplateContent(ctx, &pgdb.GetTemplateContentParams{
 		Namespace: namespace,
@@ -29,7 +32,11 @@ func (a *postgresAdapter) listTemplates(ctx context.Context, namespace string) (
 	return a.q.ListTemplates(ctx, namespace)
 }
 
-func (a *postgresAdapter) upsertTemplate(ctx context.Context, namespace, name string, content []byte) error {
+func (a *postgresAdapter) upsertTemplate(
+	ctx context.Context,
+	namespace, name string,
+	content []byte,
+) error {
 	//nolint:wrapcheck // wrapped in the Store
 	return a.q.UpsertTemplate(ctx, &pgdb.UpsertTemplateParams{
 		Namespace: namespace,
@@ -38,7 +45,10 @@ func (a *postgresAdapter) upsertTemplate(ctx context.Context, namespace, name st
 	})
 }
 
-func (a *postgresAdapter) templateExists(ctx context.Context, namespace, name string) (bool, error) {
+func (a *postgresAdapter) templateExists(
+	ctx context.Context,
+	namespace, name string,
+) (bool, error) {
 	//nolint:wrapcheck // wrapped in the Store
 	return a.q.TemplateExists(ctx, &pgdb.TemplateExistsParams{
 		Namespace: namespace,
@@ -46,7 +56,10 @@ func (a *postgresAdapter) templateExists(ctx context.Context, namespace, name st
 	})
 }
 
-func (a *postgresAdapter) deleteTemplate(ctx context.Context, namespace, name string) (int64, error) {
+func (a *postgresAdapter) deleteTemplate(
+	ctx context.Context,
+	namespace, name string,
+) (int64, error) {
 	//nolint:wrapcheck // wrapped in the Store
 	return a.q.DeleteTemplate(ctx, &pgdb.DeleteTemplateParams{
 		Namespace: namespace,
@@ -62,7 +75,10 @@ func newMySQLAdapter(q *mydb.Queries) *mysqlAdapter {
 	return &mysqlAdapter{q: q}
 }
 
-func (a *mysqlAdapter) getTemplateContent(ctx context.Context, namespace, name string) ([]byte, error) {
+func (a *mysqlAdapter) getTemplateContent(
+	ctx context.Context,
+	namespace, name string,
+) ([]byte, error) {
 	//nolint:wrapcheck // wrapped in the Store
 	return a.q.GetTemplateContent(ctx, &mydb.GetTemplateContentParams{
 		Namespace: namespace,
@@ -75,7 +91,11 @@ func (a *mysqlAdapter) listTemplates(ctx context.Context, namespace string) ([]s
 	return a.q.ListTemplates(ctx, namespace)
 }
 
-func (a *mysqlAdapter) upsertTemplate(ctx context.Context, namespace, name string, content []byte) error {
+func (a *mysqlAdapter) upsertTemplate(
+	ctx context.Context,
+	namespace, name string,
+	content []byte,
+) error {
 	//nolint:wrapcheck // wrapped in the Store
 	return a.q.UpsertTemplate(ctx, &mydb.UpsertTemplateParams{
 		Namespace: namespace,
@@ -108,7 +128,10 @@ func newSQLiteAdapter(q *litedb.Queries) *sqliteAdapter {
 	return &sqliteAdapter{q: q}
 }
 
-func (a *sqliteAdapter) getTemplateContent(ctx context.Context, namespace, name string) ([]byte, error) {
+func (a *sqliteAdapter) getTemplateContent(
+	ctx context.Context,
+	namespace, name string,
+) ([]byte, error) {
 	//nolint:wrapcheck // wrapped in the Store
 	return a.q.GetTemplateContent(ctx, &litedb.GetTemplateContentParams{
 		Namespace: namespace,
@@ -121,7 +144,11 @@ func (a *sqliteAdapter) listTemplates(ctx context.Context, namespace string) ([]
 	return a.q.ListTemplates(ctx, namespace)
 }
 
-func (a *sqliteAdapter) upsertTemplate(ctx context.Context, namespace, name string, content []byte) error {
+func (a *sqliteAdapter) upsertTemplate(
+	ctx context.Context,
+	namespace, name string,
+	content []byte,
+) error {
 	//nolint:wrapcheck // wrapped in the Store
 	return a.q.UpsertTemplate(ctx, &litedb.UpsertTemplateParams{
 		Namespace: namespace,

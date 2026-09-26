@@ -11,20 +11,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/gasmod/gas"
 	auth "github.com/gasmod/gas/auth"
 	"github.com/gasmod/gas/auth/apikey"
 	"github.com/gasmod/gas/auth/internal/testutil"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-func setupAPIKeyService(t *testing.T, opts ...apikey.Option) *apikey.Service {
+func setupAPIKeyService(t *testing.T) *apikey.Service {
 	t.Helper()
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -34,8 +34,7 @@ func setupAPIKeyService(t *testing.T, opts ...apikey.Option) *apikey.Service {
 	migMgr := pg.MigrationManager()
 
 	cfg := apikey.DefaultConfig()
-	allOpts := append([]apikey.Option{apikey.WithConfig(cfg)}, opts...)
-	svc := apikey.New(allOpts...)(pg.Provider(), logger, migMgr, nil)
+	svc := apikey.New(apikey.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
 
 	require.NoError(t, svc.Init())
 	require.NoError(t, migMgr.RunPending())
@@ -74,7 +73,12 @@ func authenticateWithAPIKey(svc *apikey.Service, headerName, key string) (gas.Pr
 func TestAPIKeyGenerateAndAuthenticate(t *testing.T) {
 	svc := setupAPIKeyService(t)
 
-	key, info, err := svc.Generate(context.Background(), "user-123", "my-key", []string{"read", "write"})
+	key, info, err := svc.Generate(
+		context.Background(),
+		"user-123",
+		"my-key",
+		[]string{"read", "write"},
+	)
 	require.NoError(t, err)
 	assert.NotEmpty(t, key)
 	assert.NotEmpty(t, info.ID)
@@ -340,7 +344,12 @@ func TestAPIKeyCSVScopeInjection(t *testing.T) {
 	svc := setupAPIKeyService(t)
 
 	// Scopes containing commas are now rejected at generation time.
-	_, _, err := svc.Generate(context.Background(), "user-csv", "test", []string{"scope,with,commas", "normal"})
+	_, _, err := svc.Generate(
+		context.Background(),
+		"user-csv",
+		"test",
+		[]string{"scope,with,commas", "normal"},
+	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "must not contain commas")
 }
@@ -455,7 +464,12 @@ func TestAPIKeyConcurrentGenerateAndAuthenticate(t *testing.T) {
 	for i := range goroutines {
 		go func(idx int) {
 			defer wg.Done()
-			key, _, genErr := svc.Generate(context.Background(), fmt.Sprintf("user-%d", idx), fmt.Sprintf("key-%d", idx), nil)
+			key, _, genErr := svc.Generate(
+				context.Background(),
+				fmt.Sprintf("user-%d", idx),
+				fmt.Sprintf("key-%d", idx),
+				nil,
+			)
 			require.NoError(t, genErr)
 			keys[idx] = key
 		}(i)

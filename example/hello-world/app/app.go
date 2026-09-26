@@ -1,4 +1,4 @@
-// Package app, contains the simplest possible Gas application. No services,
+// Package app contains the simplest possible Gas application. No services,
 // no config — just a single inline DI-aware handler registered directly on the app router.
 package app
 
@@ -13,7 +13,7 @@ import (
 func New() *gas.App {
 	app := gas.NewApp()
 
-	app.Router().Handle(nil, http.MethodGet, "/", func(ctx gas.Context) error {
+	app.Router().Get(nil, "/", func(ctx gas.Context) error {
 		return ctx.Text(http.StatusOK, "Hello, World!")
 	})
 

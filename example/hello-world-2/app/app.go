@@ -1,3 +1,5 @@
+// Package app contains the hello-world-2 example: JSON config, modules with
+// DI-aware handlers, route groups, middleware, and a custom error handler.
 package app
 
 import (
@@ -44,7 +46,11 @@ func New() *gas.App {
 	app.Router().SetErrorHandler(func(ctx gas.Context, err error) {
 		logger := gas.MustResolveFromRequestScope[RequestLogger](ctx.Request())
 		logger.Error("request failed").Err("error", err).Send()
-		http.Error(ctx.ResponseWriter(), fmt.Sprintf("[error_handler]: %v", err), http.StatusInternalServerError)
+		http.Error(
+			ctx.ResponseWriter(),
+			fmt.Sprintf("[error_handler]: %v", err),
+			http.StatusInternalServerError,
+		)
 	})
 
 	// Ready hook — runs after all services are initialized, before the server starts.

@@ -7,10 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gasmod/gas/auth/apikey"
-	"github.com/gasmod/gas/auth/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/gasmod/gas/auth/apikey"
+	"github.com/gasmod/gas/auth/internal/testutil"
 )
 
 // ---------------------------------------------------------------------------
@@ -79,13 +80,18 @@ func TestAPIKeyExpiredKeysAccumulate(t *testing.T) {
 
 	// Manually set its expiry to the past (simulating an expired key).
 	pastExpiry := time.Now().Add(-1 * time.Hour)
-	_, err = db.Exec("UPDATE __gas_auth_api_keys SET expires_at = $1 WHERE id = $2", pastExpiry, info.ID)
+	_, err = db.Exec(
+		"UPDATE __gas_auth_api_keys SET expires_at = $1 WHERE id = $2",
+		pastExpiry,
+		info.ID,
+	)
 	require.NoError(t, err)
 
 	// The key is expired and cannot be used for auth.
 	// But it still exists in the database.
 	var count int
-	err = db.QueryRow("SELECT COUNT(*) FROM __gas_auth_api_keys WHERE id = $1", info.ID).Scan(&count)
+	err = db.QueryRow("SELECT COUNT(*) FROM __gas_auth_api_keys WHERE id = $1", info.ID).
+		Scan(&count)
 	require.NoError(t, err)
 	assert.Equal(t, 1, count, "expired key remains in database")
 
@@ -97,7 +103,8 @@ func TestAPIKeyExpiredKeysAccumulate(t *testing.T) {
 	// Wait to confirm no cleanup happens (unlike session/token services).
 	time.Sleep(200 * time.Millisecond)
 
-	err = db.QueryRow("SELECT COUNT(*) FROM __gas_auth_api_keys WHERE id = $1", info.ID).Scan(&count)
+	err = db.QueryRow("SELECT COUNT(*) FROM __gas_auth_api_keys WHERE id = $1", info.ID).
+		Scan(&count)
 	require.NoError(t, err)
 	assert.Equal(t, 1, count,
 		"expired key persists indefinitely — no cleanup goroutine exists for API keys "+
@@ -128,16 +135,27 @@ func TestAPIKeyScopeQueryingLimitation(t *testing.T) {
 	// Generate keys with different scopes.
 	_, _, err := svc.Generate(context.Background(), "user-scope", "read-key", []string{"read"})
 	require.NoError(t, err)
-	_, _, err = svc.Generate(context.Background(), "user-scope", "write-key", []string{"read", "write"})
+	_, _, err = svc.Generate(
+		context.Background(),
+		"user-scope",
+		"write-key",
+		[]string{"read", "write"},
+	)
 	require.NoError(t, err)
-	_, _, err = svc.Generate(context.Background(), "user-scope", "admin-key", []string{"read", "write", "admin"})
+	_, _, err = svc.Generate(
+		context.Background(),
+		"user-scope",
+		"admin-key",
+		[]string{"read", "write", "admin"},
+	)
 	require.NoError(t, err)
 
 	// PostgreSQL can query scopes using array operators.
 	db := pg.Provider().DB()
 	var count int
 	err = db.QueryRow("SELECT COUNT(*) FROM __gas_auth_api_keys WHERE 'write' = ANY(scopes) AND subject = $1",
-		"user-scope").Scan(&count)
+		"user-scope").
+		Scan(&count)
 	require.NoError(t, err)
 	assert.Equal(t, 2, count,
 		"PostgreSQL can query by individual scope using ANY() on TEXT[] column")

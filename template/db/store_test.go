@@ -8,10 +8,10 @@ import (
 	"testing"
 	"testing/fstest"
 
+	_ "modernc.org/sqlite"
+
 	"github.com/gasmod/gas"
 	template "github.com/gasmod/gas/template"
-
-	_ "modernc.org/sqlite"
 )
 
 // ---------------------------------------------------------------------------
@@ -74,8 +74,8 @@ func (m *mockMigrationMgr) RegisterFS(_ gas.Service, _ fs.FS) error { return nil
 var nopMigrationMgr gas.MigrationManager = &mockMigrationMgr{}
 
 // openTestDB creates an in-memory SQLite database with the templates table
-// and returns a fully initialised Store.
-func openTestDB(t *testing.T, opts ...Option) *Store {
+// and returns a fully initialized Store.
+func openTestDB(t *testing.T) *Store {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
@@ -90,7 +90,7 @@ func openTestDB(t *testing.T, opts ...Option) *Store {
 	}
 
 	mgr := &mockMigrationMgr{}
-	s := NewStore(opts...)(&mockDB{db: db, driver: "sqlite"}, nopLog, mgr)
+	s := NewStore()(&mockDB{db: db, driver: "sqlite"}, nopLog, mgr)
 	if err := s.Init(); err != nil {
 		t.Fatalf("Init(): %v", err)
 	}
@@ -388,7 +388,13 @@ func TestClose(t *testing.T) {
 
 func TestWithNamespace(t *testing.T) {
 	t.Parallel()
-	s := NewStore(WithNamespace("custom"))(&mockDB{db: nil, driver: "sqlite"}, nopLog, nopMigrationMgr)
+	s := NewStore(
+		WithNamespace("custom"),
+	)(
+		&mockDB{db: nil, driver: "sqlite"},
+		nopLog,
+		nopMigrationMgr,
+	)
 	if s.namespace != "custom" {
 		t.Errorf("namespace = %q, want %q", s.namespace, "custom")
 	}
@@ -546,20 +552,20 @@ func TestE2E_NamespaceIsolation(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	if _, err := db.Exec(migrationUpSQLite); err != nil {
-		t.Fatalf("create schema: %v", err)
+	if _, execErr := db.Exec(migrationUpSQLite); execErr != nil {
+		t.Fatalf("create schema: %v", execErr)
 	}
 
 	provider := &mockDB{db: db, driver: "sqlite"}
 
 	nsA := NewStore(WithNamespace("ns-a"))(provider, nopLog, nopMigrationMgr)
-	if err := nsA.Init(); err != nil {
-		t.Fatalf("Init(ns-a): %v", err)
+	if initErr := nsA.Init(); initErr != nil {
+		t.Fatalf("Init(ns-a): %v", initErr)
 	}
 
 	nsB := NewStore(WithNamespace("ns-b"))(provider, nopLog, nopMigrationMgr)
-	if err := nsB.Init(); err != nil {
-		t.Fatalf("Init(ns-b): %v", err)
+	if initErr := nsB.Init(); initErr != nil {
+		t.Fatalf("Init(ns-b): %v", initErr)
 	}
 
 	_ = nsA.Register(context.Background(), "page.html", []byte("from A"))
@@ -582,13 +588,17 @@ func TestE2E_NamespaceIsolation(t *testing.T) {
 	}
 
 	// Deleting in ns-a should not affect ns-b.
-	if err := nsA.Delete("page.html"); err != nil {
-		t.Fatalf("nsA.Delete() error: %v", err)
+	if delErr := nsA.Delete("page.html"); delErr != nil {
+		t.Fatalf("nsA.Delete() error: %v", delErr)
 	}
 
 	_, err = nsA.Get(context.Background(), "page.html")
 	if !errors.Is(err, template.ErrTemplateNotFound) {
-		t.Errorf("nsA.Get(context.Background(),) after delete: error = %v, want %v", err, template.ErrTemplateNotFound)
+		t.Errorf(
+			"nsA.Get(context.Background(),) after delete: error = %v, want %v",
+			err,
+			template.ErrTemplateNotFound,
+		)
 	}
 
 	gotB2, err := nsB.Get(context.Background(), "page.html")
@@ -620,7 +630,11 @@ func TestE2E_RegisterFS(t *testing.T) {
 		t.Fatalf("List() error: %v", err)
 	}
 	if len(names) != 3 {
-		t.Fatalf("List() returned %d names, want 3 (non-.html should be skipped); got %v", len(names), names)
+		t.Fatalf(
+			"List() returned %d names, want 3 (non-.html should be skipped); got %v",
+			len(names),
+			names,
+		)
 	}
 
 	got, err := s.Get(context.Background(), "layouts/base.html")

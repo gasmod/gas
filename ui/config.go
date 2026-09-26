@@ -79,26 +79,35 @@ func (c *Config) Validate(hasStaticFS bool) error {
 		}
 	}
 
-	if c.UI.StaticPath != "" {
-		if err = validateRoutePattern(c.UI.StaticPath); err != nil {
-			return fmt.Errorf("UI.StaticPath: %w", err)
-		}
-	}
-
-	for i, sp := range c.UI.StaticPaths {
-		if err = validateRoutePattern(sp); err != nil {
-			return fmt.Errorf("UI.StaticPaths[%d]: %w", i, err)
-		}
-	}
-
-	if c.UI.StaticStripPrefix != "" {
-		if err = validateStaticPath(c.UI.StaticStripPrefix); err != nil {
-			return fmt.Errorf("UI.StaticStripPrefix: %w", err)
-		}
+	if err = c.UI.validateRoutes(); err != nil {
+		return err
 	}
 
 	if c.UI.LayoutName == "" {
 		return errors.New("UI.LayoutName must not be empty")
+	}
+
+	return nil
+}
+
+// validateRoutes checks the static route patterns and strip prefix.
+func (s *Settings) validateRoutes() error {
+	if s.StaticPath != "" {
+		if err := validateRoutePattern(s.StaticPath); err != nil {
+			return fmt.Errorf("UI.StaticPath: %w", err)
+		}
+	}
+
+	for i, sp := range s.StaticPaths {
+		if err := validateRoutePattern(sp); err != nil {
+			return fmt.Errorf("UI.StaticPaths[%d]: %w", i, err)
+		}
+	}
+
+	if s.StaticStripPrefix != "" {
+		if err := validateStaticPath(s.StaticStripPrefix); err != nil {
+			return fmt.Errorf("UI.StaticStripPrefix: %w", err)
+		}
 	}
 
 	return nil

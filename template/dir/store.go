@@ -28,8 +28,10 @@ type Store struct {
 	once    sync.Once
 }
 
-var _ gas.TemplateProvider = (*Store)(nil)
-var _ io.Closer = (*Store)(nil)
+var (
+	_ gas.TemplateProvider = (*Store)(nil)
+	_ io.Closer            = (*Store)(nil)
+)
 
 // NewStore returns a DI-injectable constructor for a filesystem-backed
 // template store rooted at dir. Only files with the ".html" extension are
