@@ -70,7 +70,7 @@ func WithPresigner(presigner Presigner) Option {
 
 // New captures options and returns a DI-injectable constructor.
 func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) *Service {
-	return func(cfgProvider gas.ConfigProvider, logger gas.Logger) *Service {
+	return func(_ gas.ConfigProvider, logger gas.Logger) *Service {
 		s := &Service{
 			logger: logger.With().Str("service", serviceName).Logger(),
 		}
@@ -138,10 +138,8 @@ func (s *Service) Upload(
 		if committed {
 			return
 		}
-		for _, p := range []string{tmpName, tmpMetaName} {
-			if rmErr := s.root.Remove(p); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
-				err = errors.Join(err, rmErr)
-			}
+		if rmErr := s.removeFiles(tmpName, tmpMetaName); rmErr != nil {
+			err = errors.Join(err, rmErr)
 		}
 	}()
 
@@ -157,12 +155,7 @@ func (s *Service) Upload(
 		return fmt.Errorf("%s: upload %q: %w", s.Name(), key, err)
 	}
 
-	// Commit the object, then its metadata. A failure between the two renames
-	// leaves the new object paired with its previous metadata.
-	if err = s.root.Rename(tmpName, name); err != nil {
-		return fmt.Errorf("%s: upload %q: %w", s.Name(), key, err)
-	}
-	if err = s.root.Rename(tmpMetaName, s.resolveMetadataFilename(name)); err != nil {
+	if err = s.commit(tmpName, tmpMetaName, name); err != nil {
 		return fmt.Errorf("%s: upload %q: %w", s.Name(), key, err)
 	}
 	committed = true
@@ -201,25 +194,16 @@ func (s *Service) Download(
 
 	stat, sErr := f.Stat()
 	if sErr != nil {
-		if cErr := f.Close(); cErr != nil {
-			sErr = errors.Join(sErr, cErr)
-		}
-		return nil, fmt.Errorf("%s: download %q: %w", s.Name(), key, sErr)
+		return nil, fmt.Errorf("%s: download %q: %w", s.Name(), key, closeWithErr(f, sErr))
 	}
 
 	if stat.IsDir() {
-		if cErr := f.Close(); cErr != nil {
-			return nil, errors.Join(storage.ErrKeyNotFound, cErr)
-		}
-		return nil, storage.ErrKeyNotFound
+		return nil, closeWithErr(f, storage.ErrKeyNotFound)
 	}
 
 	meta, mErr := s.getFileMetadata(name)
 	if mErr != nil {
-		if cErr := f.Close(); cErr != nil {
-			mErr = errors.Join(mErr, cErr)
-		}
-		return nil, fmt.Errorf("%s: download %q: %w", s.Name(), key, mErr)
+		return nil, fmt.Errorf("%s: download %q: %w", s.Name(), key, closeWithErr(f, mErr))
 	}
 
 	meta = s.resolveMetadata(meta)
@@ -404,6 +388,36 @@ func (s *Service) resolveMetadata(meta map[string]string) map[string]string {
 		meta = make(map[string]string)
 	}
 	return meta
+}
+
+// commit renames the object, then its metadata, into place. A failure between
+// the two renames leaves the new object paired with its previous metadata.
+//
+//nolint:wrapcheck // wrapped at the caller site
+func (s *Service) commit(tmpName, tmpMetaName, name string) error {
+	if err := s.root.Rename(tmpName, name); err != nil {
+		return err
+	}
+	return s.root.Rename(tmpMetaName, s.resolveMetadataFilename(name))
+}
+
+// removeFiles removes the named files, ignoring any that do not exist.
+func (s *Service) removeFiles(names ...string) error {
+	var errs []error
+	for _, name := range names {
+		if err := s.root.Remove(name); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// closeWithErr closes f and joins any close error onto err.
+func closeWithErr(f *os.File, err error) error {
+	if cErr := f.Close(); cErr != nil {
+		return errors.Join(err, cErr)
+	}
+	return err
 }
 
 // writeTemp streams data into a new file at name and returns up to its first

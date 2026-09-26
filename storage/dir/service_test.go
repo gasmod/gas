@@ -24,7 +24,7 @@ const testBucket = "test-bucket"
 // sniffing window, so round-trips cover both the sniffed head and the rest.
 var pngData = append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte("z"), 2000)...)
 
-// newTestService returns an initialised *dir.Service rooted at a fresh temp
+// newTestService returns an initialized *dir.Service rooted at a fresh temp
 // directory, and that directory's path.
 func newTestService(t *testing.T, opts ...dir.Option) (*dir.Service, string) {
 	t.Helper()
@@ -93,8 +93,8 @@ func listDir(t *testing.T, path string) []string {
 }
 
 type errReader struct {
-	data []byte
 	err  error
+	data []byte
 }
 
 // Read returns data once, then err.
@@ -108,9 +108,9 @@ func (r *errReader) Read(p []byte) (int, error) {
 }
 
 type fakePresigner struct {
+	err         error
 	bucket, key string
 	ttl         time.Duration
-	err         error
 }
 
 func (p *fakePresigner) PresignGetObject(bucket, key string, ttl time.Duration) (string, error) {

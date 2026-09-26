@@ -24,7 +24,7 @@ import (
 
 const testBucket = "test-bucket"
 
-// newTestService spins up a LocalStack container and returns an initialised
+// newTestService spins up a LocalStack container and returns an initialized
 // *s3svc.Service. Container and service are cleaned up via t.Cleanup.
 func newTestService(t *testing.T) *s3svc.Service {
 	t.Helper()
@@ -56,6 +56,14 @@ func newTestServiceWithEndpoint(t *testing.T) (*s3svc.Service, string) {
 	})
 
 	return svc, endpoint
+}
+
+// closeBody closes a downloaded object's body, failing the test on error.
+func closeBody(t *testing.T, obj *gas.StorageObject) {
+	t.Helper()
+	if err := obj.Body.Close(); err != nil {
+		t.Errorf("close body: %v", err)
+	}
 }
 
 func startLocalStack(t *testing.T) string {
@@ -148,7 +156,7 @@ func TestIntegration_UploadAndDownload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Download: %v", err)
 	}
-	defer obj.Body.Close()
+	defer closeBody(t, obj)
 
 	got, err := io.ReadAll(obj.Body)
 	if err != nil {
@@ -312,7 +320,7 @@ func TestIntegration_BinaryData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Download: %v", err)
 	}
-	defer obj.Body.Close()
+	defer closeBody(t, obj)
 
 	got, err := io.ReadAll(obj.Body)
 	if err != nil {
@@ -339,7 +347,7 @@ func TestIntegration_EmptyFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Download empty: %v", err)
 	}
-	defer obj.Body.Close()
+	defer closeBody(t, obj)
 
 	got, err := io.ReadAll(obj.Body)
 	if err != nil {
@@ -369,7 +377,7 @@ func TestIntegration_LargeFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Download 1MB: %v", err)
 	}
-	defer obj.Body.Close()
+	defer closeBody(t, obj)
 
 	got, err := io.ReadAll(obj.Body)
 	if err != nil {
@@ -412,7 +420,7 @@ func TestIntegration_KeysWithSpecialChars(t *testing.T) {
 			continue
 		}
 		got, readErr := io.ReadAll(obj.Body)
-		obj.Body.Close()
+		closeBody(t, obj)
 		if readErr != nil {
 			t.Errorf("ReadAll(%q): %v", key, readErr)
 			continue
@@ -447,7 +455,7 @@ func TestIntegration_OverwriteKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Download: %v", err)
 	}
-	defer obj.Body.Close()
+	defer closeBody(t, obj)
 
 	got, err := io.ReadAll(obj.Body)
 	if err != nil {
@@ -494,7 +502,7 @@ func TestIntegration_DeleteThenReUpload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Download: %v", err)
 	}
-	defer obj.Body.Close()
+	defer closeBody(t, obj)
 
 	got, err := io.ReadAll(obj.Body)
 	if err != nil {
@@ -530,7 +538,7 @@ func TestIntegration_CancelledContext(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("operations with cancelled context hung for >5s")
+		t.Fatal("operations with canceled context hung for >5s")
 	}
 }
 
@@ -567,7 +575,7 @@ func TestIntegration_ConcurrentUploadDownload(t *testing.T) {
 				return
 			}
 			got, readErr := io.ReadAll(obj.Body)
-			obj.Body.Close()
+			closeBody(t, obj)
 			if readErr != nil {
 				errs <- fmt.Errorf("ReadAll %s: %w", key, readErr)
 				return
@@ -747,8 +755,8 @@ func TestConfigValidate(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
 		modify  func(*s3svc.Config)
+		name    string
 		wantErr bool
 	}{
 		{
