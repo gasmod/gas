@@ -8,8 +8,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.4.7
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.113.1
 	github.com/aws/smithy-go v1.28.2
-	github.com/gasmod/gas v0.5.1
-	github.com/gasmod/gas/config v0.5.1
+	github.com/gasmod/gas v0.5.2
+	github.com/gasmod/gas/config v0.5.2
 	github.com/testcontainers/testcontainers-go v0.44.0
 )
 
