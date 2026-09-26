@@ -31,9 +31,9 @@ type execCall struct {
 // handler a real *sql.DB with no server behind it. gas/database exposes the
 // same seam in production code via database.WithConnector.
 type fakeConnector struct {
-	mu      sync.Mutex
-	calls   []execCall
 	execErr error
+	calls   []execCall
+	mu      sync.Mutex
 }
 
 // openDB wires the connector into a *sql.DB. sql.OpenDB is lazy, so no

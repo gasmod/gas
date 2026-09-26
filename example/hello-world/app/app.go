@@ -1,4 +1,4 @@
-// Package app, contains the simplest possible Gas application. No services,
+// Package app contains the simplest possible Gas application. No services,
 // no config — just a single inline DI-aware handler registered directly on the app router.
 package app
 

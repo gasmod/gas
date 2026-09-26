@@ -152,7 +152,14 @@ func testStaticAssets(t *testing.T, srv *httptest.Server) {
 	})
 }
 
-func get(t *testing.T, srv *httptest.Server, path string) (*http.Response, string) {
+// response holds the status and headers of an HTTP response whose body the
+// helper has already read and closed.
+type response struct {
+	Header     http.Header
+	StatusCode int
+}
+
+func get(t *testing.T, srv *httptest.Server, path string) (response, string) {
 	t.Helper()
 
 	resp, err := srv.Client().Get(srv.URL + path)
@@ -166,5 +173,5 @@ func get(t *testing.T, srv *httptest.Server, path string) (*http.Response, strin
 		t.Fatalf("reading %s body: %v", path, err)
 	}
 
-	return resp, string(body)
+	return response{Header: resp.Header, StatusCode: resp.StatusCode}, string(body)
 }

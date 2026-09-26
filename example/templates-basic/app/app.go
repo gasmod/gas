@@ -1,3 +1,5 @@
+// Package app contains the templates-basic example: filesystem templates
+// rendered through gas/ui with layouts, partials, and static files.
 package app
 
 import (

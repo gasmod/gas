@@ -56,22 +56,32 @@ func testGreetRoutes(t *testing.T, srv *httptest.Server) {
 	tests := []struct {
 		name     string
 		path     string
-		wantCode int
 		wantBody string
+		wantCode int
 	}{
-		{"index", "/", http.StatusOK, "Hello, world!"},
-		{"greet uses the default greeting", "/greet/ada", http.StatusOK, "Hello, ada!"},
 		{
-			"greet honours the greeting query param",
-			"/greet/ada?greeting=Howdy",
-			http.StatusOK,
-			"Howdy, ada!",
+			name:     "index",
+			path:     "/",
+			wantBody: "Hello, world!",
+			wantCode: http.StatusOK,
 		},
 		{
-			"unknown path hits the custom NotFound handler",
-			"/nope",
-			http.StatusNotFound,
-			"nothing here",
+			name:     "greet uses the default greeting",
+			path:     "/greet/ada",
+			wantBody: "Hello, ada!",
+			wantCode: http.StatusOK,
+		},
+		{
+			name:     "greet honors the greeting query param",
+			path:     "/greet/ada?greeting=Howdy",
+			wantBody: "Howdy, ada!",
+			wantCode: http.StatusOK,
+		},
+		{
+			name:     "unknown path hits the custom NotFound handler",
+			path:     "/nope",
+			wantBody: "nothing here",
+			wantCode: http.StatusNotFound,
 		},
 	}
 
@@ -91,7 +101,7 @@ func testGreetRoutes(t *testing.T, srv *httptest.Server) {
 func testErrorHandling(t *testing.T, srv *httptest.Server) {
 	t.Helper()
 
-	// Both a returned error and a panic are funnelled through the custom
+	// Both a returned error and a panic are funneled through the custom
 	// ErrorHandler, which flattens everything to 500 and tags the body.
 	t.Run("returned error reaches the custom handler", func(t *testing.T) {
 		code, body := get(t, srv, "/error")
@@ -235,7 +245,14 @@ func get(t *testing.T, srv *httptest.Server, path string) (int, string) {
 	return resp.StatusCode, body
 }
 
-func getRaw(t *testing.T, srv *httptest.Server, path string) (*http.Response, string) {
+// response holds the status and headers of an HTTP response whose body the
+// helper has already read and closed.
+type response struct {
+	Header     http.Header
+	StatusCode int
+}
+
+func getRaw(t *testing.T, srv *httptest.Server, path string) (response, string) {
 	t.Helper()
 
 	resp, err := srv.Client().Get(srv.URL + path)
@@ -250,7 +267,8 @@ func getRaw(t *testing.T, srv *httptest.Server, path string) (*http.Response, st
 	}
 
 	// http.Error appends a newline the handlers themselves never write.
-	return resp, strings.TrimSuffix(string(body), "\n")
+	return response{Header: resp.Header, StatusCode: resp.StatusCode},
+		strings.TrimSuffix(string(body), "\n")
 }
 
 func post(t *testing.T, srv *httptest.Server, path, contentType, body string) *http.Response {

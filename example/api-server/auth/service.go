@@ -1,3 +1,5 @@
+// Package auth implements the api-server example's user registration, login,
+// JWT issuance, and API key management.
 package auth
 
 import (
@@ -75,7 +77,7 @@ func (s *Service) Init() error {
 	// Auth middleware with JSON error responses instead of the default
 	// plain-text 401.
 	authMiddleware := gasauth.Middleware(chain, gasauth.WithOnError(
-		func(w http.ResponseWriter, r *http.Request, err error) {
+		func(w http.ResponseWriter, _ *http.Request, _ error) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
@@ -106,7 +108,7 @@ func (s *Service) Close() error { return nil }
 func (s *Service) Middleware() func(http.Handler) http.Handler {
 	chain := gasauth.Chain{s.jwt, s.apikeys}
 	return gasauth.Middleware(chain, gasauth.WithOnError(
-		func(w http.ResponseWriter, r *http.Request, err error) {
+		func(w http.ResponseWriter, _ *http.Request, _ error) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})

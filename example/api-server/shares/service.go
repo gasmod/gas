@@ -1,3 +1,5 @@
+// Package shares implements the api-server example's share links and
+// asynchronous email notifications.
 package shares
 
 import (
@@ -167,14 +169,7 @@ func (s *Service) handleCreateShare(ctx gas.Context) error {
 		return fmt.Errorf("generate share token: %w", err)
 	}
 
-	// Calculate expiry.
-	var expiresAt sql.NullTime
-	expiresStr := "never"
-	if req.ExpiresInHours > 0 {
-		t := time.Now().Add(time.Duration(req.ExpiresInHours) * time.Hour)
-		expiresAt = sql.NullTime{Time: t, Valid: true}
-		expiresStr = t.Format(time.RFC3339)
-	}
+	expiresAt, expiresStr := shareExpiry(req.ExpiresInHours)
 
 	share, err := s.queries.CreateShare(ctx, db.CreateShareParams{
 		FileID:         fileID,
@@ -194,14 +189,30 @@ func (s *Service) handleCreateShare(ctx gas.Context) error {
 	}
 
 	// Enqueue email notification asynchronously via the job queue.
-	job := shareEmailJob{
+	s.enqueueShareEmail(ctx, shareEmailJob{
 		RecipientEmail: req.RecipientEmail,
 		SenderEmail:    sender.Email,
 		FileName:       f.Name,
 		ShareToken:     token,
 		ExpiresAt:      expiresStr,
-	}
+	})
 
+	return ctx.JSON(http.StatusCreated, newShareResponse(share))
+}
+
+// shareExpiry returns the share's expiry time, unset when hours is zero, and
+// its RFC 3339 form for the notification email ("never" when unset).
+func shareExpiry(hours int) (sql.NullTime, string) {
+	if hours <= 0 {
+		return sql.NullTime{}, "never"
+	}
+	t := time.Now().Add(time.Duration(hours) * time.Hour)
+	return sql.NullTime{Time: t, Valid: true}, t.Format(time.RFC3339)
+}
+
+// enqueueShareEmail queues the share notification email. It is best-effort:
+// the share link is valid whether or not the email is sent.
+func (s *Service) enqueueShareEmail(ctx context.Context, job shareEmailJob) {
 	payload, _ := json.Marshal(job)
 
 	// Read queue URL from config. In production this would be a real SQS URL.
@@ -215,7 +226,10 @@ func (s *Service) handleCreateShare(ctx gas.Context) error {
 			_ = err
 		}
 	}
+}
 
+// newShareResponse converts a stored share into its API representation.
+func newShareResponse(share db.Share) shareResponse {
 	var resp shareResponse
 	resp.ID = share.ID
 	resp.FileID = share.FileID
@@ -225,8 +239,7 @@ func (s *Service) handleCreateShare(ctx gas.Context) error {
 	if share.ExpiresAt.Valid {
 		resp.ExpiresAt = &share.ExpiresAt.Time
 	}
-
-	return ctx.JSON(http.StatusCreated, resp)
+	return resp
 }
 
 func (s *Service) handleGetShare(ctx gas.Context) error {
@@ -289,10 +302,8 @@ func (s *Service) ProcessShareEmail(ctx context.Context, payload []byte) error {
 			"ShareURL":    "/api/shares/" + job.ShareToken,
 			"ExpiresAt":   job.ExpiresAt,
 		},
-		Email: gas.Email{
-			To:      []string{job.RecipientEmail},
-			Subject: fmt.Sprintf("%s shared a file with you", job.SenderEmail),
-		},
+		To:      []string{job.RecipientEmail},
+		Subject: fmt.Sprintf("%s shared a file with you", job.SenderEmail),
 	}); err != nil {
 		return fmt.Errorf("sending share notification: %w", err)
 	}

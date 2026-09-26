@@ -1,3 +1,5 @@
+// Package app contains the hello-world-2 example: JSON config, modules with
+// DI-aware handlers, route groups, middleware, and a custom error handler.
 package app
 
 import (

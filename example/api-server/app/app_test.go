@@ -265,12 +265,19 @@ func TestSecurityHeaders(t *testing.T) {
 
 // --- helpers ---
 
+// response holds the status and headers of an HTTP response whose body the
+// helper has already read and closed.
+type response struct {
+	Header     http.Header
+	StatusCode int
+}
+
 func do(
 	t *testing.T,
 	srv *httptest.Server,
 	method, path, contentType, body string,
 	headers ...string,
-) (*http.Response, string) {
+) (response, string) {
 	t.Helper()
 
 	var reader io.Reader
@@ -299,7 +306,7 @@ func do(
 	if err != nil {
 		t.Fatalf("reading %s %s body: %v", method, path, err)
 	}
-	return resp, string(raw)
+	return response{Header: resp.Header, StatusCode: resp.StatusCode}, string(raw)
 }
 
 // decodeError pulls the "error" field out of the service's JSON error envelope.
@@ -319,8 +326,8 @@ func decodeError(t *testing.T, body string) string {
 // returns (nil, nil) from Get, which every caller reads as a hit, so a genuine
 // store is needed to tell hits from misses.
 type memCache struct {
-	mu     sync.Mutex
 	values map[string][]byte
+	mu     sync.Mutex
 }
 
 func newMemCache() *memCache { return &memCache{values: map[string][]byte{}} }

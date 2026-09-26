@@ -1,3 +1,4 @@
+// Command hello-world runs the hello-world example application.
 package main
 
 import (
