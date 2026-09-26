@@ -218,8 +218,8 @@ func TestIntegration_Ack(t *testing.T) {
 		t.Fatalf("got %d jobs, want 1", len(jobs))
 	}
 
-	if err := svc.Ack(ctx, queueURL, jobs[0]); err != nil {
-		t.Fatalf("Ack: %v", err)
+	if ackErr := svc.Ack(ctx, queueURL, jobs[0]); ackErr != nil {
+		t.Fatalf("Ack: %v", ackErr)
 	}
 
 	remaining, err := svc.Dequeue(ctx, queueURL, 10, time.Second)
@@ -251,8 +251,8 @@ func TestIntegration_Nack(t *testing.T) {
 		t.Fatalf("got %d jobs, want 1", len(jobs))
 	}
 
-	if err := svc.Nack(ctx, queueURL, jobs[0]); err != nil {
-		t.Fatalf("Nack: %v", err)
+	if nackErr := svc.Nack(ctx, queueURL, jobs[0]); nackErr != nil {
+		t.Fatalf("Nack: %v", nackErr)
 	}
 
 	redelivered, err := svc.Dequeue(ctx, queueURL, 1, 2*time.Second)
@@ -746,12 +746,12 @@ func TestIntegration_ContextCancelled(t *testing.T) {
 
 	err := svc.Enqueue(ctx, queueURL, []byte("should-fail"))
 	if err == nil {
-		t.Fatal("Enqueue with cancelled context should fail")
+		t.Fatal("Enqueue with canceled context should fail")
 	}
 
 	_, err = svc.Dequeue(ctx, queueURL, 1, time.Second)
 	if err == nil {
-		t.Fatal("Dequeue with cancelled context should fail")
+		t.Fatal("Dequeue with canceled context should fail")
 	}
 }
 
@@ -775,8 +775,8 @@ func TestIntegration_NackThenAck(t *testing.T) {
 	if len(jobs) != 1 {
 		t.Fatalf("got %d jobs, want 1", len(jobs))
 	}
-	if err := svc.Nack(ctx, queueURL, jobs[0]); err != nil {
-		t.Fatalf("Nack: %v", err)
+	if nackErr := svc.Nack(ctx, queueURL, jobs[0]); nackErr != nil {
+		t.Fatalf("Nack: %v", nackErr)
 	}
 
 	// Second consume — ack it.
@@ -790,8 +790,8 @@ func TestIntegration_NackThenAck(t *testing.T) {
 	if string(jobs[0].Body) != "retry-me" {
 		t.Errorf("Body = %q, want %q", string(jobs[0].Body), "retry-me")
 	}
-	if err := svc.Ack(ctx, queueURL, jobs[0]); err != nil {
-		t.Fatalf("Ack: %v", err)
+	if ackErr := svc.Ack(ctx, queueURL, jobs[0]); ackErr != nil {
+		t.Fatalf("Ack: %v", ackErr)
 	}
 
 	// Should be gone now.
