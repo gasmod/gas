@@ -298,6 +298,36 @@ func TestIntegration_HeadNotFound(t *testing.T) {
 	}
 }
 
+func TestIntegration_BucketNotFound(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	svc := newTestService(t)
+	ctx := context.Background()
+	b := gas.InBucket("missing-bucket-xyz")
+
+	err := svc.Upload(ctx, "k", bytes.NewReader([]byte("data")), b)
+	if !errors.Is(err, storage.ErrBucketNotFound) {
+		t.Errorf("Upload(missing bucket) error = %v, want %v", err, storage.ErrBucketNotFound)
+	}
+	_, err = svc.Download(ctx, "k", b)
+	if !errors.Is(err, storage.ErrBucketNotFound) {
+		t.Errorf("Download(missing bucket) error = %v, want %v", err, storage.ErrBucketNotFound)
+	}
+	err = svc.Delete(ctx, "k", b)
+	if !errors.Is(err, storage.ErrBucketNotFound) {
+		t.Errorf("Delete(missing bucket) error = %v, want %v", err, storage.ErrBucketNotFound)
+	}
+
+	// HEAD responses carry no error body, so a missing bucket is
+	// indistinguishable from a missing key.
+	_, err = svc.Head(ctx, "k", b)
+	if !errors.Is(err, storage.ErrKeyNotFound) {
+		t.Errorf("Head(missing bucket) error = %v, want %v", err, storage.ErrKeyNotFound)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Adversarial: binary and weird data
 // ---------------------------------------------------------------------------

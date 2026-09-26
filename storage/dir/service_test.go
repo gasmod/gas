@@ -25,11 +25,13 @@ const testBucket = "test-bucket"
 var pngData = append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte("z"), 2000)...)
 
 // newTestService returns an initialized *dir.Service rooted at a fresh temp
-// directory, and that directory's path.
+// directory containing testBucket, and that directory's path.
 func newTestService(t *testing.T, opts ...dir.Option) (*dir.Service, string) {
 	t.Helper()
 
 	path := t.TempDir()
+	createBucket(t, path, testBucket)
+
 	root, err := os.OpenRoot(path)
 	if err != nil {
 		t.Fatalf("open root: %v", err)
@@ -51,6 +53,14 @@ func newTestService(t *testing.T, opts ...dir.Option) (*dir.Service, string) {
 	})
 
 	return svc, path
+}
+
+// createBucket creates the directory for bucket under the root at path.
+func createBucket(t *testing.T, path, bucket string) {
+	t.Helper()
+	if err := os.Mkdir(filepath.Join(path, bucket), 0o750); err != nil {
+		t.Fatalf("create bucket %q: %v", bucket, err)
+	}
 }
 
 func upload(t *testing.T, svc *dir.Service, key string, data []byte, opts ...gas.StorageOption) {
@@ -357,7 +367,9 @@ func TestUpload_ReaderErrorKeepsPreviousObject(t *testing.T) {
 }
 
 func TestBucketIsolation(t *testing.T) {
-	svc, _ := newTestService(t)
+	svc, path := newTestService(t)
+	createBucket(t, path, "one")
+	createBucket(t, path, "two")
 	ctx := context.Background()
 
 	if err := svc.Upload(ctx, "k", strings.NewReader("one"), gas.InBucket("one")); err != nil {
@@ -382,6 +394,37 @@ func TestBucketIsolation(t *testing.T) {
 		if string(body) != bucket {
 			t.Errorf("bucket %s body = %q, want %q", bucket, body, bucket)
 		}
+	}
+}
+
+func TestBucketNotFound(t *testing.T) {
+	svc, path := newTestService(t)
+	ctx := context.Background()
+	b := gas.InBucket("missing")
+
+	if err := svc.Upload(
+		ctx,
+		"k",
+		strings.NewReader("x"),
+		b,
+	); !errors.Is(
+		err,
+		storage.ErrBucketNotFound,
+	) {
+		t.Errorf("Upload = %v, want ErrBucketNotFound", err)
+	}
+	if _, err := svc.Download(ctx, "k", b); !errors.Is(err, storage.ErrBucketNotFound) {
+		t.Errorf("Download = %v, want ErrBucketNotFound", err)
+	}
+	if _, err := svc.Head(ctx, "k", b); !errors.Is(err, storage.ErrBucketNotFound) {
+		t.Errorf("Head = %v, want ErrBucketNotFound", err)
+	}
+	if err := svc.Delete(ctx, "k", b); !errors.Is(err, storage.ErrBucketNotFound) {
+		t.Errorf("Delete = %v, want ErrBucketNotFound", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(path, "missing")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("Upload created the missing bucket: stat err = %v", err)
 	}
 }
 

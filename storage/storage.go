@@ -10,6 +10,10 @@ var (
 	// requested key does not exist.
 	ErrKeyNotFound = errors.New("storage: key not found")
 
+	// ErrBucketNotFound is returned by Upload, Download, Delete or Head when
+	// the requested bucket does not exist.
+	ErrBucketNotFound = errors.New("storage: bucket not found")
+
 	// ErrClosed is returned when an operation is attempted on a closed
 	// storage service.
 	ErrClosed = errors.New("storage: service is closed")

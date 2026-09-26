@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 
 	"github.com/gasmod/gas"
 	storage "github.com/gasmod/gas/storage"
@@ -190,7 +191,8 @@ func (s *Service) resolveBucket(bucket string) (string, error) {
 	return bucket, nil
 }
 
-// Upload uploads an object to S3.
+// Upload uploads an object to S3. Returns storage.ErrBucketNotFound if the
+// bucket does not exist.
 func (s *Service) Upload(
 	ctx context.Context,
 	key string,
@@ -224,13 +226,17 @@ func (s *Service) Upload(
 	// overall Content-Length. This also lifts PutObject's 5GB limit.
 	_, err = s.uploader.UploadObject(ctx, input)
 	if err != nil {
+		if isNoSuchBucket(err) {
+			return storage.ErrBucketNotFound
+		}
 		return fmt.Errorf("%s: upload %q: %w", s.Name(), key, err)
 	}
 	return nil
 }
 
 // Download downloads an object from S3. Returns storage.ErrKeyNotFound
-// if the key does not exist.
+// if the key does not exist, or storage.ErrBucketNotFound if the bucket does
+// not exist.
 func (s *Service) Download(
 	ctx context.Context,
 	key string,
@@ -254,6 +260,9 @@ func (s *Service) Download(
 		if _, ok := errors.AsType[*types.NoSuchKey](err); ok {
 			return nil, storage.ErrKeyNotFound
 		}
+		if isNoSuchBucket(err) {
+			return nil, storage.ErrBucketNotFound
+		}
 		return nil, fmt.Errorf("%s: download %q: %w", s.Name(), key, err)
 	}
 
@@ -273,7 +282,8 @@ func (s *Service) Download(
 	return obj, nil
 }
 
-// Delete deletes an object from S3.
+// Delete deletes an object from S3. Deleting a missing key succeeds; returns
+// storage.ErrBucketNotFound if the bucket does not exist.
 func (s *Service) Delete(ctx context.Context, key string, opts ...gas.StorageOption) error {
 	if s.closed.Load() {
 		return storage.ErrClosed
@@ -290,6 +300,9 @@ func (s *Service) Delete(ctx context.Context, key string, opts ...gas.StorageOpt
 		Key:    new(key),
 	})
 	if err != nil {
+		if isNoSuchBucket(err) {
+			return storage.ErrBucketNotFound
+		}
 		return fmt.Errorf("%s: delete %q: %w", s.Name(), key, err)
 	}
 	return nil
@@ -360,7 +373,9 @@ func (s *Service) PresignUploadURL(
 }
 
 // Head retrieves object metadata without downloading the body.
-// Returns storage.ErrKeyNotFound if the key does not exist.
+// Returns storage.ErrKeyNotFound if the key does not exist. S3 answers a
+// HEAD request for a missing bucket with the same bodiless 404 as for a
+// missing key, so a missing bucket also reports storage.ErrKeyNotFound.
 func (s *Service) Head(
 	ctx context.Context,
 	key string,
@@ -407,4 +422,15 @@ func (s *Service) Head(
 // Client returns the underlying S3 client for advanced operations.
 func (s *Service) Client() *s3.Client {
 	return s.client
+}
+
+// isNoSuchBucket reports whether err is S3's NoSuchBucket error. The SDK only
+// models it as *types.NoSuchBucket for some operations; GetObject, PutObject
+// and DeleteObject surface it as a generic API error with that code.
+func isNoSuchBucket(err error) bool {
+	if _, ok := errors.AsType[*types.NoSuchBucket](err); ok {
+		return true
+	}
+	apiErr, ok := errors.AsType[smithy.APIError](err)
+	return ok && apiErr.ErrorCode() == "NoSuchBucket"
 }

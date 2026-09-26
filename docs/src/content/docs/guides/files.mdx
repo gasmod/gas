@@ -112,7 +112,8 @@ since the S3 client is stateless and has no broken state a restart would clear.
 ## Errors and testing
 
 Classify failures with `errors.Is` against `storage.ErrKeyNotFound`,
-`storage.ErrClosed`, and `storage.ErrBucketRequired`. The
+`storage.ErrBucketNotFound`, `storage.ErrClosed`, and
+`storage.ErrBucketRequired`. The
 [`storagetest`](https://pkg.go.dev/github.com/gasmod/gas/storage/storagetest)
 package provides `MockStorage`, a recording mock of `gas.StorageProvider`.
 

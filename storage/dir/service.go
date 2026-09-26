@@ -58,7 +58,8 @@ var (
 // Option configures a Service.
 type Option func(*Service)
 
-// WithRoot sets the root directory that objects are stored under.
+// WithRoot sets the root directory that objects are stored under. Each bucket
+// is a directory directly under the root and must exist before use.
 func WithRoot(root *os.Root) Option {
 	return func(s *Service) { s.root = root }
 }
@@ -104,6 +105,7 @@ func (s *Service) Close() error {
 }
 
 // Upload writes an object and its metadata under the bucket directory.
+// Returns storage.ErrBucketNotFound if the bucket directory does not exist.
 func (s *Service) Upload(
 	ctx context.Context,
 	key string,
@@ -124,14 +126,13 @@ func (s *Service) Upload(
 		return fmt.Errorf("%s: upload %q: %w", s.Name(), key, ErrInvalidPath)
 	}
 
-	name := filepath.Join(bucket, key)
-	dir := filepath.Dir(name)
-	tmpName := filepath.Join(dir, tmpFilePrefix+uuid.New().String())
-	tmpMetaName := tmpName + metaFileExt
-
-	if err = s.root.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("%s: upload %q: %w", s.Name(), key, err)
+	if err = s.requireBucket("upload", bucket, key); err != nil {
+		return err
 	}
+
+	name := filepath.Join(bucket, key)
+	tmpName := filepath.Join(filepath.Dir(name), tmpFilePrefix+uuid.New().String())
+	tmpMetaName := tmpName + metaFileExt
 
 	committed := false
 	defer func() {
@@ -164,6 +165,8 @@ func (s *Service) Upload(
 }
 
 // Download opens an object for reading. The caller must close the returned Body.
+// Returns storage.ErrKeyNotFound if the key does not exist, or
+// storage.ErrBucketNotFound if the bucket directory does not exist.
 func (s *Service) Download(
 	ctx context.Context,
 	key string,
@@ -187,6 +190,9 @@ func (s *Service) Download(
 	f, fErr := s.root.Open(name)
 	if fErr != nil {
 		if errors.Is(fErr, fs.ErrNotExist) {
+			if bErr := s.requireBucket("download", bucket, key); bErr != nil {
+				return nil, bErr
+			}
 			return nil, storage.ErrKeyNotFound
 		}
 		return nil, fmt.Errorf("%s: download %q: %w", s.Name(), key, fErr)
@@ -218,7 +224,9 @@ func (s *Service) Download(
 	}, nil
 }
 
-// Delete removes an object and its metadata file.
+// Delete removes an object and its metadata file. Deleting a missing key
+// succeeds; returns storage.ErrBucketNotFound if the bucket directory does not
+// exist.
 func (s *Service) Delete(ctx context.Context, key string, opts ...gas.StorageOption) error {
 	if err := s.CheckReady(ctx); err != nil {
 		return err
@@ -232,6 +240,10 @@ func (s *Service) Delete(ctx context.Context, key string, opts ...gas.StorageOpt
 
 	if !s.isValidPath(bucket, key) {
 		return fmt.Errorf("%s: delete %q: %w", s.Name(), key, ErrInvalidPath)
+	}
+
+	if err = s.requireBucket("delete", bucket, key); err != nil {
+		return err
 	}
 
 	name := filepath.Join(bucket, key)
@@ -250,6 +262,8 @@ func (s *Service) Delete(ctx context.Context, key string, opts ...gas.StorageOpt
 }
 
 // Head returns object metadata without opening the object for reading.
+// Returns storage.ErrKeyNotFound if the key does not exist, or
+// storage.ErrBucketNotFound if the bucket directory does not exist.
 func (s *Service) Head(
 	ctx context.Context,
 	key string,
@@ -273,6 +287,9 @@ func (s *Service) Head(
 	stat, sErr := s.root.Stat(name)
 	if sErr != nil {
 		if errors.Is(sErr, fs.ErrNotExist) {
+			if bErr := s.requireBucket("head", bucket, key); bErr != nil {
+				return nil, bErr
+			}
 			return nil, storage.ErrKeyNotFound
 		}
 		return nil, fmt.Errorf("%s: head %q: %w", s.Name(), key, sErr)
@@ -383,6 +400,20 @@ func (s *Service) resolveBucket(bucket string) (string, error) {
 	return bucket, nil
 }
 
+// requireBucket returns storage.ErrBucketNotFound if bucket's directory does
+// not exist under the root. op and key only label other stat errors.
+func (s *Service) requireBucket(op, bucket, key string) error {
+	_, err := s.root.Stat(bucket)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, fs.ErrNotExist):
+		return storage.ErrBucketNotFound
+	default:
+		return fmt.Errorf("%s: %s %q: %w", s.Name(), op, key, err)
+	}
+}
+
 func (s *Service) resolveMetadata(meta map[string]string) map[string]string {
 	if meta == nil {
 		meta = make(map[string]string)
@@ -420,11 +451,15 @@ func closeWithErr(f *os.File, err error) error {
 	return err
 }
 
-// writeTemp streams data into a new file at name and returns up to its first
-// 512 bytes for content-type detection.
+// writeTemp creates name's parent directories, streams data into a new file at
+// name and returns up to its first 512 bytes for content-type detection.
 //
 //nolint:wrapcheck // wrapped at the caller site
 func (s *Service) writeTemp(name string, data io.Reader) (head []byte, err error) {
+	if err = s.root.MkdirAll(filepath.Dir(name), 0o755); err != nil {
+		return nil, err
+	}
+
 	f, err := s.root.Create(name)
 	if err != nil {
 		return nil, err
