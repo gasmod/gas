@@ -40,6 +40,7 @@ type Service struct {
 	tmpl    gas.TemplateProvider
 	cfg     gas.ConfigProvider
 	auth    *auth.Service
+	logger  gas.Logger
 	queries *db.Queries
 }
 
@@ -56,6 +57,7 @@ func New(
 	tmpl gas.TemplateProvider,
 	cfg gas.ConfigProvider,
 	authSvc *auth.Service,
+	logger gas.Logger,
 ) *Service {
 	return &Service{
 		router:  router,
@@ -69,6 +71,7 @@ func New(
 		tmpl:    tmpl,
 		cfg:     cfg,
 		auth:    authSvc,
+		logger:  logger,
 		queries: db.New(dbProvider.DB()),
 	}
 }
@@ -223,7 +226,7 @@ func (s *Service) enqueueShareEmail(ctx context.Context, job shareEmailJob) {
 		if err := s.queue.Enqueue(ctx, queueCfg.ShareNotificationQueue, payload); err != nil {
 			// Log but don't fail the share creation if email enqueue fails.
 			// The share link is still valid.
-			_ = err
+			s.logger.Warn("enqueue share email failed").Err("error", err).Send()
 		}
 	}
 }
