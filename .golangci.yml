@@ -71,6 +71,8 @@ linters:
         - .WithMessage(
         - .WithMessagef(
         - .WithStack(
+        - (github.com/gasmod/gas.Context).
+        - (github.com/gasmod/gas.UIProvider).
 
     misspell:
       locale: US
