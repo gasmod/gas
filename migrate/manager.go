@@ -141,13 +141,9 @@ func (s *Service) RunPending() error {
 		return err
 	}
 	if len(dirty) > 0 {
-		versions := make([]string, len(dirty))
-		for i, d := range dirty {
-			versions[i] = d.Version
-		}
 		return fmt.Errorf(
 			"gas/migrate: dirty migrations block execution: %s",
-			strings.Join(versions, ", "),
+			joinVersions(dirty),
 		)
 	}
 
@@ -155,10 +151,7 @@ func (s *Service) RunPending() error {
 	if err != nil {
 		return err
 	}
-	appliedSet := make(map[string]struct{}, len(applied))
-	for _, a := range applied {
-		appliedSet[a.Version] = struct{}{}
-	}
+	appliedSet := versionSet(applied)
 
 	all, err := s.allMigrationsSorted()
 	if err != nil {
@@ -203,10 +196,7 @@ func (s *Service) Down(n int) error {
 	}
 
 	// Reverse order: most recently applied first.
-	count := n
-	if count > len(applied) {
-		count = len(applied)
-	}
+	count := min(n, len(applied))
 
 	for i := len(applied) - 1; i >= len(applied)-count; i-- {
 		a := applied[i]
@@ -235,14 +225,19 @@ func (s *Service) applyUp(ctx context.Context, migration gas.Migration) error {
 		)
 	}
 
+	if err := s.execUp(ctx, tx, migration); err != nil {
+		return err
+	}
+
+	return s.recordAndCommit(ctx, tx, migration)
+}
+
+// execUp runs migration's up SQL inside tx, rolling back and marking the
+// migration dirty on failure.
+func (s *Service) execUp(ctx context.Context, tx *sql.Tx, migration gas.Migration) error {
 	if _, err := tx.ExecContext(ctx, migration.Up); err != nil {
 		_ = tx.Rollback()
-		if markErr := s.markDirty(
-			ctx,
-			migration.Version,
-			migration.Service.Name(),
-			migration.Description,
-		); markErr != nil {
+		if markErr := s.markMigrationDirty(ctx, migration); markErr != nil {
 			return fmt.Errorf(
 				"gas/migrate: migration %s failed: %w (also failed to mark dirty: %w)",
 				migration.Version,
@@ -258,6 +253,12 @@ func (s *Service) applyUp(ctx context.Context, migration gas.Migration) error {
 		)
 	}
 
+	return nil
+}
+
+// recordAndCommit records migration as applied in tx and commits, marking the
+// migration dirty if either step fails.
+func (s *Service) recordAndCommit(ctx context.Context, tx *sql.Tx, migration gas.Migration) error {
 	// Record the migration as applied inside the same transaction as its DDL,
 	// so the schema change and the tracking row commit atomically. If recording
 	// fails (or the process crashes here), the whole transaction rolls back and
@@ -272,12 +273,7 @@ func (s *Service) applyUp(ctx context.Context, migration gas.Migration) error {
 		migration.Description,
 	); err != nil {
 		_ = tx.Rollback()
-		if markErr := s.markDirty(
-			ctx,
-			migration.Version,
-			migration.Service.Name(),
-			migration.Description,
-		); markErr != nil {
+		if markErr := s.markMigrationDirty(ctx, migration); markErr != nil {
 			return fmt.Errorf(
 				"gas/migrate: recording migration %s failed: %w (also failed to mark dirty: %w)",
 				migration.Version,
@@ -294,12 +290,7 @@ func (s *Service) applyUp(ctx context.Context, migration gas.Migration) error {
 	}
 
 	if err := tx.Commit(); err != nil {
-		if markErr := s.markDirty(
-			ctx,
-			migration.Version,
-			migration.Service.Name(),
-			migration.Description,
-		); markErr != nil {
+		if markErr := s.markMigrationDirty(ctx, migration); markErr != nil {
 			return fmt.Errorf(
 				"gas/migrate: commit failed for %s: %w (also failed to mark dirty: %w)",
 				migration.Version,
@@ -315,6 +306,11 @@ func (s *Service) applyUp(ctx context.Context, migration gas.Migration) error {
 	}
 
 	return nil
+}
+
+// markMigrationDirty records migration as dirty in the tracking table.
+func (s *Service) markMigrationDirty(ctx context.Context, migration gas.Migration) error {
+	return s.markDirty(ctx, migration.Version, migration.Service.Name(), migration.Description)
 }
 
 func (s *Service) applyDown(ctx context.Context, migration gas.Migration) error {

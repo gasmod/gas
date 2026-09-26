@@ -74,9 +74,9 @@ func TestInit_CreatesTrackingTable(t *testing.T) {
 }
 
 type testService struct {
-	name  string
 	init  func() error
 	close func() error
+	name  string
 }
 
 var _ gas.Service = (*testService)(nil)

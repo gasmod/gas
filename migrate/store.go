@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -72,4 +73,22 @@ func (s *Service) removeMigration(ctx context.Context, version string) error {
 		return fmt.Errorf("gas/migrate: failed to remove migration %s: %w", version, err)
 	}
 	return nil
+}
+
+// joinVersions returns the versions of migrations joined with ", ".
+func joinVersions(migrations []appliedMigration) string {
+	versions := make([]string, len(migrations))
+	for i, m := range migrations {
+		versions[i] = m.Version
+	}
+	return strings.Join(versions, ", ")
+}
+
+// versionSet returns the set of versions in migrations.
+func versionSet(migrations []appliedMigration) map[string]struct{} {
+	set := make(map[string]struct{}, len(migrations))
+	for _, m := range migrations {
+		set[m.Version] = struct{}{}
+	}
+	return set
 }
