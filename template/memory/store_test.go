@@ -14,7 +14,13 @@ func TestRegisterAndGet(t *testing.T) {
 	t.Parallel()
 	s := NewStore()
 
-	s.Register(context.Background(), "emails/welcome.html", []byte("<h1>Welcome</h1>"))
+	if err := s.Register(
+		context.Background(),
+		"emails/welcome.html",
+		[]byte("<h1>Welcome</h1>"),
+	); err != nil {
+		t.Fatalf("s.Register() error: %v", err)
+	}
 
 	got, err := s.Get(context.Background(), "emails/welcome.html")
 	if err != nil {
@@ -39,8 +45,12 @@ func TestRegisterOverwrite(t *testing.T) {
 	t.Parallel()
 	s := NewStore()
 
-	s.Register(context.Background(), "page.html", []byte("v1"))
-	s.Register(context.Background(), "page.html", []byte("v2"))
+	if err := s.Register(context.Background(), "page.html", []byte("v1")); err != nil {
+		t.Fatalf("s.Register() error: %v", err)
+	}
+	if err := s.Register(context.Background(), "page.html", []byte("v2")); err != nil {
+		t.Fatalf("s.Register() error: %v", err)
+	}
 
 	got, err := s.Get(context.Background(), "page.html")
 	if err != nil {
@@ -55,9 +65,15 @@ func TestList(t *testing.T) {
 	t.Parallel()
 	s := NewStore()
 
-	s.Register(context.Background(), "b.html", []byte("b"))
-	s.Register(context.Background(), "a.html", []byte("a"))
-	s.Register(context.Background(), "c.html", []byte("c"))
+	if err := s.Register(context.Background(), "b.html", []byte("b")); err != nil {
+		t.Fatalf("s.Register() error: %v", err)
+	}
+	if err := s.Register(context.Background(), "a.html", []byte("a")); err != nil {
+		t.Fatalf("s.Register() error: %v", err)
+	}
+	if err := s.Register(context.Background(), "c.html", []byte("c")); err != nil {
+		t.Fatalf("s.Register() error: %v", err)
+	}
 
 	names, err := s.List(context.Background())
 	if err != nil {
@@ -92,7 +108,14 @@ func TestConcurrentAccess(t *testing.T) {
 	go func() {
 		defer close(done)
 		for i := range 100 {
-			s.Register(context.Background(), fmt.Sprintf("t%d.html", i), []byte("content"))
+			if err := s.Register(
+				context.Background(),
+				fmt.Sprintf("t%d.html", i),
+				[]byte("content"),
+			); err != nil {
+				t.Errorf("s.Register() error: %v", err)
+				return
+			}
 		}
 	}()
 
