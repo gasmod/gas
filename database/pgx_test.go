@@ -207,7 +207,7 @@ func TestPgx_WithPgxTxCommit(t *testing.T) {
 		t.Fatalf("WithPgxTx: %v", err)
 	}
 
-	if got := pgxValue(t, s, table, 1); got != "committed" {
+	if got := pgxValue(t, s, table); got != "committed" {
 		t.Errorf("val = %q, want committed", got)
 	}
 }
@@ -233,7 +233,7 @@ func TestPgx_WithPgxTxRollback(t *testing.T) {
 		t.Fatalf("err = %v, want it to wrap the sentinel", err)
 	}
 
-	if got := pgxValue(t, s, table, 1); got != "" {
+	if got := pgxValue(t, s, table); got != "" {
 		t.Errorf("found %q after rollback, want no row", got)
 	}
 }
@@ -247,7 +247,7 @@ func TestPgx_WithPgxTxPanic(t *testing.T) {
 		if r := recover(); r == nil {
 			t.Fatal("expected panic to propagate")
 		}
-		if got := pgxValue(t, s, table, 1); got != "" {
+		if got := pgxValue(t, s, table); got != "" {
 			t.Errorf("found %q after panic rollback, want no row", got)
 		}
 	}()
@@ -279,7 +279,7 @@ func TestPgx_WithPgxTxCanceledContext(t *testing.T) {
 		); err != nil {
 			return err
 		}
-		// The commit runs on ctx, so cancelling here must fail it rather
+		// The commit runs on ctx, so canceling here must fail it rather
 		// than persist work the caller abandoned.
 		cancel()
 		return nil
@@ -288,7 +288,7 @@ func TestPgx_WithPgxTxCanceledContext(t *testing.T) {
 		t.Fatal("expected commit to fail on a canceled context")
 	}
 
-	if got := pgxValue(t, s, table, 1); got != "" {
+	if got := pgxValue(t, s, table); got != "" {
 		t.Errorf("found %q after a failed commit, want no row", got)
 	}
 }
@@ -314,7 +314,7 @@ func TestPgx_BeginPgxTxManual(t *testing.T) {
 		t.Fatalf("Commit: %v", err)
 	}
 
-	if got := pgxValue(t, s, table, 1); got != "manual" {
+	if got := pgxValue(t, s, table); got != "manual" {
 		t.Errorf("val = %q, want manual", got)
 	}
 }
@@ -326,7 +326,7 @@ func createPgxTable(t *testing.T, s *database.Service) string {
 
 	table := "gas_db_test_" + t.Name()
 	for i, r := range table {
-		if !('a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || '0' <= r && r <= '9' || r == '_') {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '_' {
 			table = table[:i] + "_" + table[i+1:]
 		}
 	}
@@ -350,13 +350,13 @@ func createPgxTable(t *testing.T, s *database.Service) string {
 	return table
 }
 
-// pgxValue returns the val column for id, or "" when the row is absent.
-func pgxValue(t *testing.T, s *database.Service, table string, id int) string {
+// pgxValue returns the val column for row 1, or "" when the row is absent.
+func pgxValue(t *testing.T, s *database.Service, table string) string {
 	t.Helper()
 
 	var val string
 	err := s.DB().
-		QueryRowContext(context.Background(), "SELECT val FROM "+table+" WHERE id = $1", id).
+		QueryRowContext(context.Background(), "SELECT val FROM "+table+" WHERE id = $1", 1).
 		Scan(&val)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ""

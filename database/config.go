@@ -122,8 +122,18 @@ const (
 )
 
 // Validate checks the Config struct for correctness and returns an error if any validation rule is violated.
-// nolint:cyclop,gocyclo // intentionally complex
 func (c *Config) Validate() error {
+	if err := c.validateSource(); err != nil {
+		return err
+	}
+	if err := c.validateConns(); err != nil {
+		return err
+	}
+	return c.validateLifetimes()
+}
+
+// validateSource checks the mode, driver, connector and DSN settings.
+func (c *Config) validateSource() error {
 	if !validModes[c.Database.Mode] {
 		return fmt.Errorf(
 			"Database.Mode must be one of [%s, %s], got %q",
@@ -156,6 +166,11 @@ func (c *Config) Validate() error {
 	if c.Database.DSN == "" && !c.hasConnector {
 		return errors.New("Database.DSN must not be empty")
 	}
+	return nil
+}
+
+// validateConns checks the connection pool size limits.
+func (c *Config) validateConns() error {
 	if c.Database.MaxOpenConns < minMaxOpenConns || c.Database.MaxOpenConns > maxMaxOpenConns {
 		return fmt.Errorf(
 			"Database.MaxOpenConns must be between %d and %d, got %d",
@@ -181,6 +196,11 @@ func (c *Config) Validate() error {
 			)
 		}
 	}
+	return nil
+}
+
+// validateLifetimes checks the connection lifetime and idle time limits.
+func (c *Config) validateLifetimes() error {
 	if c.Database.ConnMaxLifetime < minConnMaxLifetime ||
 		c.Database.ConnMaxLifetime > maxConnMaxLifetime {
 		return fmt.Errorf(

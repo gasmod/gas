@@ -20,16 +20,16 @@ import (
 // database will not fail a rollback or commit on demand, so these paths are
 // only reachable through an injected driver.
 type fakeBehavior struct {
+	beginErr    error
+	commitErr   error
+	rollbackErr error
+
 	mu sync.Mutex
 
 	// failPings is the number of leading Ping calls that fail, used to
 	// exercise connection retry.
 	failPings int
 	pings     int
-
-	beginErr    error
-	commitErr   error
-	rollbackErr error
 }
 
 func (b *fakeBehavior) pingErr() error {
@@ -109,7 +109,11 @@ func newFakeService(
 	if err := s.Init(); err != nil {
 		t.Fatalf("Init on fake driver: %v", err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
 	return s
 }
 
@@ -236,7 +240,11 @@ func TestInit_BindsConfigFromProvider(t *testing.T) {
 	if err := s.Init(); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
 
 	if !provider.called {
 		t.Error("Init did not bind from the config provider")
@@ -266,7 +274,11 @@ func TestInit_WithConfigSkipsProvider(t *testing.T) {
 	if err := s.Init(); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
 
 	if provider.called {
 		t.Error("WithConfig should suppress binding from the provider")
