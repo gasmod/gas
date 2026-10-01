@@ -22,7 +22,7 @@ require (
 )
 
 require (
-	github.com/aws/aws-sdk-go-v2 v1.47.0 // indirect
+	github.com/aws/aws-sdk-go-v2 v1.47.1 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.20 // indirect
 	github.com/aws/aws-sdk-go-v2/config v1.33.5 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.5 // indirect
@@ -61,6 +61,7 @@ require (
 	github.com/rs/zerolog v1.35.1 // indirect
 	github.com/valkey-io/valkey-go v1.0.78 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
+	golang.org/x/net v0.59.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
