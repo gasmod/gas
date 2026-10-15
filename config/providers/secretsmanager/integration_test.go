@@ -26,7 +26,8 @@ func startLocalStack(t *testing.T) string {
 	ctx := context.Background()
 
 	req := testcontainers.ContainerRequest{
-		Image:        "localstack/localstack:4",
+		// Pinned: newer LocalStack images need an auth token; 4.14.0 is the last Community build.
+		Image:        "localstack/localstack:4.14.0@sha256:3ebc37595918b8accb852f8048fef2aff047d465167edd655528065b07bc364a",
 		ExposedPorts: []string{"4566/tcp"},
 		WaitingFor: wait.ForHTTP("/_localstack/health").
 			WithPort("4566/tcp").
