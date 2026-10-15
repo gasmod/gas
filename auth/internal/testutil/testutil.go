@@ -5,12 +5,12 @@ package testutil
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 	_ "modernc.org/sqlite" // pure-Go "sqlite" driver for SQLite-backed test helpers
 
 	"github.com/gasmod/gas"
@@ -82,11 +82,11 @@ func SetupPostgres(t *testing.T) *PostgresContainer {
 		postgres.WithDatabase("testdb"),
 		postgres.WithUsername("testuser"),
 		postgres.WithPassword("testpass"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(30*time.Second),
-		),
+		// BasicWaitStrategies waits for the second readiness log line and
+		// then for 5432/tcp to be served on the host, within a 60s deadline.
+		// The log alone is not enough: on Docker Desktop the port proxy can
+		// lag the log, and ConnectionString then fails to find the mapping.
+		postgres.BasicWaitStrategies(),
 	)
 	if err != nil {
 		t.Fatalf("failed to start postgres container: %v", err)
@@ -100,7 +100,7 @@ func SetupPostgres(t *testing.T) *PostgresContainer {
 
 	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		t.Fatalf("failed to get connection string: %v", err)
+		t.Fatalf("failed to get connection string: %v (%s)", err, containerStatus(ctx, pgContainer))
 	}
 
 	dbSvc := newDatabaseService(t, func(s *database.Settings) {
@@ -118,6 +118,16 @@ func SetupPostgres(t *testing.T) *PostgresContainer {
 		dbSvc:     dbSvc,
 		migSvc:    migSvc,
 	}
+}
+
+// containerStatus describes the container's Docker state for a failure
+// message, so a failed setup shows whether the container had exited.
+func containerStatus(ctx context.Context, c testcontainers.Container) string {
+	state, err := c.State(ctx)
+	if err != nil {
+		return fmt.Sprintf("container state unavailable: %v", err)
+	}
+	return fmt.Sprintf("container status %q, exit code %d", state.Status, state.ExitCode)
 }
 
 // Provider returns the real database service for this container.
