@@ -28,8 +28,12 @@ func newTestService(t *testing.T) *vk.Service {
 	req := testcontainers.ContainerRequest{
 		Image:        "valkey/valkey:8",
 		ExposedPorts: []string{"6379/tcp"},
-		WaitingFor: wait.ForLog("Ready to accept connections").
-			WithStartupTimeout(30 * time.Second),
+		// The log line alone can precede the host port mapping on Docker
+		// Desktop, so also wait for 6379/tcp to be served before MappedPort.
+		WaitingFor: wait.ForAll(
+			wait.ForLog("Ready to accept connections"),
+			wait.ForListeningPort("6379/tcp"),
+		).WithDeadline(60 * time.Second),
 	}
 
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
