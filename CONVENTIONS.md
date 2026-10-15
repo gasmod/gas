@@ -15,9 +15,10 @@ func NewModule(opts ...Option) func(<dependencies>) (*Module, error)
 `func(gas.ConfigProvider, gas.Logger) (*Module, error)`. The service container resolves them, so its cycle and lifetime
 checks see every dependency. Constructors never take `*gas.ServiceContainer`.
 
-This convention covers constructors whose result is registered in the DI container. Values an app builds directly, such as
-`config.New`, the `log` constructors, config providers, `ui.NewEngine`, `log.NewOTLPMarshaler`, and `gas.NewNopLogger`,
-are out of scope.
+This convention covers constructors whose result is registered in the DI container, including the logger constructors
+(`gas.NewNopLogger`, `log.NewZeroLogLogger`, `log.NewSlogLogger`, `log.NewShippingLogger`), and including constructors
+that cannot fail. Values an app builds directly, such as `config.New`, config providers, `ui.NewEngine`,
+`log.NewShippingHandler`, and `log.NewOTLPMarshaler`, are out of scope.
 
 One-time setup belongs in the constructor, and Init must be restartable.
 
