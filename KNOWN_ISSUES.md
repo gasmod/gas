@@ -48,16 +48,17 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
     `auth/token/db.New`, and `template/db.NewStore`.
   - `func() *Store`: `template/dir.NewStore(dir)` and
     `template/fs.NewStore(fsys)`.
+  - `func() *<logger type>`: `gas.NewNopLogger`, `log.NewZeroLogLogger`,
+    `log.NewSlogLogger`, and `log.NewShippingLogger`.
 
   Out of scope, because an app builds the value directly rather than
   registering a constructor: in core, `NewApp`, `NewWorker`, `NewRouter`,
-  `NewServiceContainer`, `NewEventBus`, `NewContext`, `NewError`, and
-  `NewNopLogger`; `auth.NewPrincipal`; `config.New`,
+  `NewServiceContainer`, `NewEventBus`, `NewContext`, and `NewError`;
+  `auth.NewPrincipal`; `config.New`,
   `config/extensions/gasenv.NewExtension`, `config/providers`
   `NewDotEnvProvider`, `NewEnvProvider`, and `NewJSONProvider`,
   `config/providers/secretsmanager.NewProvider`, and
-  `config/configtest.NewMockConfigWithValues`; `log.NewZeroLogLogger`,
-  `log.NewSlogLogger`, `log.NewShippingLogger`, `log.NewShippingHandler`,
+  `config/configtest.NewMockConfigWithValues`; `log.NewShippingHandler`
   and `log.NewOTLPMarshaler`; `template/composite.NewStore` and
   `template/memory.NewStore`; and `ui.NewEngine`. Generated sqlc code is out
   of scope too.
