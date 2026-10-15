@@ -2,8 +2,8 @@
 
 Defects, test gaps, and debts found in Gas that are not fixed by the change
 that found them. An entry stays here until the fix is merged; the fix removes
-the entry in the same change, and its `CHANGELOG.md` entry records what was
-fixed.
+the entry in the same change, and, when the fix is visible to users, its
+`CHANGELOG.md` entry records what was fixed.
 
 Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
 
@@ -14,20 +14,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
 - **Detail**: what is wrong, with the evidence (error text, file and line,
   input that triggers it).
 - **Next step**: what has to happen to close it.
-
-## KI-001: `auth/apikey` `TestAPIKeyListEmpty` failed on a missing port mapping
-
-- **Status**: investigating
-- **Area**: `auth/apikey`, `auth/internal/testutil`
-- **Found**: 2026-10-15, one failure in a `make test-all` run on the
-  uncommitted lifecycle, auth, and storage work.
-- **Detail**: `apikey_integration_test.go:297: failed to get connection
-  string: port "5432/tcp" not found` from a postgres:16-alpine
-  testcontainer. It failed once; how often it fails, and whether it also
-  fails on `main`, is not yet known.
-- **Next step**: measure the failure rate on `main` and on the uncommitted
-  work, find the cause, then fix it in its own `test(auth)` change or in
-  the change that introduced it.
 
 ## KI-002: s3 backend has no real-service test suite after the storage rewrite
 
