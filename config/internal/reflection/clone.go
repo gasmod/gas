@@ -1,6 +1,3 @@
-// Package reflection provides utilities for working with Go's reflection system.
-// It includes functions for deep cloning of values, handling nil checks, and other
-// reflection-based operations.
 package reflection
 
 import "reflect"

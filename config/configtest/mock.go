@@ -1,18 +1,3 @@
-// Package configtest provides a mock implementation of the config provider
-// API for use in tests. The mock records all calls and allows configuring
-// per-method behavior via function fields.
-//
-//	mock := &configtest.MockConfig{}
-//	mock.GetFn = func(key string) any {
-//	    if key == "database.host" {
-//	        return "localhost"
-//	    }
-//	    return nil
-//	}
-//
-// For tests that just need a working config seeded with known values, use
-// NewMockConfigWithValues, which delegates to a real *config.Config under the
-// hood so Get/Find/Bind retain their normal semantics.
 package configtest
 
 import (
