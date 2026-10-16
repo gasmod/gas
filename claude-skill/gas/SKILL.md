@@ -97,13 +97,13 @@ const (
 ```
 
 **Choosing a lifetime:**
-- **Singleton** — stateless services, routers, event subscriptions, anything
+- **Singleton**: stateless services, routers, event subscriptions, anything
   that survives the full app lifetime. Most services are singletons.
-- **Scoped** — per-request state like a request logger type with
+- **Scoped**: per-request state like a request logger type with
   request-level fields (derived from the singleton `gas.Logger`, which stays a
   singleton because services depend on it), or database connections with
   request-scoped transactions.
-- **Transient** — lightweight value objects that need fresh state on every
+- **Transient**: lightweight value objects that need fresh state on every
   injection. Cannot implement `Service` (no Init/Close lifecycle).
 
 ## Option Types
