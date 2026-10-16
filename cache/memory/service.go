@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/gasmod/gas"
@@ -33,8 +32,16 @@ type Service struct {
 	cfgProvider gas.ConfigProvider
 	cancel      context.CancelFunc
 
-	mu     sync.RWMutex
-	closed atomic.Bool
+	// testHookBeforeLock, when set by a test, runs in each cache
+	// operation before it takes mu, so a test can close the service in
+	// that window.
+	testHookBeforeLock func()
+
+	// mu guards items. A nil items map means the service is not open:
+	// it was never started, or it was closed. Every cache operation
+	// checks that under mu, so a Close cannot slip in between the check
+	// and the access.
+	mu sync.RWMutex
 
 	customConfigProvided bool
 }
@@ -89,8 +96,9 @@ func (s *Service) Init(context.Context) error {
 		return err
 	}
 
+	s.mu.Lock()
 	s.items = make(map[string]entry)
-	s.closed.Store(false)
+	s.mu.Unlock()
 
 	if s.cfg.Cache.CleanupInterval > 0 {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -105,8 +113,6 @@ func (s *Service) Init(context.Context) error {
 
 // Close stops the background cleanup goroutine and clears the cache.
 func (s *Service) Close(context.Context) error {
-	s.closed.Store(true)
-
 	if s.cancel != nil {
 		s.cancel()
 	}
@@ -120,13 +126,16 @@ func (s *Service) Close(context.Context) error {
 }
 
 // Get returns the value for the given key, or cache.ErrKeyNotFound if
-// the key does not exist or has expired.
+// the key does not exist or has expired. It returns cache.ErrClosed if
+// the service was never started or has been closed.
 func (s *Service) Get(_ context.Context, key string) ([]byte, error) {
-	if s.closed.Load() {
-		return nil, cache.ErrClosed
-	}
+	s.runTestHookBeforeLock()
 
 	s.mu.RLock()
+	if s.items == nil {
+		s.mu.RUnlock()
+		return nil, cache.ErrClosed
+	}
 	e, ok := s.items[key]
 	s.mu.RUnlock()
 
@@ -149,11 +158,11 @@ func (s *Service) Get(_ context.Context, key string) ([]byte, error) {
 // DefaultTTL is used. If DefaultTTL is also 0, the entry never expires.
 // When MaxEntries is reached and a new key is inserted, one expired
 // entry, chosen in map iteration order rather than by age, is evicted
-// first; if none are expired, the set is rejected with an error.
+// first; if none are expired, the set is rejected with an error. It
+// returns cache.ErrClosed if the service was never started or has been
+// closed.
 func (s *Service) Set(_ context.Context, key string, value []byte, ttl time.Duration) error {
-	if s.closed.Load() {
-		return cache.ErrClosed
-	}
+	s.runTestHookBeforeLock()
 
 	if ttl == 0 {
 		ttl = s.cfg.Cache.DefaultTTL
@@ -166,6 +175,10 @@ func (s *Service) Set(_ context.Context, key string, value []byte, ttl time.Dura
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.items == nil {
+		return cache.ErrClosed
+	}
 
 	// enforce max entries for new keys
 	if s.cfg.Cache.MaxEntries > 0 {
@@ -181,26 +194,31 @@ func (s *Service) Set(_ context.Context, key string, value []byte, ttl time.Dura
 	return nil
 }
 
-// Delete removes a key from the cache.
+// Delete removes a key from the cache. It returns cache.ErrClosed if the
+// service was never started or has been closed.
 func (s *Service) Delete(_ context.Context, key string) error {
-	if s.closed.Load() {
-		return cache.ErrClosed
-	}
+	s.runTestHookBeforeLock()
 
 	s.mu.Lock()
-	delete(s.items, key)
-	s.mu.Unlock()
+	defer s.mu.Unlock()
 
+	if s.items == nil {
+		return cache.ErrClosed
+	}
+	delete(s.items, key)
 	return nil
 }
 
-// Exists checks whether a key exists and has not expired.
+// Exists checks whether a key exists and has not expired. It returns
+// cache.ErrClosed if the service was never started or has been closed.
 func (s *Service) Exists(_ context.Context, key string) (bool, error) {
-	if s.closed.Load() {
-		return false, cache.ErrClosed
-	}
+	s.runTestHookBeforeLock()
 
 	s.mu.RLock()
+	if s.items == nil {
+		s.mu.RUnlock()
+		return false, cache.ErrClosed
+	}
 	e, ok := s.items[key]
 	s.mu.RUnlock()
 
@@ -208,6 +226,13 @@ func (s *Service) Exists(_ context.Context, key string) (bool, error) {
 		return false, nil
 	}
 	return true, nil
+}
+
+// runTestHookBeforeLock runs testHookBeforeLock if a test has set it.
+func (s *Service) runTestHookBeforeLock() {
+	if s.testHookBeforeLock != nil {
+		s.testHookBeforeLock()
+	}
 }
 
 // cleanup periodically removes expired entries.

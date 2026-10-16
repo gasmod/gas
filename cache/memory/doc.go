@@ -24,7 +24,11 @@
 // when CleanupInterval is positive, starts a goroutine that removes expired
 // entries on that interval until the service stops. Stopping it cancels
 // that goroutine, drops every entry, and makes every operation return
-// cache.ErrClosed. Starting it again begins with an empty cache.
+// cache.ErrClosed. Starting it again begins with an empty cache. Before
+// the service has started, every operation also returns cache.ErrClosed.
+// Each operation checks this under the mutex, so a stop that races an
+// operation makes it return cache.ErrClosed rather than touch the dropped
+// map.
 //
 // # Behavior
 //
@@ -34,8 +38,7 @@
 // the expired entry it finds. When MaxEntries is reached, a Set of a new
 // key removes one expired entry, chosen in map iteration order rather than
 // by age, and fails with an error if there is none; overwriting an existing
-// key always succeeds. A Set that races a stop, or that runs before the
-// service has started, can panic (KI-016). Values are stored and returned
+// key always succeeds. Values are stored and returned
 // as the same slice, not copies, so a caller that modifies a slice it
 // passed to Set or got from Get changes the cached value.
 //

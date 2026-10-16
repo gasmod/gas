@@ -258,3 +258,87 @@ func TestDefaultTTL(t *testing.T) {
 		)
 	}
 }
+
+func TestUnstartedServiceReturnsErrClosed(t *testing.T) {
+	t.Parallel()
+
+	svc := New(WithConfig(DefaultConfig()))(nil, gas.NewNopLogger()())
+	ctx := context.Background()
+
+	if _, err := svc.Get(ctx, "k"); !errors.Is(err, cache.ErrClosed) {
+		t.Errorf("Get() before Init = %v, want %v", err, cache.ErrClosed)
+	}
+	if err := svc.Set(ctx, "k", []byte("v"), 0); !errors.Is(err, cache.ErrClosed) {
+		t.Errorf("Set() before Init = %v, want %v", err, cache.ErrClosed)
+	}
+	if err := svc.Delete(ctx, "k"); !errors.Is(err, cache.ErrClosed) {
+		t.Errorf("Delete() before Init = %v, want %v", err, cache.ErrClosed)
+	}
+	if _, err := svc.Exists(ctx, "k"); !errors.Is(err, cache.ErrClosed) {
+		t.Errorf("Exists() before Init = %v, want %v", err, cache.ErrClosed)
+	}
+}
+
+func TestCloseDuringOperationReturnsErrClosed(t *testing.T) {
+	t.Parallel()
+
+	ops := map[string]func(*Service) error{
+		"Get": func(s *Service) error {
+			_, err := s.Get(context.Background(), "k")
+			return err
+		},
+		"Set": func(s *Service) error {
+			return s.Set(context.Background(), "k", []byte("v"), 0)
+		},
+		"Delete": func(s *Service) error {
+			return s.Delete(context.Background(), "k")
+		},
+		"Exists": func(s *Service) error {
+			_, err := s.Exists(context.Background(), "k")
+			return err
+		},
+	}
+
+	for name, op := range ops {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			svc := newTestService(t)
+			if err := svc.Set(context.Background(), "k", []byte("v"), 0); err != nil {
+				t.Fatalf("Set() error: %v", err)
+			}
+
+			svc.testHookBeforeLock = func() {
+				_ = svc.Close(context.Background())
+			}
+
+			if err := op(svc); !errors.Is(err, cache.ErrClosed) {
+				t.Errorf(
+					"%s() with Close before the lock = %v, want %v",
+					name,
+					err,
+					cache.ErrClosed,
+				)
+			}
+		})
+	}
+}
+
+func TestReinitAfterClose(t *testing.T) {
+	t.Parallel()
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	if err := svc.Close(ctx); err != nil {
+		t.Fatalf("Close() error: %v", err)
+	}
+	if err := svc.Init(t.Context()); err != nil {
+		t.Fatalf("Init() after Close error: %v", err)
+	}
+	if err := svc.Set(ctx, "k", []byte("v"), 0); err != nil {
+		t.Fatalf("Set() after re-Init error: %v", err)
+	}
+	got, err := svc.Get(ctx, "k")
+	if err != nil || string(got) != "v" {
+		t.Errorf("Get() after re-Init = %q, %v, want %q, nil", got, err, "v")
+	}
+}

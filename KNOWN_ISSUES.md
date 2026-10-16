@@ -252,25 +252,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   initialized, and whether a later `Start` returns the original error (a
   §3 lifecycle decision in `CLAUDE.md`).
 
-## KI-016: memory cache Set can panic on a stopped or unstarted service
-
-- **Status**: open
-- **Area**: `cache/memory` (`service.go`).
-- **Found**: 2026-10-16, while writing the cache `doc.go`. Suspected from
-  reading the code; a 2000-round probe racing `Set` against `Close` did
-  not trigger it.
-- **Detail**: `Set` checks `closed` (`cache/memory/service.go:152`) before
-  it takes the mutex (`:165`), and does not check it again before writing
-  `s.items[key]` (`:178`). `Close` sets `closed` (`:106`) and then, under
-  the mutex, sets `s.items` to nil (`:112` and `:113`). If `Set` passes its
-  check, `Close` runs to completion, and `Set` then takes the mutex, the
-  write goes to a nil map and panics with `assignment to entry in nil
-  map`. A `Set` on a service that was constructed but never started
-  writes to the same nil map. `Get`, `Exists`, and `Delete` only read or
-  delete, which a nil map allows.
-- **Next step**: check `closed` again after taking the mutex in `Set` (or
-  keep an empty map on `Close`), with a test that drives the interleaving.
-
 ## KI-017: valkey cache operations panic before the service starts
 
 - **Status**: open
