@@ -16,6 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   context is canceled or its deadline passes; the returned error wraps
   `ctx.Err()`. The memory backend's cleanup goroutine keeps its own lifetime
   and is still stopped by `Close`, not by the Init context.
+- `memory.Service` `Get`, `Delete`, and `Exists` return `cache.ErrClosed`
+  before the service has started, as `Set` now does. They used to report a
+  missing key, `nil`, and `false`.
+
+### Fixed
+
+- `memory.Service.Set` no longer panics with `assignment to entry in nil
+  map` when it runs before the service has started or races `Close`; it
+  returns `cache.ErrClosed`. Every operation now checks that the service is
+  open under its mutex.
 
 ## [0.3.0] - 2026-07-03
 

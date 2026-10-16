@@ -95,6 +95,8 @@ func receives `gas.ConfigProvider` and `gas.Logger` from the DI container.
   periodically removes all expired entries.
 - **Lazy deletion:** `Get` on an expired key deletes it before returning
   `ErrKeyNotFound`.
+- **Not open:** `Get`, `Set`, `Delete`, and `Exists` return `ErrClosed`
+  before `Init` and after `Close`, including when `Close` races the call.
 
 ### Config
 
