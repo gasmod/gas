@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **DI sentinel errors:** `gas.ErrNotRegistered`,
+  `gas.ErrCircularDependency`, `gas.ErrCaptiveDependency`,
+  `gas.ErrScopeRequired`, `gas.ErrNoConstructor`, `gas.ErrInvalidLifetime`,
+  and `gas.ErrInvalidServiceShape`. Errors from `Resolve`, `BuildAll`, and
+  startup wrap the matching sentinel, so callers can use `errors.Is` instead
+  of matching message text. The messages are unchanged.
+
+### Changed
+
+- **BREAKING: `Authenticator`, `Authorizer`, and `PrincipalRevoker` moved to
+  the auth module.** They are now `auth.Authenticator`, `auth.Authorizer`, and
+  `auth.PrincipalRevoker` in `github.com/gasmod/gas/auth`, the only module
+  that implements them. Replace `gas.Authenticator` with `auth.Authenticator`
+  (and likewise for the other two). `gas.Principal`, `gas.PrincipalMetadata`,
+  `gas.BasePrincipalMetadata`, `gas.MetadataValue`, `gas.WithPrincipal`,
+  `gas.PrincipalFromContext`, and `Context.Principal` stay in core, unchanged.
+
+### Removed
+
+- **BREAKING: `gas.StorageProvider` is removed from core**, together with
+  `gas.StorageObject`, `gas.ObjectInfo`, `gas.StorageOption`, `gas.InBucket`,
+  `gas.WithContentType`, `gas.WithMetadata`, and `gas.ApplyStorageOptions`.
+  Object storage is now `storage.Provider` and `storage.Presigner` in the
+  `gas/storage` module; register `s3.NewProvider()` and `s3.NewPresigner()`
+  (or `dir.NewProvider(...)`) under them. See `storage/CHANGELOG.md`.
+- **BREAKING: `gas.MustPrincipalFromContext`.** It panicked on any request
+  that reached a handler without a principal. Use `ctx.Principal()` in a
+  handler, which returns a 401 `*gas.Error` the handler can return, or
+  `gas.PrincipalFromContext` and check for nil.
+
 ## [0.5.0] - 2026-09-19
 
 ### Added

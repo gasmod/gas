@@ -1,5 +1,3 @@
-// Package shares implements the api-server example's share links and
-// asynchronous email notifications.
 package shares
 
 import (
@@ -18,6 +16,7 @@ import (
 	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/example/api-server/auth"
 	"github.com/gasmod/gas/example/api-server/db"
+	"github.com/gasmod/gas/storage"
 )
 
 //go:embed migrations/*.sql
@@ -29,19 +28,19 @@ var templatesFS embed.FS
 // Service handles creating share links and sending email notifications
 // asynchronously via the job queue.
 type Service struct {
-	router  *gas.Router
-	bus     *gas.EventBus
-	db      gas.DatabaseProvider
-	mgr     gas.MigrationManager
-	storage gas.StorageProvider
-	cache   gas.CacheProvider
-	queue   gas.JobQueueProvider
-	email   gas.EmailProvider
-	tmpl    gas.TemplateProvider
-	cfg     gas.ConfigProvider
-	auth    *auth.Service
-	logger  gas.Logger
-	queries *db.Queries
+	router    *gas.Router
+	bus       *gas.EventBus
+	db        gas.DatabaseProvider
+	mgr       gas.MigrationManager
+	presigner storage.Presigner
+	cache     gas.CacheProvider
+	queue     gas.JobQueueProvider
+	email     gas.EmailProvider
+	tmpl      gas.TemplateProvider
+	cfg       gas.ConfigProvider
+	auth      *auth.Service
+	logger    gas.Logger
+	queries   *db.Queries
 }
 
 // New is the DI constructor; the container injects every parameter.
@@ -50,7 +49,7 @@ func New(
 	bus *gas.EventBus,
 	dbProvider gas.DatabaseProvider,
 	mgr gas.MigrationManager,
-	storage gas.StorageProvider,
+	presigner storage.Presigner,
 	cache gas.CacheProvider,
 	queue gas.JobQueueProvider,
 	email gas.EmailProvider,
@@ -60,19 +59,19 @@ func New(
 	logger gas.Logger,
 ) *Service {
 	return &Service{
-		router:  router,
-		bus:     bus,
-		db:      dbProvider,
-		mgr:     mgr,
-		storage: storage,
-		cache:   cache,
-		queue:   queue,
-		email:   email,
-		tmpl:    tmpl,
-		cfg:     cfg,
-		auth:    authSvc,
-		logger:  logger,
-		queries: db.New(dbProvider.DB()),
+		router:    router,
+		bus:       bus,
+		db:        dbProvider,
+		mgr:       mgr,
+		presigner: presigner,
+		cache:     cache,
+		queue:     queue,
+		email:     email,
+		tmpl:      tmpl,
+		cfg:       cfg,
+		auth:      authSvc,
+		logger:    logger,
+		queries:   db.New(dbProvider.DB()),
 	}
 }
 
@@ -268,7 +267,13 @@ func (s *Service) handleGetShare(ctx gas.Context) error {
 	}
 
 	// Generate presigned download URL.
-	url, err := s.storage.PresignDownloadURL(ctx, share.FileStorageKey, 15*time.Minute)
+	ttl := 15 * time.Minute
+	presigned, err := s.presigner.PresignDownloadURL(ctx, &storage.PresignDownloadURLInput{
+		TTL: &ttl,
+		GetObjectInput: storage.GetObjectInput{HeadObjectInput: storage.HeadObjectInput{
+			BaseObjectInput: storage.BaseObjectInput{Key: share.FileStorageKey},
+		}},
+	})
 	if err != nil {
 		return fmt.Errorf("presign url: %w", err)
 	}
@@ -277,7 +282,7 @@ func (s *Service) handleGetShare(ctx gas.Context) error {
 		FileName:    share.FileName,
 		FileSize:    share.FileSize,
 		ContentType: share.FileContentType,
-		DownloadURL: url,
+		DownloadURL: presigned.URL,
 	}
 
 	// Cache for 14 minutes (slightly less than presigned URL expiry).
