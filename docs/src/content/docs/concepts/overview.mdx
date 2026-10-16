@@ -35,7 +35,7 @@ func New(router *gas.Router, bus *gas.EventBus) *Service {
 ```
 
 This is what makes a module replaceable. A service that depends on
-`gas.StorageProvider` works unchanged against S3, against a fake in tests, or
+`storage.Provider` works unchanged against S3, against a fake in tests, or
 against an implementation you write yourself.
 
 ## Ownership tracking

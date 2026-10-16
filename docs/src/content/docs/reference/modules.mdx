@@ -44,7 +44,7 @@ or startup fails with `no registration for <type>`.
 | `cachemem.New()`, `cachevk.New()` | `gas.ConfigProvider`, `gas.Logger` |
 | `database.New()` | `gas.ConfigProvider`, `gas.Logger` |
 | `migrate.New()` | `gas.DatabaseProvider` |
-| `s3.New()` | `gas.ConfigProvider`, `gas.Logger` |
+| `s3.NewProvider()`, `s3.NewPresigner()`, `dir.NewProvider(dir.WithRoot(root))` | `gas.ConfigProvider` |
 | `sqs.New()` | `gas.ConfigProvider`, `gas.Logger` |
 | `ses.New()` | `gas.TemplateProvider`, `gas.ConfigProvider`, `gas.Logger` |
 | `jwt.New()` | `gas.ConfigProvider`, `gas.Logger` |
