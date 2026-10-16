@@ -165,10 +165,11 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
 - **Area**: `migrate` (`manager.go`).
 - **Found**: 2026-10-16, while writing the migrate `doc.go`.
 - **Detail**: `allMigrationsSorted` (`migrate/manager.go:351`) rejects a
-  version registered by two different services but not one registered twice by the same service.
-  `RunPending` then applies the first, and recording the second hits the
-  tracking table's primary key; the failure marks the version dirty,
-  although its first migration did apply, which blocks every later run.
+  version registered by two different services but not one registered
+  twice by the same service. `RunPending` then applies the first, and
+  recording the second hits the tracking table's primary key; the failure
+  marks the version dirty, although its first migration did apply, which
+  blocks every later run.
   Verified on SQLite: `UNIQUE constraint failed: __gas_migrations.version`,
   then one dirty version.
 - **Next step**: reject a duplicate version from the same service at
