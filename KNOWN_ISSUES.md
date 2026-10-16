@@ -114,3 +114,53 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   `CLAUDE.md`, which asks for `errors.Is` or `errors.As`; the core's own
   `unhappy_path_test.go:31`, `:55`, and `:78` use `strings.Contains`.
 - **Next step**: one §3 decision covering sentinels for all of these.
+
+## KI-022: template dir store panics after Close
+
+- **Status**: open
+- **Area**: `template/dir` (`store.go`).
+- **Found**: 2026-10-16, while writing the template `doc.go`.
+- **Detail**: the store opens its `os.Root` once, through a `sync.Once`
+  (`template/dir/store.go:50`), and `Close` sets it to nil (`:135`). The
+  `Once` does not run again, so a `Get` or `List` after `Close` calls
+  `FS()` on the nil root (`:69`, `:86`) and panics with `invalid memory
+  address or nil pointer dereference`. Verified with a throwaway test for
+  `Get`. `Close` also writes `s.root` without the store's lock, so a `Close`
+  concurrent with a read is a data race.
+- **Next step**: return an error after `Close` (for example a closed flag
+  checked under the lock), since §7 of `CLAUDE.md` reserves panics for
+  wiring mistakes.
+
+## KI-023: two template db stores register the same migration
+
+- **Status**: open
+- **Area**: `template/db` (`store.go`).
+- **Found**: 2026-10-16, while writing the template `doc.go`.
+- **Detail**: the package documents namespaces as the way for several
+  stores to share the `__gas_templates` table, but every store registers
+  the table's migration, version `20260322235959`, under the same service
+  name, `gas/template/db` (`template/db/store.go:79` and `:105`). Two
+  stores therefore register one version twice under one service, which
+  is the case in KI-021: `RunPending` applies it once, fails on the
+  tracking table's primary key for the second, and marks the version
+  dirty. Verified with a recording migration manager (two stores, two
+  registrations of `gas/template/db@20260322235959`); the `RunPending`
+  outcome is KI-021's, verified separately.
+- **Next step**: register the migration once however many stores exist,
+  or have the migration manager accept an identical re-registration.
+
+## KI-024: template db store cannot be written to while services start
+
+- **Status**: open
+- **Area**: `template/db` (`store.go`), with the Worker's startup order.
+- **Found**: 2026-10-16, while writing the template `doc.go`.
+- **Detail**: the store's table comes from a migration it registers when
+  it starts, and the Worker applies migrations only after every service
+  has started. A service that registers templates into the store from its
+  own start-up, as services are told to do, writes before the table
+  exists on a fresh database. Verified on SQLite: `Register` before
+  `RunPending` failed with `no such table: __gas_templates`, and succeeded
+  after it.
+- **Next step**: create the table when the store starts instead of
+  through a deferred migration, or document that templates can only be
+  written once startup has finished.

@@ -1,7 +1,3 @@
-// Package fs provides a read-only template store backed by an fs.FS,
-// suitable for use with embed.FS or any other fs.FS implementation.
-// For mutable storage, wrap this in a composite.Store with a writable
-// provider such as memory.Store.
 package fs
 
 import (
