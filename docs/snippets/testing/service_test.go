@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/gasmod/gas"
+	"github.com/gasmod/gas/storage"
 	"github.com/gasmod/gas/storage/storagetest"
 )
 
@@ -18,12 +19,12 @@ import (
 
 // The service under test depends on the interface, not on a backend.
 type Service struct {
-	storage gas.StorageProvider
+	storage storage.Provider
 	router  *gas.Router
 }
 
-func New(storage gas.StorageProvider, router *gas.Router) *Service {
-	return &Service{storage: storage, router: router}
+func New(provider storage.Provider, router *gas.Router) *Service {
+	return &Service{storage: provider, router: router}
 }
 
 func (s *Service) Name() string                { return "files" }
@@ -35,7 +36,11 @@ func (s *Service) Init(context.Context) error {
 }
 
 func (s *Service) download(ctx gas.Context) error {
-	obj, err := s.storage.Download(ctx, ctx.Param("key"))
+	obj, err := s.storage.GetObject(ctx, &storage.GetObjectInput{
+		HeadObjectInput: storage.HeadObjectInput{
+			BaseObjectInput: storage.BaseObjectInput{Key: ctx.Param("key")},
+		},
+	})
 	if err != nil {
 		return gas.NotFound("file not found").WithCause(err)
 	}
@@ -52,24 +57,27 @@ func (s *Service) download(ctx gas.Context) error {
 // Every provider ships a recording mock, so a unit test needs no backend and
 // no network. Set only the methods the test exercises.
 func TestDownloadUsesStorage(t *testing.T) {
-	mock := &storagetest.MockStorage{}
-	mock.DownloadFn = func(_ context.Context, key string, _ ...gas.StorageOption) (*gas.StorageObject, error) {
-		return &gas.StorageObject{
-			Body:        io.NopCloser(strings.NewReader("hello")),
-			ContentType: "text/plain",
+	mock := &storagetest.MockProvider{}
+	mock.GetObjectFn = func(_ context.Context, _ *storage.GetObjectInput) (*storage.Object, error) {
+		return &storage.Object{
+			Body:       io.NopCloser(strings.NewReader("hello")),
+			ObjectInfo: storage.ObjectInfo{ContentType: "text/plain"},
 		}, nil
 	}
 
 	svc := New(mock, gas.NewApp().Router())
-	if svc.storage != gas.StorageProvider(mock) {
+	if svc.storage != storage.Provider(mock) {
 		t.Fatal("service should hold the mock")
 	}
 
-	if _, err := mock.Download(context.Background(), "notes.txt"); err != nil {
-		t.Fatalf("download: %v", err)
+	input := &storage.GetObjectInput{HeadObjectInput: storage.HeadObjectInput{
+		BaseObjectInput: storage.BaseObjectInput{Key: "notes.txt"},
+	}}
+	if _, err := mock.GetObject(context.Background(), input); err != nil {
+		t.Fatalf("get object: %v", err)
 	}
-	if mock.CallCount("Download") != 1 {
-		t.Fatalf("expected one Download call, got %d", mock.CallCount("Download"))
+	if mock.CallCount("GetObject") != 1 {
+		t.Fatalf("expected one GetObject call, got %d", mock.CallCount("GetObject"))
 	}
 }
 
@@ -80,13 +88,13 @@ func TestDownloadUsesStorage(t *testing.T) {
 // router behind CSRF protection, so the test exercises the same middleware as
 // production without binding a port.
 func TestDownloadRoute(t *testing.T) {
-	mock := &storagetest.MockStorage{}
-	mock.DownloadFn = func(_ context.Context, _ string, _ ...gas.StorageOption) (*gas.StorageObject, error) {
-		return &gas.StorageObject{Body: io.NopCloser(strings.NewReader("hello"))}, nil
+	mock := &storagetest.MockProvider{}
+	mock.GetObjectFn = func(_ context.Context, _ *storage.GetObjectInput) (*storage.Object, error) {
+		return &storage.Object{Body: io.NopCloser(strings.NewReader("hello"))}, nil
 	}
 
 	app := gas.NewApp(
-		gas.WithServiceInstance[gas.StorageProvider](mock),
+		gas.WithServiceInstance[storage.Provider](mock),
 		gas.WithSingletonService[*Service](New),
 	)
 	if err := app.Start(t.Context()); err != nil {

@@ -1,7 +1,7 @@
 // Package token provides single-use, time-limited tokens for the Gas
 // ecosystem. Tokens are used for magic links, email verification, password
 // reset, and invite links. They implement gas.Service but NOT
-// gas.Authenticator — tokens are verified once and consumed.
+// auth.Authenticator: tokens are verified once and consumed.
 package token //nolint:revive // intentional: "token" is the natural name for this domain package
 
 import (

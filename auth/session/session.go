@@ -1,5 +1,5 @@
 // Package session provides server-side session authentication for the Gas
-// ecosystem. It implements gas.Authenticator, gas.PrincipalRevoker, and
+// ecosystem. It implements auth.Authenticator, auth.PrincipalRevoker, and
 // gas.Service.
 package session
 
@@ -18,8 +18,8 @@ import (
 
 const serviceName = "gas/auth/session"
 
-// Service is a session authenticator implementing gas.Authenticator,
-// gas.PrincipalRevoker, and gas.Service.
+// Service is a session authenticator implementing auth.Authenticator,
+// auth.PrincipalRevoker, and gas.Service.
 type Service struct {
 	store  *db.Store
 	logger gas.Logger
@@ -33,10 +33,10 @@ type Service struct {
 }
 
 var (
-	_ gas.Service          = (*Service)(nil)
-	_ gas.Authenticator    = (*Service)(nil)
-	_ gas.PrincipalRevoker = (*Service)(nil)
-	_ Provider             = (*Service)(nil)
+	_ gas.Service           = (*Service)(nil)
+	_ auth.Authenticator    = (*Service)(nil)
+	_ auth.PrincipalRevoker = (*Service)(nil)
+	_ Provider              = (*Service)(nil)
 )
 
 // Option configures a Service.

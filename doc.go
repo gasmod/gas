@@ -1,8 +1,9 @@
 // Package gas is the core of the Gas framework: the DI container, the Worker
 // and App lifecycles, the Router with service ownership, the EventBus,
-// request scopes, the error model, the runtime kill switch, and the provider
-// interfaces (Logger, StorageProvider, ...) that other gasmod modules
-// implement.
+// request scopes, the error model, the runtime kill switch, the provider
+// interfaces (Logger, CacheProvider, ...) that other gasmod modules
+// implement, and the Principal that authentication middleware stores on the
+// request context.
 //
 // # Wiring
 //
@@ -11,6 +12,11 @@
 // type that implements Service has Init(ctx) called after construction and
 // Close(ctx) at shutdown (singletons) or scope end (scoped); a type that
 // declares Init or Close with any other signature is rejected at startup.
+//
+// Errors from dependency resolution wrap one of the sentinels
+// ErrNotRegistered, ErrCircularDependency, ErrCaptiveDependency,
+// ErrScopeRequired, ErrNoConstructor, ErrInvalidLifetime, and
+// ErrInvalidServiceShape, so callers classify them with errors.Is.
 //
 // # Lifecycle
 //

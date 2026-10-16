@@ -7,14 +7,122 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking changes
+
+- **`gas.StorageProvider` is replaced by interfaces in this module.**
+  `storage.Provider` covers `CreateBucket`, `HeadObject`, `PutObject`,
+  `GetObject` and `DeleteObject`. `storage.Presigner` covers
+  `PresignUploadURL` and `PresignDownloadURL`. Each method takes an input
+  struct (`PutObjectInput` and so on) in place of a key and
+  `gas.StorageOption`s. `BaseObjectInput.Key` is a `string`, and a nil
+  `Bucket` means the configured default bucket.
+- **Constructors.** `s3.New` and `s3.Service` are replaced by
+  `s3.NewProvider` / `s3.Provider` and `s3.NewPresigner` / `s3.Presigner`,
+  each a constructor taking `gas.ConfigProvider` and returning an error:
+  `func(gas.ConfigProvider) (*Provider, error)`. The replacements for
+  `WithConfig` are `WithClient` and `WithUploaderClient` (provider), and
+  `WithPresignerS3Client` and `WithPresignClient` (presigner). Configuration
+  is always bound from `gas.ConfigProvider`, and `gas.Logger` is no longer
+  needed.
+- **Lifecycle.** The providers no longer implement `gas.Service` or
+  `gas.ReadyReporter`. `Name`, `Init`, `Close` and `CheckReady` are gone.
+- **Removed sentinels:**
+  - `storage.ErrClosed`.
+  - `storage.ErrBucketRequired`. A missing bucket is now
+    `storage.ErrInvalidBucket`.
+- **`s3.Config`.** `Storage.Region` is optional: empty uses the AWS SDK's
+  default resolution. `Config.Validate`, `DefaultConfig` and the `Settings`
+  type are removed.
+- **`storagetest`.** `MockStorage` is replaced by `MockProvider` and
+  `MockPresigner`.
+- **`dir` backend.** Rewritten on a hashed on-disk layout and incompatible
+  with directories written by earlier versions.
+  - `dir.Service`, `dir.New`, `dir.WithPresigner`, `dir.ErrInvalidPath` and
+    `dir.ErrNoPresigner` are removed.
+  - Keys are opaque strings: `../x`, `/abs` and keys differing only in case
+    are distinct objects.
+  - Buckets are created with `CreateBucket`, not by making a directory.
+- **Error messages** have the form `gas/storage/<backend>/<component>: <op>:
+  <cause>` in both backends. The messages gas builds no longer quote the
+  object key. An s3 error can still wrap an AWS SDK error whose text
+  includes the request URL, with the bucket and key.
+
+### Added
+
+- **`dir.Provider`.** A filesystem backend rooted in an `os.Root`, with
+  per-key locking that also excludes other processes, and atomic
+  overwrites.
+- **Sentinels:**
+  - `storage.ErrInputRequired`, `storage.ErrInvalidKey`,
+    `storage.ErrInvalidBucket` and `storage.ErrNotFound`.
+  - `storage.ErrBucketExists`. s3 `CreateBucket` returns it when the name
+    belongs to another account (S3 BucketAlreadyExists). Creating a bucket
+    the caller already owns succeeds in every backend and region, so the dir
+    backend never returns it.
+  - `dir.ErrStaleData`. `dir.PutObject` returns it together with the
+    object info when the object was written but the data file it replaced
+    could not be removed.
+  - `dir.ErrRootRequired`.
+  - `storage.ErrVersionNotFound`. s3 `GetObject` returns it for a
+    `Version` that does not exist (S3 NoSuchVersion). It matches neither
+    `ErrKeyNotFound` nor `ErrNotFound`. s3 `HeadObject` reports an unknown
+    version as `ErrNotFound`, since HEAD responses carry no error code. A
+    malformed version ID may get a 400 from AWS with no sentinel.
+  - `storage.ErrInvalidOption`. Backend constructors return it for a nil
+    option.
+  - `storage.ErrInvalidRange`. `GetObject` and `HeadObject` return it for a
+    `Range` that cannot be satisfied: its first byte at or past the end, or
+    `bytes=-0`. s3 maps S3's 416 to it.
+  - `storage.ErrNotSupported`. dir `HeadObject`, `GetObject` and
+    `DeleteObject` return it when `Version` is set, and `HeadObject` and
+    `GetObject` when `PartNumber` is set, since dir neither versions objects
+    nor stores them in parts.
+  - `storage.ErrContentLengthMismatch`. `PutObject` returns it in both
+    backends when `ContentLength` is set and `Body` yields a different
+    number of bytes, or when `ContentLength` is negative. Nothing is stored,
+    and an object already under the key is unchanged. A nil `ContentLength`
+    still means the length is unknown.
+  - `storage.ErrInvalidTTL`. `Presigner` methods return it for a TTL that
+    is negative, under one second, or over seven days.
+- **`s3.Config` field** `Storage.SessionToken`.
+- **Range reads in the dir backend.** `GetObject` and `HeadObject` honor
+  `Range` with RFC 9110 single-range semantics, matching S3 on the cases
+  where S3 follows the RFC: `Size` is the selected length, a header that is
+  not one valid byte range is ignored, and an unsatisfiable one is
+  `storage.ErrInvalidRange`.
+- **`CreateBucket`** in both backends. s3 creates the bucket in the client's
+  region, sending the location constraint S3 requires outside us-east-1 and
+  `aws-global`. For a bucket the caller already owns it succeeds, and the
+  returned `BucketInfo` may be empty.
+- **LocalStack test suite** for the s3 backend, against
+  `localstack/localstack:4.14.0` pinned by digest.
+
 ### Changed
 
-- **BREAKING:** `s3.Service` and `dir.Service` implement the context-aware
-  `gas.Service` (`Init(ctx context.Context) error`,
-  `Close(ctx context.Context) error`). `s3.Service.Init` loads the AWS
-  configuration under ctx, so a slow credential chain is bounded by the
-  container's Init deadline. `dir.Service` and both `Close` methods ignore
-  ctx.
+- **Nil options.** `s3.NewProvider`, `s3.NewPresigner` and
+  `dir.NewProvider` return an error wrapping `storage.ErrInvalidOption`,
+  naming the option's position, when given a nil option, instead of
+  panicking.
+- **Presign TTL.** A nil or zero TTL signs an explicit 15-minute expiry
+  instead of relying on the SDK default, so it also overrides a default
+  set on a presign client given with `WithPresignClient`. A TTL that is
+  negative, under one second, or over seven days returns
+  `storage.ErrInvalidTTL` instead of being signed (or, for a negative TTL,
+  failing with an unwrapped SDK error). Fractional seconds are truncated.
+
+### Fixed
+
+- **s3 error mapping:** `CreateBucket` errors are now mapped to storage
+  sentinels.
+- **Uninitialized providers:** a provider or presigner not built by its
+  constructor, including a nil pointer, returns `storage.ErrNotInitialized`
+  from every method instead of panicking.
+- **Key validation is the same on every platform.** Keys are checked as
+  `/`-separated paths with package `path`, not `path/filepath`, so on
+  Windows a backslash no longer acts as a separator: `a\.` and `.\` are
+  valid keys everywhere, and `a/.` and `./` are invalid everywhere.
+- **s3 NoSuchVersion** is mapped to `storage.ErrVersionNotFound` instead of
+  carrying no sentinel.
 
 ## [0.3.0] - 2026-07-03
 

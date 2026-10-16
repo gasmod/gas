@@ -1,5 +1,5 @@
 // Package jwt provides a stateless JWT authenticator for the Gas ecosystem.
-// It implements gas.Authenticator and gas.Service.
+// It implements auth.Authenticator and gas.Service.
 package jwt
 
 import (
@@ -34,7 +34,7 @@ type TokenClaims struct {
 	Audience     []string
 }
 
-// Service is a JWT authenticator implementing gas.Authenticator and gas.Service.
+// Service is a JWT authenticator implementing auth.Authenticator and gas.Service.
 type Service struct {
 	logger gas.Logger
 	cfg    *Config
@@ -49,9 +49,9 @@ type Service struct {
 }
 
 var (
-	_ gas.Service       = (*Service)(nil)
-	_ gas.Authenticator = (*Service)(nil)
-	_ Provider          = (*Service)(nil)
+	_ gas.Service        = (*Service)(nil)
+	_ auth.Authenticator = (*Service)(nil)
+	_ Provider           = (*Service)(nil)
 )
 
 // Option configures a Service.

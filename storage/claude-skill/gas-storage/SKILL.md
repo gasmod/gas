@@ -1,318 +1,208 @@
 ---
 name: gas-storage
 description: >
-  Reference documentation for the gas/storage Go package
-  (github.com/gasmod/gas/storage) — the object storage service for the Gas
-  ecosystem. Use this skill when writing, reviewing, or debugging Go code that
-  uses gas/storage for file/object storage with AWS S3 or S3-compatible
-  backends (MinIO, LocalStack, DigitalOcean Spaces). Covers the s3 sub-package,
-  storagetest mock, gas.StorageProvider implementation, sentinel errors, DI
-  wiring, configuration binding, presigned URLs, and direct S3 client access. Make sure to use this skill
-  whenever working with object storage in the Gas ecosystem, even if the user
-  doesn't explicitly mention gas/storage — any code that imports
-  gasmod/gas/storage or references gas.StorageProvider should trigger this skill.
+  Reference documentation for the gas/storage Go module
+  (github.com/gasmod/gas/storage), object storage for the Gas ecosystem. Use
+  this skill when writing, reviewing, or debugging Go code that stores or
+  reads objects through storage.Provider or presigns URLs through
+  storage.Presigner, on AWS S3 or S3-compatible backends (MinIO, LocalStack)
+  or on a local directory. Covers the storage interfaces and input types,
+  sentinel errors, the s3 and dir backends, DI wiring, configuration, and the
+  storagetest mocks. Use it whenever code imports gasmod/gas/storage or any
+  of its packages, even if the user does not mention it by name.
 ---
 
-# Gas Storage Package Reference
+# Gas Storage Reference
 
-Object storage service for the Gas ecosystem. Provides a `gas.StorageProvider`
-implementation backed by AWS S3 and S3-compatible services.
-
-```
-import storage "github.com/gasmod/gas/storage"
+```go
+import "github.com/gasmod/gas/storage"
 import storages3 "github.com/gasmod/gas/storage/s3"
+import storagedir "github.com/gasmod/gas/storage/dir"
 import "github.com/gasmod/gas/storage/storagetest"
 ```
 
 ## Backends
 
-| Backend | Package             | Service name     | Use case                                     |
-|---------|---------------------|------------------|----------------------------------------------|
-| S3      | `gas/storage/s3`    | `gas/storage/s3` | Production, any S3-compatible object storage |
+| Backend   | Package       | Implements                              | Use case                                    |
+|-----------|---------------|-----------------------------------------|---------------------------------------------|
+| S3        | `storage/s3`  | `storage.Provider`, `storage.Presigner` | Production, any S3-compatible store         |
+| Directory | `storage/dir` | `storage.Provider`                      | Development, tests, single-host deployments |
 
-Implements `gas.Service` and `gas.StorageProvider`.
+Services depend on the interfaces, never on a backend package.
 
-## StorageProvider Interface
-
-Defined in the gas core package:
+## Interfaces
 
 ```go
-type StorageProvider interface {
-    Upload(ctx context.Context, key string, data io.Reader, opts ...StorageOption) error
-    Download(ctx context.Context, key string, opts ...StorageOption) (*StorageObject, error)
-    Delete(ctx context.Context, key string, opts ...StorageOption) error
-    Head(ctx context.Context, key string, opts ...StorageOption) (*ObjectInfo, error)
-    PresignDownloadURL(ctx context.Context, key string, expires time.Duration, opts ...StorageOption) (string, error)
-    PresignUploadURL(ctx context.Context, key string, expires time.Duration, opts ...StorageOption) (string, error)
+type Provider interface {
+    CreateBucket(ctx context.Context, input *CreateBucketInput) (*BucketInfo, error)
+
+    HeadObject(ctx context.Context, input *HeadObjectInput) (*ObjectInfo, error)
+    PutObject(ctx context.Context, input *PutObjectInput) (*ObjectInfo, error)
+    GetObject(ctx context.Context, input *GetObjectInput) (*Object, error)
+    DeleteObject(ctx context.Context, input *DeleteObjectInput) (*ObjectInfo, error)
+}
+
+type Presigner interface {
+    PresignUploadURL(ctx context.Context, input *PresignUploadURLInput) (*PresignURLResponse, error)
+    PresignDownloadURL(ctx context.Context, input *PresignDownloadURLInput) (*PresignURLResponse, error)
 }
 ```
 
-### StorageObject
-
-Returned by `Download`. Carries the response body alongside metadata the
-backend provides.
+Every object input embeds `BaseObjectInput`:
 
 ```go
-type StorageObject struct {
-    Body        io.ReadCloser
-    ContentType string
-    Size        int64
-    Metadata    map[string]string // provider-specific extras
+type BaseObjectInput struct {
+    Bucket *string // nil uses the configured default bucket (config key storage.bucket)
+    Key    string
 }
 ```
 
-### ObjectInfo
+- `HeadObjectInput` and `GetObjectInput` add `Version`, `PartNumber`, `Range` and `Response*` fields.
+- `PutObjectInput` adds `Body io.Reader` (nil is an empty object), `ContentType`, `ContentLength`, `Expires` and `Metadata map[string]string`. `ContentLength` nil means unknown; when set, the body must match it exactly or `PutObject` fails with `ErrContentLengthMismatch` and stores nothing (both backends).
+- `DeleteObjectInput` adds `Version`.
+- `PresignUploadURLInput` and `PresignDownloadURLInput` wrap the put and get inputs and add `TTL *time.Duration`. Nil or zero means 15 minutes on s3. A TTL that is negative, under one second, or over seven days fails with `storage.ErrInvalidTTL` and nothing is signed. s3 signs whole seconds and truncates any fraction (1.9s signs as 1s).
 
-Returned by `Head`. Carries object metadata without the body.
+`GetObject` returns `*storage.Object`, which embeds `ObjectInfo` (`LastModified`, `Metadata`, `ContentType`, `Version`, `Size`) and adds a `Body io.ReadCloser` that the caller must close.
 
-```go
-type ObjectInfo struct {
-    ContentType  string
-    Size         int64
-    Metadata     map[string]string
-    LastModified time.Time
-}
-```
+## Sentinel errors
 
-### StorageOption
+Match them with `errors.Is`; never compare messages.
 
-Functional options for all `StorageProvider` methods:
+| Sentinel                     | Returned when                                                                                                                                                                                                                                   |
+|------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `storage.ErrNotInitialized`  | a provider or presigner was not built by its constructor (zero value or nil pointer)                                                                                                                                                            |
+| `storage.ErrInputRequired`   | the input is nil                                                                                                                                                                                                                                |
+| `storage.ErrInvalidKey`      | the key is empty, longer than 1024 bytes, not valid UTF-8, or cleans to `.` or ends in a `.` path element (`./`, `a/.`). Only `/` separates elements, on every OS: `a\.`, `.\` and `\` are valid keys, on Windows too                           |
+| `storage.ErrInvalidBucket`   | the bucket name is invalid, or neither the input nor the config names one                                                                                                                                                                       |
+| `storage.ErrBucketNotFound`  | an object operation targets a missing bucket (s3 HeadObject excepted)                                                                                                                                                                           |
+| `storage.ErrKeyNotFound`     | `GetObject` of a missing key                                                                                                                                                                                                                    |
+| `storage.ErrNotFound`        | `HeadObject` of a missing object. On s3 this also covers a missing bucket, because S3 HEAD responses have no body                                                                                                                               |
+| `storage.ErrBucketExists`    | s3 `CreateBucket` of a name another account owns (S3 BucketAlreadyExists). `CreateBucket` of a bucket the caller already owns succeeds in both backends and every region                                                                                     |
+| `storage.ErrVersionNotFound` | s3 `GetObject` of a `Version` that does not exist (S3 NoSuchVersion). Matches neither `ErrKeyNotFound` nor `ErrNotFound`. s3 `HeadObject` reports an unknown version as `ErrNotFound`, since HEAD responses have no body. A malformed version ID may get a 400 from AWS with no sentinel. On dir, `Version` is `ErrNotSupported`|
+| `storage.ErrInvalidOption`   | a backend constructor was given a nil option. The message names its zero-based position: `gas/storage/s3/provider: storage: invalid option: option 1 is nil`                                                                                    |
+| `storage.ErrInvalidTTL`      | a `Presigner` method was given a TTL that is negative, under one second, or over seven days                                                                                                                                                     |
+| `storage.ErrNotSupported`  | dir `HeadObject` or `GetObject` with `Version` or `PartNumber` set, or `DeleteObject` with `Version` set: dir neither versions objects nor stores them in parts                                                                                   |
+| `storage.ErrContentLengthMismatch` | `PutObject` with `ContentLength` set and a `Body` that is shorter or longer, or a negative length, on both backends. Nothing is stored; the previous object stays                                                                         |
+| `storage.ErrInvalidRange`  | `GetObject` or `HeadObject` with a `Range` that cannot be satisfied: its first byte is at or past the end, or `bytes=-0` (S3 416 InvalidRange)                                                                                                    |
 
-```go
-gas.InBucket(name string)                    // override the default bucket for this operation
-gas.WithContentType(ct string)               // set content type on Upload
-gas.WithMetadata(m map[string]string)        // attach arbitrary key-value metadata on Upload
-```
+`DeleteObject` of a missing key succeeds on both backends.
 
-Implementations unpack options via `gas.ApplyStorageOptions(opts)`.
+Every error has the form `gas/storage/<backend>/<component>: <op>: <cause>`, for example `gas/storage/s3/provider: get: storage: key not found: ...`. Errors never quote the object key from the backend's own code, but s3 errors carry the AWS SDK error, and that can include the request URL.
 
-## Sentinel Errors
-
-The root `storage` package defines sentinel errors:
-
-```go
-storage.ErrKeyNotFound    // Download or Head returns this when the key does not exist
-storage.ErrBucketNotFound // Upload, Download, Delete or Head returns this when the bucket does not exist
-storage.ErrClosed         // returned when an operation is attempted on a closed service
-```
-
-## S3 Backend
-
-### Constructor
+## S3 backend
 
 ```go
-func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) *Service
+func NewProvider(opts ...ProviderOption) func(gas.ConfigProvider) (*Provider, error)
+func NewPresigner(opts ...PresignerOption) func(gas.ConfigProvider) (*Presigner, error)
 ```
 
-`New` captures options and returns a DI-injectable constructor. The returned
-func receives `gas.ConfigProvider` and `gas.Logger` from the DI container.
+The container passes both the registered `gas.ConfigProvider`, which they bind into `s3.Config`; a missing one is the container's `no registration for gas.ConfigProvider` error at startup, and a nil one passed directly returns an error. Neither sends a request at construction. A nil option makes the constructor return an error wrapping `storage.ErrInvalidOption` instead of panicking. An option given a nil client (`WithClient(nil)` and so on) is ignored, and the constructor builds that client as if the option were absent.
 
-### Options
+| Option                                        | For       | Description                                            |
+|-----------------------------------------------|-----------|--------------------------------------------------------|
+| `WithClient(*s3.Client)`                      | Provider  | Use this S3 client instead of building one from config |
+| `WithUploaderClient(*transfermanager.Client)` | Provider  | Use this transfer manager for `PutObject`              |
+| `WithPresignerS3Client(*s3.Client)`           | Presigner | Build the presign client from this S3 client           |
+| `WithPresignClient(*s3.PresignClient)`        | Presigner | Use this presign client                                |
 
-| Option                    | Description                                                 |
-|---------------------------|-------------------------------------------------------------|
-| `WithConfig(cfg *Config)` | Set configuration explicitly (skips config binding from DI) |
+Config keys, all under `storage`:
 
-### Lifecycle (gas.Service)
+| Key                                              | Meaning                                                                                            |
+|--------------------------------------------------|----------------------------------------------------------------------------------------------------|
+| `bucket`                                         | Default bucket for inputs with a nil `Bucket`. Optional; must be a valid bucket name if set        |
+| `region`                                         | AWS region. Empty uses the SDK's default resolution                                                |
+| `accessKeyID`, `secretAccessKey`, `sessionToken` | Static credentials, used when `accessKeyID` is set. Otherwise the default credential chain applies |
+| `endpoint`                                       | Custom endpoint for S3-compatible services. Setting it enables path-style addressing               |
 
-| Method  | Signature   | Description                                            |
-|---------|-------------|--------------------------------------------------------|
-| `Name`  | `() string` | Returns `"gas/storage/s3"`                             |
-| `Init`  | `() error`  | Validates config, loads AWS config, creates S3 client  |
-| `Close` | `() error`  | Marks service as closed                                |
+Behavior:
+- `PutObject` uploads through the SDK transfer manager. It accepts any reader, including one of unknown length, and switches to multipart for large bodies.
+- S3 errors map to sentinels: NoSuchBucket to `ErrBucketNotFound`, NoSuchKey to `ErrKeyNotFound`, NoSuchVersion to `ErrVersionNotFound`, a HEAD 404 to `ErrNotFound`, InvalidRange (GET 416) and RequestedRangeNotSatisfiable (HEAD 416) to `ErrInvalidRange`, and BucketAlreadyExists to `ErrBucketExists`. A ranged GetObject or HeadObject reports the range's length as `Size`; `Object` has no total-size or Content-Range field. The SDK error stays in the chain for `errors.As`.
+- `CreateBucket` creates the bucket in the client's region, sending that region as the location constraint outside us-east-1 and `aws-global` (S3 rejects the request there without it); with no configured region it uses the region the SDK resolved. A bucket the caller already owns is success, and its `BucketInfo` may be empty: us-east-1 answers 200 with the usual fields, other regions answer BucketAlreadyOwnedByYou with none.
+- Presign TTL: nil or zero signs 15 minutes, passed to the SDK explicitly, so it also overrides a default expiry set on a presign client given with `WithPresignClient`. Valid TTLs run from 1 second to 7 days inclusive (the AWS SigV4 range); anything else is `ErrInvalidTTL`. `X-Amz-Expires` is whole seconds, truncated toward zero.
+- `Provider.Client()` and `Presigner.PresignClient()` return the underlying SDK clients, for operations the interfaces do not cover.
 
-Also implements `gas.ReadyReporter`:
-
-| Method       | Signature                      | Description                                                            |
-|--------------|--------------------------------|------------------------------------------------------------------------|
-| `CheckReady` | `(ctx context.Context) error`  | Issues `HeadBucket` against the configured default bucket; returns nil |
-
-- Returns `storage.ErrClosed` if the service is closed, or an error if the
-  client is not initialized.
-- When `Storage.Bucket` is empty (per-call bucket mode), `CheckReady` returns
-  `nil` as soon as `Init` has completed — there is no single bucket to probe.
-- **IAM:** the caller's principal MUST have `s3:ListBucket` on the configured
-  bucket. Without it, `HeadBucket` returns 403 and readiness probes fail.
-  Narrowly-scoped S3 policies that only grant `s3:GetObject`/`s3:PutObject`
-  must be extended with `s3:ListBucket` on the bucket ARN.
-
-### Behavior
-
-- **Upload:** Stores an object in S3 using `PutObject`. Honors
-  `gas.WithContentType` and `gas.WithMetadata` options. Returns
-  `storage.ErrBucketNotFound` if the bucket does not exist, or
-  `storage.ErrClosed` if the service is closed.
-- **Download:** Retrieves an object from S3 using `GetObject`. Returns a
-  `*gas.StorageObject` with `Body`, `ContentType`, `Size`, and `Metadata`.
-  Returns `storage.ErrKeyNotFound` if the key does not exist (detects
-  `types.NoSuchKey`), or `storage.ErrBucketNotFound` if the bucket does not
-  exist (detects the `NoSuchBucket` error code). Returns `storage.ErrClosed`
-  if the service is closed.
-- **Delete:** Removes an object from S3 using `DeleteObject`. Deleting a
-  non-existent key does not error. Returns `storage.ErrBucketNotFound` if the
-  bucket does not exist, or `storage.ErrClosed` if closed.
-- **Head:** Retrieves object metadata (content type, size, last modified,
-  metadata) without downloading the body. Returns `storage.ErrKeyNotFound` if
-  the key does not exist. S3 answers a HEAD for a missing bucket with the same
-  bodiless 404, so a missing bucket also returns `storage.ErrKeyNotFound`.
-  Returns `storage.ErrClosed` if the service is closed.
-- **PresignDownloadURL:** Generates a presigned GET URL valid for the given
-  duration. Returns `storage.ErrClosed` if the service is closed.
-- **PresignUploadURL:** Generates a presigned PUT URL valid for the given
-  duration. Honors `gas.WithContentType` and `gas.WithMetadata` options.
-  Returns `storage.ErrClosed` if the service is closed.
-- **Bucket resolution:** All methods accept `gas.InBucket(name)` to override
-  (or supply) the bucket for a single operation. The default
-  `Config.Storage.Bucket` is optional — if it is empty, every call must pass
-  `gas.InBucket(...)` or the operation returns `storage.ErrBucketRequired`.
-- **Credentials:** When `AccessKeyID` is set, static credentials are used.
-  When empty, the AWS default credential chain is used (environment variables,
-  IAM roles, etc.).
-- **Custom endpoint:** When `Endpoint` is set, path-style addressing is
-  automatically enabled for S3-compatible services.
-
-### Direct Client Access
+## Directory backend
 
 ```go
-func (s *Service) Client() *s3.Client
+func NewProvider(opts ...Option) func(gas.ConfigProvider) (*Provider, error)
+func WithRoot(root *os.Root) Option // required
 ```
 
-For operations beyond `StorageProvider` (multipart uploads, bucket operations,
-object metadata), define a local interface and type-assert:
+- **Config.** The provider binds `storage.bucket` as the default bucket.
+- **Root.** The caller opens the `os.Root` and closes it once the provider is no longer used. The provider never closes it.
+- **Buckets.** Create them with `CreateBucket`; making a directory does not create one. `CreateBucket` of an existing bucket succeeds and keeps its objects; dir never returns `ErrBucketExists`.
+- **Keys.** Keys are opaque strings, hashed on disk: `../x`, `/abs` and keys that differ only in case are distinct objects on every filesystem.
+- **Writes.** Overwrites are atomic: a reader sees the old object or the new one.
+- **Locking.** Operations on one key are serialized with a file lock, which also excludes other processes sharing the directory.
+- **Versions and parts.** Objects are not versioned or stored in parts: `Version` on Head, Get or Delete, and `PartNumber` on Head or Get, return `storage.ErrNotSupported`, after key and bucket validation and before any disk access.
+- **Range.** Get and Head honor `Range` with RFC 9110 single-range semantics: one `bytes=first-last`, `bytes=first-` or `bytes=-suffix` range, clamped to the object, with `Size` set to its length; anything else is ignored (whole object); a first byte at or past the end, or `bytes=-0`, is `ErrInvalidRange`. S3 (LocalStack at least) is more lenient on some malformed headers (a unit other than bytes, spaces around `=` or `-`, a `+` sign), and answers 416 on an empty object where dir returns the empty body for an ignored header; dir follows RFC 9110.
+- **Ignored fields.** `Response*` and `Expires`. `ObjectInfo` carries no `Version`, and Put and Delete return an empty `ObjectInfo`.
+- **Content type.** A Put without one sniffs it from the body.
+- **`dir.ErrStaleData`.** `PutObject` returns it together with the `ObjectInfo` when the object was written but the data file it replaced could not be removed. The object reads back as written.
+- **`dir.ErrRootRequired`.** `NewProvider` returns it when no root was given, including `WithRoot(nil)`. It wraps `storage.ErrNotInitialized`.
+- **Nil option.** `NewProvider` given a nil `Option` returns an error wrapping `storage.ErrInvalidOption` and creates nothing in the root.
 
-```go
-type S3Provider interface {
-    Client() *s3.Client
-}
-```
-
-### Config
-
-```go
-type Config struct {
-    env.WithGasEnv
-    Storage Settings
-}
-
-type Settings struct {
-    Region            string        // required
-    Bucket            string        // optional default; if unset, every call must pass gas.InBucket(...)
-    AccessKeyID       string        // empty = use default credential chain
-    SecretAccessKey   string        // AWS secret access key
-    Endpoint          string        // optional; enables path-style when set
-}
-
-func DefaultConfig() *Config
-func (c *Config) Validate() error  // rejects empty Region (Bucket is optional)
-```
-
-## Test Mock
-
-The `storagetest` package provides `MockStorage`, a configurable mock of
-`gas.StorageProvider` for use in unit tests.
-
-```go
-import "github.com/gasmod/gas/storage/storagetest"
-```
-
-### MockStorage
-
-```go
-type MockStorage struct {
-    UploadFn             func(ctx context.Context, key string, data io.Reader, opts ...gas.StorageOption) error
-    DownloadFn           func(ctx context.Context, key string, opts ...gas.StorageOption) (*gas.StorageObject, error)
-    DeleteFn             func(ctx context.Context, key string, opts ...gas.StorageOption) error
-    HeadFn               func(ctx context.Context, key string, opts ...gas.StorageOption) (*gas.ObjectInfo, error)
-    PresignDownloadURLFn func(ctx context.Context, key string, expires time.Duration, opts ...gas.StorageOption) (string, error)
-    PresignUploadURLFn   func(ctx context.Context, key string, expires time.Duration, opts ...gas.StorageOption) (string, error)
-    CheckReadyFn         func(ctx context.Context) error
-    Calls                []Call
-}
-```
-
-`MockStorage` also implements `gas.ReadyReporter` — wire `CheckReadyFn` to
-simulate readiness states in tests.
-
-Each method delegates to its `Fn` field if set, otherwise returns zero value.
-All calls are recorded in `Calls` for assertions. Thread-safe.
-
-| Method                  | Description                                    |
-|-------------------------|------------------------------------------------|
-| `Reset()`               | Clear all recorded calls                       |
-| `CallCount(method) int` | Count calls by method name (e.g. `"Upload"`)   |
-
-## DI Wiring Patterns
-
-### S3 backend (production)
+## Wiring
 
 ```go
 app := gas.NewApp(
-    gas.WithSingletonService[*storages3.Service](storages3.New()),
+    gas.WithSingletonService[storage.Provider](storages3.NewProvider()),
+    gas.WithSingletonService[storage.Presigner](storages3.NewPresigner()),
 )
 ```
 
-### With explicit config
+Directory backend:
 
 ```go
+root, err := os.OpenRoot("/var/lib/myapp/storage")
+if err != nil {
+    return err
+}
+defer root.Close()
+
 app := gas.NewApp(
-    gas.WithSingletonService[*storages3.Service](
-        storages3.New(storages3.WithConfig(&storages3.Config{
-            Storage: storages3.Settings{
-                Region:          "eu-west-1",
-                Bucket:          "my-bucket",
-                AccessKeyID:     "AKIA...",
-                SecretAccessKey: "secret",
-            },
-        })),
-    ),
+    gas.WithSingletonService[storage.Provider](storagedir.NewProvider(storagedir.WithRoot(root))),
 )
 ```
 
-### With custom endpoint (LocalStack / MinIO)
-
-```go
-app := gas.NewApp(
-    gas.WithSingletonService[*storages3.Service](
-        storages3.New(storages3.WithConfig(&storages3.Config{
-            Storage: storages3.Settings{
-                Region:          "us-east-1",
-                Bucket:          "local-bucket",
-                Endpoint:        "http://localhost:4566",
-                AccessKeyID:     "test",
-                SecretAccessKey: "test",
-            },
-        })),
-    ),
-)
-```
-
-### Consuming via gas.StorageProvider
-
-Services receive storage through the provider interface, never importing
-gas/storage backends directly:
+Consuming:
 
 ```go
 type Service struct {
-    storage gas.StorageProvider
+    storage storage.Provider
 }
 
-func New(storage gas.StorageProvider) *Service {
-    return &Service{storage: storage}
-}
-
-func (s *Service) Init(_ context.Context) error {
-    // use s.storage.Upload, Download, Delete, Head, PresignDownloadURL, PresignUploadURL
-    return nil
+func (s *Service) Read(ctx context.Context, key string) ([]byte, error) {
+    obj, err := s.storage.GetObject(ctx, &storage.GetObjectInput{
+        HeadObjectInput: storage.HeadObjectInput{
+            BaseObjectInput: storage.BaseObjectInput{Key: key},
+        },
+    })
+    if errors.Is(err, storage.ErrKeyNotFound) {
+        return nil, gas.NotFound("file not found").WithCause(err)
+    }
+    if err != nil {
+        return nil, err
+    }
+    defer obj.Body.Close()
+    return io.ReadAll(obj.Body)
 }
 ```
 
-### Testing with MockStorage
+## Test mocks
+
+`storagetest.MockProvider` and `storagetest.MockPresigner` are recording mocks.
+
+- **Zero value.** Ready to use.
+- **Delegation.** Each method records a `Call`, then delegates to its `Fn` field (`CreateBucketFn`, `HeadObjectFn`, `PutObjectFn`, `GetObjectFn`, `DeleteObjectFn`, `PresignUploadURLFn`, `PresignDownloadURLFn`). When that field is nil it returns `nil, nil`.
+- **Assertions.** `CallCount(method)` counts recorded calls, and `Reset()` clears them.
+- **Concurrency.** Safe for concurrent use.
 
 ```go
-mock := &storagetest.MockStorage{}
-mock.UploadFn = func(ctx context.Context, key string, data io.Reader, opts ...gas.StorageOption) error {
-    return nil
+mock := &storagetest.MockProvider{
+    GetObjectFn: func(_ context.Context, _ *storage.GetObjectInput) (*storage.Object, error) {
+        return nil, storage.ErrKeyNotFound
+    },
 }
-
-// inject mock as gas.StorageProvider in tests
+app := gas.NewApp(gas.WithServiceInstance[storage.Provider](mock))
 ```

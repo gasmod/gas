@@ -147,9 +147,9 @@ func (s *Service) Get(_ context.Context, key string) ([]byte, error) {
 
 // Set stores a value with the given TTL. If ttl is 0, the configured
 // DefaultTTL is used. If DefaultTTL is also 0, the entry never expires.
-// When MaxEntries is reached and a new key is inserted, the oldest
-// expired entry is evicted first; if none are expired, the set is
-// rejected with an error.
+// When MaxEntries is reached and a new key is inserted, one expired
+// entry, chosen in map iteration order rather than by age, is evicted
+// first; if none are expired, the set is rejected with an error.
 func (s *Service) Set(_ context.Context, key string, value []byte, ttl time.Duration) error {
 	if s.closed.Load() {
 		return cache.ErrClosed

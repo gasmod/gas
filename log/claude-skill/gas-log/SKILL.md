@@ -10,7 +10,8 @@ description: >
   gas.MutableLoggerContext interfaces, constructor options, sub-loggers via
   With(), in-place logger mutation via SetBaseFields()/Apply(), context-scoped
   logging via gas.WithLogger / gas.LoggerFromContext, DI registration via
-  gas.WithService with ServiceLifetimeScoped, level mapping across backends,
+  a singleton gas.Logger plus a scoped per-request logger type, level mapping
+  across backends,
   and the log-shipping subsystem: NewShippingLogger / NewShippingHandler, the
   batching HTTP sender, per-sink level thresholds, the Marshaler interface and
   Record type, the OTLP/HTTP JSON marshaler (NewOTLPMarshaler), the fanout and
@@ -166,11 +167,14 @@ accumulates fields and on `Apply()` mutates the originating logger in-place.
 **When to use `SetBaseFields` vs `With`:**
 - Use `With()` when you want a new, independent sub-logger (e.g. a per-request
   logger passed down to child calls).
-- Use `SetBaseFields()` when middleware owns one logger instance and needs to
-  stamp persistent fields onto it before the rest of the request runs.
+- Use `SetBaseFields()` when middleware owns one per-request logger instance
+  and needs to stamp persistent fields onto it before the rest of the request
+  runs. Never call it on the shared singleton `gas.Logger`: `Apply` mutates
+  without synchronization, so concurrent requests race and the fields pile up
+  across requests (KI-026 in `KNOWN_ISSUES.md`).
 
 ```go
-// In middleware: mutate the shared logger in-place, then continue
+// In middleware: mutate this request's logger in place, then continue
 logger.SetBaseFields().
     Str("request_id", reqID).
     Str("user_id", userID).
@@ -178,20 +182,20 @@ logger.SetBaseFields().
 // all subsequent events from logger include request_id and user_id
 ```
 
-Typical middleware pattern:
+Typical middleware pattern, with `RequestLogger` registered as a scoped type
+derived from the singleton (see DI Registration):
 
 ```go
-func loggingMiddleware(logger gas.Logger) func(http.Handler) http.Handler {
-    return func(next http.Handler) http.Handler {
-        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-            logger.SetBaseFields().
-                Str("request_id", r.Header.Get("X-Request-ID")).
-                Str("method", r.Method).
-                Str("path", r.URL.Path).
-                Apply()
-            next.ServeHTTP(w, r)
-        })
-    }
+func loggingMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        logger := gas.MustResolveFromRequestScope[RequestLogger](r)
+        logger.SetBaseFields().
+            Str("request_id", r.Header.Get("X-Request-ID")).
+            Str("method", r.Method).
+            Str("path", r.URL.Path).
+            Apply()
+        next.ServeHTTP(w, r)
+    })
 }
 ```
 
@@ -415,17 +419,17 @@ Error→17. `SeverityText` is the slog level string.
 
 ## DI Registration
 
-Pass the constructor function to `gas.WithService` with
-`gas.ServiceLifetimeScoped`. The DI container calls it once per request scope
-to produce a fresh logger instance:
+Register `gas.Logger` as a **singleton**. Most services take a `gas.Logger` in
+their constructor, and the container rejects a singleton that depends on a
+scoped service (`captive dependency: singleton X depends on scoped
+gas.Logger`):
 
 ```go
 zl := zerolog.New(os.Stdout).With().Timestamp().Logger()
 
 app := gas.NewApp(
-    gas.WithService[gas.Logger](
+    gas.WithSingletonService[gas.Logger](
         gaslog.NewZeroLogLogger(gaslog.WithZeroLogInstance(&zl)),
-        gas.ServiceLifetimeScoped, // per-request, not singleton
     ),
     // ...other services
 )
@@ -437,12 +441,11 @@ With slog (zero external deps):
 sl := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
 app := gas.NewApp(
-    gas.WithService[gas.Logger](
+    gas.WithSingletonService[gas.Logger](
         gaslog.NewSlogLogger(
             gaslog.WithSlogInstance(sl),
             gaslog.WithEventInitialCapacity(5),
         ),
-        gas.ServiceLifetimeScoped,
     ),
 )
 ```
@@ -451,8 +454,25 @@ Using defaults (Zerolog uses `log.Logger`, Slog uses `slog.Default()`):
 
 ```go
 app := gas.NewApp(
-    gas.WithService[gas.Logger](gaslog.NewZeroLogLogger(), gas.ServiceLifetimeScoped),
+    gas.WithSingletonService[gas.Logger](gaslog.NewZeroLogLogger()),
 )
+```
+
+For per-request fields, register a separate scoped type derived from the
+singleton and give it to the request middleware, so each request gets its own
+logger. Calling `SetBaseFields` on the shared singleton races and piles up
+fields across requests (KI-026 in `KNOWN_ISSUES.md`):
+
+```go
+type RequestLogger interface{ gas.Logger }
+
+app := gas.NewApp(
+    gas.WithSingletonService[gas.Logger](gaslog.NewSlogLogger()),
+    gas.WithScopedService[RequestLogger](func(l gas.Logger) RequestLogger {
+        return l.With().Logger()
+    }),
+)
+app.Router().UseMiddlewareFunc(gas.RequestLogger[RequestLogger]())
 ```
 
 ## Complete Example
@@ -539,9 +559,8 @@ func main() {
     zl := zerolog.New(os.Stdout).With().Timestamp().Logger()
 
     app := gas.NewApp(
-        gas.WithService[gas.Logger](
+        gas.WithSingletonService[gas.Logger](
             gaslog.NewZeroLogLogger(gaslog.WithZeroLogInstance(&zl)),
-            gas.ServiceLifetimeScoped, // per-request, not singleton
         ),
         gas.WithSingletonService[*myservice.Service](myservice.New),
     )

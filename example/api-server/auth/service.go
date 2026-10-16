@@ -1,5 +1,3 @@
-// Package auth implements the api-server example's user registration, login,
-// JWT issuance, and API key management.
 package auth
 
 import (

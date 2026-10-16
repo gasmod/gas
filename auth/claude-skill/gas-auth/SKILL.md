@@ -7,14 +7,14 @@ description: >
   debugging Go code that uses gas/auth for JWT, server-side sessions, API keys,
   or single-use tokens. Covers the jwt, session, apikey, and token sub-packages,
   Provider interfaces (jwt.Provider, session.Provider, apikey.Provider, token.Provider),
-  authtest mocks, gas.Authenticator/gas.PrincipalRevoker implementations,
+  authtest mocks, auth.Authenticator/auth.PrincipalRevoker implementations,
   scheme constants, middleware, MiddlewareOption, WithOnError, Chain composite authenticator, BasePrincipal,
   session.Session public type, sentinel errors, DI wiring, configuration binding,
   multi-dialect database support (PostgreSQL, MySQL, SQLite), background cleanup goroutines, cookie
   management, and credential revocation. Make sure to use this skill whenever
   working with authentication or authorization in the Gas ecosystem, even if the
   user doesn't explicitly mention gas/auth — any code that imports
-  gasmod/gas/auth or references gas.Authenticator, gas.PrincipalRevoker, or
+  gasmod/gas/auth or references auth.Authenticator, auth.PrincipalRevoker, or
   gas.Principal should trigger this skill.
 ---
 
@@ -37,12 +37,41 @@ import "github.com/gasmod/gas/auth/authtest"
 
 | Package    | Service name         | Implements                                                 | Provider Interface |
 |------------|----------------------|------------------------------------------------------------|--------------------|
-| `auth`     | --                   | `gas.Authenticator` (Chain)                                | --                 |
-| `jwt`      | `gas/auth/jwt`       | `gas.Authenticator`, `gas.Service`                         | `jwt.Provider`     |
-| `session`  | `gas/auth/session`   | `gas.Authenticator`, `gas.PrincipalRevoker`, `gas.Service` | `session.Provider` |
-| `apikey`   | `gas/auth/apikey`    | `gas.Authenticator`, `gas.PrincipalRevoker`, `gas.Service` | `apikey.Provider`  |
+| `auth`     | --                   | `auth.Authenticator` (Chain)                                | --                 |
+| `jwt`      | `gas/auth/jwt`       | `auth.Authenticator`, `gas.Service`                         | `jwt.Provider`     |
+| `session`  | `gas/auth/session`   | `auth.Authenticator`, `auth.PrincipalRevoker`, `gas.Service` | `session.Provider` |
+| `apikey`   | `gas/auth/apikey`    | `auth.Authenticator`, `auth.PrincipalRevoker`, `gas.Service` | `apikey.Provider`  |
 | `token`    | `gas/auth/token`     | `gas.Service`                                              | `token.Provider`   |
 | `authtest` | --                   | Test mocks                                                 | --                 |
+
+## Interfaces
+
+Package `auth` defines the three authentication interfaces. Core keeps only
+`gas.Principal`, its metadata types, and the context helpers
+(`gas.WithPrincipal`, `gas.PrincipalFromContext`, `gas.Context.Principal`).
+
+```go
+// Authenticator extracts a principal from an HTTP request.
+type Authenticator interface {
+    Authenticate(ctx context.Context, r *http.Request) (gas.Principal, error)
+}
+
+// Authorizer decides whether a principal may perform an action on a resource.
+type Authorizer interface {
+    Authorize(ctx context.Context, principal gas.Principal, action, resource string) error
+}
+
+// PrincipalRevoker invalidates one credential, every credential for a
+// subject, or every credential of one scheme for a subject.
+type PrincipalRevoker interface {
+    Revoke(ctx context.Context, principal gas.Principal) error
+    RevokeAll(ctx context.Context, subject string) error
+    RevokeAllByScheme(ctx context.Context, subject, scheme string) error
+}
+```
+
+Handlers read the authenticated principal with `ctx.Principal()`, which
+returns a 401 `*gas.Error` (`gas.CodeUnauthorized`) when none is present.
 
 ## Scheme Constants
 
@@ -141,7 +170,7 @@ Composite authenticator. Tries each authenticator in order, returns the first
 success or the last error. Empty chain returns `ErrUnauthenticated`.
 
 ```go
-type Chain []gas.Authenticator
+type Chain []auth.Authenticator
 
 func (c Chain) Authenticate(ctx context.Context, r *http.Request) (gas.Principal, error)
 ```
@@ -149,7 +178,7 @@ func (c Chain) Authenticate(ctx context.Context, r *http.Request) (gas.Principal
 ## Middleware
 
 ```go
-func Middleware(provider gas.Authenticator, opts ...MiddlewareOption) func(http.Handler) http.Handler
+func Middleware(provider auth.Authenticator, opts ...MiddlewareOption) func(http.Handler) http.Handler
 ```
 
 Calls `provider.Authenticate`, sets principal in context via
@@ -676,7 +705,7 @@ mock := &authtest.MockAuthenticator{
         return auth.NewPrincipal("user-1", auth.SchemeJWT, "tok-1", nil), nil
     },
 }
-// inject mock as gas.Authenticator in tests
+// inject mock as auth.Authenticator in tests
 ```
 
 ## Database Support

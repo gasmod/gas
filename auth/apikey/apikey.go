@@ -1,5 +1,5 @@
 // Package apikey provides API key authentication for the Gas ecosystem.
-// It implements gas.Authenticator, gas.PrincipalRevoker, and gas.Service.
+// It implements auth.Authenticator, auth.PrincipalRevoker, and gas.Service.
 package apikey
 
 import (
@@ -26,8 +26,8 @@ const serviceName = "gas/auth/apikey"
 // Re-exported from the db package for convenience.
 type KeyInfo = db.KeyInfo
 
-// Service is an API key authenticator implementing gas.Authenticator,
-// gas.PrincipalRevoker, and gas.Service.
+// Service is an API key authenticator implementing auth.Authenticator,
+// auth.PrincipalRevoker, and gas.Service.
 type Service struct {
 	store  *db.Store
 	logger gas.Logger
@@ -39,10 +39,10 @@ type Service struct {
 }
 
 var (
-	_ gas.Service          = (*Service)(nil)
-	_ gas.Authenticator    = (*Service)(nil)
-	_ gas.PrincipalRevoker = (*Service)(nil)
-	_ Provider             = (*Service)(nil)
+	_ gas.Service           = (*Service)(nil)
+	_ auth.Authenticator    = (*Service)(nil)
+	_ auth.PrincipalRevoker = (*Service)(nil)
+	_ Provider              = (*Service)(nil)
 )
 
 // Option configures a Service.

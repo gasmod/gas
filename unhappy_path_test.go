@@ -28,8 +28,8 @@ func TestServiceContainer_CircularDependency(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for circular dependency")
 	}
-	if !strings.Contains(err.Error(), "circular dependency") {
-		t.Fatalf("expected circular dependency error, got: %v", err)
+	if !errors.Is(err, gas.ErrCircularDependency) {
+		t.Fatalf("expected ErrCircularDependency, got: %v", err)
 	}
 }
 
@@ -52,8 +52,8 @@ func TestServiceContainer_CaptiveDependency(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error for captive dependency (singleton -> scoped)")
 		}
-		if !strings.Contains(err.Error(), "captive dependency") {
-			t.Fatalf("expected captive dependency error, got: %v", err)
+		if !errors.Is(err, gas.ErrCaptiveDependency) {
+			t.Fatalf("expected ErrCaptiveDependency, got: %v", err)
 		}
 	})
 
@@ -75,8 +75,8 @@ func TestServiceContainer_CaptiveDependency(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error for captive dependency (singleton -> transient)")
 		}
-		if !strings.Contains(err.Error(), "captive dependency") {
-			t.Fatalf("expected captive dependency error, got: %v", err)
+		if !errors.Is(err, gas.ErrCaptiveDependency) {
+			t.Fatalf("expected ErrCaptiveDependency, got: %v", err)
 		}
 	})
 }

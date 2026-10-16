@@ -1,5 +1,5 @@
-// Package authtest provides mock implementations of the gas authentication
-// and authorization interfaces for use in tests.
+// Package authtest provides mock implementations of the authentication,
+// authorization, and revocation interfaces in package auth for use in tests.
 package authtest
 
 import (
@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/gasmod/gas"
+	"github.com/gasmod/gas/auth"
 )
 
 // Call records a single method invocation on a mock.
@@ -16,7 +17,7 @@ type Call struct {
 	Args   []any
 }
 
-// MockAuthenticator is a test double for gas.Authenticator.
+// MockAuthenticator is a test double for auth.Authenticator.
 type MockAuthenticator struct {
 	// AuthenticateFn is called when Authenticate is invoked. If nil,
 	// Authenticate returns (nil, nil).
@@ -27,7 +28,7 @@ type MockAuthenticator struct {
 	mu sync.Mutex
 }
 
-var _ gas.Authenticator = (*MockAuthenticator)(nil)
+var _ auth.Authenticator = (*MockAuthenticator)(nil)
 
 // Authenticate delegates to AuthenticateFn if set, otherwise returns zero values.
 func (m *MockAuthenticator) Authenticate(
@@ -65,7 +66,7 @@ func (m *MockAuthenticator) CallCount(method string) int {
 	return n
 }
 
-// MockAuthorizer is a test double for gas.Authorizer.
+// MockAuthorizer is a test double for auth.Authorizer.
 type MockAuthorizer struct {
 	// AuthorizeFn is called when Authorize is invoked. If nil, Authorize
 	// returns nil.
@@ -76,7 +77,7 @@ type MockAuthorizer struct {
 	mu sync.Mutex
 }
 
-var _ gas.Authorizer = (*MockAuthorizer)(nil)
+var _ auth.Authorizer = (*MockAuthorizer)(nil)
 
 // Authorize delegates to AuthorizeFn if set, otherwise returns nil.
 func (m *MockAuthorizer) Authorize(
@@ -118,7 +119,7 @@ func (m *MockAuthorizer) CallCount(method string) int {
 	return n
 }
 
-// MockRevoker is a test double for gas.PrincipalRevoker.
+// MockRevoker is a test double for auth.PrincipalRevoker.
 type MockRevoker struct {
 	// RevokeFn is called when Revoke is invoked. If nil, Revoke returns nil.
 	RevokeFn func(ctx context.Context, principal gas.Principal) error
@@ -134,7 +135,7 @@ type MockRevoker struct {
 	mu sync.Mutex
 }
 
-var _ gas.PrincipalRevoker = (*MockRevoker)(nil)
+var _ auth.PrincipalRevoker = (*MockRevoker)(nil)
 
 // Revoke delegates to RevokeFn if set, otherwise returns nil.
 func (m *MockRevoker) Revoke(ctx context.Context, principal gas.Principal) error {
