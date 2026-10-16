@@ -179,3 +179,39 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   for example one in-flight build per type under a container lock with
   later callers waiting, weighing the deadlock risk of holding it while a
   constructor and `Init` run (a §3 decision in `CLAUDE.md`).
+
+## KI-012: ui static files are unreachable with the default settings
+
+- **Status**: open
+- **Area**: `ui` (`config.go`, `service.go`).
+- **Found**: 2026-10-16, while writing the ui `doc.go`.
+- **Detail**: the comment on `Settings.StaticStripPrefix`
+  (`ui/config.go:46`) says it defaults to `StaticPath` when empty, but
+  `initStaticRoute` passes it unchanged (`ui/service.go:147` and `:149`),
+  so with the defaults nothing is stripped. A request for
+  `/static/app.css` is looked up as `static/app.css` inside the static
+  root, which for the default `StaticDir` of `static/` is
+  `./static/static/app.css`; a file at `./static/app.css` is reachable at
+  no URL. Verified with the service built over an `fstest.MapFS` holding
+  `app.css` and `static/app.css`, default config: `GET /static/app.css`
+  served the nested file and `GET /app.css` answered 404.
+- **Next step**: apply the documented default (strip `StaticPath`'s
+  literal prefix when `StaticStripPrefix` is empty) or change the
+  documentation. Either changes which URLs serve which files, so it is a
+  decision for Ahmed.
+
+## KI-013: ui template rebuilds race with concurrent renders
+
+- **Status**: open
+- **Area**: `ui` (`render.go`).
+- **Found**: 2026-10-16, while writing the ui `doc.go`.
+- **Detail**: `Engine.Build` resets `layouts`, `partials`, and `pages`
+  (`ui/render.go:90`) and `classify` appends to them (`:201` to `:205`)
+  outside `e.mu`, while renders read them (`:124`, `:129`, `:182`). In a
+  development-like environment every render calls `Build`, so concurrent
+  renders race: 8 goroutines rendering 20 times each produced 28 data race
+  reports under `go test -race`. The same probe passes without `-race`,
+  so the failure is silent corruption rather than a crash.
+- **Next step**: hold `e.mu` across `Build`, or build into locals and
+  swap them in under the lock. A plain bug fix, outside the current task
+  list.
