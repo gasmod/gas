@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `memory.Service` `Get`, `Delete`, and `Exists` return `cache.ErrClosed`
   before the service has started, as `Set` now does. They used to report a
   missing key, `nil`, and `false`.
+- `valkey.Service` `CheckHealth` returns `cache.ErrClosed` before the
+  service has started; it used to report healthy. A `Get`, `Set`, `Delete`,
+  `Exists`, or `CheckReady` that fails because `Close` or a restart happened
+  while it ran returns `cache.ErrClosed` instead of the wrapped valkey-go
+  error.
 
 ### Fixed
 
@@ -26,6 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   map` when it runs before the service has started or races `Close`; it
   returns `cache.ErrClosed`. Every operation now checks that the service is
   open under its mutex.
+- `valkey.Service` `Get`, `Set`, `Delete`, `Exists`, and `CheckReady` no
+  longer panic with a nil pointer dereference before the service has
+  started; they return `cache.ErrClosed`. The client is now held in an
+  atomic pointer, so restarting the service while operations run is no
+  longer a data race.
 
 ## [0.3.0] - 2026-07-03
 

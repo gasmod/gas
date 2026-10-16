@@ -8,7 +8,8 @@
 //
 // This package holds what the backends share: the sentinel errors
 // ErrKeyNotFound, returned by Get for a key that is missing or expired, and
-// ErrClosed, returned by every operation on a backend that has been stopped.
+// ErrClosed, returned by every operation on a backend that has not started
+// or has been stopped.
 //
 // See the module README for usage examples and design rationale.
 //

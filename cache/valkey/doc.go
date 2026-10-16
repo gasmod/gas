@@ -32,18 +32,20 @@
 // that context ends during a wait the retries stop and starting fails with
 // an error wrapping both the context's error and the last connection error.
 // Stopping the service closes the client and makes every operation return
-// cache.ErrClosed.
+// cache.ErrClosed, as does every operation before the service has started.
+// An operation that is running when the service stops, or when a restart
+// replaces the client, also returns cache.ErrClosed. The client is held in
+// an atomic pointer, so operations can run while the service restarts.
 //
 // # Behavior
 //
 // Get returns cache.ErrKeyNotFound for a missing key. Set with a positive
 // TTL sets a millisecond expiry on the server; a TTL of 0 or less stores the
 // key without one. Errors from the server are wrapped with the service name
-// and the key. CheckHealth fails only once the service has stopped, since
-// the client reconnects on its own; CheckReady pings the server with the
-// caller's context. Get, Set, Delete, Exists, and CheckReady panic on a
-// service that has not started, because the client does not exist yet
-// (KI-017).
+// and the key. CheckHealth fails only before the service has started or
+// once it has stopped, since the client reconnects on its own; CheckReady
+// pings the server with the caller's context. Client returns nil before the
+// service first connects, and the closed client after it stops.
 //
 // SPDX-License-Identifier: MIT
 package valkey

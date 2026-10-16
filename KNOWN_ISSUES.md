@@ -252,22 +252,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   initialized, and whether a later `Start` returns the original error (a
   §3 lifecycle decision in `CLAUDE.md`).
 
-## KI-017: valkey cache operations panic before the service starts
-
-- **Status**: open
-- **Area**: `cache/valkey` (`service.go`).
-- **Found**: 2026-10-16, while writing the cache `doc.go`.
-- **Detail**: the client is created when the service starts, and `closed`
-  starts false, so on a `Service` that was constructed but never started
-  `Get`, `Set`, `Delete`, and `Exists` pass their `closed` check and call
-  the nil client (`cache/valkey/service.go:182`, `:206` and `:208`,
-  `:223`, `:235`), and so does `CheckReady` (`:258`). Each one panics with
-  `invalid memory address or nil pointer dereference`. Verified for the
-  four cache methods with a throwaway test.
-- **Next step**: return `cache.ErrClosed`, or a not-started error, when
-  the client is nil, since §7 of `CLAUDE.md` reserves panics for wiring
-  mistakes.
-
 ## KI-018: migrate Down runs the down SQL of a dirty version
 
 - **Status**: open
