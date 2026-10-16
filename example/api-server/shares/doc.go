@@ -1,8 +1,8 @@
 // Package shares implements the api-server example's share links. An
 // authenticated POST /api/files/{id}/share creates a link with an optional
 // expiry, and the public GET /api/shares/{token} returns the file's details
-// and a presigned download link. The service registers its migrations and
-// its email templates when it starts.
+// and a download link presigned by storage.Presigner. The service registers
+// its migrations and its email templates when it starts.
 //
 // Creating a share also queues a notification email on the queue named by
 // the share_notification_queue setting. Queueing is best effort: a missing
