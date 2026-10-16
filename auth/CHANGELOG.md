@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`auth.Authenticator`, `auth.Authorizer`, and `auth.PrincipalRevoker`.**
+  The interfaces moved here from core, with the same methods. `Chain`,
+  `Middleware`, the `jwt`, `session`, and `apikey` services, and the
+  `authtest` mocks now implement or accept the `auth` interfaces.
+
+### Changed
+
+- **BREAKING: the auth API names `auth.Authenticator`.** It is the element
+  type of `Chain` and the parameter type of `Middleware`, so code converting a
+  `[]gas.Authenticator` to `auth.Chain` must use `[]auth.Authenticator`
+  instead. Values typed `gas.Authenticator` keep working in `Chain` literals
+  and as the `Middleware` argument against core v0.5.x, since the method sets
+  are identical.
+
 ## [0.1.0] - 2026-07-03
 
 First open source release. Versions prior to 0.1.0 were developed in a private
