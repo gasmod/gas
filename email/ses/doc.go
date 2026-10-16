@@ -35,10 +35,10 @@
 //
 // Init runs at startup. It binds and validates the configuration and,
 // unless WithClient was given, builds the SES client from the AWS default
-// configuration, loaded under Init's context, so a slow credential chain is
-// bounded by the container's init deadline. It does not contact SES, so bad
-// credentials or an unreachable endpoint surface on the first send, not at
-// startup.
+// configuration (environment and shared config files), loaded under Init's
+// context; credentials are fetched on the first call, not in Init. It does
+// not contact SES, so bad credentials or an unreachable endpoint surface on
+// the first send, not at startup.
 //
 // Close runs at shutdown. It only marks the Service closed: Send,
 // SendFromTemplate and CheckReady then return email.ErrClosed, so a

@@ -111,7 +111,8 @@ func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) *Service {
 func (s *Service) Name() string { return serviceName }
 
 // Init validates the configuration and creates the SQS client. ctx bounds
-// loading the AWS configuration and credentials.
+// loading the AWS configuration; credentials are fetched on the first call,
+// not in Init.
 func (s *Service) Init(ctx context.Context) error {
 	if !s.customConfigProvided {
 		if s.cfgProvider != nil {
