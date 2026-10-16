@@ -187,7 +187,16 @@ func (p *Provider) HeadObject(
 }
 
 // PutObject uploads an object through the transfer manager and returns the
-// version S3 assigned, if any. A nil Body uploads an empty object.
+// version S3 assigned, if any. A nil Body uploads an empty object. A set
+// ContentLength must match the body: a shorter or longer body, or a
+// negative length, returns an error wrapping storage.ErrContentLengthMismatch
+// and the object is not stored. A multipart upload in progress is aborted;
+// if the abort itself fails, the incomplete upload remains (its parts are
+// stored and billed until a lifecycle rule removes them) and the abort's
+// error is not reported. Body is read to EOF, so a body that blocks after
+// exactly ContentLength bytes without ending blocks PutObject. With
+// ContentLength set, a seekable Body is sized from ContentLength, not by
+// seeking, and buffered in parts like any other reader.
 func (p *Provider) PutObject(
 	ctx context.Context,
 	input *storage.PutObjectInput,
@@ -205,10 +214,17 @@ func (p *Provider) PutObject(
 		return nil, internal.Errorf("s3/provider", "put: %w", bucketErr)
 	}
 
+	// The transfer manager buffers the body and sends what it read, so it
+	// accepts a body that does not match ContentLength; the check is ours.
+	body, lenErr := internal.CheckLength(input.Body, input.ContentLength)
+	if lenErr != nil {
+		return nil, internal.Errorf("s3/provider", "put: %w", lenErr)
+	}
+
 	in := &transfermanager.UploadObjectInput{
 		Bucket:        new(bucket),
 		Key:           new(input.Key),
-		Body:          input.Body,
+		Body:          body,
 		ContentLength: input.ContentLength,
 		ContentType:   input.ContentType,
 		Expires:       input.Expires,

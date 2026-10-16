@@ -11,28 +11,45 @@ import (
 )
 
 // FuzzProviderInput drives PutObject, HeadObject, GetObject and DeleteObject
-// with an arbitrary key, bucket name, metadata pair, content type and body,
-// all through the public API. No input may panic. A key or bucket name that
-// fails validation must be reported as storage.ErrInvalidKey or
-// storage.ErrInvalidBucket, and an object that was stored must read back
-// with the body it was given.
+// with an arbitrary key, bucket name, metadata pair, content type, body and
+// declared ContentLength, all through the public API. No input may panic. A
+// key or bucket name that fails validation must be reported as
+// storage.ErrInvalidKey or storage.ErrInvalidBucket, a ContentLength that
+// does not match the body as storage.ErrContentLengthMismatch, and an object
+// that was stored must read back with the body it was given.
 func FuzzProviderInput(f *testing.F) {
-	f.Add("k", testBucket, "mk", "mv", "text/plain", []byte("data"))
-	f.Add("../x", "B!", "\xff", "\x00", "", []byte{})
-	f.Add("a/./b", testBucket, "", "", "\r\n", []byte("<html>"))
-	f.Add("/abs", testBucket, "Trace-ID", "\xc3\x28", "image/png", []byte{0, 1, 2})
+	f.Add("k", testBucket, "mk", "mv", "text/plain", []byte("data"), false, int64(0))
+	f.Add("../x", "B!", "\xff", "\x00", "", []byte{}, true, int64(0))
+	f.Add("a/./b", testBucket, "", "", "\r\n", []byte("<html>"), true, int64(6))
+	f.Add("/abs", testBucket, "Trace-ID", "\xc3\x28", "image/png", []byte{0, 1, 2}, true, int64(2))
+	f.Add("k", testBucket, "", "", "", []byte("data"), true, int64(5))
+	f.Add("k", testBucket, "", "", "", []byte("data"), true, int64(-1))
 
-	f.Fuzz(func(t *testing.T, key, bucket, metaKey, metaValue, contentType string, body []byte) {
+	f.Fuzz(func(t *testing.T, key, bucket, metaKey, metaValue, contentType string, body []byte,
+		setLength bool, length int64,
+	) {
 		p, _ := newTestProvider(t)
 		ctx := context.Background()
 		in := storage.BaseObjectInput{Bucket: &bucket, Key: key}
 
+		var contentLength *int64
+		if setLength {
+			contentLength = &length
+		}
 		_, putErr := p.PutObject(ctx, &storage.PutObjectInput{
 			BaseObjectInput: in,
 			Body:            bytes.NewReader(body),
+			ContentLength:   contentLength,
 			ContentType:     &contentType,
 			Metadata:        map[string]string{metaKey: metaValue},
 		})
+		if putErr == nil && setLength && length != int64(len(body)) {
+			t.Errorf(
+				"PutObject() with ContentLength %d for %d bytes succeeded, want ErrContentLengthMismatch",
+				length,
+				len(body),
+			)
+		}
 		_, headErr := p.HeadObject(ctx, &storage.HeadObjectInput{BaseObjectInput: in})
 		obj, getErr := p.GetObject(ctx, &storage.GetObjectInput{
 			HeadObjectInput: storage.HeadObjectInput{BaseObjectInput: in},
@@ -57,23 +74,43 @@ func FuzzProviderInput(f *testing.F) {
 			"GetObject":    getErr,
 			"DeleteObject": delErr,
 		} {
-			if err == nil {
-				continue
-			}
-			if !errors.Is(err, storage.ErrInvalidKey) &&
-				!errors.Is(err, storage.ErrInvalidBucket) &&
-				!errors.Is(err, storage.ErrBucketNotFound) {
+			if err != nil && !fuzzErrAllowed(op, err, putErr) {
 				t.Errorf(
-					"%s() error = %v, want nil or an invalid-input or bucket-not-found sentinel",
+					"%s() error = %v, want nil or an invalid-input, bucket-not-found, "+
+						"content-length or (after a rejected put) not-found sentinel",
 					op,
 					err,
 				)
 			}
 		}
+		// Every iteration uses a fresh provider, so the key is new: a put
+		// rejected for its length must leave nothing to read.
+		if errors.Is(putErr, storage.ErrContentLengthMismatch) &&
+			!errors.Is(headErr, storage.ErrNotFound) {
+			t.Errorf("HeadObject() after a rejected put error = %v, want ErrNotFound", headErr)
+		}
 		if putErr == nil && (headErr != nil || getErr != nil) {
 			t.Errorf("stored object not readable: head %v, get %v", headErr, getErr)
 		}
 	})
+}
+
+// fuzzErrAllowed reports whether err is an error FuzzProviderInput accepts
+// from op: an invalid key or bucket, a missing bucket, a content-length
+// mismatch from PutObject, or, when the put was rejected, a not-found from
+// the reads that follow it.
+func fuzzErrAllowed(op string, err, putErr error) bool {
+	switch {
+	case errors.Is(err, storage.ErrInvalidKey),
+		errors.Is(err, storage.ErrInvalidBucket),
+		errors.Is(err, storage.ErrBucketNotFound):
+		return true
+	case op == "PutObject":
+		return errors.Is(err, storage.ErrContentLengthMismatch)
+	default:
+		return putErr != nil &&
+			(errors.Is(err, storage.ErrKeyNotFound) || errors.Is(err, storage.ErrNotFound))
+	}
 }
 
 // FuzzMetadataOnDisk overwrites an object's metadata file with arbitrary

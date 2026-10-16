@@ -2,8 +2,10 @@ package internal
 
 import (
 	"errors"
+	"io"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/gasmod/gas/config"
 	"github.com/gasmod/gas/config/configtest"
@@ -356,6 +358,201 @@ func TestErrorf(t *testing.T) {
 		}
 		if errors.Unwrap(err) != nil {
 			t.Errorf("errors.Unwrap() = %v, want nil", errors.Unwrap(err))
+		}
+	})
+}
+
+// badCountReader is a reader whose Read breaks the io.Reader contract: it
+// returns len(p)+over when over is set, and the negative count neg
+// otherwise, with no error.
+type badCountReader struct{ over, neg int }
+
+func (b badCountReader) Read(p []byte) (int, error) {
+	if b.over != 0 {
+		return len(p) + b.over, nil
+	}
+	return b.neg, nil
+}
+
+// TestCheckLengthInvalidCount checks that a reader that breaks the io.Reader
+// contract with a count below zero or above len(p) gets a sticky error, not a
+// panic or a miscount, while reading and while probing. It is not a length
+// mismatch.
+func TestCheckLengthInvalidCount(t *testing.T) {
+	t.Parallel()
+	for name, bad := range map[string]badCountReader{
+		"len(p)+5": {over: 5},
+		"-3":       {neg: -3},
+	} {
+		t.Run("reader returning "+name, func(t *testing.T) {
+			t.Parallel()
+			n := int64(100)
+			r, err := CheckLength(bad, &n)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				k, err := r.Read(make([]byte, 8))
+				if k != 0 || err == nil || errors.Is(err, storage.ErrContentLengthMismatch) ||
+					!strings.Contains(err.Error(), "invalid count") {
+					t.Fatalf("Read() = %d, %v; want 0 and a sticky invalid count error", k, err)
+				}
+			}
+		})
+	}
+	t.Run("reader returning an invalid count while probing", func(t *testing.T) {
+		t.Parallel()
+		n := int64(2)
+		r, err := CheckLength(io.MultiReader(strings.NewReader("ab"), badCountReader{over: 5}), &n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = io.ReadAll(r)
+		if err == nil || errors.Is(err, storage.ErrContentLengthMismatch) ||
+			!strings.Contains(err.Error(), "invalid count") {
+			t.Fatalf("ReadAll() error = %v, want an invalid count error", err)
+		}
+	})
+}
+
+// zeroReads is a reader that returns 0, nil a few times before each byte,
+// which io.Reader allows but discourages.
+type zeroReads struct {
+	data  []byte
+	calls int
+}
+
+func (z *zeroReads) Read(p []byte) (int, error) {
+	z.calls++
+	if z.calls%3 != 0 {
+		return 0, nil
+	}
+	if len(z.data) == 0 {
+		return 0, io.EOF
+	}
+	if len(p) == 0 {
+		return 0, nil
+	}
+	p[0], z.data = z.data[0], z.data[1:]
+	return 1, nil
+}
+
+// TestCheckLength checks the reader CheckLength returns: it yields the body
+// unchanged when the length matches, and fails with ErrContentLengthMismatch
+// as soon as the body is shorter or longer than declared.
+func TestCheckLength(t *testing.T) {
+	t.Parallel()
+
+	read := func(t *testing.T, body io.Reader, n *int64) ([]byte, error) {
+		t.Helper()
+		r, err := CheckLength(body, n)
+		if err != nil {
+			return nil, err
+		}
+		return io.ReadAll(r)
+	}
+
+	t.Run("nil length passes the body through", func(t *testing.T) {
+		t.Parallel()
+		body := strings.NewReader("abc")
+		r, err := CheckLength(body, nil)
+		if err != nil || r != io.Reader(body) {
+			t.Fatalf("CheckLength(body, nil) = %v, %v; want the body itself", r, err)
+		}
+	})
+
+	for _, tc := range []struct {
+		body     io.Reader
+		name     string
+		want     string
+		length   int64
+		mismatch bool
+	}{
+		{name: "exact", body: strings.NewReader("abcde"), length: 5, want: "abcde"},
+		{name: "exact empty", body: strings.NewReader(""), length: 0, want: ""},
+		{name: "nil body with zero length", body: nil, length: 0, want: ""},
+		{name: "nil body with a length", body: nil, length: 3, mismatch: true},
+		{name: "short", body: strings.NewReader("abc"), length: 5, mismatch: true},
+		{name: "long", body: strings.NewReader("abcdefg"), length: 5, mismatch: true},
+		{name: "long by one", body: strings.NewReader("abcdef"), length: 5, mismatch: true},
+		{name: "zero length with data", body: strings.NewReader("a"), length: 0, mismatch: true},
+		{name: "negative", body: strings.NewReader("abc"), length: -1, mismatch: true},
+		{name: "one byte reads, exact", body: iotest.OneByteReader(strings.NewReader("abcde")), length: 5, want: "abcde"},
+		{name: "one byte reads, long", body: iotest.OneByteReader(strings.NewReader("abcdef")), length: 5, mismatch: true},
+		{name: "data with EOF, exact", body: iotest.DataErrReader(strings.NewReader("abcde")), length: 5, want: "abcde"},
+		{name: "data with EOF, short", body: iotest.DataErrReader(strings.NewReader("abc")), length: 5, mismatch: true},
+		{name: "zero reads, exact", body: &zeroReads{data: []byte("abc")}, length: 3, want: "abc"},
+		{name: "zero reads, long", body: &zeroReads{data: []byte("abcd")}, length: 3, mismatch: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := read(t, tc.body, &tc.length)
+			if tc.mismatch {
+				if !errors.Is(err, storage.ErrContentLengthMismatch) {
+					t.Fatalf("read = %q, %v; want ErrContentLengthMismatch", got, err)
+				}
+				return
+			}
+			if err != nil || string(got) != tc.want {
+				t.Fatalf("read = %q, %v; want %q", got, err, tc.want)
+			}
+		})
+	}
+}
+
+// TestCheckLengthReaderBehavior checks how the reader CheckLength returns
+// handles a caller that stops at the declared length, a body that fails or
+// breaks the io.Reader contract, and repeated reads after an error.
+func TestCheckLengthReaderBehavior(t *testing.T) {
+	t.Parallel()
+
+	read := func(t *testing.T, body io.Reader, n *int64) ([]byte, error) {
+		t.Helper()
+		r, err := CheckLength(body, n)
+		if err != nil {
+			return nil, err
+		}
+		return io.ReadAll(r)
+	}
+
+	t.Run("a long body is caught even when only the declared bytes are read", func(t *testing.T) {
+		t.Parallel()
+		n := int64(5)
+		r, err := CheckLength(strings.NewReader("abcdefg"), &n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		buf := make([]byte, 5)
+		if _, err := io.ReadFull(r, buf); !errors.Is(err, storage.ErrContentLengthMismatch) {
+			t.Fatalf(
+				"ReadFull of the declared length error = %v, want ErrContentLengthMismatch",
+				err,
+			)
+		}
+	})
+
+	t.Run("a read error passes through", func(t *testing.T) {
+		t.Parallel()
+		boom := errors.New("boom")
+		n := int64(5)
+		_, err := read(t, io.MultiReader(strings.NewReader("ab"), iotest.ErrReader(boom)), &n)
+		if !errors.Is(err, boom) || errors.Is(err, storage.ErrContentLengthMismatch) {
+			t.Fatalf("error = %v, want boom only", err)
+		}
+	})
+
+	t.Run("the error is sticky", func(t *testing.T) {
+		t.Parallel()
+		n := int64(5)
+		r, err := CheckLength(strings.NewReader("abc"), &n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, first := io.ReadAll(r)
+		k, again := r.Read(make([]byte, 8))
+		if !errors.Is(first, storage.ErrContentLengthMismatch) || k != 0 ||
+			!errors.Is(again, storage.ErrContentLengthMismatch) {
+			t.Fatalf("first = %v, then %d, %v; want the mismatch both times", first, k, again)
 		}
 	})
 }

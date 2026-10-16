@@ -52,7 +52,16 @@
 // through the SDK's transfer manager, which accepts any reader, including one that
 // cannot seek or has unknown length, and switches to a multipart upload for
 // large bodies; the part uploads it runs concurrently end before PutObject
-// returns, and a failed multipart upload is aborted. A Provider or Presigner
+// returns, and a failed multipart upload is aborted. The transfer manager
+// itself sends whatever the body yields, so PutObject enforces a set
+// ContentLength: a body that turns out shorter or longer fails the upload
+// (single part before anything is sent; multipart by aborting it) with
+// storage.ErrContentLengthMismatch. If that abort fails, the incomplete
+// multipart upload remains, stored and billed until a lifecycle rule removes
+// it, and the abort's error is not reported. With a missing bucket and a
+// mismatched body, a body below the multipart threshold reports the mismatch
+// (nothing is sent); above it, S3 may answer NoSuchBucket first. A Provider
+// or Presigner
 // that was not built by its constructor, including a nil pointer, returns
 // storage.ErrNotInitialized from every method. Both are safe for concurrent
 // use.

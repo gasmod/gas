@@ -66,7 +66,7 @@ func (b *Bucket) CreateObject(
 	if lErr := b.lock.Lock(ctx, name); lErr != nil {
 		return nil, fmt.Errorf("lock object: %w", lErr)
 	}
-	defer func() { err = b.unlockWith(name, err) }()
+	defer func() { err = b.finishCreate(name, out != nil, err) }()
 
 	prevDataFile, pErr := b.previousDataFile(name)
 	if pErr != nil {
@@ -255,6 +255,27 @@ func (b *Bucket) Close() error {
 		return fmt.Errorf("close bucket: %w", err)
 	}
 	return nil
+}
+
+// finishCreate gives up the lock CreateObject took on name, which wrote an
+// object when wrote is set and returned err. A failed write of a key with no
+// metadata leaves no object, so its lock file need not stay, as in
+// OpenObject. Removing it is safe while the lock is held: a waiter on the
+// removed file sees it is no longer current and retries. A key whose
+// metadata exists, even corrupt, keeps its lock file.
+func (b *Bucket) finishCreate(name string, wrote bool, err error) error {
+	if err != nil && !wrote && b.metaMissing(name) {
+		return b.releaseWith(name, err)
+	}
+	return b.unlockWith(name, err)
+}
+
+// metaMissing reports whether name has no metadata file. Any other outcome
+// of reading it, including corrupt metadata or an I/O error, counts as
+// present, so the caller keeps the lock file.
+func (b *Bucket) metaMissing(name string) bool {
+	_, err := b.meta(name)
+	return errors.Is(err, ErrObjectNotFound)
 }
 
 // unlockWith unlocks name, keeping its lock file, and returns err joined

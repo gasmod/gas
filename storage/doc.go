@@ -63,16 +63,20 @@
 // only the s3 backend can report.
 //
 // Presigner methods reject a TTL that is negative, under one second, or over
-// seven days with ErrInvalidTTL. A GetObject or HeadObject Range selects
-// part of the object, and Size is then the length of that part. A Range that
-// cannot be satisfied (its first byte at or past the end, or "bytes=-0") is
+// seven days with ErrInvalidTTL. A GetObject or HeadObject Range selects part
+// of the object, and Size is then the length of that part. A Range that cannot
+// be satisfied (its first byte at or past the end, or "bytes=-0") is
 // ErrInvalidRange in both backends. dir applies RFC 9110 single-range
-// semantics and ignores any other header; the s3 backend passes the header
-// to S3, which agrees on valid single ranges but may accept some malformed
-// ones. An input that asks for a
-// feature the backend does not implement, such as a Version on the unversioned
-// dir backend, returns ErrNotSupported. Backend constructors given a nil
-// option return ErrInvalidOption instead of panicking.
+// semantics and ignores any other header; the s3 backend passes the header to
+// S3, which agrees on valid single ranges but may accept some malformed ones.
+// An input that asks for a feature the backend does not implement, such as a
+// Version or PartNumber on the dir backend, returns ErrNotSupported. A
+// PutObject whose ContentLength is set and does not match the body returns
+// ErrContentLengthMismatch in both backends and stores nothing. When the
+// bucket is also missing, the error may be ErrBucketNotFound or
+// ErrContentLengthMismatch depending on the backend and the object's size (see
+// each backend); callers must not rely on the order. Backend constructors
+// given a nil option return ErrInvalidOption instead of panicking.
 //
 // # Lifecycle
 //

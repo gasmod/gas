@@ -1060,8 +1060,44 @@ func TestProvider_VersionNotSupported(t *testing.T) {
 	}
 }
 
+// TestProvider_PartNumberNotSupported checks that Head and Get reject a set
+// PartNumber, including a pointer to 0, with ErrNotSupported, since dir does
+// not store objects in parts, and that the rejection reads nothing. An
+// invalid key is still reported as such.
+func TestProvider_PartNumberNotSupported(t *testing.T) {
+	t.Parallel()
+	p, _ := newTestProvider(t)
+	put(t, p, "k", []byte("kept"))
+	ctx := context.Background()
+
+	for _, part := range []int32{0, 1, 2, -1} {
+		in := storage.HeadObjectInput{BaseObjectInput: base("k"), PartNumber: new(part)}
+		h, err := p.HeadObject(ctx, &in)
+		if !errors.Is(err, storage.ErrNotSupported) || h != nil {
+			t.Errorf("HeadObject(PartNumber %d) = %+v, %v; want nil, ErrNotSupported", part, h, err)
+		}
+		obj, err := p.GetObject(ctx, &storage.GetObjectInput{HeadObjectInput: in})
+		if !errors.Is(err, storage.ErrNotSupported) || obj != nil {
+			t.Errorf(
+				"GetObject(PartNumber %d) = %+v, %v; want nil, ErrNotSupported",
+				part,
+				obj,
+				err,
+			)
+		}
+	}
+
+	bad := storage.HeadObjectInput{BaseObjectInput: base(""), PartNumber: new(int32(1))}
+	if _, err := p.HeadObject(ctx, &bad); !errors.Is(err, storage.ErrInvalidKey) {
+		t.Errorf("HeadObject(invalid key, PartNumber) error = %v, want ErrInvalidKey", err)
+	}
+	if _, data := get(t, p, "k"); string(data) != "kept" {
+		t.Errorf("object after rejected calls = %q, want kept", data)
+	}
+}
+
 // TestProvider_IgnoresReadOptions documents that dir ignores the S3-only
-// read options other than Version and Range rather than erroring on them.
+// Response* read options rather than erroring on them.
 func TestProvider_IgnoresReadOptions(t *testing.T) {
 	t.Parallel()
 	p, _ := newTestProvider(t)
@@ -1069,7 +1105,6 @@ func TestProvider_IgnoresReadOptions(t *testing.T) {
 
 	in := storage.HeadObjectInput{
 		BaseObjectInput:     base("k"),
-		PartNumber:          new(int32(2)),
 		ResponseContentType: new("text/x-override"),
 	}
 	h, err := p.HeadObject(context.Background(), &in)
@@ -1090,15 +1125,14 @@ func TestProvider_IgnoresReadOptions(t *testing.T) {
 	}
 }
 
-// TestProvider_IgnoresWriteOptions documents that dir ignores ContentLength
-// and Expires on Put.
+// TestProvider_IgnoresWriteOptions documents that dir ignores Expires on
+// Put. ContentLength is enforced; see TestProvider_ContentLength.
 func TestProvider_IgnoresWriteOptions(t *testing.T) {
 	t.Parallel()
 	p, _ := newTestProvider(t)
 	_, err := p.PutObject(context.Background(), &storage.PutObjectInput{
 		BaseObjectInput: base("k"),
 		Body:            strings.NewReader("0123456789"),
-		ContentLength:   new(int64(3)),
 		Expires:         new(time.Unix(0, 0)),
 	})
 	if err != nil {

@@ -113,8 +113,9 @@ func (p *Provider) CreateBucket(
 // Version returns an error wrapping storage.ErrNotSupported, after the key and
 // bucket are validated and before anything is read. A Range is applied as by
 // GetObject, so Size is the length of the selected range, and an
-// unsatisfiable one returns an error wrapping storage.ErrInvalidRange. The
-// PartNumber and Response* fields of input are ignored.
+// unsatisfiable one returns an error wrapping storage.ErrInvalidRange. A set
+// PartNumber returns an error wrapping storage.ErrNotSupported, as Version
+// does. The Response* fields of input are ignored.
 func (p *Provider) HeadObject(
 	ctx context.Context,
 	input *storage.HeadObjectInput,
@@ -127,7 +128,7 @@ func (p *Provider) HeadObject(
 		return nil, internal.Errorf(mod, "head: %w", storage.ErrInputRequired)
 	}
 
-	if err := p.rejectVersion("head", &input.BaseObjectInput, input.Version); err != nil {
+	if err := p.rejectUnsupported("head", input); err != nil {
 		return nil, err
 	}
 
@@ -153,7 +154,12 @@ func (p *Provider) HeadObject(
 
 // PutObject writes the object, replacing any object at its key. A nil Body
 // is an empty object; a nil or empty ContentType is sniffed from the body.
-// The ContentLength and Expires fields of input are ignored, and the
+// A set ContentLength must match the body: a shorter or longer body, or a
+// negative length, returns an error wrapping storage.ErrContentLengthMismatch
+// and stores nothing. The bucket is checked first, so a missing bucket is
+// reported as such even when the length would also mismatch. Body is read to
+// EOF, so a body that blocks after exactly ContentLength bytes without ending
+// blocks PutObject. The Expires field of input is ignored, and the
 // returned ObjectInfo carries no fields.
 //
 // The write is atomic: a failed PutObject leaves the previous object as it
@@ -185,9 +191,15 @@ func (p *Provider) PutObject(
 		return nil, opError("put", nil, bkErr)
 	}
 
+	// Checked after the bucket, so a missing bucket is reported first.
+	body, lenErr := internal.CheckLength(input.Body, input.ContentLength)
+	if lenErr != nil {
+		return nil, internal.Errorf(mod, "put: %w", errors.Join(lenErr, bk.Close()))
+	}
+
 	out, err := bk.CreateObject(ctx, &vfs.CreateObjectInput{
 		Key:         input.Key,
-		Body:        input.Body,
+		Body:        body,
 		ContentType: input.ContentType,
 		Metadata:    input.Metadata,
 	})
@@ -213,8 +225,9 @@ func (p *Provider) PutObject(
 // matching S3: Body reads only those bytes and Size is their count. A Range
 // that is not a single valid byte range is ignored and the whole object is
 // returned; one that cannot be satisfied (its first byte at or past the end,
-// or "bytes=-0") returns an error wrapping storage.ErrInvalidRange. The
-// PartNumber and Response* fields of input are ignored.
+// or "bytes=-0") returns an error wrapping storage.ErrInvalidRange. A set
+// PartNumber returns an error wrapping storage.ErrNotSupported. The
+// Response* fields of input are ignored.
 func (p *Provider) GetObject(
 	ctx context.Context,
 	input *storage.GetObjectInput,
@@ -227,7 +240,7 @@ func (p *Provider) GetObject(
 		return nil, internal.Errorf(mod, "get: %w", storage.ErrInputRequired)
 	}
 
-	if err := p.rejectVersion("get", &input.BaseObjectInput, input.Version); err != nil {
+	if err := p.rejectUnsupported("get", &input.HeadObjectInput); err != nil {
 		return nil, err
 	}
 
@@ -377,15 +390,19 @@ func rangeBody(f fs.File, off, n int64) (io.ReadCloser, error) {
 	}{io.NewSectionReader(ra, off, n), f}, nil
 }
 
-// rejectVersion validates in's key and bucket, then reports a set version as
-// storage.ErrNotSupported: dir does not version objects. It returns nil when
-// the input is valid and version is nil.
-func (p *Provider) rejectVersion(op string, in *storage.BaseObjectInput, version *string) error {
-	if _, err := internal.ValidateInput(in, p.config.Storage.Bucket); err != nil {
+// rejectUnsupported validates in's key and bucket, then reports a set
+// Version or PartNumber as storage.ErrNotSupported: dir neither versions
+// objects nor stores them in parts. It returns nil when the input is valid
+// and asks for neither.
+func (p *Provider) rejectUnsupported(op string, in *storage.HeadObjectInput) error {
+	if _, err := internal.ValidateInput(&in.BaseObjectInput, p.config.Storage.Bucket); err != nil {
 		return internal.Errorf(mod, "%s: %w", op, err)
 	}
-	if version != nil {
+	if in.Version != nil {
 		return internal.Errorf(mod, "%s: version: %w", op, storage.ErrNotSupported)
+	}
+	if in.PartNumber != nil {
+		return internal.Errorf(mod, "%s: part number: %w", op, storage.ErrNotSupported)
 	}
 	return nil
 }

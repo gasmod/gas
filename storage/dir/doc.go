@@ -85,9 +85,13 @@
 //   - storage.ErrNotFound from Head, and storage.ErrKeyNotFound from Get: a
 //     missing object. Each matches only its own sentinel, as with s3.
 //   - storage.ErrInvalidRange: a Head or Get whose Range cannot be satisfied.
-//   - storage.ErrNotSupported: a Head, Get or Delete with Version set,
-//     checked after the key and bucket and before any disk access. This
-//     backend does not version objects.
+//   - storage.ErrNotSupported: a Head, Get or Delete with Version set, or a
+//     Head or Get with PartNumber set, checked after the key and bucket and
+//     before any disk access. This backend neither versions objects nor
+//     stores them in parts.
+//   - storage.ErrContentLengthMismatch: a Put whose Body does not yield
+//     exactly ContentLength bytes, or whose ContentLength is negative. Nothing
+//     is stored and no data file is left behind.
 //   - ErrStaleData: a Put that wrote the object but could not remove the data
 //     file it replaced. Put returns the ObjectInfo with this error.
 //
@@ -110,10 +114,10 @@
 // more lenient than RFC 9110 on some malformed headers (LocalStack, for
 // example, accepts a unit other than bytes, spaces around "=" or "-", and a
 // "+" sign), and on an empty object it may answer 416 where this backend
-// returns the empty body; dir follows RFC 9110. PartNumber and the Response*
-// fields of reads, and ContentLength and Expires of Put, are ignored.
-// ObjectInfo carries no Version, and Put and Delete return an empty
-// ObjectInfo. A Put without a content type sniffs one from the body with
+// returns the empty body; dir follows RFC 9110. PartNumber is
+// storage.ErrNotSupported. The Response* fields of reads, and Expires of Put,
+// are ignored. ObjectInfo carries no Version, and Put and Delete return an
+// empty ObjectInfo. A Put without a content type sniffs one from the body with
 // http.DetectContentType. Metadata keys keep their case, and invalid UTF-8 in
 // metadata is replaced with U+FFFD when it is stored.
 //

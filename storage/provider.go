@@ -91,9 +91,13 @@ type PutObjectInput struct {
 	// Body supplies the contents. Nil writes an empty object. It may be any
 	// reader, including one that cannot seek or whose length is unknown.
 	Body io.Reader
-	// ContentLength is the length of Body in bytes, when known. It is a
-	// hint: the s3 backend sends the length it actually reads and uses this
-	// only to size multipart uploads.
+	// ContentLength is the length of Body in bytes, when known. Nil means the
+	// length is unknown. When it is set, Body must yield exactly that many
+	// bytes: a shorter or longer body, or a negative length, fails with
+	// ErrContentLengthMismatch and stores nothing, leaving any object already
+	// under the key as it was. Zero with an empty or nil Body is valid. Body
+	// is read to EOF, so one that blocks after exactly ContentLength bytes
+	// without ending blocks PutObject.
 	ContentLength *int64
 	// ContentType is the object's media type.
 	ContentType *string

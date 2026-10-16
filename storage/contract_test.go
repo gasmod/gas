@@ -418,6 +418,7 @@ func classify(err error) string {
 		{storage.ErrBucketExists, "ErrBucketExists"},
 		{storage.ErrNotSupported, "ErrNotSupported"},
 		{storage.ErrInvalidRange, "ErrInvalidRange"},
+		{storage.ErrContentLengthMismatch, "ErrContentLengthMismatch"},
 	}
 	var names []string
 	for _, s := range sentinels {
@@ -463,6 +464,7 @@ func TestContract_Common(t *testing.T) {
 		"error message shape":              contractErrorMessage,
 		"create bucket new then owned":     contractCreateBucket,
 		"ranged reads":                     contractRange,
+		"content length":                   contractContentLength,
 	}
 	for name, check := range cases {
 		for _, be := range backends {
@@ -547,6 +549,50 @@ func contractRange(t *testing.T, p storage.Provider) {
 				herr,
 				len(c.want),
 			)
+		}
+	}
+}
+
+// contractContentLength puts with a matching, nil, shorter and longer
+// ContentLength. A mismatch is ErrContentLengthMismatch and keeps the object
+// that was there; the others store the body.
+func contractContentLength(t *testing.T, p storage.Provider) {
+	if _, err := cput(p, key("k"), strings.NewReader("previous"), nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name, body string
+		length     *int64
+		want       string
+	}{
+		{"short", "abc", new(int64(5)), "ErrContentLengthMismatch"},
+		{"long", "abcdefg", new(int64(5)), "ErrContentLengthMismatch"},
+		{"exact", "abcde", new(int64(5)), "ok"},
+		{"nil", "unknown length", nil, "ok"},
+	} {
+		_, err := p.PutObject(context.Background(), &storage.PutObjectInput{
+			BaseObjectInput: key("k"),
+			Body:            strings.NewReader(c.body),
+			ContentLength:   c.length,
+		})
+		if got := classify(err); got != c.want {
+			t.Errorf("PutObject(%s) = %s (%v), want %s", c.name, got, err, c.want)
+		}
+		want := c.body
+		if c.want != "ok" {
+			want = "previous"
+		}
+		if _, body, err := cget(
+			p,
+			storage.HeadObjectInput{BaseObjectInput: key("k")},
+		); err != nil ||
+			string(body) != want {
+			t.Errorf("after PutObject(%s) the object is %q, %v; want %q", c.name, body, err, want)
+		}
+		if c.want == "ok" {
+			if _, err := cput(p, key("k"), strings.NewReader("previous"), nil, nil); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 }
@@ -859,6 +905,18 @@ func divergences(t *testing.T) []divergence {
 			want:    map[string]string{"dir": "ok", "s3": "ErrBucketExists"},
 		},
 		{
+			// Documented, not normalized: dir checks the bucket first; s3
+			// reads the body before sending anything below the multipart
+			// threshold, so the mismatch comes first there (above it, S3
+			// may answer NoSuchBucket first).
+			name:    "put with a mismatched length into a missing bucket",
+			observe: observePutMismatchMissingBucket,
+			want: map[string]string{
+				"dir": "ErrBucketNotFound",
+				"s3":  "ErrContentLengthMismatch",
+			},
+		},
+		{
 			name:    "last modified precision",
 			observe: observeLastModifiedPrecision,
 			want:    map[string]string{"dir": "sub-second", "s3": "whole seconds"},
@@ -873,6 +931,17 @@ func observeCreateForeignBucket(_ *testing.T, p storage.Provider) string {
 		context.Background(),
 		&storage.CreateBucketInput{Bucket: foreignBucket},
 	)
+	return classify(err)
+}
+
+// observePutMismatchMissingBucket returns the error class of a put whose
+// body does not match its ContentLength, into a bucket that does not exist.
+func observePutMismatchMissingBucket(_ *testing.T, p storage.Provider) string {
+	_, err := p.PutObject(context.Background(), &storage.PutObjectInput{
+		BaseObjectInput: storage.BaseObjectInput{Bucket: new("no-such-bucket"), Key: "k"},
+		Body:            strings.NewReader("abc"),
+		ContentLength:   new(int64(5)),
+	})
 	return classify(err)
 }
 

@@ -68,10 +68,18 @@ var (
 	// ignored instead, and the whole object is returned.
 	ErrInvalidRange = errors.New("storage: invalid range")
 
+	// ErrContentLengthMismatch is returned by PutObject when ContentLength is
+	// set and Body yields a different number of bytes, fewer or more, or when
+	// ContentLength is negative. Nothing is stored: an object already under
+	// the key is left as it was.
+	ErrContentLengthMismatch = errors.New("storage: content length mismatch")
+
 	// ErrNotSupported is returned when an input asks for a feature the
 	// backend does not implement. The dir backend returns it from HeadObject,
 	// GetObject and DeleteObject when Version is set, because it does not
-	// version objects. Nothing is read or changed.
+	// version objects, and from HeadObject and GetObject when PartNumber is
+	// set, because it does not store objects in parts. Nothing is read or
+	// changed.
 	ErrNotSupported = errors.New("storage: not supported")
 
 	// ErrInvalidOption is returned by a backend constructor given a nil

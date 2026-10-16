@@ -74,8 +74,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `Range` that cannot be satisfied: its first byte at or past the end, or
     `bytes=-0`. s3 maps S3's 416 to it.
   - `storage.ErrNotSupported`. dir `HeadObject`, `GetObject` and
-    `DeleteObject` return it when `Version` is set, since dir does not
-    version objects.
+    `DeleteObject` return it when `Version` is set, and `HeadObject` and
+    `GetObject` when `PartNumber` is set, since dir neither versions objects
+    nor stores them in parts.
+  - `storage.ErrContentLengthMismatch`. `PutObject` returns it in both
+    backends when `ContentLength` is set and `Body` yields a different
+    number of bytes, or when `ContentLength` is negative. Nothing is stored,
+    and an object already under the key is unchanged. A nil `ContentLength`
+    still means the length is unknown.
   - `storage.ErrInvalidTTL`. `Presigner` methods return it for a TTL that
     is negative, under one second, or over seven days.
 - **`s3.Config` field** `Storage.SessionToken`.

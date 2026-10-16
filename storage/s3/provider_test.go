@@ -764,11 +764,6 @@ func TestProvider_PutObject(t *testing.T) {
 		"reader error is returned and nothing is sent",
 		testProviderPutObjectReaderErrorIsReturnedAndNothingIsSent,
 	)
-
-	t.Run(
-		"declared ContentLength is not sent as-is",
-		testProviderPutObjectDeclaredContentLengthIsNotSentAsIs,
-	)
 }
 
 // testProviderPutObjectForwardsAllFields checks that every input field
@@ -934,33 +929,13 @@ func testProviderPutObjectReaderErrorIsReturnedAndNothingIsSent(t *testing.T) {
 	}
 }
 
-// testProviderPutObjectDeclaredContentLengthIsNotSentAsIs checks that the
-// real body length is sent, not the declared one.
-func testProviderPutObjectDeclaredContentLengthIsNotSentAsIs(t *testing.T) {
-	t.Parallel()
-	// Documents current behavior: the transfer manager buffers the body and
-	// sends the real length; the declared ContentLength only sizes parts.
-	f := newFakeS3(t, nil)
-	p := newTestProvider(t, f)
-	if _, err := p.PutObject(context.Background(), &storage.PutObjectInput{
-		BaseObjectInput: base("k"),
-		Body:            iotest.OneByteReader(strings.NewReader("0123456789")),
-		ContentLength:   new(int64(3)),
-	}); err != nil {
-		t.Fatalf("PutObject() error: %v", err)
-	}
-	req := f.lastRequest(t)
-	if req.Header.Get("Content-Length") != "10" || string(req.Body) != "0123456789" {
-		t.Errorf("Content-Length = %q body = %q", req.Header.Get("Content-Length"), req.Body)
-	}
-}
-
 // multipartServer scripts the CreateMultipartUpload / UploadPart /
 // CompleteMultipartUpload / AbortMultipartUpload exchange.
 type multipartServer struct {
 	parts     map[int][]byte
 	mu        chan struct{}
 	failPart  int
+	failAbort bool
 	completed atomic.Bool
 	aborted   atomic.Bool
 	single    atomic.Bool
@@ -1000,6 +975,10 @@ func (m *multipartServer) handle(w http.ResponseWriter, r *http.Request, body []
 		_, _ = fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?>
 <CompleteMultipartUploadResult><Bucket>%s</Bucket><Key>big</Key><ETag>"final"</ETag></CompleteMultipartUploadResult>`, testBucket)
 	case r.Method == http.MethodDelete && q.Get("uploadId") == "upload-1":
+		if m.failAbort {
+			writeS3Error(w, http.StatusInternalServerError, "InternalError")
+			return
+		}
 		m.aborted.Store(true)
 		w.WriteHeader(http.StatusNoContent)
 	case r.Method == http.MethodPut:
@@ -1044,6 +1023,99 @@ func TestProvider_PutObjectMultipart(t *testing.T) {
 	t.Run("unknown-length stream", testProviderPutObjectMultipartUnknownLengthStream)
 
 	t.Run("part failure aborts upload", testProviderPutObjectMultipartPartFailureAbortsUpload)
+}
+
+// TestProvider_PutObjectContentLength checks that a set ContentLength is
+// enforced: a shorter or longer body fails with ErrContentLengthMismatch.
+// A small body is buffered before any request, so nothing is sent; a
+// multipart upload is aborted and never completed.
+func TestProvider_PutObjectContentLength(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name     string
+		body     string
+		length   int64
+		mismatch bool
+	}{
+		{name: "exact", body: "hello", length: 5},
+		{name: "zero", body: "", length: 0},
+		{name: "short", body: "hel", length: 5, mismatch: true},
+		{name: "long", body: "hello world", length: 5, mismatch: true},
+		{name: "negative", body: "hello", length: -1, mismatch: true},
+	} {
+		t.Run("single part "+tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newFakeS3(t, nil)
+			_, err := newTestProvider(t, f).PutObject(context.Background(), &storage.PutObjectInput{
+				BaseObjectInput: base("k"),
+				Body:            strings.NewReader(tc.body),
+				ContentLength:   new(tc.length),
+			})
+			if !tc.mismatch {
+				if err != nil {
+					t.Fatalf("PutObject() error: %v", err)
+				}
+				if got := string(f.lastRequest(t).Body); got != tc.body {
+					t.Errorf("sent body %q, want %q", got, tc.body)
+				}
+				return
+			}
+			if !errors.Is(err, storage.ErrContentLengthMismatch) {
+				t.Fatalf("PutObject() error = %v, want ErrContentLengthMismatch", err)
+			}
+			if n := len(f.requests()); n != 0 {
+				t.Errorf("PutObject() sent %d requests, want none", n)
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name  string
+		delta int64
+	}{{"short", 1000}, {"long", -1000}} {
+		t.Run("multipart "+tc.name, func(t *testing.T) {
+			t.Parallel()
+			payload := multipartPayload()
+			m := newMultipartServer(0)
+			f := newFakeS3(t, m.handle)
+			_, err := newTestProvider(t, f).PutObject(context.Background(), &storage.PutObjectInput{
+				BaseObjectInput: base("big"),
+				Body:            pipeBody(payload),
+				ContentLength:   new(int64(len(payload)) + tc.delta),
+			})
+			if !errors.Is(err, storage.ErrContentLengthMismatch) {
+				t.Fatalf("PutObject() error = %v, want ErrContentLengthMismatch", err)
+			}
+			if m.completed.Load() || !m.aborted.Load() || m.single.Load() {
+				t.Errorf("completed=%v aborted=%v single=%v, want an aborted multipart upload",
+					m.completed.Load(), m.aborted.Load(), m.single.Load())
+			}
+		})
+	}
+
+	// Guards transfermanager's multiUploader.seterr (v0.4.16), which keeps
+	// the first error: when the abort itself fails, the mismatch survives
+	// with its chain and the abort's error is dropped. The upload stays
+	// incomplete on the server.
+	t.Run("multipart short with a failing abort", func(t *testing.T) {
+		t.Parallel()
+		payload := multipartPayload()
+		m := newMultipartServer(0)
+		m.failAbort = true
+		f := newFakeS3(t, m.handle)
+		_, err := newTestProvider(t, f).PutObject(context.Background(), &storage.PutObjectInput{
+			BaseObjectInput: base("big"),
+			Body:            pipeBody(payload),
+			ContentLength:   new(int64(len(payload)) + 1000),
+		})
+		if !errors.Is(err, storage.ErrContentLengthMismatch) {
+			t.Fatalf("PutObject() error = %v, want ErrContentLengthMismatch", err)
+		}
+		if m.completed.Load() {
+			t.Error("multipart upload completed, want it left incomplete")
+		}
+	})
 }
 
 // testProviderPutObjectMultipartUnknownLengthStream checks a multipart upload

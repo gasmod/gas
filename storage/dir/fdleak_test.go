@@ -82,6 +82,16 @@ func TestProvider_NoFDLeaks(t *testing.T) {
 		"delete corrupt":         func() error { _, err := del(p, "corrupt"); return err },
 		"get missing data file":  func() error { return getErr(p, "no-data") },
 		"get data file is a dir": func() error { return getErr(p, "dir-data") },
+		"put content length mismatch": func() error {
+			_, err := p.PutObject(t.Context(), &storage.PutObjectInput{
+				BaseObjectInput: base(
+					"ten",
+				),
+				Body:          strings.NewReader("abc"),
+				ContentLength: new(int64(5)),
+			})
+			return err
+		},
 		"get unsatisfiable range": func() error {
 			return getRange(
 				p,

@@ -13,19 +13,20 @@ func TestSentinelErrors(t *testing.T) {
 	t.Parallel()
 
 	sentinels := map[string]error{
-		"ErrNotInitialized":  ErrNotInitialized,
-		"ErrInputRequired":   ErrInputRequired,
-		"ErrInvalidKey":      ErrInvalidKey,
-		"ErrKeyNotFound":     ErrKeyNotFound,
-		"ErrNotFound":        ErrNotFound,
-		"ErrInvalidBucket":   ErrInvalidBucket,
-		"ErrBucketNotFound":  ErrBucketNotFound,
-		"ErrBucketExists":    ErrBucketExists,
-		"ErrVersionNotFound": ErrVersionNotFound,
-		"ErrInvalidOption":   ErrInvalidOption,
-		"ErrInvalidTTL":      ErrInvalidTTL,
-		"ErrNotSupported":    ErrNotSupported,
-		"ErrInvalidRange":    ErrInvalidRange,
+		"ErrNotInitialized":        ErrNotInitialized,
+		"ErrInputRequired":         ErrInputRequired,
+		"ErrInvalidKey":            ErrInvalidKey,
+		"ErrKeyNotFound":           ErrKeyNotFound,
+		"ErrNotFound":              ErrNotFound,
+		"ErrInvalidBucket":         ErrInvalidBucket,
+		"ErrBucketNotFound":        ErrBucketNotFound,
+		"ErrBucketExists":          ErrBucketExists,
+		"ErrVersionNotFound":       ErrVersionNotFound,
+		"ErrInvalidOption":         ErrInvalidOption,
+		"ErrInvalidTTL":            ErrInvalidTTL,
+		"ErrNotSupported":          ErrNotSupported,
+		"ErrInvalidRange":          ErrInvalidRange,
+		"ErrContentLengthMismatch": ErrContentLengthMismatch,
 	}
 
 	messages := map[string]string{}

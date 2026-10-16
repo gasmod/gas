@@ -790,6 +790,91 @@ func TestLocalStack_MultipartUnseekable(t *testing.T) {
 	}
 }
 
+// TestLocalStack_ContentLength checks that a set ContentLength is enforced
+// against S3 on both upload paths: a body that is shorter or longer fails
+// with ErrContentLengthMismatch, the object already under the key is
+// unchanged, and no multipart upload is left in progress. A matching length
+// uploads on both paths.
+func TestLocalStack_ContentLength(t *testing.T) {
+	t.Parallel()
+	p, bucket := lsProviderWithBucket(t, "ls-clen")
+
+	const big = 20 << 20 // above the transfer manager's multipart threshold
+	payload := make([]byte, big)
+	if _, err := rand.Read(payload); err != nil {
+		t.Fatal(err)
+	}
+	pipe := func(data []byte) io.Reader {
+		pr, pw := io.Pipe()
+		go func() {
+			_, err := pw.Write(data)
+			_ = pw.CloseWithError(err)
+		}()
+		return pr
+	}
+
+	for _, tc := range []struct {
+		body   func() io.Reader
+		name   string
+		length int64
+	}{
+		{name: "single part short", body: func() io.Reader { return strings.NewReader("abc") }, length: 5},
+		{name: "single part long", body: func() io.Reader { return strings.NewReader("abcdefg") }, length: 5},
+		{name: "multipart short", body: func() io.Reader { return pipe(payload) }, length: big + 1000},
+		{name: "multipart long", body: func() io.Reader { return pipe(payload) }, length: big - 1000},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			key := "clen/" + strings.ReplaceAll(tc.name, " ", "-")
+			lsPut(t, p, bucket, key, []byte("previous"))
+			_, err := p.PutObject(t.Context(), &storage.PutObjectInput{
+				Body:            tc.body(),
+				ContentLength:   new(tc.length),
+				BaseObjectInput: lsObj(bucket, key),
+			})
+			assertIs(t, "PutObject()", err, storage.ErrContentLengthMismatch)
+			if got, getErr := lsGet(
+				t,
+				p,
+				bucket,
+				key,
+				nil,
+			); getErr != nil ||
+				string(got) != "previous" {
+				t.Errorf("object after a rejected put = %q, %v; want previous", got, getErr)
+			}
+			ups, err := p.Client().
+				ListMultipartUploads(t.Context(), &awss3.ListMultipartUploadsInput{Bucket: &bucket})
+			if err != nil {
+				t.Fatalf("ListMultipartUploads() error: %v", err)
+			}
+			if len(ups.Uploads) != 0 {
+				t.Errorf("multipart uploads in progress = %d, want 0", len(ups.Uploads))
+			}
+		})
+	}
+
+	t.Run("matching length on both paths", func(t *testing.T) {
+		for _, data := range [][]byte{[]byte("hello"), payload} {
+			if _, err := p.PutObject(t.Context(), &storage.PutObjectInput{
+				Body:            pipe(data),
+				ContentLength:   new(int64(len(data))),
+				BaseObjectInput: lsObj(bucket, "clen/exact"),
+			}); err != nil {
+				t.Fatalf("PutObject(%d bytes) error: %v", len(data), err)
+			}
+			got, err := lsGet(t, p, bucket, "clen/exact", nil)
+			if err != nil || !bytes.Equal(got, data) {
+				t.Errorf(
+					"GetObject() = %d bytes, %v; want the %d uploaded",
+					len(got),
+					err,
+					len(data),
+				)
+			}
+		}
+	})
+}
+
 // TestLocalStack_Concurrent checks concurrent puts and gets through one
 // provider.
 func TestLocalStack_Concurrent(t *testing.T) {

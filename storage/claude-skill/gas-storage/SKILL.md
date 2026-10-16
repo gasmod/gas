@@ -58,7 +58,7 @@ type BaseObjectInput struct {
 ```
 
 - `HeadObjectInput` and `GetObjectInput` add `Version`, `PartNumber`, `Range` and `Response*` fields.
-- `PutObjectInput` adds `Body io.Reader` (nil is an empty object), `ContentType`, `ContentLength`, `Expires` and `Metadata map[string]string`.
+- `PutObjectInput` adds `Body io.Reader` (nil is an empty object), `ContentType`, `ContentLength`, `Expires` and `Metadata map[string]string`. `ContentLength` nil means unknown; when set, the body must match it exactly or `PutObject` fails with `ErrContentLengthMismatch` and stores nothing (both backends).
 - `DeleteObjectInput` adds `Version`.
 - `PresignUploadURLInput` and `PresignDownloadURLInput` wrap the put and get inputs and add `TTL *time.Duration`. Nil or zero means 15 minutes on s3. A TTL that is negative, under one second, or over seven days fails with `storage.ErrInvalidTTL` and nothing is signed. s3 signs whole seconds and truncates any fraction (1.9s signs as 1s).
 
@@ -81,7 +81,8 @@ Match them with `errors.Is`; never compare messages.
 | `storage.ErrVersionNotFound` | s3 `GetObject` of a `Version` that does not exist (S3 NoSuchVersion). Matches neither `ErrKeyNotFound` nor `ErrNotFound`. s3 `HeadObject` reports an unknown version as `ErrNotFound`, since HEAD responses have no body. A malformed version ID may get a 400 from AWS with no sentinel. On dir, `Version` is `ErrNotSupported`|
 | `storage.ErrInvalidOption`   | a backend constructor was given a nil option. The message names its zero-based position: `gas/storage/s3/provider: storage: invalid option: option 1 is nil`                                                                                    |
 | `storage.ErrInvalidTTL`      | a `Presigner` method was given a TTL that is negative, under one second, or over seven days                                                                                                                                                     |
-| `storage.ErrNotSupported`  | dir `HeadObject`, `GetObject` or `DeleteObject` with `Version` set: dir does not version objects                                                                                                                                                  |
+| `storage.ErrNotSupported`  | dir `HeadObject` or `GetObject` with `Version` or `PartNumber` set, or `DeleteObject` with `Version` set: dir neither versions objects nor stores them in parts                                                                                   |
+| `storage.ErrContentLengthMismatch` | `PutObject` with `ContentLength` set and a `Body` that is shorter or longer, or a negative length, on both backends. Nothing is stored; the previous object stays                                                                         |
 | `storage.ErrInvalidRange`  | `GetObject` or `HeadObject` with a `Range` that cannot be satisfied: its first byte is at or past the end, or `bytes=-0` (S3 416 InvalidRange)                                                                                                    |
 
 `DeleteObject` of a missing key succeeds on both backends.
@@ -133,9 +134,9 @@ func WithRoot(root *os.Root) Option // required
 - **Keys.** Keys are opaque strings, hashed on disk: `../x`, `/abs` and keys that differ only in case are distinct objects on every filesystem.
 - **Writes.** Overwrites are atomic: a reader sees the old object or the new one.
 - **Locking.** Operations on one key are serialized with a file lock, which also excludes other processes sharing the directory.
-- **Versions.** Objects are not versioned: `Version` on Head, Get or Delete returns `storage.ErrNotSupported`, after key and bucket validation and before any disk access.
+- **Versions and parts.** Objects are not versioned or stored in parts: `Version` on Head, Get or Delete, and `PartNumber` on Head or Get, return `storage.ErrNotSupported`, after key and bucket validation and before any disk access.
 - **Range.** Get and Head honor `Range` with RFC 9110 single-range semantics: one `bytes=first-last`, `bytes=first-` or `bytes=-suffix` range, clamped to the object, with `Size` set to its length; anything else is ignored (whole object); a first byte at or past the end, or `bytes=-0`, is `ErrInvalidRange`. S3 (LocalStack at least) is more lenient on some malformed headers (a unit other than bytes, spaces around `=` or `-`, a `+` sign), and answers 416 on an empty object where dir returns the empty body for an ignored header; dir follows RFC 9110.
-- **Ignored fields.** `PartNumber`, `Response*`, `ContentLength` and `Expires`. `ObjectInfo` carries no `Version`, and Put and Delete return an empty `ObjectInfo`.
+- **Ignored fields.** `Response*` and `Expires`. `ObjectInfo` carries no `Version`, and Put and Delete return an empty `ObjectInfo`.
 - **Content type.** A Put without one sniffs it from the body.
 - **`dir.ErrStaleData`.** `PutObject` returns it together with the `ObjectInfo` when the object was written but the data file it replaced could not be removed. The object reads back as written.
 - **`dir.ErrRootRequired`.** `NewProvider` returns it when no root was given, including `WithRoot(nil)`. It wraps `storage.ErrNotInitialized`.

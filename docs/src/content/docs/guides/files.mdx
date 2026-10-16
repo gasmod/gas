@@ -63,7 +63,7 @@ optional `Bucket`; a nil `Bucket` means the configured default bucket.
 | Method | Returns | Notes |
 |---|---|---|
 | `CreateBucket(ctx, *CreateBucketInput)` | `*BucketInfo` | A bucket you already own is success |
-| `PutObject(ctx, *PutObjectInput)` | `*ObjectInfo` | Streams the body; content type and metadata are optional |
+| `PutObject(ctx, *PutObjectInput)` | `*ObjectInfo` | Streams the body; content type, metadata and length are optional. A set `ContentLength` must match the body |
 | `GetObject(ctx, *GetObjectInput)` | `*Object` | Body plus `ObjectInfo`; the caller closes `Body` |
 | `HeadObject(ctx, *HeadObjectInput)` | `*ObjectInfo` | Size, content type, modification time, version, metadata |
 | `DeleteObject(ctx, *DeleteObjectInput)` | `*ObjectInfo` | Deleting a missing key succeeds |
@@ -121,7 +121,8 @@ Classify failures with `errors.Is` against the sentinels in `storage`:
 | `ErrInvalidKey`, `ErrInvalidBucket`, `ErrInputRequired` | Input rejected before anything is sent |
 | `ErrInvalidTTL` | A presign TTL out of bounds |
 | `ErrInvalidRange` | A `Range` whose first byte is at or past the end of the object, or `bytes=-0` |
-| `ErrNotSupported` | A feature the backend does not implement, such as `Version` on the unversioned directory backend |
+| `ErrNotSupported` | A feature the backend does not implement, such as `Version` or `PartNumber` on the directory backend |
+| `ErrContentLengthMismatch` | A `PutObject` whose body does not match its `ContentLength`; nothing is stored |
 | `ErrInvalidOption` | A constructor given a nil option |
 | `ErrNotInitialized` | A provider not built by its constructor |
 
