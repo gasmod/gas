@@ -41,7 +41,7 @@ workspace, and sliced by region marker:
 ```go
 // #region app
 app := gas.NewApp(
-	gas.WithSingletonService[gas.StorageProvider](storages3.New()),
+	gas.WithSingletonService[storage.Provider](storages3.NewProvider()),
 )
 // #endregion app
 ```

@@ -9,6 +9,7 @@ import (
 	"github.com/gasmod/gas/config"
 	"github.com/gasmod/gas/config/providers"
 	gaslog "github.com/gasmod/gas/log"
+	"github.com/gasmod/gas/storage"
 	storages3 "github.com/gasmod/gas/storage/s3"
 )
 
@@ -29,7 +30,8 @@ func main() {
 		gas.WithSingletonService[gas.Logger](gaslog.NewSlogLogger()),
 
 		// Modules, registered under the provider interface your services inject.
-		gas.WithSingletonService[gas.StorageProvider](storages3.New()),
+		gas.WithSingletonService[storage.Provider](storages3.NewProvider()),
+		gas.WithSingletonService[storage.Presigner](storages3.NewPresigner()),
 	)
 	// #endregion app
 

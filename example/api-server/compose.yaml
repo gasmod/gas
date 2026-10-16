@@ -8,7 +8,8 @@ services:
     ports:
       - "5432:5432"
   localstack:
-    image: localstack/localstack
+    # Pinned: newer LocalStack images need an auth token; 4.14.0 is the last Community build.
+    image: localstack/localstack:4.14.0@sha256:3ebc37595918b8accb852f8048fef2aff047d465167edd655528065b07bc364a
     ports:
       - "4566:4566"
     environment:
