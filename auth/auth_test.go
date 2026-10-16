@@ -236,7 +236,7 @@ func TestChain(t *testing.T) {
 
 	t.Run("large chain of 100 failing authenticators returns last error", func(t *testing.T) {
 		const n = 100
-		authenticators := make([]gas.Authenticator, n)
+		authenticators := make([]auth.Authenticator, n)
 		for i := range n {
 			authenticators[i] = &authtest.MockAuthenticator{
 				AuthenticateFn: func(_ context.Context, _ *http.Request) (gas.Principal, error) {
