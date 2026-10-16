@@ -15,20 +15,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   input that triggers it).
 - **Next step**: what has to happen to close it.
 
-## KI-002: s3 backend has no real-service test suite after the storage rewrite
-
-- **Status**: decision needed
-- **Area**: `storage/s3`
-- **Found**: 2026-10-15, while splitting the uncommitted work into PRs.
-- **Detail**: `main` tests the s3 backend against LocalStack
-  (`storage/s3/integration_test.go`). The pending storage rewrite deletes
-  that suite and drops testcontainers from `storage/go.mod`, so the s3
-  backend would be tested only through mocks and fakes, which §2 of
-  `CLAUDE.md` does not accept. MinIO is ruled out by its license, and no
-  replacement container has been chosen.
-- **Next step**: choose the S3-compatible container for the suite, then
-  add it back.
-
 ## KI-004: built-in module constructors are not on the `CONVENTIONS.md` shape
 
 - **Status**: open
@@ -42,8 +28,8 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   - `func(deps...) *Service`: `auth/jwt.New`, `auth/apikey.New`,
     `auth/session.New`, `auth/token.New`, `cache/memory.New`,
     `cache/valkey.New`, `database.New`, `email/ses.New` and
-    `email/ses.NewWithCustomProvider`, `migrate.New`, `queue/sqs.New`,
-    `storage/dir.New`, `storage/s3.New`, and `ui.New`.
+    `email/ses.NewWithCustomProvider`, `migrate.New`, `queue/sqs.New`, and
+    `ui.New`.
   - `func(deps...) *Store`: `auth/apikey/db.New`, `auth/session/db.New`,
     `auth/token/db.New`, and `template/db.NewStore`.
   - `func() *Store`: `template/dir.NewStore(dir)` and
