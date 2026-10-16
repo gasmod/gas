@@ -1,5 +1,3 @@
-// Package app contains the lambda-worker example: a gas.Worker that processes
-// SQS events in AWS Lambda.
 package app
 
 import (

@@ -7,9 +7,10 @@ import { Code, Aside, CardGrid, Card } from '@astrojs/starlight/components';
 import auth from '../../../../snippets/auth/main.go?raw';
 import { region } from '../../../lib/snippet';
 
-`gas/auth` provides four credential types behind one interface. Core declares
-`gas.Authenticator`, `gas.Authorizer`, and `gas.PrincipalRevoker`; the module
-implements them and adds middleware.
+`gas/auth` provides four credential types behind one interface. The module
+declares `auth.Authenticator`, `auth.Authorizer`, and `auth.PrincipalRevoker`,
+implements them, and adds middleware. Core owns only the `gas.Principal` the
+middleware stores on the request, which a handler reads with `ctx.Principal()`.
 
 ```bash
 go get github.com/gasmod/gas/auth
@@ -76,7 +77,7 @@ By default a failed authentication writes a plain `401`. To return the
 
 ## Revoking
 
-`session` and `apikey` implement `gas.PrincipalRevoker`: `Revoke` kills one
+`session` and `apikey` implement `auth.PrincipalRevoker`: `Revoke` kills one
 credential, `RevokeAll` every credential for a subject, and `RevokeAllByScheme`
 every credential of one type. JWTs are stateless and cannot be revoked
 individually, which is the trade you accept for not touching a database on every

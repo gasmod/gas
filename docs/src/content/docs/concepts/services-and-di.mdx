@@ -129,6 +129,29 @@ svc := container.MustResolve[*auth.Service]()
 `*Scope`. Scoped services cannot be resolved from the container; resolve them
 from a [scope](/gas/concepts/request-scopes/) instead.
 
+### Resolution errors
+
+`Resolve`, `BuildAll`, and startup return errors that wrap a sentinel, so
+classify them with `errors.Is`. The message still names the types involved.
+
+| Sentinel | Returned when |
+|---|---|
+| `gas.ErrNotRegistered` | A type, or a constructor's dependency, has no registration or instance |
+| `gas.ErrCircularDependency` | Registered constructors depend on each other in a cycle |
+| `gas.ErrCaptiveDependency` | A singleton depends on a scoped or transient service |
+| `gas.ErrScopeRequired` | A scoped service is resolved from the container instead of a `Scope` |
+| `gas.ErrInvalidLifetime` | A registration's `ServiceLifetime` is not Singleton, Scoped, or Transient |
+| `gas.ErrInvalidServiceShape` | A registered type declares `Init` or `Close` but does not implement `Service` |
+| `gas.ErrNoConstructor` | The container is asked to construct a type it has no constructor for. It guards an internal invariant and is not returned through the public API today |
+
+```go
+if _, err := container.Resolve[*auth.Service](); errors.Is(err, gas.ErrNotRegistered) {
+	// register it, or resolve something else
+}
+```
+
+`MustResolve` panics with a string that carries the same message.
+
 The options passed to `NewApp` have imperative twins on the container, and
 forwarded on the Worker, for wiring done after construction:
 
