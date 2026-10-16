@@ -1,6 +1,3 @@
-// File Vault API — a complete Gas example demonstrating DI, routing, auth,
-// database, migrations, caching, file storage, job queues, email, and
-// structured logging working together.
 package main
 
 import (

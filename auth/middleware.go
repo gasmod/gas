@@ -28,7 +28,7 @@ func WithOnError(fn func(w http.ResponseWriter, r *http.Request, err error)) Mid
 // context via gas.WithPrincipal and calls the next handler. On failure it
 // invokes the OnError handler or writes a 401 Unauthorized response.
 func Middleware(
-	provider gas.Authenticator,
+	provider Authenticator,
 	opts ...MiddlewareOption,
 ) func(http.Handler) http.Handler {
 	if provider == nil {

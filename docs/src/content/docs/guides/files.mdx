@@ -1,6 +1,6 @@
 ---
 title: Store and serve files
-description: Uploads, downloads, and presigned URLs on S3 and compatible services.
+description: Uploads, downloads, and presigned URLs on S3, compatible services, or a local directory.
 ---
 
 import { Code, Aside } from '@astrojs/starlight/components';
@@ -8,10 +8,12 @@ import storage from '../../../../snippets/storage/main.go?raw';
 import wiring from '../../../../snippets/wiring/main.go?raw';
 import { region } from '../../../lib/snippet';
 
-`gas/storage` implements `gas.StorageProvider` on AWS S3 and on S3-compatible
-services such as MinIO, LocalStack, and DigitalOcean Spaces. Your services
-depend on the interface, so the same code runs against LocalStack in
-development and S3 in production.
+`gas/storage` defines two interfaces, `storage.Provider` for buckets and
+objects and `storage.Presigner` for presigned URLs. It implements them on AWS
+S3 and S3-compatible services (`storage/s3`) and on a local directory
+(`storage/dir`, a `Provider` only). Your services depend on the interfaces, so
+the same code runs against a directory or LocalStack in development and S3 in
+production.
 
 ```bash
 go get github.com/gasmod/gas/storage
@@ -19,103 +21,114 @@ go get github.com/gasmod/gas/storage
 
 ## Wiring
 
-`s3.New()` returns a DI constructor that takes `gas.ConfigProvider` and
-`gas.Logger`, so register both alongside it. Register the result under
-`gas.StorageProvider`, the interface your services inject.
+`s3.NewProvider()` and `s3.NewPresigner()` return DI constructors of the shape
+`func(gas.ConfigProvider) (*T, error)`, so register a `gas.ConfigProvider`
+alongside them. Register each under the interface your services inject.
 
 <Code code={region(wiring, 'app')} lang="go" title="main.go" />
 
 <Aside type="caution">
-The container matches by exact type. Registering this as `*s3.Service` leaves
-your services' `gas.StorageProvider` dependency unresolved and startup fails.
-See [Services and DI](/gas/concepts/services-and-di/).
+The container matches by exact type. Registering the provider as
+`*s3.Provider` leaves your services' `storage.Provider` dependency unresolved
+and startup fails. See [Services and DI](/gas/concepts/services-and-di/).
 </Aside>
+
+The directory backend needs an `os.Root`, which you open and close:
+
+```go
+root, err := os.OpenRoot("/var/lib/myapp/storage")
+if err != nil {
+	return err
+}
+defer root.Close()
+
+app := gas.NewApp(
+	gas.WithSingletonService[storage.Provider](storagedir.NewProvider(storagedir.WithRoot(root))),
+)
+```
 
 ## Consuming it
 
-A service depends on the interface, never on the backend package, so it can be
-tested against `storagetest.MockStorage` with no network.
+A service depends on the interfaces, never on a backend package, so it can be
+tested against `storagetest.MockProvider` and `storagetest.MockPresigner` with
+no network.
 
 <Code code={region(storage, 'service')} lang="go" />
 
 ## Operations
 
-`gas.StorageProvider` covers six operations, each accepting optional
-`gas.StorageOption` values.
+Every method takes an input struct. `BaseObjectInput` carries the `Key` and an
+optional `Bucket`; a nil `Bucket` means the configured default bucket.
 
 | Method | Returns | Notes |
 |---|---|---|
-| `Upload(ctx, key, data, opts...)` | `error` | Streams the reader to the object store |
-| `Download(ctx, key, opts...)` | `*gas.StorageObject` | Body, content type, size, metadata; caller closes `Body` |
-| `Head(ctx, key, opts...)` | `*gas.ObjectInfo` | Metadata without the body |
-| `Delete(ctx, key, opts...)` | `error` | |
-| `PresignDownloadURL(ctx, key, expires, opts...)` | `string` | Time-limited URL a browser can GET |
-| `PresignUploadURL(ctx, key, expires, opts...)` | `string` | Time-limited URL a browser can PUT |
-
-| Option | Applies to | Effect |
-|---|---|---|
-| `gas.InBucket(name)` | all | Overrides the default bucket for one call |
-| `gas.WithContentType(ct)` | `Upload`, presigning | Sets the object's content type |
-| `gas.WithMetadata(m)` | `Upload` | Attaches user metadata |
+| `CreateBucket(ctx, *CreateBucketInput)` | `*BucketInfo` | A bucket you already own is success |
+| `PutObject(ctx, *PutObjectInput)` | `*ObjectInfo` | Streams the body; content type, metadata and length are optional. A set `ContentLength` must match the body |
+| `GetObject(ctx, *GetObjectInput)` | `*Object` | Body plus `ObjectInfo`; the caller closes `Body` |
+| `HeadObject(ctx, *HeadObjectInput)` | `*ObjectInfo` | Size, content type, modification time, version, metadata |
+| `DeleteObject(ctx, *DeleteObjectInput)` | `*ObjectInfo` | Deleting a missing key succeeds |
+| `PresignUploadURL(ctx, *PresignUploadURLInput)` | `*PresignURLResponse` | URL, method, and the headers the client must send |
+| `PresignDownloadURL(ctx, *PresignDownloadURLInput)` | `*PresignURLResponse` | URL, method, and signed headers for a GET |
 
 <Code code={region(storage, 'upload')} lang="go" />
 
-`Download` returns an open body the caller must close, and reports a missing key
-as `storage.ErrKeyNotFound`.
+`GetObject` returns an open body the caller must close, and reports a missing
+key as `storage.ErrKeyNotFound`. A `Range` such as `bytes=0-1023` reads part
+of the object in both backends, and `Size` is then the length of that part. A
+header that is not one valid byte range is ignored, and one starting past the
+end is `storage.ErrInvalidRange`.
 
 <Code code={region(storage, 'download')} lang="go" />
 
 Presigned URLs let the browser transfer bytes straight to S3, so large files
-never pass through your server. Signing is local; no network call is made.
+never pass through your server. Signing is local; no network call is made. A
+nil or zero TTL signs 15 minutes; a TTL that is negative, under one second, or
+over seven days is `storage.ErrInvalidTTL`.
 
 <Code code={region(storage, 'presign')} lang="go" />
 
+On S3, `CreateBucket` creates the bucket in the client's region and sends the
+location constraint S3 requires outside us-east-1 and `aws-global`. With no
+configured region it uses the region the AWS SDK resolved. For a bucket you
+already own it succeeds, and the returned `BucketInfo` may be empty.
+
 ## Config
 
-Without `WithConfig`, settings bind from the registered `gas.ConfigProvider`, so
-they can come from environment variables or a config file. Build custom configs
-from `s3.DefaultConfig()` rather than a bare `&s3.Config{}` literal, so unset
-fields keep their defaults.
+Settings bind from the registered `gas.ConfigProvider`, under `storage`, so
+they can come from environment variables or a config file.
 
-| Field | Description |
+| Key | Description |
 |---|---|
-| `Storage.Region` | AWS region (required) |
-| `Storage.Bucket` | Default bucket. Leave unset to require `gas.InBucket(...)` on every call |
-| `Storage.AccessKeyID` | Static AWS access key. Empty uses the default credential chain |
-| `Storage.SecretAccessKey` | Static AWS secret key |
-| `Storage.Endpoint` | Custom endpoint for S3-compatible services. Enables path-style addressing |
+| `storage.bucket` | Default bucket for inputs with a nil `Bucket`. Optional; must be a valid bucket name when set |
+| `storage.region` | AWS region (s3). Empty uses the AWS SDK's default resolution |
+| `storage.accessKeyID`, `storage.secretAccessKey`, `storage.sessionToken` | Static credentials (s3). Without `accessKeyID` the default credential chain applies |
+| `storage.endpoint` | Custom endpoint for S3-compatible services (s3). Enables path-style addressing |
 
-## Readiness
-
-The service implements `gas.ReadyReporter`. With a default bucket configured,
-`CheckReady` issues a `HeadBucket` against it, so a Kubernetes readiness probe
-passes only once credentials are valid and the bucket is reachable.
-
-<Aside type="danger" title="Requires s3:ListBucket">
-Without `s3:ListBucket` on the bucket, `HeadBucket` returns 403 and the pod
-never becomes ready. If your policy is scoped narrowly to
-`s3:GetObject`/`s3:PutObject` on a prefix, add:
-
-```json
-{
-  "Effect": "Allow",
-  "Action": "s3:ListBucket",
-  "Resource": "arn:aws:s3:::your-bucket"
-}
-```
-</Aside>
-
-With no default bucket, readiness succeeds once `Init` completes; there is no
-single bucket to probe. `gas.HealthReporter` is intentionally not implemented,
-since the S3 client is stateless and has no broken state a restart would clear.
+The providers have no start or close step: a provider is ready when its
+constructor returns, and no request is sent at construction.
 
 ## Errors and testing
 
-Classify failures with `errors.Is` against `storage.ErrKeyNotFound`,
-`storage.ErrBucketNotFound`, `storage.ErrClosed`, and
-`storage.ErrBucketRequired`. The
-[`storagetest`](https://pkg.go.dev/github.com/gasmod/gas/storage/storagetest)
-package provides `MockStorage`, a recording mock of `gas.StorageProvider`.
+Classify failures with `errors.Is` against the sentinels in `storage`:
+
+| Sentinel | Meaning |
+|---|---|
+| `ErrKeyNotFound` | `GetObject` of a missing key |
+| `ErrNotFound` | `HeadObject` of a missing object; on S3 also a missing bucket, because HEAD responses carry no error code |
+| `ErrBucketNotFound` | An object operation on a missing bucket (S3 `HeadObject` excepted) |
+| `ErrVersionNotFound` | S3 `GetObject` of a version that does not exist. S3 `HeadObject` reports it as `ErrNotFound`, and AWS may reject a malformed version ID with an error that carries no sentinel |
+| `ErrBucketExists` | S3 `CreateBucket` of a name another account owns |
+| `ErrInvalidKey`, `ErrInvalidBucket`, `ErrInputRequired` | Input rejected before anything is sent |
+| `ErrInvalidTTL` | A presign TTL out of bounds |
+| `ErrInvalidRange` | A `Range` whose first byte is at or past the end of the object, or `bytes=-0` |
+| `ErrNotSupported` | A feature the backend does not implement, such as `Version` or `PartNumber` on the directory backend |
+| `ErrContentLengthMismatch` | A `PutObject` whose body does not match its `ContentLength`; nothing is stored |
+| `ErrInvalidOption` | A constructor given a nil option |
+| `ErrNotInitialized` | A provider not built by its constructor |
+
+The [`storagetest`](https://pkg.go.dev/github.com/gasmod/gas/storage/storagetest)
+package provides `MockProvider` and `MockPresigner`, recording mocks of the two
+interfaces.
 
 Full API reference on
 [pkg.go.dev](https://pkg.go.dev/github.com/gasmod/gas/storage).
