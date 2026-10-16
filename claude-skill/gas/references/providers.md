@@ -268,6 +268,10 @@ request-scoped middleware where one Logger instance is shared across the
 whole request and you want every subsequent log call to carry fields like
 request_id, user_id, trace_id automatically — without threading a new Logger
 reference around.
+Call it only on a per-request logger (a scoped type derived from the
+singleton `gas.Logger`), never on the shared singleton: `Apply` mutates
+without synchronization, so concurrent requests race and the fields pile up
+across requests (KI-026 in `KNOWN_ISSUES.md`).
 
 ```go
 // Typical middleware pattern:

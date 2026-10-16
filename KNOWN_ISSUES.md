@@ -114,3 +114,46 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   `CLAUDE.md`, which asks for `errors.Is` or `errors.As`; the core's own
   `unhappy_path_test.go:31`, `:55`, and `:78` use `strings.Contains`.
 - **Next step**: one §3 decision covering sentinels for all of these.
+
+## KI-025: a ShippingLogger sub-logger's Flush does nothing
+
+- **Status**: open
+- **Area**: `log` (`slog.go`, `shipping.go`).
+- **Found**: 2026-10-16, while writing the log package's `doc.go`.
+- **Detail**: `ShippingLogger` embeds `*SlogLogger` and overrides `Flush`
+  to post the current batch (`log/shipping.go:214`). `With()` is inherited,
+  and `SlogLoggerContext.Logger` returns a plain `*SlogLogger`
+  (`log/slog.go:243`) whose `Flush` is a no-op (`log/slog.go:100`). The
+  sub-logger's records still ship, through the same handlers, but its
+  `Flush` does not wait for them. Repro: a `ShippingLogger` with
+  `WithFlushInterval(time.Hour)`, `sub := l.With().Str("k", "v").Logger()`,
+  `sub.Info("x").Send()`, `sub.Flush()`: the endpoint has received 0
+  batches; `l.Flush()` then delivers 1. Services usually hold such a
+  sub-logger (`logger.With().Str("service", ...).Logger()`), so their
+  `Flush` calls do nothing.
+- **Next step**: have the shipping logger's `With` return a logger whose
+  `Flush` reaches the sender.
+
+## KI-026: `SetBaseFields` on a shared logger races and accumulates fields
+
+- **Status**: decision needed
+- **Area**: core (`middleware.go`, `logger.go`) and `log` (`slog.go`,
+  `zerolog.go`).
+- **Found**: 2026-10-16, while writing the log package's `doc.go`.
+- **Detail**: `gas.Logger.SetBaseFields` is documented as "intended for use
+  by request-scoped middleware" and mutates the receiver. The log backends
+  apply it by replacing the logger's fields without synchronization
+  (`log/slog.go:180`, `log/zerolog.go:143`). `gas.RequestLogger` calls it
+  on the logger it resolves from the request scope to add `request_id`
+  (`middleware.go:106`). When the app registers its logger as a singleton,
+  as the log README does, that is the shared logger. Repro: an App with a
+  `SlogLogger` instance registered as `gas.Logger`, chi's `RequestID` and
+  `gas.RequestLogger[gas.Logger]()` as middleware, then 20 parallel
+  requests and one more: `go test -race` reports data races in
+  `SlogMutableLoggerContext.Apply` from `RequestLogger`, and the last
+  request's log line carries 9 `request_id` fields. The fields grow with
+  every request for the life of the process.
+- **Next step**: decide the contract (a §3 decision in `CLAUDE.md`): a
+  per-request logger for the middleware (for example deriving with `With`
+  and storing the result on the request), synchronized and non-accumulating
+  `SetBaseFields`, or a documented requirement that the logger be scoped.

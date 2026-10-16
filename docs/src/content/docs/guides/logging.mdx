@@ -29,10 +29,13 @@ container.
 <Code code={region(lg, 'register')} lang="go" title="main.go" />
 
 <Aside type="note" title="Singleton or scoped?">
-Register a **singleton** and every service shares one logger. Register it
-**scoped** and each HTTP request gets its own, which is what lets middleware
-attach request-specific fields without leaking them into other requests. Most
-apps that use the request logger want scoped.
+Register `gas.Logger` as a **singleton**. Most services take a `gas.Logger` in
+their constructor, and the container rejects a singleton that depends on a
+scoped service. For request-specific fields, register a separate **scoped**
+type derived from it, as above, and hand that type to the request middleware,
+so each request gets its own logger and nothing leaks into other requests.
+Calling `SetBaseFields` on the shared singleton instead races and piles up
+fields across requests (KI-026 in `KNOWN_ISSUES.md`).
 </Aside>
 
 ## Logging

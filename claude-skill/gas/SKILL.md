@@ -99,8 +99,10 @@ const (
 **Choosing a lifetime:**
 - **Singleton** — stateless services, routers, event subscriptions, anything
   that survives the full app lifetime. Most services are singletons.
-- **Scoped** — per-request state like loggers with request-level fields, or
-  database connections with request-scoped transactions.
+- **Scoped** — per-request state like a request logger type with
+  request-level fields (derived from the singleton `gas.Logger`, which stays a
+  singleton because services depend on it), or database connections with
+  request-scoped transactions.
 - **Transient** — lightweight value objects that need fresh state on every
   injection. Cannot implement `Service` (no Init/Close lifecycle).
 
@@ -398,7 +400,9 @@ Gas provides three middleware constructors (see `references/middleware.md` for
 full option signatures):
 
 - **`RequestLogger[T Logger]`** — logs method, path, status, bytes, duration
-  per request. Resolves a scoped Logger from DI. Status >= 400 → error level.
+  per request. Resolves T from the request scope: pass a scoped per-request
+  logger type derived from the singleton `gas.Logger`, not the singleton
+  itself (KI-026). Status >= 400 → error level.
 - **`SecurityHeaders`** — sets X-Content-Type-Options, X-Frame-Options, etc.
   with secure defaults.
 - **`CacheControl`** — sets Cache-Control header based on path matching rules.
@@ -699,7 +703,7 @@ or `/readyz` endpoint without coupling handlers to `*Worker`.
 Built-in no-op logger for tests or when logging isn't needed:
 
 ```go
-gas.WithScopedService[gas.Logger](gas.NewNopLogger())
+gas.WithSingletonService[gas.Logger](gas.NewNopLogger())
 ```
 
 ## Config (App only)
