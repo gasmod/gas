@@ -114,3 +114,38 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   `CLAUDE.md`, which asks for `errors.Is` or `errors.As`; the core's own
   `unhappy_path_test.go:31`, `:55`, and `:78` use `strings.Contains`.
 - **Next step**: one §3 decision covering sentinels for all of these.
+
+## KI-016: memory cache Set can panic on a stopped or unstarted service
+
+- **Status**: open
+- **Area**: `cache/memory` (`service.go`).
+- **Found**: 2026-10-16, while writing the cache `doc.go`. Suspected from
+  reading the code; a 2000-round probe racing `Set` against `Close` did
+  not trigger it.
+- **Detail**: `Set` checks `closed` (`cache/memory/service.go:152`) before
+  it takes the mutex (`:165`), and does not check it again before writing
+  `s.items[key]` (`:178`). `Close` sets `closed` (`:106`) and then, under
+  the mutex, sets `s.items` to nil (`:112` and `:113`). If `Set` passes its
+  check, `Close` runs to completion, and `Set` then takes the mutex, the
+  write goes to a nil map and panics with `assignment to entry in nil
+  map`. A `Set` on a service that was constructed but never started
+  writes to the same nil map. `Get`, `Exists`, and `Delete` only read or
+  delete, which a nil map allows.
+- **Next step**: check `closed` again after taking the mutex in `Set` (or
+  keep an empty map on `Close`), with a test that drives the interleaving.
+
+## KI-017: valkey cache operations panic before the service starts
+
+- **Status**: open
+- **Area**: `cache/valkey` (`service.go`).
+- **Found**: 2026-10-16, while writing the cache `doc.go`.
+- **Detail**: the client is created when the service starts, and `closed`
+  starts false, so on a `Service` that was constructed but never started
+  `Get`, `Set`, `Delete`, and `Exists` pass their `closed` check and call
+  the nil client (`cache/valkey/service.go:182`, `:206` and `:208`,
+  `:223`, `:235`), and so does `CheckReady` (`:258`). Each one panics with
+  `invalid memory address or nil pointer dereference`. Verified for the
+  four cache methods with a throwaway test.
+- **Next step**: return `cache.ErrClosed`, or a not-started error, when
+  the client is nil, since §7 of `CLAUDE.md` reserves panics for wiring
+  mistakes.
