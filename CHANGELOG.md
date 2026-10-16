@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **DI sentinel errors:** `gas.ErrNotRegistered`,
+  `gas.ErrCircularDependency`, `gas.ErrCaptiveDependency`,
+  `gas.ErrScopeRequired`, `gas.ErrNoConstructor`, `gas.ErrInvalidLifetime`,
+  and `gas.ErrInvalidServiceShape`. Errors from `Resolve`, `BuildAll`, and
+  startup wrap the matching sentinel, so callers can use `errors.Is` instead
+  of matching message text. The messages are unchanged.
+
 ### Changed
 
 - **BREAKING: `Authenticator`, `Authorizer`, and `PrincipalRevoker` moved to

@@ -306,6 +306,23 @@ svc := c.MustResolve[*myservice.Service]()
 on scoped or transient services — this would "capture" a short-lived instance
 inside a long-lived one. Error: `captive dependency: singleton X depends on scoped Y`.
 
+### DI errors
+
+Resolution and startup errors wrap a sentinel; match them with `errors.Is`
+(the message text still names the types):
+
+| Sentinel | Returned when |
+|---|---|
+| `gas.ErrNotRegistered` | A type, or a constructor's dependency, has no registration or instance |
+| `gas.ErrCircularDependency` | Registered constructors depend on each other in a cycle |
+| `gas.ErrCaptiveDependency` | A singleton depends on a scoped or transient service |
+| `gas.ErrScopeRequired` | A scoped service is resolved from the container instead of a `Scope` |
+| `gas.ErrInvalidLifetime` | A registration's `ServiceLifetime` is not Singleton, Scoped, or Transient |
+| `gas.ErrInvalidServiceShape` | A registered type declares `Init` or `Close` but does not implement `Service` |
+| `gas.ErrNoConstructor` | The container is asked to construct a type it has no constructor for. It guards an internal invariant and is not returned through the public API today |
+
+`MustResolve` panics with a string carrying the same message, not an error.
+
 ## Request Scopes
 
 The App installs middleware that creates a DI `Scope` per HTTP request. Scoped
