@@ -19,7 +19,8 @@ import (
 	gaslog "github.com/gasmod/gas/log"
 	"github.com/gasmod/gas/migrate"
 	queue "github.com/gasmod/gas/queue/sqs"
-	storage "github.com/gasmod/gas/storage/s3"
+	"github.com/gasmod/gas/storage"
+	storages3 "github.com/gasmod/gas/storage/s3"
 	template "github.com/gasmod/gas/template/memory"
 )
 
@@ -53,7 +54,8 @@ func New() *gas.App {
 	app.RegisterSingletonService[gas.DatabaseProvider](database.New())
 	app.RegisterSingletonService[*migrate.Service](migrate.New())
 	app.RegisterSingletonService[gas.CacheProvider](cache.New())
-	app.RegisterSingletonService[gas.StorageProvider](storage.New())
+	app.RegisterSingletonService[storage.Provider](storages3.NewProvider())
+	app.RegisterSingletonService[storage.Presigner](storages3.NewPresigner())
 	app.RegisterSingletonService[gas.JobQueueProvider](queue.New())
 	app.RegisterServiceInstance[gas.TemplateProvider](template.NewStore())
 	app.RegisterSingletonService[gas.EmailProvider](email.New())

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **BREAKING: `gas.StorageProvider` is removed from core**, together with
+  `gas.StorageObject`, `gas.ObjectInfo`, `gas.StorageOption`, `gas.InBucket`,
+  `gas.WithContentType`, `gas.WithMetadata`, and `gas.ApplyStorageOptions`.
+  Object storage is now `storage.Provider` and `storage.Presigner` in the
+  `gas/storage` module; register `s3.NewProvider()` and `s3.NewPresigner()`
+  (or `dir.NewProvider(...)`) under them. See `storage/CHANGELOG.md`.
+
 ## [0.5.0] - 2026-09-19
 
 ### Added

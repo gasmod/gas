@@ -676,7 +676,6 @@ separate modules. See `references/providers.md` for full signatures.
 | `CacheProvider`    | Key-value caching                      | gas/cache               |
 | `JobQueueProvider` | Async job/message queues               | gas/queue               |
 | `EmailProvider`    | Email sending                          | gas/email               |
-| `StorageProvider`  | File storage (S3, etc.)                | gas/storage             |
 | `ConfigProvider`   | Configuration management               | gas/config              |
 | `TemplateProvider` | Template storage/retrieval             | gas/ui                  |
 | `UIProvider`       | Template rendering                     | gas/ui                  |
@@ -687,6 +686,9 @@ separate modules. See `references/providers.md` for full signatures.
 | `PrincipalRevoker` | Credential revocation                  | gas/auth                |
 | `HealthProvider`   | Aggregate health of active services    | core (Worker satisfies) |
 | `ReadyProvider`    | Aggregate readiness of active services | core (Worker satisfies) |
+
+Object storage is not a core interface: `storage.Provider` and
+`storage.Presigner` live in the gas/storage module (see the gas-storage skill).
 
 Services opt into health/readiness reporting by implementing `HealthReporter`
 (`CheckHealth(ctx) error`) and/or `ReadyReporter` (`CheckReady(ctx) error`).

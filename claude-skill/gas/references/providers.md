@@ -9,7 +9,6 @@ logging types, or supporting structs like Email and Migration.
 - [CacheProvider](#cacheprovider)
 - [JobQueueProvider](#jobqueueprovider)
 - [EmailProvider](#emailprovider)
-- [StorageProvider](#storageprovider)
 - [ConfigProvider](#configprovider)
 - [TemplateProvider](#templateprovider)
 - [UIProvider](#uiprovider)
@@ -99,57 +98,11 @@ type EmailProvider interface {
 }
 ```
 
-## StorageProvider
+## Object storage
 
-```go
-type StorageProvider interface {
-	Upload(ctx context.Context, key string, data io.Reader, opts ...StorageOption) error
-	Download(ctx context.Context, key string, opts ...StorageOption) (*StorageObject, error)
-	Delete(ctx context.Context, key string, opts ...StorageOption) error
-	Head(ctx context.Context, key string, opts ...StorageOption) (*ObjectInfo, error)
-	PresignDownloadURL(ctx context.Context, key string, expires time.Duration, opts ...StorageOption) (string, error)
-	PresignUploadURL(ctx context.Context, key string, expires time.Duration, opts ...StorageOption) (string, error)
-}
-```
-
-### StorageObject
-
-Returned by `Download`. Carries the response body alongside metadata the
-backend provides.
-
-```go
-type StorageObject struct {
-	Body        io.ReadCloser
-	ContentType string
-	Size        int64
-	Metadata    map[string]string // provider-specific extras
-}
-```
-
-### ObjectInfo
-
-Returned by `Head`. Carries object metadata without the body.
-
-```go
-type ObjectInfo struct {
-	ContentType  string
-	Size         int64
-	Metadata     map[string]string
-	LastModified time.Time
-}
-```
-
-### StorageOption
-
-Functional options for all `StorageProvider` methods:
-
-```go
-gas.InBucket(name string)                    // override the default bucket for this operation
-gas.WithContentType(ct string)               // set content type on Upload
-gas.WithMetadata(m map[string]string)        // attach arbitrary key-value metadata on Upload
-```
-
-Implementations unpack options via `gas.ApplyStorageOptions(opts)`.
+Object storage is not a core interface. `storage.Provider` and
+`storage.Presigner` live in `github.com/gasmod/gas/storage`; see the
+gas-storage skill for their signatures, input types, and sentinel errors.
 
 ## ConfigProvider
 
@@ -452,22 +405,6 @@ type Job struct {
 }
 
 type EnqueueOption func(*enqueueOptions) // see WithDelay, WithGroupID, WithDedupeID, WithJobAttributes
-
-type StorageObject struct {
-	Body        io.ReadCloser
-	ContentType string
-	Size        int64
-	Metadata    map[string]string
-}
-
-type ObjectInfo struct {
-	ContentType  string
-	Size         int64
-	Metadata     map[string]string
-	LastModified time.Time
-}
-
-type StorageOption func(*storageOptions) // see InBucket, WithContentType, WithMetadata
 
 type RegisteredRoute struct {
 	Method     string
