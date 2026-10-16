@@ -421,8 +421,34 @@ func TestLock_UnopenableLockFile(t *testing.T) {
 	}
 }
 
+// TestLock_DanglingSymlinkLockFile checks that a lock name that exists but
+// cannot be opened as a file, here a symlink to a missing path, makes Lock
+// fail promptly with an error wrapping os.ErrNotExist and frees the slot. On
+// darwin the exclusive create sees the link (EEXIST) and the follow-up open
+// sees its missing target (ENOENT), which once retried forever.
+func TestLock_DanglingSymlinkLockFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Symlink(filepath.Join("missingdir", "x"), filepath.Join(dir, "n")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	l := newTestLock(t, dir)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	err := recv(t, lockAsync(ctx, l), 2*time.Second)
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Lock = %v, want ErrNotExist", err)
+	}
+	if n := slotCount(l); n != 0 {
+		t.Fatalf("%d slots left, want 0", n)
+	}
+}
+
 // TestOpenInRoot_Concurrent checks that concurrent first opens of one new
-// name must all succeed (the darwin os.Root ENOENT workaround).
+// name all succeed (the darwin os.Root ENOENT workaround). It covers first
+// creation only; the retry after a lock file is removed between the two
+// opens is covered by TestBucket_ConcurrentSameKey and
+// TestLock_MutualExclusionAcrossLocks.
 func TestOpenInRoot_Concurrent(t *testing.T) {
 	root, err := os.OpenRoot(t.TempDir())
 	if err != nil {
