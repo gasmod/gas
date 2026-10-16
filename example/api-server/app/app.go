@@ -1,5 +1,3 @@
-// Package app wires the api-server example: config, infrastructure
-// providers, auth, and the auth, files, and shares services.
 package app
 
 import (

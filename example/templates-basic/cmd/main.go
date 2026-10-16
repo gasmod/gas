@@ -1,5 +1,3 @@
-// Templates demo showing layouts, partials, page rendering, config loading,
-// structured logging, and the request logger middleware.
 package main
 
 import (

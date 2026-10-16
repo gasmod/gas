@@ -1,8 +1,3 @@
-// Lambda worker example showing Gas DI, config, database, and SQS queue
-// without the Gas App or HTTP server. gas.NewWorker provides the same DI
-// container, service lifecycle, and migrations as gas.NewApp but without
-// a router or HTTP server — ideal for AWS Lambda, CLI tools, or background
-// workers.
 package main
 
 import (
