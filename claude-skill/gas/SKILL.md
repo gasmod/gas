@@ -681,9 +681,6 @@ separate modules. See `references/providers.md` for full signatures.
 | `UIProvider`       | Template rendering                     | gas/ui                  |
 | `Logger`           | Structured logging                     | gas/log                 |
 | `MigrationManager` | Database migrations                    | gas/migrate             |
-| `Authenticator`    | Request authentication                 | gas/auth                |
-| `Authorizer`       | Action authorization                   | gas/auth                |
-| `PrincipalRevoker` | Credential revocation                  | gas/auth                |
 | `HealthProvider`   | Aggregate health of active services    | core (Worker satisfies) |
 | `ReadyProvider`    | Aggregate readiness of active services | core (Worker satisfies) |
 

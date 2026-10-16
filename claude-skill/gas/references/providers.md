@@ -18,9 +18,6 @@ logging types, or supporting structs like Email and Migration.
 - [LoggerContext & MutableLoggerContext](#loggercontext--mutableloggercontext)
 - [LogEvent](#logevent)
 - [MigrationManager](#migrationmanager)
-- [Authenticator](#authenticator)
-- [Authorizer](#authorizer)
-- [PrincipalRevoker](#principalrevoker)
 - [Principal & Metadata](#principal--metadata)
 - [Supporting Types](#supporting-types)
 
@@ -284,42 +281,6 @@ type MigrationManager interface {
 }
 ```
 
-## Authenticator
-
-Extracts a Principal from an HTTP request. Implementations may use JWTs,
-server-side sessions, API keys, or any other credential scheme.
-
-```go
-type Authenticator interface {
-	Authenticate(ctx context.Context, r *http.Request) (Principal, error)
-}
-```
-
-## Authorizer
-
-Decides whether a Principal is allowed to perform an action on a resource.
-Separate concern from authentication.
-
-```go
-type Authorizer interface {
-	Authorize(ctx context.Context, principal Principal, action, resource string) error
-}
-```
-
-## PrincipalRevoker
-
-Invalidates credentials associated with a Principal. Revoke targets a single
-credential, RevokeAll targets all credentials for a subject, and
-RevokeAllByScheme targets all credentials of a specific scheme for a subject.
-
-```go
-type PrincipalRevoker interface {
-	Revoke(ctx context.Context, principal Principal) error
-	RevokeAll(ctx context.Context, subject string) error
-	RevokeAllByScheme(ctx context.Context, subject, scheme string) error
-}
-```
-
 ## Principal & Metadata
 
 Principal represents an authenticated identity. PrincipalMetadata provides
@@ -348,9 +309,16 @@ Context helpers:
 
 ```go
 gas.WithPrincipal(ctx context.Context, p Principal) context.Context
-gas.PrincipalFromContext(ctx context.Context) Principal      // nil if absent
-gas.MustPrincipalFromContext(ctx context.Context) Principal  // panics if absent
+gas.PrincipalFromContext(ctx context.Context) Principal  // nil if absent
 ```
+
+In a handler, `ctx.Principal()` returns the principal, or a 401 `*gas.Error`
+with `gas.CodeUnauthorized` when none is present, so the handler can return
+the error directly.
+
+The `Authenticator`, `Authorizer`, and `PrincipalRevoker` interfaces live in
+the auth module (`github.com/gasmod/gas/auth`), not in core. See the gas-auth
+skill.
 
 Type-safe metadata access:
 

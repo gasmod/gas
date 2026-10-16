@@ -7,7 +7,9 @@ Part of the [Gas](../README.md) monorepo · [Documentation](https://gasmod.githu
 Authentication, authorization, and credential management for the [Gas](../README.md) framework:
 JWT, server-side sessions, API keys, and single-use tokens.
 
-Implements `gas.Authenticator`, `gas.Authorizer`, `gas.PrincipalRevoker`.
+Defines `auth.Authenticator`, `auth.Authorizer`, and `auth.PrincipalRevoker`, and
+implements them. The `gas.Principal` they produce, and the helpers that store it
+on a request, stay in core.
 
 ```bash
 go get github.com/gasmod/gas/auth
