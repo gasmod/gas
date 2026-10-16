@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"html/template"
-	"io"
 	"io/fs"
 	"net/http"
 	"time"
@@ -139,79 +138,6 @@ type TemplatedEmail struct {
 	HTMLTemplate    string
 	Data            any
 	Email
-}
-
-// StorageProvider abstracts file storage (S3, DO Spaces, local filesystem, etc.).
-type StorageProvider interface {
-	Upload(ctx context.Context, key string, data io.Reader, opts ...StorageOption) error
-	Download(ctx context.Context, key string, opts ...StorageOption) (*StorageObject, error)
-	Delete(ctx context.Context, key string, opts ...StorageOption) error
-	Head(ctx context.Context, key string, opts ...StorageOption) (*ObjectInfo, error)
-	PresignDownloadURL(
-		ctx context.Context,
-		key string,
-		expires time.Duration,
-		opts ...StorageOption,
-	) (string, error)
-	PresignUploadURL(
-		ctx context.Context,
-		key string,
-		expires time.Duration,
-		opts ...StorageOption,
-	) (string, error)
-}
-
-// StorageObject holds the response from a Download call, including the body
-// and any metadata the backend provides (content type, size, etc.).
-type StorageObject struct {
-	Body        io.ReadCloser
-	Metadata    map[string]string
-	ContentType string
-	Size        int64
-}
-
-// ObjectInfo holds metadata about an object without its body, returned by Head.
-type ObjectInfo struct {
-	LastModified time.Time
-	Metadata     map[string]string
-	ContentType  string
-	Size         int64
-}
-
-// StorageOption configures a storage operation.
-type StorageOption func(*storageOptions)
-
-type storageOptions struct {
-	Metadata    map[string]string
-	Bucket      string
-	ContentType string
-}
-
-// InBucket overrides the default bucket for a single operation.
-func InBucket(name string) StorageOption {
-	return func(o *storageOptions) { o.Bucket = name }
-}
-
-// WithContentType sets the content type for an Upload.
-func WithContentType(ct string) StorageOption {
-	return func(o *storageOptions) { o.ContentType = ct }
-}
-
-// WithMetadata attaches provider-specific key-value metadata to an Upload.
-func WithMetadata(m map[string]string) StorageOption {
-	return func(o *storageOptions) { o.Metadata = m }
-}
-
-// ApplyStorageOptions resolves variadic StorageOption values into their
-// individual fields. Implementations call this inside their methods.
-func ApplyStorageOptions(
-	opts []StorageOption,
-) (bucket, contentType string, metadata map[string]string) {
-	o := &storageOptions{}
-	for _, fn := range opts {
-		fn(o)
-	}
-	return o.Bucket, o.ContentType, o.Metadata
 }
 
 // TemplateProvider abstracts template storage and retrieval. Implementations

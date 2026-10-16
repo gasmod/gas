@@ -1,11 +1,3 @@
-// Package emailtest provides a mock implementation of gas.EmailProvider
-// for use in tests. The mock records all calls and allows configuring
-// per-method behavior via function fields.
-//
-//	mock := &emailtest.MockEmail{}
-//	mock.SendFn = func(ctx context.Context, msg *gas.Email) error {
-//	    return nil
-//	}
 package emailtest
 
 import (

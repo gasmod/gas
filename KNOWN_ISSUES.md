@@ -15,20 +15,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   input that triggers it).
 - **Next step**: what has to happen to close it.
 
-## KI-002: s3 backend has no real-service test suite after the storage rewrite
-
-- **Status**: decision needed
-- **Area**: `storage/s3`
-- **Found**: 2026-10-15, while splitting the uncommitted work into PRs.
-- **Detail**: `main` tests the s3 backend against LocalStack
-  (`storage/s3/integration_test.go`). The pending storage rewrite deletes
-  that suite and drops testcontainers from `storage/go.mod`, so the s3
-  backend would be tested only through mocks and fakes, which §2 of
-  `CLAUDE.md` does not accept. MinIO is ruled out by its license, and no
-  replacement container has been chosen.
-- **Next step**: choose the S3-compatible container for the suite, then
-  add it back.
-
 ## KI-004: built-in module constructors are not on the `CONVENTIONS.md` shape
 
 - **Status**: open
@@ -42,8 +28,8 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   - `func(deps...) *Service`: `auth/jwt.New`, `auth/apikey.New`,
     `auth/session.New`, `auth/token.New`, `cache/memory.New`,
     `cache/valkey.New`, `database.New`, `email/ses.New` and
-    `email/ses.NewWithCustomProvider`, `migrate.New`, `queue/sqs.New`,
-    `storage/dir.New`, `storage/s3.New`, and `ui.New`.
+    `email/ses.NewWithCustomProvider`, `migrate.New`, `queue/sqs.New`, and
+    `ui.New`.
   - `func(deps...) *Store`: `auth/apikey/db.New`, `auth/session/db.New`,
     `auth/token/db.New`, and `template/db.NewStore`.
   - `func() *Store`: `template/dir.NewStore(dir)` and
@@ -87,33 +73,112 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   ```
 
   `CONVENTIONS.md` keeps built-in modules off this path by declaring
-  dependencies as parameters; app code can still reach it.
-- **Next step**: decide whether resolution should detect re-entrant
-  construction of a type and return a cycle error (a §3 decision in
-  `CLAUDE.md`).
+  dependencies as parameters; app code can still reach it. An `Init` that
+  resolves its own type through a captured container recurses the same
+  way, because `invoke` runs `Init` before `setInstance` caches the value.
 
-## KI-006: DI errors have no sentinel
+  `Resolve` takes no chain or context, so a resolve from a captured
+  container cannot be told apart from a concurrent one without goroutine
+  identity or an API change. Options considered: tracking a build stack
+  while `BuildAll` runs (exact, and covers the repro above, since
+  `BuildAll` is single-goroutine), plus a depth bound as a backstop for
+  resolves outside `BuildAll` (turns the overflow into an error but cannot
+  name the cycle). Either one interacts with KI-011, since a concurrent
+  resolve during a build would see a false cycle.
+- **Next step**: decide whether resolution should detect re-entrant
+  construction of a type and return a cycle error, and how (a §3
+  decision in `CLAUDE.md`); see KI-011 for the concurrency half.
+
+## KI-007: `auth.Middleware` treats a nil principal as authenticated
+
+- **Status**: decision needed
+- **Area**: `auth` (`middleware.go`, `auth.go`).
+- **Found**: 2026-10-16, while moving the auth interfaces into the auth
+  module.
+- **Detail**: `Middleware` treats any nil error from `Authenticate` as
+  success. At `auth/middleware.go:49` it calls `Authenticate`, and at
+  `:55` and `:56` it stores the returned principal with `gas.WithPrincipal`
+  and calls the next handler, even when that principal is nil. `Chain`
+  passes the same result on (`auth/auth.go:89` and `:90`), so one member
+  returning `(nil, nil)` ends the chain as a success. A handler that calls
+  `Context.Principal` still gets a 401, and `RequireScheme` still answers
+  403, but a route that relies on `Middleware` alone runs for a caller
+  with no credentials. The `jwt`, `session`, and `apikey` services never
+  return `(nil, nil)`; `authtest.MockAuthenticator` does when
+  `AuthenticateFn` is nil (`auth/authtest/mock.go:45`), and so can any
+  app-written `Authenticator`. Repro sketch:
+
+  ```go
+  type none struct{}
+
+  func (none) Authenticate(
+      context.Context, *http.Request,
+  ) (gas.Principal, error) {
+      return nil, nil
+  }
+
+  ok := func(w http.ResponseWriter, _ *http.Request) {
+      w.WriteHeader(http.StatusOK)
+  }
+  h := auth.Middleware(none{})(http.HandlerFunc(ok))
+  rr := httptest.NewRecorder()
+  h.ServeHTTP(rr, httptest.NewRequest("GET", "/", nil))
+  // rr.Code == 200: the protected handler ran without a principal.
+  ```
+
+- **Next step**: decide the contract (a §3 security decision in
+  `CLAUDE.md`): whether `Middleware` and `Chain` reject a nil principal
+  with `ErrUnauthenticated`, and whether the `Authenticator` doc and the
+  `authtest` mock's default change to match.
+
+## KI-009: `auth.Middleware` panics with an `auth:` prefix
+
+- **Status**: open
+- **Area**: `auth` (`middleware.go`).
+- **Found**: 2026-10-16, while moving the auth interfaces into the auth
+  module.
+- **Detail**: `Middleware` with a nil authenticator panics with
+  `"auth: nil authenticator"` (`auth/middleware.go:35`). §7 of
+  `CLAUDE.md` asks every panic message to start with `gas:` and say how
+  to fix the mistake.
+- **Next step**: reword the message, for example
+  `"gas: auth.Middleware: nil Authenticator; pass a configured
+  authenticator"`.
+
+## KI-010: suspected flake in the s3 multipart content-length test
+
+- **Status**: open
+- **Area**: `storage/s3` tests.
+- **Found**: 2026-10-16, in review of the darwin lock-open fix, once in
+  about 31 runs.
+- **Detail**: the `multipart short` case of
+  `TestProvider_PutObjectContentLength` (`storage/s3/provider_test.go:1088`)
+  failed when an `UploadPart` send to the in-process fake S3 hit ENOBUFS
+  (`write: no buffer space available`). The transfer manager keeps the first
+  error, so that transport error masked `ErrContentLengthMismatch` and the
+  `errors.Is` assertion failed. The runtime behavior is correct; only the
+  assertion is fragile under transport errors.
+- **Next step**: if it recurs, make the fake read the whole part before it
+  replies, or accept a transport error in that case.
+
+## KI-011: concurrent lazy singleton resolution is a data race
 
 - **Status**: decision needed
 - **Area**: core DI (`service_registry.go`).
-- **Found**: 2026-10-16, while writing DI tests.
-- **Detail**: the core package defines no exported `Err*` sentinels, and
-  every DI error is a plain `fmt.Errorf` in `service_registry.go`:
-
-  - `:287` resolver is nil
-  - `:302` resolved incorrect type
-  - `:322` and `:407` no registration
-  - `:338` scoped service resolved outside a scope
-  - `:344` and `:428` unknown lifetime
-  - `:464` no constructor
-  - `:546` and `:552` captive dependency
-  - `:625` circular dependency
-  - `:837` and `:865` startup service-shape errors
-
-  Callers and tests can only match message text, contrary to §2 of
-  `CLAUDE.md`, which asks for `errors.Is` or `errors.As`; the core's own
-  `unhappy_path_test.go:31`, `:55`, and `:78` use `strings.Contains`.
-- **Next step**: one §3 decision covering sentinels for all of these.
+- **Found**: 2026-10-16, while designing the KI-005 cycle guard.
+- **Detail**: `ServiceContainer` has no mutex; `registrations`,
+  `instances`, and `instanceOrder` are plain maps and slices. `BuildAll`
+  builds every singleton on one goroutine, and after that resolution only
+  reads them, but a singleton resolved lazily (before `InitServices`,
+  registered after it, or from a constructor through a captured
+  container) is built on whichever goroutine asks. With four goroutines
+  calling `Resolve` on the same unbuilt singleton, whose constructor
+  sleeps 20ms, the constructor ran four times and `go test -race`
+  reported three data races.
+- **Next step**: decide whether lazy resolution becomes concurrency-safe,
+  for example one in-flight build per type under a container lock with
+  later callers waiting, weighing the deadlock risk of holding it while a
+  constructor and `Init` run (a §3 decision in `CLAUDE.md`).
 
 ## KI-012: ui static files are unreachable with the default settings
 

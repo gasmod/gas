@@ -1,11 +1,3 @@
-// Package queuetest provides a mock implementation of gas.JobQueueProvider
-// for use in tests. The mock records all calls and allows configuring
-// per-method behavior via function fields.
-//
-//	mock := &queuetest.MockQueue{}
-//	mock.EnqueueFn = func(ctx context.Context, queue string, payload []byte, opts ...gas.EnqueueOption) error {
-//	    return nil
-//	}
 package queuetest
 
 import (

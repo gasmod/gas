@@ -1,5 +1,3 @@
-// Package files implements the api-server example's authenticated file
-// upload, listing, download, and deletion routes.
 package files
 
 import (
@@ -14,6 +12,7 @@ import (
 	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/example/api-server/auth"
 	"github.com/gasmod/gas/example/api-server/db"
+	"github.com/gasmod/gas/storage"
 )
 
 //go:embed migrations/*.sql
@@ -31,16 +30,18 @@ type FileUploadedPayload struct {
 }
 
 // Service exposes the authenticated file CRUD routes, storing blobs in the
-// StorageProvider and metadata in the database, with a cache in front of reads.
+// storage.Provider and metadata in the database, with a cache in front of
+// reads. Downloads are served as storage.Presigner URLs.
 type Service struct {
-	router  *gas.Router
-	bus     *gas.EventBus
-	db      gas.DatabaseProvider
-	mgr     gas.MigrationManager
-	storage gas.StorageProvider
-	cache   gas.CacheProvider
-	auth    *auth.Service
-	queries *db.Queries
+	router    *gas.Router
+	bus       *gas.EventBus
+	db        gas.DatabaseProvider
+	mgr       gas.MigrationManager
+	storage   storage.Provider
+	presigner storage.Presigner
+	cache     gas.CacheProvider
+	auth      *auth.Service
+	queries   *db.Queries
 }
 
 // New is the DI constructor; the container injects every parameter.
@@ -49,19 +50,21 @@ func New(
 	bus *gas.EventBus,
 	dbProvider gas.DatabaseProvider,
 	mgr gas.MigrationManager,
-	storage gas.StorageProvider,
+	store storage.Provider,
+	presigner storage.Presigner,
 	cache gas.CacheProvider,
 	authSvc *auth.Service,
 ) *Service {
 	return &Service{
-		router:  router,
-		bus:     bus,
-		db:      dbProvider,
-		mgr:     mgr,
-		storage: storage,
-		cache:   cache,
-		auth:    authSvc,
-		queries: db.New(dbProvider.DB()),
+		router:    router,
+		bus:       bus,
+		db:        dbProvider,
+		mgr:       mgr,
+		storage:   store,
+		presigner: presigner,
+		cache:     cache,
+		auth:      authSvc,
+		queries:   db.New(dbProvider.DB()),
 	}
 }
 
@@ -134,12 +137,12 @@ func (s *Service) handleUpload(ctx gas.Context) error {
 
 	// Upload to S3 with explicit content type so downloads serve the
 	// correct MIME type without needing to guess from the key.
-	if uploadErr := s.storage.Upload(
-		ctx,
-		storageKey,
-		file,
-		gas.WithContentType(contentType),
-	); uploadErr != nil {
+	if _, uploadErr := s.storage.PutObject(ctx, &storage.PutObjectInput{
+		Body:            file,
+		ContentLength:   &header.Size,
+		ContentType:     &contentType,
+		BaseObjectInput: storage.BaseObjectInput{Key: storageKey},
+	}); uploadErr != nil {
 		return fmt.Errorf("upload to storage: %w", uploadErr)
 	}
 
@@ -268,10 +271,17 @@ func (s *Service) handleDownload(ctx gas.Context) error {
 	}
 
 	// Generate presigned URL valid for 15 minutes.
-	url, err := s.storage.PresignDownloadURL(ctx, f.StorageKey, 15*time.Minute)
+	ttl := 15 * time.Minute
+	presigned, err := s.presigner.PresignDownloadURL(ctx, &storage.PresignDownloadURLInput{
+		TTL: &ttl,
+		GetObjectInput: storage.GetObjectInput{HeadObjectInput: storage.HeadObjectInput{
+			BaseObjectInput: storage.BaseObjectInput{Key: f.StorageKey},
+		}},
+	})
 	if err != nil {
 		return fmt.Errorf("presign url: %w", err)
 	}
+	url := presigned.URL
 
 	// Cache the presigned URL for 14 minutes (slightly less than expiry).
 	// Best-effort: a failed cache write must not fail the request.
@@ -298,7 +308,9 @@ func (s *Service) handleDelete(ctx gas.Context) error {
 	}
 
 	// Delete from S3 first, then DB.
-	if err := s.storage.Delete(ctx, f.StorageKey); err != nil {
+	if _, err := s.storage.DeleteObject(ctx, &storage.DeleteObjectInput{
+		BaseObjectInput: storage.BaseObjectInput{Key: f.StorageKey},
+	}); err != nil {
 		return fmt.Errorf("delete from storage: %w", err)
 	}
 
