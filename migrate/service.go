@@ -52,14 +52,14 @@ func New() func(gas.DatabaseProvider) *Service {
 func (s *Service) Name() string { return "gas/migrate" }
 
 // Init validates dependencies, selects the correct sqlc adapter based on the
-// configured database driver, and creates the migrations tracking table.
-func (s *Service) Init() error {
+// configured database driver, and creates the migrations tracking table
+// under ctx.
+func (s *Service) Init(ctx context.Context) error {
 	if s.db == nil {
 		return fmt.Errorf("%s: DatabaseProvider is required", s.Name())
 	}
 
 	sqlDB := s.db.DB()
-	ctx := context.Background()
 
 	var createDDL string
 
@@ -84,7 +84,7 @@ func (s *Service) Init() error {
 }
 
 // Close marks the service as closed.
-func (s *Service) Close() error {
+func (s *Service) Close(context.Context) error {
 	s.closed.Store(true)
 	return nil
 }

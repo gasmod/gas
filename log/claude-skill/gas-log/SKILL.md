@@ -269,9 +269,10 @@ func NewShippingHandler(endpoint string, marshaler Marshaler, opts ...ShippingOp
 ```
 
 `ShippingLogger` implements `gas.Service`: registered in the DI container,
-`Close()` is called at shutdown and drains buffered records. Outside the
+`Close(ctx)` is called at shutdown and drains buffered records (the ctx is
+not consulted; the drain is bounded by the HTTP client timeout). Outside the
 container, call `Flush()` before exit (posts and blocks until sent) or
-`Close()` (drains and stops the delivery goroutine; idempotent). `Init()` is a
+`Close(ctx)` (drains and stops the delivery goroutine; idempotent). `Init(ctx)` is a
 no-op — the delivery goroutine starts at construction, so the logger works with
 or without the container.
 
@@ -498,9 +499,9 @@ func New(logger gas.Logger, router *gas.Router) *Service {
 }
 
 func (s *Service) Name() string  { return "myservice" }
-func (s *Service) Close() error  { return nil }
+func (s *Service) Close(ctx context.Context) error { return nil }
 
-func (s *Service) Init() error {
+func (s *Service) Init(ctx context.Context) error {
     s.logger.Info("service initialized").Str("name", s.Name()).Send()
     s.router.Handle(s, "GET", "/users/{id}", s.handleGetUser)
     return nil

@@ -62,7 +62,7 @@ func newTestService(t *testing.T, mock *mockSESClient, tmpl gas.TemplateProvider
 	t.Helper()
 	ctor := New(WithConfig(validConfig()), WithClient(mock))
 	svc := ctor(tmpl, nil, gas.NewNopLogger()())
-	if err := svc.Init(); err != nil {
+	if err := svc.Init(t.Context()); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 	return svc
@@ -136,7 +136,7 @@ func TestInitWithInvalidConfig(t *testing.T) {
 	cfg := &Config{Email: Settings{Region: ""}}
 	ctor := New(WithConfig(cfg), WithClient(&mockSESClient{}))
 	svc := ctor(&mockTemplateProvider{}, nil, gas.NewNopLogger()())
-	if err := svc.Init(); err == nil {
+	if err := svc.Init(t.Context()); err == nil {
 		t.Error("Init() should fail with invalid config")
 	}
 }
@@ -167,7 +167,7 @@ func TestSend(t *testing.T) {
 	cfg.GasEnv = "production"
 	ctor := New(WithConfig(cfg), WithClient(mock))
 	svc := ctor(&mockTemplateProvider{}, nil, gas.NewNopLogger()())
-	if err := svc.Init(); err != nil {
+	if err := svc.Init(t.Context()); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 
@@ -218,7 +218,7 @@ func TestSendUsesMessageFrom(t *testing.T) {
 	cfg.GasEnv = "production"
 	ctor := New(WithConfig(cfg), WithClient(mock))
 	svc := ctor(&mockTemplateProvider{}, nil, gas.NewNopLogger()())
-	if err := svc.Init(); err != nil {
+	if err := svc.Init(t.Context()); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 
@@ -251,7 +251,7 @@ func TestSendWithCcBcc(t *testing.T) {
 	cfg.GasEnv = "production"
 	ctor := New(WithConfig(cfg), WithClient(mock))
 	svc := ctor(&mockTemplateProvider{}, nil, gas.NewNopLogger()())
-	if err := svc.Init(); err != nil {
+	if err := svc.Init(t.Context()); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 
@@ -277,7 +277,7 @@ func TestSendWithCcBcc(t *testing.T) {
 func TestSendClosed(t *testing.T) {
 	t.Parallel()
 	svc := newTestService(t, &mockSESClient{}, &mockTemplateProvider{})
-	_ = svc.Close()
+	_ = svc.Close(context.Background())
 
 	err := svc.Send(context.Background(), &gas.Email{To: []string{"x@x.com"}})
 	if !errors.Is(err, email.ErrClosed) {
@@ -299,7 +299,7 @@ func TestSendSESError(t *testing.T) {
 	cfg.GasEnv = "production"
 	ctor := New(WithConfig(cfg), WithClient(mock))
 	svc := ctor(&mockTemplateProvider{}, nil, gas.NewNopLogger()())
-	if err := svc.Init(); err != nil {
+	if err := svc.Init(t.Context()); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 
@@ -341,7 +341,7 @@ func TestSendFromTemplate(t *testing.T) {
 	cfg.GasEnv = "production"
 	ctor := New(WithConfig(cfg), WithClient(mock))
 	svc := ctor(tmpl, nil, gas.NewNopLogger()())
-	if err := svc.Init(); err != nil {
+	if err := svc.Init(t.Context()); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 
@@ -391,7 +391,7 @@ func TestSendFromTemplatePartial(t *testing.T) {
 	cfg.GasEnv = "production"
 	ctor := New(WithConfig(cfg), WithClient(mock))
 	svc := ctor(tmpl, nil, gas.NewNopLogger()())
-	if err := svc.Init(); err != nil {
+	if err := svc.Init(t.Context()); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 
@@ -420,7 +420,7 @@ func TestSendFromTemplatePartial(t *testing.T) {
 func TestSendFromTemplateClosed(t *testing.T) {
 	t.Parallel()
 	svc := newTestService(t, &mockSESClient{}, &mockTemplateProvider{})
-	_ = svc.Close()
+	_ = svc.Close(context.Background())
 
 	err := svc.SendFromTemplate(context.Background(), &gas.TemplatedEmail{
 		HTMLTemplate: "test",
@@ -444,7 +444,7 @@ func TestSendFromTemplateGetError(t *testing.T) {
 	cfg.GasEnv = "production"
 	ctor := New(WithConfig(cfg), WithClient(&mockSESClient{}))
 	svc := ctor(tmpl, nil, gas.NewNopLogger()())
-	if err := svc.Init(); err != nil {
+	if err := svc.Init(t.Context()); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 
@@ -470,7 +470,7 @@ func TestSendFromTemplateParseError(t *testing.T) {
 	cfg.GasEnv = "production"
 	ctor := New(WithConfig(cfg), WithClient(&mockSESClient{}))
 	svc := ctor(tmpl, nil, gas.NewNopLogger()())
-	if err := svc.Init(); err != nil {
+	if err := svc.Init(t.Context()); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 
@@ -493,7 +493,7 @@ func TestCheckReady(t *testing.T) {
 		t.Errorf("CheckReady() before close = %v, want nil", err)
 	}
 
-	_ = svc.Close()
+	_ = svc.Close(context.Background())
 
 	err := svc.CheckReady(context.Background())
 	if !errors.Is(err, email.ErrClosed) {

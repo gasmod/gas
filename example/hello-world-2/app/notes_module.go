@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -40,7 +41,7 @@ func NewNotesModule() NotesModuleCtor {
 func (m *NotesModule) Name() string { return "notes-module" }
 
 // Init registers this module's named middleware and its /notes route group.
-func (m *NotesModule) Init() error {
+func (m *NotesModule) Init(_ context.Context) error {
 	// Register a named middleware for content-type checking.
 	m.router.Register(m, "json-content-type", func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -73,7 +74,7 @@ func (m *NotesModule) Init() error {
 }
 
 // Close releases module resources at shutdown. This module holds none.
-func (m *NotesModule) Close() error { return nil }
+func (m *NotesModule) Close(_ context.Context) error { return nil }
 
 // handleList — lists all note slugs as JSON.
 func (m *NotesModule) handleList(ctx gas.Context, logger RequestLogger) error {

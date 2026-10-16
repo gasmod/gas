@@ -105,8 +105,8 @@ func receives `gas.ConfigProvider` and `gas.Logger` from the DI container.
 | Method  | Signature   | Description                                           |
 |---------|-------------|-------------------------------------------------------|
 | `Name`  | `() string` | Returns `"gas/queue/sqs"`                             |
-| `Init`  | `() error`  | Validates config, creates AWS SQS client              |
-| `Close` | `() error`  | Marks service as closed                               |
+| `Init`  | `(ctx context.Context) error` | Validates config, creates AWS SQS client (ctx bounds AWS config loading) |
+| `Close` | `(ctx context.Context) error` | Marks service as closed (ctx unused) |
 
 ### Behavior
 
@@ -213,7 +213,7 @@ func New(queue gas.JobQueueProvider) *Service {
     return &Service{queue: queue}
 }
 
-func (s *Service) Init() error {
+func (s *Service) Init(ctx context.Context) error {
     // use s.queue.Enqueue, Dequeue, Ack, Nack
     return nil
 }

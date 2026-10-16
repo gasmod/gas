@@ -43,7 +43,7 @@ func newHS256Service(t *testing.T, key string, opts ...func(*jwtpkg.Config)) *jw
 		fn(cfg)
 	}
 	svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, gas.NewNopLogger()())
-	require.NoError(t, svc.Init())
+	require.NoError(t, svc.Init(context.Background()))
 	return svc
 }
 
@@ -90,7 +90,7 @@ func newRS256Service(t *testing.T, opts ...func(*jwtpkg.Config)) *jwtpkg.Service
 		fn(cfg)
 	}
 	svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, gas.NewNopLogger()())
-	require.NoError(t, svc.Init())
+	require.NoError(t, svc.Init(context.Background()))
 	return svc
 }
 
@@ -330,7 +330,7 @@ func TestSignVerifyHS256(t *testing.T) {
 		}
 		svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, gas.NewNopLogger()())
 
-		err := svc.Init()
+		err := svc.Init(context.Background())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "signing key not configured")
 	})
@@ -545,7 +545,7 @@ func TestRSAKeyLoading(t *testing.T) {
 			},
 		}
 		svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, gas.NewNopLogger()())
-		err := svc.Init()
+		err := svc.Init(context.Background())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "load public key")
 	})
@@ -563,7 +563,7 @@ func TestRSAKeyLoading(t *testing.T) {
 			},
 		}
 		svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, gas.NewNopLogger()())
-		err := svc.Init()
+		err := svc.Init(context.Background())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "decode PEM")
 	})
@@ -583,7 +583,7 @@ func TestRSAKeyLoading(t *testing.T) {
 			},
 		}
 		svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, gas.NewNopLogger()())
-		err := svc.Init()
+		err := svc.Init(context.Background())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "decode PEM")
 	})
@@ -600,5 +600,5 @@ func TestServiceName(t *testing.T) {
 
 func TestServiceClose(t *testing.T) {
 	svc := newHS256Service(t, "some-key-that-is-at-least-32bytes")
-	assert.NoError(t, svc.Close())
+	assert.NoError(t, svc.Close(context.Background()))
 }

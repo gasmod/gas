@@ -117,8 +117,8 @@ the interface itself. Behaves identically to `New` otherwise.
 | Method  | Signature   | Description                                           |
 |---------|-------------|-------------------------------------------------------|
 | `Name`  | `() string` | Returns `"gas/email/ses"`                             |
-| `Init`  | `() error`  | Validates config, creates AWS SES client              |
-| `Close` | `() error`  | Marks service as closed                               |
+| `Init`  | `(ctx context.Context) error` | Validates config, creates AWS SES client (ctx bounds AWS config loading) |
+| `Close` | `(ctx context.Context) error` | Marks service as closed (ctx unused) |
 
 ### Readiness (gas.ReadyReporter)
 
@@ -248,7 +248,7 @@ func New(email gas.EmailProvider) *Service {
     return &Service{email: email}
 }
 
-func (s *Service) Init() error {
+func (s *Service) Init(ctx context.Context) error {
     // use s.email.Send, s.email.SendFromTemplate
     return nil
 }

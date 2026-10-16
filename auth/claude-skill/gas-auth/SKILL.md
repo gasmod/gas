@@ -232,11 +232,11 @@ func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) *Service
 
 ### Lifecycle (gas.Service)
 
-| Method  | Signature   | Description                  |
-|---------|-------------|------------------------------|
-| `Name`  | `() string` | Returns `"gas/auth/jwt"`     |
-| `Init`  | `() error`  | Validates config, loads keys |
-| `Close` | `() error`  | No-op (stateless)            |
+| Method  | Signature     | Description                  |
+|---------|---------------|------------------------------|
+| `Name`  | `() string`   | Returns `"gas/auth/jwt"`     |
+| `Init`  | `(ctx) error` | Validates config, loads keys |
+| `Close` | `(ctx) error` | No-op (stateless)            |
 
 ### Methods
 
@@ -314,11 +314,11 @@ func New(opts ...Option) func(gas.DatabaseProvider, gas.Logger, gas.MigrationMan
 
 ### Lifecycle (gas.Service)
 
-| Method  | Signature   | Description                                   |
-|---------|-------------|-----------------------------------------------|
-| `Name`  | `() string` | Returns `"gas/auth/session"`                  |
-| `Init`  | `() error`  | Validates config, inits store, starts cleanup |
-| `Close` | `() error`  | Stops cleanup goroutine                       |
+| Method  | Signature     | Description                                   |
+|---------|---------------|-----------------------------------------------|
+| `Name`  | `() string`   | Returns `"gas/auth/session"`                  |
+| `Init`  | `(ctx) error` | Validates config, inits store, starts cleanup |
+| `Close` | `(ctx) error` | Stops cleanup goroutine                       |
 
 ### Methods
 
@@ -407,11 +407,11 @@ func New(opts ...Option) func(gas.DatabaseProvider, gas.Logger, gas.MigrationMan
 
 ### Lifecycle (gas.Service)
 
-| Method  | Signature   | Description                   |
-|---------|-------------|-------------------------------|
-| `Name`  | `() string` | Returns `"gas/auth/apikey"`   |
-| `Init`  | `() error`  | Validates config, inits store |
-| `Close` | `() error`  | No-op (stateless)             |
+| Method  | Signature     | Description                   |
+|---------|---------------|-------------------------------|
+| `Name`  | `() string`   | Returns `"gas/auth/apikey"`   |
+| `Init`  | `(ctx) error` | Validates config, inits store |
+| `Close` | `(ctx) error` | No-op (stateless)             |
 
 ### Methods
 
@@ -552,11 +552,11 @@ func New(opts ...Option) func(gas.DatabaseProvider, gas.Logger, gas.MigrationMan
 
 ### Lifecycle (gas.Service)
 
-| Method  | Signature   | Description                                   |
-|---------|-------------|-----------------------------------------------|
-| `Name`  | `() string` | Returns `"gas/auth/token"`                    |
-| `Init`  | `() error`  | Validates config, inits store, starts cleanup |
-| `Close` | `() error`  | Stops cleanup goroutine                       |
+| Method  | Signature     | Description                                   |
+|---------|---------------|-----------------------------------------------|
+| `Name`  | `() string`   | Returns `"gas/auth/token"`                    |
+| `Init`  | `(ctx) error` | Validates config, inits store, starts cleanup |
+| `Close` | `(ctx) error` | Stops cleanup goroutine                       |
 
 ### Methods
 
@@ -675,7 +675,7 @@ app := gas.NewApp(
 Wire into a chain in your service's `Init`:
 
 ```go
-func (s *MyService) Init() error {
+func (s *MyService) Init(_ context.Context) error {
     chain := auth.Chain{s.jwt, s.session, s.apikey}
     s.router.Group(func(sub *gas.Router) {
         sub.UseMiddlewareFunc(auth.Middleware(chain))

@@ -1,6 +1,7 @@
 package files
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -72,7 +73,7 @@ func New(
 func (s *Service) Name() string { return "files" }
 
 // Init registers migrations and the authenticated /api/files route group.
-func (s *Service) Init() error {
+func (s *Service) Init(_ context.Context) error {
 	if err := s.mgr.RegisterFS(s, migrationsFS); err != nil {
 		return fmt.Errorf("registering files migrations: %w", err)
 	}
@@ -92,7 +93,7 @@ func (s *Service) Init() error {
 }
 
 // Close releases service resources at shutdown. This service holds none.
-func (s *Service) Close() error { return nil }
+func (s *Service) Close(_ context.Context) error { return nil }
 
 // --- Response types ---
 

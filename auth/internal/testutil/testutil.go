@@ -40,20 +40,20 @@ func newDatabaseService(t *testing.T, apply func(*database.Settings)) *database.
 		&configtest.MockConfig{},
 		NewNopLogger(),
 	)
-	if err := svc.Init(); err != nil {
+	if err := svc.Init(t.Context()); err != nil {
 		t.Fatalf("failed to init database service: %v", err)
 	}
-	t.Cleanup(func() { _ = svc.Close() })
+	t.Cleanup(func() { _ = svc.Close(context.Background()) })
 	return svc
 }
 
 func newMigrateService(t *testing.T, db gas.DatabaseProvider) *migrate.Service {
 	t.Helper()
 	svc := migrate.New()(db)
-	if err := svc.Init(); err != nil {
+	if err := svc.Init(t.Context()); err != nil {
 		t.Fatalf("failed to init migrate service: %v", err)
 	}
-	t.Cleanup(func() { _ = svc.Close() })
+	t.Cleanup(func() { _ = svc.Close(context.Background()) })
 	return svc
 }
 

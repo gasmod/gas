@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING:** `Service` implements the context-aware `gas.Service`
+  (`Init(ctx context.Context) error`, `Close(ctx context.Context) error`).
+  The connection ping (and pgx pool creation) derives from the Init context,
+  and connection retries stop when that context is canceled or its deadline
+  passes; the returned error wraps `ctx.Err()`.
 - **Transaction errors are no longer discarded** — `WithTx` previously dropped
   rollback failures and returned commit errors unwrapped. Rollback failures are
   now logged and joined onto the caller's error with `errors.Join`, except

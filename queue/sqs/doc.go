@@ -32,8 +32,10 @@
 //
 // Init runs at startup. It binds and validates the configuration and,
 // unless WithClient was given, builds the SQS client from the AWS default
-// configuration. It does not contact SQS, so bad credentials, an unreachable
-// endpoint or a missing queue surface on the first operation.
+// configuration (environment and shared config files), loaded under Init's
+// context; credentials are fetched on the first call, not in Init. It does
+// not contact SQS, so bad credentials, an unreachable endpoint or a missing
+// queue surface on the first operation.
 //
 // Close runs at shutdown. It only marks the Service closed: Enqueue,
 // Dequeue, Ack, Nack and CheckReady then return queue.ErrClosed, so a

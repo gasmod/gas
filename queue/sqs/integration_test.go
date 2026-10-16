@@ -158,10 +158,10 @@ func newIntegrationService(t *testing.T, endpoint string) *Service {
 	client := newSQSClient(t, endpoint)
 	ctor := New(WithConfig(cfg), WithClient(client))
 	svc := ctor(nil, gas.NewNopLogger()())
-	if err := svc.Init(); err != nil {
+	if err := svc.Init(t.Context()); err != nil {
 		t.Fatalf("init: %v", err)
 	}
-	t.Cleanup(func() { _ = svc.Close() })
+	t.Cleanup(func() { _ = svc.Close(context.Background()) })
 	return svc
 }
 
@@ -313,10 +313,10 @@ func TestIntegration_Close(t *testing.T) {
 
 	ctor := New(WithConfig(cfg))
 	svc := ctor(nil, gas.NewNopLogger()())
-	if err := svc.Init(); err != nil {
+	if err := svc.Init(t.Context()); err != nil {
 		t.Fatalf("init: %v", err)
 	}
-	if err := svc.Close(); err != nil {
+	if err := svc.Close(context.Background()); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 

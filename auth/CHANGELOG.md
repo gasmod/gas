@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING:** the `jwt`, `session`, `apikey`, and `token` services implement
+  the context-aware `gas.Service` (`Init(ctx context.Context) error`,
+  `Close(ctx context.Context) error`). None of them does context-bound work in
+  `Init` or `Close`, so the context is accepted and unused; the `session` and
+  `token` cleanup goroutines still run until `Close` and do not derive from
+  the `Init` context.
 - **BREAKING: the auth API names `auth.Authenticator`.** It is the element
   type of `Chain` and the parameter type of `Middleware`, so code converting a
   `[]gas.Authenticator` to `auth.Chain` must use `[]auth.Authenticator`

@@ -1,6 +1,7 @@
 package app_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -23,14 +24,14 @@ func TestApp(t *testing.T) {
 
 	// Start seals the router (until then it has no routes), runs the ready
 	// hook, and validates that every DI-aware handler's dependencies resolve.
-	if err := a.Start(); err != nil {
+	if err := a.Start(t.Context()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
 	stopped := false
 	t.Cleanup(func() {
 		if !stopped {
-			_ = a.Stop()
+			_ = a.Stop(context.Background())
 		}
 	})
 
@@ -45,7 +46,7 @@ func TestApp(t *testing.T) {
 	t.Run("notes routes", func(t *testing.T) { testNotesRoutes(t, srv) })
 
 	stopped = true
-	if err := a.Stop(); err != nil {
+	if err := a.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
 }

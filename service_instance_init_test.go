@@ -1,6 +1,7 @@
 package gas_test
 
 import (
+	"context"
 	"errors"
 	"slices"
 	"strings"
@@ -32,7 +33,7 @@ func TestServiceInstanceIsInitialized(t *testing.T) {
 		gas.WithSingletonService[gas.Logger](gas.NewNopLogger()),
 		gas.WithServiceInstance[*ordService[instTagA]](svc),
 	)
-	if err := w.InitServices(); err != nil {
+	if err := w.InitServices(context.Background()); err != nil {
 		t.Fatalf("InitServices: %v", err)
 	}
 
@@ -56,7 +57,7 @@ func TestServiceInstanceInitializedExactlyOnce(t *testing.T) {
 		gas.WithServiceInstance[*ordService[instTagA]](svc),
 	)
 	for range 3 {
-		if err := w.InitServices(); err != nil {
+		if err := w.InitServices(context.Background()); err != nil {
 			t.Fatalf("InitServices: %v", err)
 		}
 	}
@@ -73,9 +74,9 @@ type failingInstance struct{}
 
 var errInstanceInit = errors.New("instance init failed")
 
-func (s *failingInstance) Name() string { return "failing-instance" }
-func (s *failingInstance) Init() error  { return errInstanceInit }
-func (s *failingInstance) Close() error { return nil }
+func (s *failingInstance) Name() string                { return "failing-instance" }
+func (s *failingInstance) Init(context.Context) error  { return errInstanceInit }
+func (s *failingInstance) Close(context.Context) error { return nil }
 
 func TestServiceInstanceInitErrorAbortsStartup(t *testing.T) {
 	w := gas.NewWorker(
@@ -83,7 +84,7 @@ func TestServiceInstanceInitErrorAbortsStartup(t *testing.T) {
 		gas.WithServiceInstance[*failingInstance](&failingInstance{}),
 	)
 
-	err := w.InitServices()
+	err := w.InitServices(context.Background())
 	if err == nil {
 		t.Fatal("expected InitServices to fail")
 	}
@@ -109,10 +110,10 @@ func TestServiceInstanceInitializesBeforeConstructedServices(t *testing.T) {
 				return &ordService[instTagB]{log: log, name: "constructed"}
 			}),
 		)
-		if err := w.InitServices(); err != nil {
+		if err := w.InitServices(context.Background()); err != nil {
 			t.Fatalf("run %d: InitServices: %v", run, err)
 		}
-		if err := w.Shutdown(); err != nil {
+		if err := w.Shutdown(context.Background()); err != nil {
 			t.Fatalf("run %d: Shutdown: %v", run, err)
 		}
 

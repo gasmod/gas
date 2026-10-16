@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -8,7 +9,7 @@ import (
 )
 
 // Module implements gas.Service for the landing page routes. The DI container
-// injects the Router via the constructor; routes are registered during Init().
+// injects the Router via the constructor; routes are registered during Init.
 type Module struct {
 	router *gas.Router
 }
@@ -25,7 +26,7 @@ func (m *Module) Name() string {
 }
 
 // Init registers the index route and the custom NotFound handler.
-func (m *Module) Init() error {
+func (m *Module) Init(_ context.Context) error {
 	m.router.Get(m, "/", m.handleIndex)
 	m.router.NotFound(m, m.handleNotFound)
 
@@ -33,7 +34,7 @@ func (m *Module) Init() error {
 }
 
 // Close releases module resources at shutdown. This module holds none.
-func (m *Module) Close() error {
+func (m *Module) Close(_ context.Context) error {
 	return nil
 }
 

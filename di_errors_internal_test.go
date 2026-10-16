@@ -1,6 +1,7 @@
 package gas
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"testing"
@@ -12,7 +13,7 @@ import (
 func TestDIError_NoConstructor(t *testing.T) {
 	type unregistered struct{}
 	c := NewServiceContainer()
-	_, err := c.invoke(reflect.TypeFor[*unregistered](), c)
+	_, err := c.invoke(context.Background(), reflect.TypeFor[*unregistered](), c)
 	if !errors.Is(err, ErrNoConstructor) {
 		t.Fatalf("invoke error = %v, want ErrNoConstructor", err)
 	}

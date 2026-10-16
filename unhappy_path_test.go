@@ -24,7 +24,7 @@ func TestServiceContainer_CircularDependency(t *testing.T) {
 	c.RegisterService[*A](func(b *B) *A { return &A{} }, gas.ServiceLifetimeSingleton)
 	c.RegisterService[*B](func(a *A) *B { return &B{} }, gas.ServiceLifetimeSingleton)
 
-	err := c.BuildAll()
+	err := c.BuildAll(context.Background())
 	if err == nil {
 		t.Fatal("expected error for circular dependency")
 	}
@@ -48,7 +48,7 @@ func TestServiceContainer_CaptiveDependency(t *testing.T) {
 			gas.ServiceLifetimeSingleton,
 		)
 
-		err := c.BuildAll()
+		err := c.BuildAll(context.Background())
 		if err == nil {
 			t.Fatal("expected error for captive dependency (singleton -> scoped)")
 		}
@@ -71,7 +71,7 @@ func TestServiceContainer_CaptiveDependency(t *testing.T) {
 			gas.ServiceLifetimeSingleton,
 		)
 
-		err := c.BuildAll()
+		err := c.BuildAll(context.Background())
 		if err == nil {
 			t.Fatal("expected error for captive dependency (singleton -> transient)")
 		}
@@ -137,7 +137,7 @@ func TestDIHandler_PanicRecovery(t *testing.T) {
 		}),
 	)
 
-	if err := app.InitServices(); err != nil {
+	if err := app.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -164,7 +164,7 @@ func TestServiceContainer_ConstructorError(t *testing.T) {
 		return nil, errors.New("ctor failed")
 	}, gas.ServiceLifetimeSingleton)
 
-	err := c.BuildAll()
+	err := c.BuildAll(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "ctor failed") {
 		t.Fatalf("expected ctor failure, got: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestServiceContainer_InitError(t *testing.T) {
 		return svc
 	}, gas.ServiceLifetimeSingleton)
 
-	err := c.BuildAll()
+	err := c.BuildAll(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "init failed") {
 		t.Fatalf("expected init failure, got: %v", err)
 	}
@@ -251,19 +251,19 @@ func TestApp_CloseService_CloseError(t *testing.T) {
 	svc := &testService{name: "failing-close", closeErr: errors.New("close failed")}
 	app := gas.NewApp(gas.WithServiceInstance[*testService](svc))
 
-	if err := app.InitServices(); err != nil {
+	if err := app.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
 	// CloseService should log the error but still return nil because it continues cleanup.
 	// Actually, looking at the code:
-	// if err := svc.Close(); err != nil {
+	// if err := svc.Close(ctx); err != nil {
 	//     a.getLogger().Error("service close failed").Str("service", name).Err("error", err).Send()
 	// }
 	// delete(a.activeServices, name)
 	// return nil
 
-	err := app.CloseService[*testService]()
+	err := app.CloseService[*testService](context.Background())
 	if err != nil {
 		t.Fatalf("expected nil error from CloseService even if Close() fails, got %v", err)
 	}

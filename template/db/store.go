@@ -80,7 +80,7 @@ func (s *Store) Name() string { return "gas/template/db" }
 
 // Init implements gas.Service. It registers the templates table migration
 // and selects the correct sqlc adapter based on the configured database driver.
-func (s *Store) Init() error {
+func (s *Store) Init(context.Context) error {
 	sqlDB := s.db.DB()
 
 	var up, down string
@@ -118,7 +118,7 @@ func (s *Store) Init() error {
 }
 
 // Close implements gas.Service.
-func (s *Store) Close() error { return nil }
+func (s *Store) Close(context.Context) error { return nil }
 
 // Get returns the raw template content by name.
 func (s *Store) Get(ctx context.Context, name string) ([]byte, error) {

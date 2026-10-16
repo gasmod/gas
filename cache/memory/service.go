@@ -74,7 +74,8 @@ func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) *Service {
 func (s *Service) Name() string { return serviceName }
 
 // Init validates the configuration and starts the background cleanup goroutine.
-func (s *Service) Init() error {
+// The goroutine does not inherit ctx; it runs until Close.
+func (s *Service) Init(context.Context) error {
 	if !s.customConfigProvided {
 		if s.cfgProvider != nil {
 			if err := s.cfgProvider.Bind(s.cfg); err != nil {
@@ -94,6 +95,7 @@ func (s *Service) Init() error {
 	if s.cfg.Cache.CleanupInterval > 0 {
 		ctx, cancel := context.WithCancel(context.Background())
 		s.cancel = cancel
+		//nolint:contextcheck // the cleanup goroutine outlives Init, so it must not inherit the Init ctx; Close cancels it
 		go s.cleanup(ctx)
 	}
 
@@ -102,7 +104,7 @@ func (s *Service) Init() error {
 }
 
 // Close stops the background cleanup goroutine and clears the cache.
-func (s *Service) Close() error {
+func (s *Service) Close(context.Context) error {
 	s.closed.Store(true)
 
 	if s.cancel != nil {

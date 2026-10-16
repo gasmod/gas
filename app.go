@@ -121,12 +121,14 @@ func (a *App) Router() *Router { return a.router }
 
 // Start initializes the underlying Worker (services, migrations, hooks) and
 // binds configuration. It does not start the HTTP server; call Serve for that,
-// or use Run to do both and block until shutdown.
-func (a *App) Start() error {
-	if err := a.Worker.Start(); err != nil {
+// or use Run to do both and block until shutdown. ctx is passed to the Init
+// of every service built during startup.
+func (a *App) Start(ctx context.Context) error {
+	if err := a.Worker.Start(ctx); err != nil {
 		return err
 	}
 
+	//nolint:contextcheck // every singleton is built by now, so resolving the provider runs no Init
 	if err := a.bindConfig(); err != nil {
 		return fmt.Errorf("gas: failed to bind config: %w", err)
 	}
@@ -174,25 +176,29 @@ func (a *App) Serve() error {
 }
 
 // Stop emits the server-shutting-down event, gracefully shuts down the HTTP
-// server within ShutdownTimeout, and then shuts down the underlying Worker.
-func (a *App) Stop() error {
+// server within ShutdownTimeout (or sooner, if ctx ends first), and then
+// shuts down the underlying Worker, passing ctx to each service's Close.
+func (a *App) Stop(ctx context.Context) error {
 	srv := a.Server()
 
 	a.Worker.eventBus.Emit[SystemServerShuttingDown](SystemServerShuttingDownPayload{}).Wait()
 
-	ctx, cancel := context.WithTimeout(context.Background(), a.cfg.Server.ShutdownTimeout)
+	srvCtx, cancel := context.WithTimeout(ctx, a.cfg.Server.ShutdownTimeout)
 	defer cancel()
-	if srvErr := srv.Shutdown(ctx); srvErr != nil {
+	if srvErr := srv.Shutdown(srvCtx); srvErr != nil {
+		//nolint:contextcheck // getLogger resolves the logger, which needs no caller ctx
 		a.getLogger().Error("server shutdown error").Err("error", srvErr).Send()
 	}
 
-	return a.Shutdown()
+	return a.Shutdown(ctx)
 }
 
 // Run initializes all services, runs pending migrations, starts the HTTP
-// server, and blocks until a shutdown signal is received.
+// server, and blocks until a shutdown signal is received. Startup and
+// shutdown use context.Background().
 func (a *App) Run() error {
-	if err := a.Start(); err != nil {
+	ctx := context.Background()
+	if err := a.Start(ctx); err != nil {
 		return err
 	}
 
@@ -219,7 +225,7 @@ func (a *App) Run() error {
 		}
 	}
 
-	return a.Stop()
+	return a.Stop(ctx)
 }
 
 func (a *App) bindConfig() error {

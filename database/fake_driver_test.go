@@ -106,11 +106,11 @@ func newFakeService(
 		database.WithConnector(&fakeConnector{behavior: b}),
 	)(nil, gas.NewNopLogger()())
 
-	if err := s.Init(); err != nil {
+	if err := s.Init(t.Context()); err != nil {
 		t.Fatalf("Init on fake driver: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := s.Close(); err != nil {
+		if err := s.Close(context.Background()); err != nil {
 			t.Errorf("Close: %v", err)
 		}
 	})
@@ -206,6 +206,43 @@ func TestInit_RetryThenSucceed(t *testing.T) {
 	}
 }
 
+// TestInit_RetryStopsWhenContextEnds checks that a connection retry loop
+// stops waiting when Init's context ends, instead of sleeping out its backoff,
+// and returns an error wrapping the context's error.
+func TestInit_RetryStopsWhenContextEnds(t *testing.T) {
+	for name, canceledCase := range map[string]bool{"deadline": false, "canceled": true} {
+		t.Run(name, func(t *testing.T) {
+			b := &fakeBehavior{failPings: 1000}
+			cfg := database.DefaultConfig()
+			cfg.Database.Driver = ""
+			cfg.Database.DSN = ""
+			cfg.Database.ConnRetries = 5
+			cfg.Database.ConnRetryInterval = time.Minute
+			s := database.New(
+				database.WithConfig(cfg),
+				database.WithConnector(&fakeConnector{behavior: b}),
+			)(nil, gas.NewNopLogger()())
+
+			ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+			defer cancel()
+			want := context.DeadlineExceeded
+			if canceledCase {
+				cancel()
+				want = context.Canceled
+			}
+
+			start := time.Now()
+			err := s.Init(ctx)
+			if !errors.Is(err, want) {
+				t.Fatalf("Init error = %v, want %v", err, want)
+			}
+			if elapsed := time.Since(start); elapsed > 5*time.Second {
+				t.Errorf("Init took %v, want it to stop when the context ends", elapsed)
+			}
+		})
+	}
+}
+
 // fakeConfigProvider is a gas.ConfigProvider that binds a fixed Config, used
 // to check that Init pulls settings from DI when WithConfig is absent.
 type fakeConfigProvider struct {
@@ -237,11 +274,11 @@ func TestInit_BindsConfigFromProvider(t *testing.T) {
 	provider := &fakeConfigProvider{bound: bound}
 
 	s := database.New()(provider, gas.NewNopLogger()())
-	if err := s.Init(); err != nil {
+	if err := s.Init(t.Context()); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := s.Close(); err != nil {
+		if err := s.Close(context.Background()); err != nil {
 			t.Errorf("Close: %v", err)
 		}
 	})
@@ -258,7 +295,7 @@ func TestInit_BindFailure(t *testing.T) {
 	provider := &fakeConfigProvider{err: errors.New("bind exploded")}
 
 	s := database.New()(provider, gas.NewNopLogger()())
-	if err := s.Init(); err == nil {
+	if err := s.Init(t.Context()); err == nil {
 		t.Fatal("expected Init to fail when config binding fails")
 	}
 }
@@ -271,11 +308,11 @@ func TestInit_WithConfigSkipsProvider(t *testing.T) {
 	cfg.Database.DSN = filepath.Join(t.TempDir(), "explicit.db")
 
 	s := database.New(database.WithConfig(cfg))(provider, gas.NewNopLogger()())
-	if err := s.Init(); err != nil {
+	if err := s.Init(t.Context()); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := s.Close(); err != nil {
+		if err := s.Close(context.Background()); err != nil {
 			t.Errorf("Close: %v", err)
 		}
 	})
@@ -300,7 +337,7 @@ func TestInit_ConnectorInPgxMode(t *testing.T) {
 		database.WithConnector(&fakeConnector{behavior: &fakeBehavior{}}),
 	)(nil, gas.NewNopLogger()())
 
-	err := s.Init()
+	err := s.Init(t.Context())
 	if err == nil {
 		t.Fatal("expected Init to reject a connector in pgx mode")
 	}

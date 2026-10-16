@@ -2,6 +2,7 @@
 package log
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -218,8 +219,9 @@ func (l *ShippingLogger) Name() string { return l.name }
 
 // Init is a no-op; the delivery goroutine starts at construction so the logger
 // works with or without the DI container (implements [gas.Service]).
-func (l *ShippingLogger) Init() error { return nil }
+func (l *ShippingLogger) Init(_ context.Context) error { return nil }
 
 // Close drains buffered records and stops the delivery goroutine. It is
-// idempotent (implements [gas.Service]).
-func (l *ShippingLogger) Close() error { return l.handler.sender.close() }
+// idempotent. The context is not consulted: the drain is bounded by the
+// HTTP client's timeout (implements [gas.Service]).
+func (l *ShippingLogger) Close(_ context.Context) error { return l.handler.sender.close() }

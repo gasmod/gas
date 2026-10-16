@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 
 	"github.com/aws/aws-lambda-go/lambda"
@@ -20,7 +21,7 @@ func init() {
 	// hooks. Non-blocking — does not start an HTTP server or wait for
 	// signals. If the database is unreachable, config is invalid, or
 	// NotificationQueueURL is missing, this fails fast.
-	if err := worker.Start(); err != nil {
+	if err := worker.Start(context.Background()); err != nil {
 		log.Fatalf("failed to start worker: %s\n", err)
 	}
 }
@@ -34,7 +35,7 @@ func main() {
 	// freezing the execution environment. Worker.Shutdown emits
 	// SystemShuttingDown and closes services in reverse init order.
 	lambda.StartWithOptions(h.Handle, lambda.WithEnableSIGTERM(func() {
-		if err := worker.Shutdown(); err != nil {
+		if err := worker.Shutdown(context.Background()); err != nil {
 			log.Printf("shutdown error: %s\n", err)
 		}
 	}))

@@ -80,8 +80,8 @@ func receives `gas.ConfigProvider` and `gas.Logger` from the DI container.
 | Method  | Signature   | Description                                           |
 |---------|-------------|-------------------------------------------------------|
 | `Name`  | `() string` | Returns `"gas/cache/memory"`                          |
-| `Init`  | `() error`  | Validates config, starts background cleanup goroutine |
-| `Close` | `() error`  | Stops cleanup, clears cache                           |
+| `Init`  | `(context.Context) error` | Validates config, starts background cleanup goroutine (not tied to the Init ctx) |
+| `Close` | `(context.Context) error` | Stops cleanup, clears cache |
 
 ### Behavior
 
@@ -133,8 +133,8 @@ func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) *Service
 | Method  | Signature   | Description                                         |
 |---------|-------------|-----------------------------------------------------|
 | `Name`  | `() string` | Returns `"gas/cache/valkey"`                        |
-| `Init`  | `() error`  | Validates config, connects with retry, pings server |
-| `Close` | `() error`  | Closes the Valkey client                            |
+| `Init`  | `(context.Context) error` | Validates config, connects with retry, pings server |
+| `Close` | `(context.Context) error` | Closes the Valkey client |
 
 ### Behavior
 
@@ -143,6 +143,8 @@ func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) *Service
 - **Connection retry:** When `ConnRetries > 0`, the service retries the
   initial connection with exponential backoff. The interval starts at
   `ConnRetryInterval` (default 2s) and doubles after each failed attempt.
+  The ping uses the Init context, and retries stop when that context is
+  canceled or its deadline passes (the error wraps `ctx.Err()`).
 
 ### Health and Readiness
 
@@ -276,7 +278,7 @@ func New(cache gas.CacheProvider) *Service {
     return &Service{cache: cache}
 }
 
-func (s *Service) Init() error {
+func (s *Service) Init(ctx context.Context) error {
     // use s.cache.Get, Set, Delete, Exists
     return nil
 }

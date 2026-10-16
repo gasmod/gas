@@ -440,7 +440,7 @@ func TestService_InitAndRender(t *testing.T) {
 		nil,
 		gas.NewNopLogger()(),
 	)
-	if err := svc.Init(); err != nil {
+	if err := svc.Init(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -467,10 +467,10 @@ func TestService_ClosedReturns503(t *testing.T) {
 		nil,
 		gas.NewNopLogger()(),
 	)
-	if err := svc.Init(); err != nil {
+	if err := svc.Init(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.Close(); err != nil {
+	if err := svc.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -497,7 +497,7 @@ func TestService_RegisterFuncs(t *testing.T) {
 		nil,
 		gas.NewNopLogger()(),
 	)
-	if err := svc.Init(); err != nil {
+	if err := svc.Init(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -532,7 +532,7 @@ func TestService_CheckReady(t *testing.T) {
 		t.Fatal("expected not-ready before Init")
 	}
 
-	if err := svc.Init(); err != nil {
+	if err := svc.Init(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -542,7 +542,7 @@ func TestService_CheckReady(t *testing.T) {
 	}
 
 	// Not ready after Close (draining).
-	if err := svc.Close(); err != nil {
+	if err := svc.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.CheckReady(context.Background()); err == nil {

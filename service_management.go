@@ -2,6 +2,7 @@ package gas
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"sync"
@@ -85,10 +86,15 @@ func safeCall(ctx context.Context, fn func(context.Context) error) (err error) {
 	return fn(ctx)
 }
 
+// errWorkerShutDown is returned by CloseService and RestartService once
+// Shutdown has begun, so the kill switch cannot reopen a service after the
+// worker has closed it.
+var errWorkerShutDown = errors.New("gas: worker is shut down")
+
 // CloseService performs the kill-switch sequence for the service registered
 // under T at runtime:
 //
-//	w.CloseService[*auth.Service]()
+//	w.CloseService[*auth.Service](ctx)
 //
 // Infrastructure is cleaned up first, so even if Close panics or fails, the
 // service's routes and event subscriptions are already gone. Its routes then
@@ -97,10 +103,18 @@ func safeCall(ctx context.Context, fn func(context.Context) error) (err error) {
 // The service is looked up among the instances the container has already
 // built, so a registration that was never initialized is reported as an error
 // rather than constructed here. Returns an error if T has no built instance or
-// is not currently active; a failure from the service's own Close is logged,
-// not returned, because the teardown above it has already happened.
-func (w *Worker) CloseService[T Service]() error {
+// is not currently active, or Shutdown has begun; a failure from the
+// service's own Close is logged, not returned, because the teardown above it
+// has already happened.
+//
+// ctx is passed to the service's Close.
+func (w *Worker) CloseService[T Service](ctx context.Context) error {
 	w.mu.Lock()
+
+	if w.shutDown {
+		w.mu.Unlock()
+		return errWorkerShutDown
+	}
 
 	s, ok := w.serviceContainer.resolveBuilt[T]()
 	if !ok {
@@ -130,7 +144,8 @@ func (w *Worker) CloseService[T Service]() error {
 	}
 
 	// 3. Close the service (internal cleanup).
-	if err := svc.Close(); err != nil {
+	if err := svc.Close(ctx); err != nil {
+		//nolint:contextcheck // getLogger resolves the logger, which needs no caller ctx
 		w.getLogger().Error("service close failed").Str("service", name).Err("error", err).Send()
 	}
 
@@ -142,6 +157,7 @@ func (w *Worker) CloseService[T Service]() error {
 	// 5. Notify all other services.
 	w.eventBus.Emit[SystemServiceClosed](SystemServiceClosedPayload{ServiceName: name}).Wait()
 
+	//nolint:contextcheck // getLogger resolves the logger, which needs no caller ctx
 	w.getLogger().Info("service closed").Str("service", name).Send()
 	return nil
 }
@@ -150,14 +166,19 @@ func (w *Worker) CloseService[T Service]() error {
 // under T, re-running Init on the same instance so it registers its routes,
 // middleware and subscriptions again:
 //
-//	w.RestartService[*auth.Service]()
+//	w.RestartService[*auth.Service](ctx)
 //
 // The service must have been registered with the Worker at construction time
 // and built during InitServices (that is, it must be a singleton in
 // serviceOrder). Returns an error if T has no built instance, is already
-// active, or its Init fails.
-func (w *Worker) RestartService[T Service]() error {
+// active, Shutdown has begun, or its Init fails. ctx is passed to the service's Init.
+func (w *Worker) RestartService[T Service](ctx context.Context) error {
 	w.mu.Lock()
+
+	if w.shutDown {
+		w.mu.Unlock()
+		return errWorkerShutDown
+	}
 
 	s, ok := w.serviceContainer.resolveBuilt[T]()
 	if !ok {
@@ -188,8 +209,8 @@ func (w *Worker) RestartService[T Service]() error {
 		return fmt.Errorf("gas: service %q not found", name)
 	}
 
-	// Re-initialize.
-	if err := svc.Init(); err != nil {
+	// Re-initialize under the same init deadline as startup.
+	if err := w.serviceContainer.initService(ctx, reflect.TypeFor[T](), svc); err != nil {
 		w.mu.Unlock()
 		return fmt.Errorf("gas: re-init %s: %w", name, err)
 	}
@@ -202,6 +223,7 @@ func (w *Worker) RestartService[T Service]() error {
 		SystemServiceInitializedPayload{ServiceName: name},
 	).Wait()
 
+	//nolint:contextcheck // getLogger resolves the logger, which needs no caller ctx
 	w.getLogger().Info("service restarted").Str("service", name).Send()
 	return nil
 }

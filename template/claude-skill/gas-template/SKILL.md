@@ -163,8 +163,8 @@ from the DI container.
 | Method  | Signature    | Description                                                     |
 |---------|--------------|-----------------------------------------------------------------|
 | `Name`  | `() string`  | Returns `"gas/template/db"`                                     |
-| `Init`  | `() error`   | Registers migration, selects sqlc adapter based on driver       |
-| `Close` | `() error`   | No-op                                                           |
+| `Init`  | `(context.Context) error` | Registers migration, selects sqlc adapter based on driver       |
+| `Close` | `(context.Context) error` | No-op                                                           |
 
 ### Supported Drivers
 
@@ -330,7 +330,7 @@ func New(templates gas.TemplateProvider) *Service {
     return &Service{templates: templates}
 }
 
-func (s *Service) Init() error {
+func (s *Service) Init(ctx context.Context) error {
     content, err := s.templates.Get(ctx, "emails/welcome.html")
     if err != nil {
         return err

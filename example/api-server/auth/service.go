@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -61,7 +62,7 @@ func (s *Service) Name() string { return "auth" }
 
 // Init registers migrations, builds the JWT/API-key chain authenticator, and
 // registers the public and protected route groups.
-func (s *Service) Init() error {
+func (s *Service) Init(_ context.Context) error {
 	// Register migrations for the users table. API key and JWT services
 	// register their own internal migrations automatically.
 	if err := s.mgr.RegisterFS(s, migrationsFS); err != nil {
@@ -99,10 +100,10 @@ func (s *Service) Init() error {
 }
 
 // Close releases service resources at shutdown. This service holds none.
-func (s *Service) Close() error { return nil }
+func (s *Service) Close(_ context.Context) error { return nil }
 
 // Middleware returns the auth middleware for use by other services. Called
-// during their Init() to protect their own route groups.
+// during their Init to protect their own route groups.
 func (s *Service) Middleware() func(http.Handler) http.Handler {
 	chain := gasauth.Chain{s.jwt, s.apikeys}
 	return gasauth.Middleware(chain, gasauth.WithOnError(

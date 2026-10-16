@@ -1,6 +1,7 @@
 package gas_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -48,7 +49,7 @@ func TestDIHandler_HappyPath(t *testing.T) {
 		gas.WithService[*testDep](newTestDep, gas.ServiceLifetimeScoped),
 	)
 
-	if err := app.InitServices(); err != nil {
+	if err := app.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -74,7 +75,7 @@ func TestDIHandler_HappyPath(t *testing.T) {
 func TestDIHandler_ZeroDeps(t *testing.T) {
 	app := gas.NewApp()
 
-	if err := app.InitServices(); err != nil {
+	if err := app.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -103,7 +104,7 @@ func TestDIHandler_MultipleDeps(t *testing.T) {
 		gas.WithService[*testDepB](newTestDepB, gas.ServiceLifetimeScoped),
 	)
 
-	if err := app.InitServices(); err != nil {
+	if err := app.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -142,7 +143,7 @@ func TestDIHandler_InterfaceDep(t *testing.T) {
 		gas.WithService[Greeter](newHelloGreeter, gas.ServiceLifetimeSingleton),
 	)
 
-	if err := app.InitServices(); err != nil {
+	if err := app.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -168,7 +169,7 @@ func TestDIHandler_InterfaceDep(t *testing.T) {
 func TestDIHandler_BackwardCompat_HandlerFunc(t *testing.T) {
 	app := gas.NewApp()
 
-	if err := app.InitServices(); err != nil {
+	if err := app.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -196,7 +197,7 @@ func TestDIHandler_BackwardCompat_HandlerFunc(t *testing.T) {
 func TestDIHandler_BackwardCompat_FuncLiteral(t *testing.T) {
 	app := gas.NewApp()
 
-	if err := app.InitServices(); err != nil {
+	if err := app.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -274,7 +275,7 @@ func TestDIHandler_BootValidation_MissingDep(t *testing.T) {
 		return nil
 	})
 
-	err := app.InitServices()
+	err := app.InitServices(context.Background())
 	if err == nil {
 		t.Fatal("expected error from InitServices for missing dependency")
 	}
@@ -296,7 +297,7 @@ func TestDIHandler_BootValidation_Group(t *testing.T) {
 		})
 	})
 
-	err := app.InitServices()
+	err := app.InitServices(context.Background())
 	if err == nil {
 		t.Fatal("expected error from InitServices for missing dependency in Group")
 	}
@@ -314,7 +315,7 @@ func TestDIHandler_BootValidation_Route(t *testing.T) {
 		})
 	})
 
-	err := app.InitServices()
+	err := app.InitServices(context.Background())
 	if err == nil {
 		t.Fatal("expected error from InitServices for missing dependency in Route")
 	}
@@ -330,7 +331,7 @@ func TestDIHandler_BootValidation_Route(t *testing.T) {
 func TestDIHandler_ErrorHandling_Default(t *testing.T) {
 	app := gas.NewApp()
 
-	if err := app.InitServices(); err != nil {
+	if err := app.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -372,7 +373,7 @@ func TestDIHandler_ErrorHandling_Custom(t *testing.T) {
 		}),
 	)
 
-	if err := app.InitServices(); err != nil {
+	if err := app.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -401,7 +402,7 @@ func TestDIHandler_ErrorHandling_Custom(t *testing.T) {
 func TestDIHandler_NilError(t *testing.T) {
 	app := gas.NewApp()
 
-	if err := app.InitServices(); err != nil {
+	if err := app.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -709,7 +710,7 @@ func TestRouter_NotFound_DIHandler(t *testing.T) {
 		return ctx.Text(http.StatusNotFound, "custom 404")
 	})
 
-	if err := app.InitServices(); err != nil {
+	if err := app.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -745,7 +746,7 @@ func TestDIHandler_ScopedIsolation(t *testing.T) {
 		}, gas.ServiceLifetimeScoped),
 	)
 
-	if err := app.InitServices(); err != nil {
+	if err := app.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -776,7 +777,7 @@ func TestDIHandler_SingletonDep(t *testing.T) {
 		gas.WithService[*testDep](newTestDep, gas.ServiceLifetimeSingleton),
 	)
 
-	if err := app.InitServices(); err != nil {
+	if err := app.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 

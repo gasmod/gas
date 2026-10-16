@@ -43,7 +43,10 @@
 // pool limits and pings the database with a 5-second timeout. A failed
 // attempt is retried connretries times, waiting connretryinterval before
 // the first retry and doubling the wait each time; Init blocks while it
-// waits. When every attempt fails, Init returns the last error.
+// waits. The ping runs under Init's context, and when that context ends
+// during a wait, Init stops retrying and returns an error wrapping both the
+// context's error and the last connection error. When every attempt fails,
+// Init returns the last error.
 //
 // Close runs at shutdown. It marks the Service closed and closes the
 // *sql.DB and, in pgx mode, the pool. After Close, Query, Exec, BeginTx,

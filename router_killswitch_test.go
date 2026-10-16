@@ -213,7 +213,7 @@ func TestRestartServiceRestoresMiddlewareAndRoutes(t *testing.T) {
 		t.Fatalf("after kill-switch: /api/invoices = %d, want 503", got)
 	}
 
-	// RestartService -> svc.Init() re-registers the middleware, then the routes.
+	// RestartService -> svc.Init(ctx) re-registers the middleware, then the routes.
 	router.Register(auth, "require-auth", ksPassthrough)
 
 	if got := ksStatus(t, router, "/api/invoices"); got != http.StatusOK {

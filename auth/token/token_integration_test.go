@@ -33,10 +33,10 @@ func setupTokenService(t *testing.T) *token.Service {
 
 	svc := token.New(token.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
 
-	require.NoError(t, svc.Init())
+	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
 
-	t.Cleanup(func() { _ = svc.Close() })
+	t.Cleanup(func() { _ = svc.Close(context.Background()) })
 	return svc
 }
 
@@ -205,7 +205,7 @@ func TestTokenCleanupGoroutine(t *testing.T) {
 	cfg.Token.CleanupInterval = 100 * time.Millisecond
 
 	svc := token.New(token.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
-	require.NoError(t, svc.Init())
+	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
 
 	rawToken, err := svc.Issue(context.Background(), "user-cleanup", "reset", 1*time.Millisecond)
@@ -217,7 +217,7 @@ func TestTokenCleanupGoroutine(t *testing.T) {
 	_, err = svc.Verify(context.Background(), rawToken, "reset")
 	assert.Error(t, err, "expired token should have been cleaned up")
 
-	require.NoError(t, svc.Close())
+	require.NoError(t, svc.Close(context.Background()))
 }
 
 // ---------------------------------------------------------------------------

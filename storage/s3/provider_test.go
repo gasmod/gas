@@ -1609,7 +1609,7 @@ func TestProvider_DIWiring(t *testing.T) {
 			NewPresigner(WithPresignerS3Client(f.client(t))),
 		),
 	)
-	if err := w.InitServices(); err != nil {
+	if err := w.InitServices(context.Background()); err != nil {
 		t.Fatalf("InitServices() error: %v", err)
 	}
 	if _, err := w.ServiceContainer().Resolve[storage.Provider](); err != nil {
@@ -1627,13 +1627,13 @@ func TestProvider_DIMissingConfigProvider(t *testing.T) {
 	t.Parallel()
 	f := newFakeS3(t, nil)
 
-	// gas has no sentinel for a missing registration, so match the message.
 	const want = "no registration for gas.ConfigProvider"
 
 	w := gas.NewWorker(
 		gas.WithSingletonService[storage.Provider](NewProvider(WithClient(f.client(t)))),
 	)
-	if err := w.InitServices(); err == nil || !strings.Contains(err.Error(), want) {
+	err := w.InitServices(context.Background())
+	if !errors.Is(err, gas.ErrNotRegistered) || !strings.Contains(err.Error(), want) {
 		t.Errorf("InitServices() with NewProvider error = %v, want %q", err, want)
 	}
 
@@ -1642,7 +1642,8 @@ func TestProvider_DIMissingConfigProvider(t *testing.T) {
 			NewPresigner(WithPresignerS3Client(f.client(t))),
 		),
 	)
-	if err := w.InitServices(); err == nil || !strings.Contains(err.Error(), want) {
+	err = w.InitServices(context.Background())
+	if !errors.Is(err, gas.ErrNotRegistered) || !strings.Contains(err.Error(), want) {
 		t.Errorf("InitServices() with NewPresigner error = %v, want %q", err, want)
 	}
 }

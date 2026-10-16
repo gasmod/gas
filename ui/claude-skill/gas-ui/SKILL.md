@@ -70,8 +70,8 @@ Implements `gas.Service`, `gas.UIProvider`, and `gas.ReadyReporter`.
 
 ```go
 func (s *Service) Name() string                          // "gas/ui"
-func (s *Service) Init() error                           // builds template engine, registers static route
-func (s *Service) Close() error                          // marks closed, subsequent Render returns 503
+func (s *Service) Init(_ context.Context) error          // builds template engine, registers static route
+func (s *Service) Close(_ context.Context) error         // marks closed, subsequent Render returns 503
 func (s *Service) CheckReady(ctx context.Context) error  // readiness probe: not-ready pre-Init or post-Close
 ```
 
@@ -93,7 +93,7 @@ func (s *Service) RegisterFuncs(funcs template.FuncMap)
 for HTMX partial responses.
 
 `RegisterFuncs` merges template functions into the engine's funcmap and
-invalidates the cache. Safe to call during `Init()` from other services.
+invalidates the cache. Safe to call during `Init(ctx)` from other services.
 
 ### Engine access
 
@@ -116,7 +116,7 @@ type Service struct {
     tp gas.TemplateProvider
 }
 
-func (s *Service) Init() error {
+func (s *Service) Init(ctx context.Context) error {
     sub, _ := fs.Sub(blogTemplates, "templates")
     s.tp.RegisterFS(sub)
     return nil
@@ -361,7 +361,7 @@ type Service struct {
     ui gas.UIProvider
 }
 
-func (s *Service) Init() error {
+func (s *Service) Init(ctx context.Context) error {
     sub, _ := fs.Sub(blogTemplates, "templates")
     s.tp.RegisterFS(sub)
     s.ui.RegisterFuncs(template.FuncMap{

@@ -60,7 +60,7 @@ func newTestService(t *testing.T, mock *mockSQSClient) *Service {
 	t.Helper()
 	ctor := New(WithConfig(DefaultConfig()), WithClient(mock))
 	svc := ctor(nil, gas.NewNopLogger()())
-	if err := svc.Init(); err != nil {
+	if err := svc.Init(t.Context()); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 	return svc
@@ -202,7 +202,7 @@ func TestEnqueueWithOptions(t *testing.T) {
 func TestEnqueueClosed(t *testing.T) {
 	t.Parallel()
 	svc := newTestService(t, &mockSQSClient{})
-	_ = svc.Close()
+	_ = svc.Close(context.Background())
 
 	err := svc.Enqueue(context.Background(), "https://sqs/q", []byte("x"))
 	if !errors.Is(err, queue.ErrClosed) {
@@ -354,7 +354,7 @@ func TestNack(t *testing.T) {
 func TestNackClosed(t *testing.T) {
 	t.Parallel()
 	svc := newTestService(t, &mockSQSClient{})
-	_ = svc.Close()
+	_ = svc.Close(context.Background())
 
 	err := svc.Nack(context.Background(), "https://sqs/q", gas.Job{ReceiptHandle: "rh"})
 	if !errors.Is(err, queue.ErrClosed) {
@@ -384,7 +384,7 @@ func TestCheckReadyAfterInit(t *testing.T) {
 func TestCheckReadyAfterClose(t *testing.T) {
 	t.Parallel()
 	svc := newTestService(t, &mockSQSClient{})
-	_ = svc.Close()
+	_ = svc.Close(context.Background())
 
 	err := svc.CheckReady(context.Background())
 	if !errors.Is(err, queue.ErrClosed) {

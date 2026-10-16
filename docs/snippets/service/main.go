@@ -3,6 +3,7 @@ package main
 
 // #region imports
 import (
+	"context"
 	"net/http"
 
 	"github.com/gasmod/gas"
@@ -24,12 +25,12 @@ func New(router *gas.Router, bus *gas.EventBus, db gas.DatabaseProvider) *Servic
 
 func (s *Service) Name() string { return "notes" }
 
-func (s *Service) Init() error {
+func (s *Service) Init(_ context.Context) error {
 	s.router.Handle(s, http.MethodGet, "/notes/{id}", s.show)
 	return nil
 }
 
-func (s *Service) Close() error { return nil }
+func (s *Service) Close(_ context.Context) error { return nil }
 
 // #endregion service
 

@@ -1,7 +1,12 @@
 package valkey
 
 import (
+	"context"
+	"errors"
 	"testing"
+	"time"
+
+	"github.com/gasmod/gas"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -54,6 +59,44 @@ func TestConfigValidate(t *testing.T) {
 			err := cfg.Validate()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Validate() error = %v, wantErr = %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestInit_RetryStopsWhenContextEnds checks that the connection retry loop
+// stops waiting when Init's context ends, instead of sleeping out its backoff,
+// and returns an error wrapping the context's error. Nothing listens on the
+// address, so every connection attempt fails.
+func TestInit_RetryStopsWhenContextEnds(t *testing.T) {
+	t.Parallel()
+
+	for name, canceledCase := range map[string]bool{"deadline": false, "canceled": true} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := DefaultConfig()
+			cfg.Cache.Addr = "127.0.0.1:1"
+			cfg.Cache.DialTimeout = 50 * time.Millisecond
+			cfg.Cache.ConnRetries = 5
+			cfg.Cache.ConnRetryInterval = time.Minute
+			s := New(WithConfig(cfg))(nil, gas.NewNopLogger()())
+
+			ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+			defer cancel()
+			want := context.DeadlineExceeded
+			if canceledCase {
+				cancel()
+				want = context.Canceled
+			}
+
+			start := time.Now()
+			err := s.Init(ctx)
+			if !errors.Is(err, want) {
+				t.Fatalf("Init error = %v, want %v", err, want)
+			}
+			if elapsed := time.Since(start); elapsed > 5*time.Second {
+				t.Errorf("Init took %v, want it to stop when the context ends", elapsed)
 			}
 		})
 	}

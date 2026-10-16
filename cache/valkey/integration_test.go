@@ -62,11 +62,11 @@ func newTestService(t *testing.T) *vk.Service {
 	cfg.Cache.Addr = fmt.Sprintf("%s:%s", host, port.Port())
 
 	svc := vk.New(vk.WithConfig(cfg))(nil, &gas.NopLogger{})
-	if err := svc.Init(); err != nil {
+	if err := svc.Init(t.Context()); err != nil {
 		t.Fatalf("init service: %v", err)
 	}
 	t.Cleanup(func() {
-		if closeErr := svc.Close(); closeErr != nil {
+		if closeErr := svc.Close(context.Background()); closeErr != nil {
 			t.Logf("close service: %v", closeErr)
 		}
 	})
@@ -227,7 +227,7 @@ func TestIntegration_ClosedService(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	if err := svc.Close(); err != nil {
+	if err := svc.Close(context.Background()); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 
@@ -703,7 +703,7 @@ func TestIntegration_ConcurrentCloseWhileOperating(t *testing.T) {
 
 	// Close while workers are running.
 	time.Sleep(5 * time.Millisecond)
-	_ = svc.Close()
+	_ = svc.Close(context.Background())
 
 	// Must not hang or panic.
 	wg.Wait()
@@ -717,7 +717,7 @@ func TestIntegration_DoubleClose(t *testing.T) {
 
 	svc := newTestService(t)
 
-	if err := svc.Close(); err != nil {
+	if err := svc.Close(context.Background()); err != nil {
 		t.Fatalf("first Close: %v", err)
 	}
 
@@ -728,7 +728,7 @@ func TestIntegration_DoubleClose(t *testing.T) {
 				t.Fatalf("second Close panicked: %v", r)
 			}
 		}()
-		if err := svc.Close(); err != nil {
+		if err := svc.Close(context.Background()); err != nil {
 			t.Logf("second Close returned error (acceptable): %v", err)
 		}
 	}()
@@ -837,7 +837,7 @@ func TestIntegration_InitBadAddress(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- svc.Init()
+		done <- svc.Init(t.Context())
 	}()
 
 	select {
@@ -873,7 +873,7 @@ func TestIntegration_CheckHealthClosed(t *testing.T) {
 	}
 
 	svc := newTestService(t)
-	if err := svc.Close(); err != nil {
+	if err := svc.Close(context.Background()); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 
@@ -902,7 +902,7 @@ func TestIntegration_CheckReadyClosed(t *testing.T) {
 	}
 
 	svc := newTestService(t)
-	if err := svc.Close(); err != nil {
+	if err := svc.Close(context.Background()); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 

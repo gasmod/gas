@@ -35,14 +35,14 @@ func TestWorkerLifecycle(t *testing.T) {
 	w.RegisterSingletonService[gas.DatabaseProvider](database.New(database.WithConnector(conn)))
 	w.RegisterSingletonService[gas.JobQueueProvider](func() gas.JobQueueProvider { return queue })
 
-	if err := w.Start(); err != nil {
+	if err := w.Start(t.Context()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
 	stopped := false
 	t.Cleanup(func() {
 		if !stopped {
-			_ = w.Shutdown()
+			_ = w.Shutdown(context.Background())
 		}
 	})
 
@@ -76,7 +76,7 @@ func TestWorkerLifecycle(t *testing.T) {
 	}
 
 	stopped = true
-	if err := w.Shutdown(); err != nil {
+	if err := w.Shutdown(context.Background()); err != nil {
 		t.Fatalf("Shutdown: %v", err)
 	}
 }

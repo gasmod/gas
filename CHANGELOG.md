@@ -9,15 +9,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Service init deadline:** every singleton's Init (at startup and on
+  `RestartService`) gets a deadline, 15 seconds by default. When it passes,
+  Init's context is canceled and the container waits for Init to return,
+  then fails with an error wrapping `context.DeadlineExceeded`; no Init is
+  left running behind a failed start. An Init that ignores the cancellation
+  and returns nil late is closed again. `gas.WithServiceInitTimeout` (a
+  `WorkerOption`) and `gas.WithServiceContainerServiceTimeout` (a new
+  `gas.ServiceContainerOption` for `NewServiceContainer`) change the
+  default, and 0 disables it; both panic on a negative duration. A service
+  implementing `gas.ServiceInitTimeout` sets its own; a negative value there
+  fails Init without running it.
 - **DI sentinel errors:** `gas.ErrNotRegistered`,
   `gas.ErrCircularDependency`, `gas.ErrCaptiveDependency`,
   `gas.ErrScopeRequired`, `gas.ErrNoConstructor`, `gas.ErrInvalidLifetime`,
   and `gas.ErrInvalidServiceShape`. Errors from `Resolve`, `BuildAll`, and
   startup wrap the matching sentinel, so callers can use `errors.Is` instead
-  of matching message text. The messages are unchanged.
+  of matching message text. The messages are unchanged, except that the
+  scoped-service error now says to use `container.NewScope(ctx)`.
 
 ### Changed
 
+- **BREAKING: `gas.Service` takes a context.** `Init(ctx context.Context)`
+  and `Close(ctx context.Context)` replace `Init()` and `Close()`; the
+  container rejects a type with the old signatures and names the expected
+  ones. A singleton's Init gets the caller's startup context plus its init
+  deadline, and that context is canceled when Init returns, so background
+  work must not derive from it. A scoped service's Init gets the scope's
+  context; in an App that is the request context, and the request scope's
+  Close gets that context without its cancellation.
+- **BREAKING: lifecycle methods take the caller's context.**
+  `Worker.Start(ctx)`, `Worker.InitServices(ctx)`, `Worker.Shutdown(ctx)`,
+  `Worker.CloseService[T](ctx)`, `Worker.RestartService[T](ctx)`,
+  `App.Start(ctx)`, `App.Stop(ctx)`, `ServiceContainer.BuildAll(ctx)`,
+  `ServiceContainer.NewScope(ctx)`, and `Scope.Close(ctx)`. `Run` is
+  unchanged and uses `context.Background()`. `App.Stop` bounds the HTTP
+  server's shutdown by `ServerSettings.ShutdownTimeout` or its context,
+  whichever ends first.
+- **BREAKING: `Worker.Shutdown` runs once and returns Close errors.** It
+  closes only services that are still active, so one already closed by
+  `CloseService` is not closed again, and services it closes leave
+  `ActiveServices`. Every Close error is returned, joined, instead of being
+  logged; later calls return nil. Once Shutdown has begun, `CloseService`
+  and `RestartService` return an error, so the kill switch cannot reopen a
+  service after shutdown.
 - **BREAKING: `Authenticator`, `Authorizer`, and `PrincipalRevoker` moved to
   the auth module.** They are now `auth.Authenticator`, `auth.Authorizer`, and
   `auth.PrincipalRevoker` in `github.com/gasmod/gas/auth`, the only module

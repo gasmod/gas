@@ -84,8 +84,9 @@ func (s *Service) Name() string {
 }
 
 // Init opens the database connection, configures the pool, and pings
-// the database to verify connectivity.
-func (s *Service) Init() error {
+// the database to verify connectivity. The ping and the retry backoff use
+// ctx, so a canceled or expired ctx stops the retries.
+func (s *Service) Init(ctx context.Context) error {
 	if !s.customConfigProvided {
 		// no custom config provided, try to bind from config service
 		if s.cfgProvider != nil {
@@ -102,7 +103,7 @@ func (s *Service) Init() error {
 		return err
 	}
 
-	var initFn func() error
+	var initFn func(context.Context) error
 	switch s.cfg.Database.Mode {
 	case ModePgx:
 		initFn = s.initPgx
@@ -113,7 +114,7 @@ func (s *Service) Init() error {
 		return fmt.Errorf("%s: unknown mode %q", s.Name(), s.cfg.Database.Mode)
 	}
 
-	if err := s.connectWithRetry(initFn); err != nil {
+	if err := s.connectWithRetry(ctx, initFn); err != nil {
 		return err
 	}
 
@@ -121,8 +122,8 @@ func (s *Service) Init() error {
 	return nil
 }
 
-func (s *Service) connectWithRetry(initFn func() error) error {
-	err := initFn()
+func (s *Service) connectWithRetry(ctx context.Context, initFn func(context.Context) error) error {
+	err := initFn(ctx)
 	if err == nil {
 		return nil
 	}
@@ -145,10 +146,15 @@ func (s *Service) connectWithRetry(initFn func() error) error {
 			Str("next_retry_in", interval.String()).
 			Send()
 
-		time.Sleep(interval)
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("%s: connect canceled after %d attempts: %w",
+				s.Name(), attempt, errors.Join(ctx.Err(), err))
+		case <-time.After(interval):
+		}
 		interval *= 2
 
-		err = initFn()
+		err = initFn(ctx)
 		if err == nil {
 			return nil
 		}
@@ -161,7 +167,7 @@ func (s *Service) connectWithRetry(initFn func() error) error {
 	return fmt.Errorf("%s: connect failed after %d retries: %w", s.Name(), maxRetries, err)
 }
 
-func (s *Service) initSQL() error {
+func (s *Service) initSQL(ctx context.Context) error {
 	var db *sql.DB
 	if s.connector != nil {
 		db = sql.OpenDB(s.connector)
@@ -179,7 +185,7 @@ func (s *Service) initSQL() error {
 	db.SetConnMaxLifetime(s.cfg.Database.ConnMaxLifetime)
 	db.SetConnMaxIdleTime(s.cfg.Database.ConnMaxIdleTime)
 
-	ctx, cancel := context.WithTimeout(context.Background(), defaultPingTimeout)
+	ctx, cancel := context.WithTimeout(ctx, defaultPingTimeout)
 	defer cancel()
 
 	if err := db.PingContext(ctx); err != nil {
@@ -198,8 +204,8 @@ func (s *Service) initSQL() error {
 	return nil
 }
 
-func (s *Service) initPgx() error {
-	ctx, cancel := context.WithTimeout(context.Background(), defaultPingTimeout)
+func (s *Service) initPgx(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, defaultPingTimeout)
 	defer cancel()
 
 	poolCfg, err := pgxpool.ParseConfig(s.cfg.Database.DSN)
@@ -238,7 +244,7 @@ func (s *Service) initPgx() error {
 }
 
 // Close closes the underlying database connections.
-func (s *Service) Close() error {
+func (s *Service) Close(context.Context) error {
 	s.closed.Store(true)
 
 	if s.db != nil {

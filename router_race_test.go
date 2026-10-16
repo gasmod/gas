@@ -23,7 +23,7 @@ import (
 // This is not theoretical: Worker.CloseService and Worker.RestartService call
 // this exact path at RUNTIME, while the server is live and handling traffic
 // (CloseService -> onServiceClose -> Router.RemoveByService;
-// RestartService -> svc.Init() -> Router.Handle). A data race on the routing
+// RestartService -> svc.Init(ctx) -> Router.Handle). A data race on the routing
 // tree is undefined behavior: torn reads, a "concurrent map writes" fatal
 // panic that takes down the whole process (DoS), or a request dispatched to a
 // half-mutated node.
@@ -105,7 +105,7 @@ func TestRouterServeHTTPRacesKillSwitch(t *testing.T) {
 
 // TestRouterServeHTTPRacesRuntimeHandle is the symmetric counterpart to the
 // kill-switch race: it exercises ServeHTTP concurrently with Handle, which is
-// the path RestartService drives at runtime (RestartService -> svc.Init() ->
+// the path RestartService drives at runtime (RestartService -> svc.Init(ctx) ->
 // Router.Handle on a sealed, live router). Adding a route rebuilds the tree
 // and swaps it in; serving must never observe a half-mutated tree.
 //

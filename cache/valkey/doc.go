@@ -28,8 +28,11 @@
 // fails and ConnRetries is positive, it retries up to ConnRetries times,
 // sleeping ConnRetryInterval before the first retry and doubling the wait
 // each time (an interval of 0 or less uses two seconds); starting fails
-// once the retries run out. Stopping the service closes the client and makes
-// every operation return cache.ErrClosed.
+// once the retries run out. The ping runs under the start context, and when
+// that context ends during a wait the retries stop and starting fails with
+// an error wrapping both the context's error and the last connection error.
+// Stopping the service closes the client and makes every operation return
+// cache.ErrClosed.
 //
 // # Behavior
 //

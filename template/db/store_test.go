@@ -53,11 +53,11 @@ type mockMigrationMgr struct {
 	migrations []gas.Migration
 }
 
-func (m *mockMigrationMgr) Name() string      { return "mock-migrate" }
-func (m *mockMigrationMgr) Init() error       { return nil }
-func (m *mockMigrationMgr) Close() error      { return nil }
-func (m *mockMigrationMgr) RunPending() error { return nil }
-func (m *mockMigrationMgr) Down(_ int) error  { return nil }
+func (m *mockMigrationMgr) Name() string                { return "mock-migrate" }
+func (m *mockMigrationMgr) Init(context.Context) error  { return nil }
+func (m *mockMigrationMgr) Close(context.Context) error { return nil }
+func (m *mockMigrationMgr) RunPending() error           { return nil }
+func (m *mockMigrationMgr) Down(_ int) error            { return nil }
 
 func (m *mockMigrationMgr) Register(_ gas.Service, migration gas.Migration) {
 	m.migrations = append(m.migrations, migration)
@@ -91,7 +91,7 @@ func openTestDB(t *testing.T) *Store {
 
 	mgr := &mockMigrationMgr{}
 	s := NewStore()(&mockDB{db: db, driver: "sqlite"}, nopLog, mgr)
-	if err := s.Init(); err != nil {
+	if err := s.Init(t.Context()); err != nil {
 		t.Fatalf("Init(): %v", err)
 	}
 	return s
@@ -341,7 +341,7 @@ func TestInitRegistersMigration(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	s := NewStore()(&mockDB{db: db, driver: "sqlite"}, nopLog, mgr)
-	if err := s.Init(); err != nil {
+	if err := s.Init(t.Context()); err != nil {
 		t.Fatalf("Init() error: %v", err)
 	}
 
@@ -364,7 +364,7 @@ func TestInitUnsupportedDriver(t *testing.T) {
 	t.Parallel()
 	s := NewStore()(&mockDB{db: nil, driver: "oracle"}, nopLog, nopMigrationMgr)
 
-	err := s.Init()
+	err := s.Init(t.Context())
 	if err == nil {
 		t.Fatal("Init() expected error for unsupported driver, got nil")
 	}
@@ -381,7 +381,7 @@ func TestName(t *testing.T) {
 func TestClose(t *testing.T) {
 	t.Parallel()
 	s := &Store{}
-	if err := s.Close(); err != nil {
+	if err := s.Close(context.Background()); err != nil {
 		t.Errorf("Close() = %v, want nil", err)
 	}
 }
@@ -559,12 +559,12 @@ func TestE2E_NamespaceIsolation(t *testing.T) {
 	provider := &mockDB{db: db, driver: "sqlite"}
 
 	nsA := NewStore(WithNamespace("ns-a"))(provider, nopLog, nopMigrationMgr)
-	if initErr := nsA.Init(); initErr != nil {
+	if initErr := nsA.Init(t.Context()); initErr != nil {
 		t.Fatalf("Init(ns-a): %v", initErr)
 	}
 
 	nsB := NewStore(WithNamespace("ns-b"))(provider, nopLog, nopMigrationMgr)
-	if initErr := nsB.Init(); initErr != nil {
+	if initErr := nsB.Init(t.Context()); initErr != nil {
 		t.Fatalf("Init(ns-b): %v", initErr)
 	}
 
@@ -656,7 +656,7 @@ func TestE2E_InitDrivers(t *testing.T) {
 
 	// sqlite3 alias should also work.
 	s := NewStore()(&mockDB{db: db, driver: "sqlite3"}, nopLog, nopMigrationMgr)
-	if err := s.Init(); err != nil {
+	if err := s.Init(t.Context()); err != nil {
 		t.Fatalf("Init(sqlite3) error: %v", err)
 	}
 }

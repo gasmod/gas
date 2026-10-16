@@ -123,9 +123,9 @@ func TestTokenVerifyRace_SimulatedWithDirectSQL(t *testing.T) {
 	cfg.Token.CleanupInterval = 0
 
 	svc := token.New(token.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
-	require.NoError(t, svc.Init())
+	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
-	t.Cleanup(func() { _ = svc.Close() })
+	t.Cleanup(func() { _ = svc.Close(context.Background()) })
 
 	rawToken, err := svc.Issue(context.Background(), "user-sim", "verify", 15*time.Minute)
 	require.NoError(t, err)
@@ -210,9 +210,9 @@ func TestTokenCleanupRemovesExpired(t *testing.T) {
 	cfg.Token.CleanupTimeout = 5 * time.Second
 
 	svc := token.New(token.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
-	require.NoError(t, svc.Init())
+	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
-	t.Cleanup(func() { _ = svc.Close() })
+	t.Cleanup(func() { _ = svc.Close(context.Background()) })
 
 	// Issue a token with very short TTL.
 	rawToken, err := svc.Issue(context.Background(), "user-cleanup", "verify", 50*time.Millisecond)
@@ -251,13 +251,13 @@ func TestTokenCleanupGracefulShutdown(t *testing.T) {
 	cfg.Token.CleanupTimeout = 5 * time.Second
 
 	svc := token.New(token.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
-	require.NoError(t, svc.Init())
+	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
 
 	// Let a few cleanup cycles run.
 	time.Sleep(350 * time.Millisecond)
 
 	// Close should stop the goroutine without hanging.
-	err := svc.Close()
+	err := svc.Close(context.Background())
 	assert.NoError(t, err, "Close should shut down cleanup goroutine cleanly")
 }

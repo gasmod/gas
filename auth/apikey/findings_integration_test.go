@@ -68,9 +68,9 @@ func TestAPIKeyExpiredKeysAccumulate(t *testing.T) {
 
 	cfg := apikey.DefaultConfig()
 	svc := apikey.New(apikey.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
-	require.NoError(t, svc.Init())
+	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
-	t.Cleanup(func() { _ = svc.Close() })
+	t.Cleanup(func() { _ = svc.Close(context.Background()) })
 
 	db := pg.Provider().DB()
 
@@ -128,9 +128,9 @@ func TestAPIKeyScopeQueryingLimitation(t *testing.T) {
 
 	cfg := apikey.DefaultConfig()
 	svc := apikey.New(apikey.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
-	require.NoError(t, svc.Init())
+	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
-	t.Cleanup(func() { _ = svc.Close() })
+	t.Cleanup(func() { _ = svc.Close(context.Background()) })
 
 	// Generate keys with different scopes.
 	_, _, err := svc.Generate(context.Background(), "user-scope", "read-key", []string{"read"})
@@ -178,7 +178,7 @@ func TestAPIKeyCloseIsNoOp(t *testing.T) {
 	svc := setupAPIKeyService(t)
 
 	// Close is a no-op — no goroutines to stop, no resources to release.
-	err := svc.Close()
+	err := svc.Close(context.Background())
 	assert.NoError(t, err)
 
 	// Service can still be used after Close (it's truly stateless).

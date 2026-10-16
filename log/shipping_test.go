@@ -3,6 +3,7 @@ package log
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -85,7 +86,7 @@ func TestShippingLogger_EndToEnd(t *testing.T) {
 		t.Errorf("record 1 severity = %q", recs[1].SeverityText)
 	}
 
-	if err := logger.Close(); err != nil {
+	if err := logger.Close(context.Background()); err != nil {
 		t.Errorf("close: %v", err)
 	}
 }
@@ -104,7 +105,7 @@ func TestShippingLogger_ClosingDrainsWithoutFlush(t *testing.T) {
 	)()
 
 	logger.Info("only-on-close").Send()
-	if err := logger.Close(); err != nil {
+	if err := logger.Close(context.Background()); err != nil {
 		t.Fatalf("close: %v", err)
 	}
 
@@ -139,7 +140,7 @@ func TestShippingLogger_LocalTee(t *testing.T) {
 	if len(bodies) != 1 || !bytes.Contains(bodies[0], []byte("teed")) {
 		t.Errorf("remote sink did not receive the record")
 	}
-	_ = logger.Close()
+	_ = logger.Close(context.Background())
 }
 
 func TestShippingLogger_ImplementsService(t *testing.T) {
@@ -149,13 +150,13 @@ func TestShippingLogger_ImplementsService(t *testing.T) {
 		WithoutLocalHandler(),
 		WithName("central-logs"),
 	)()
-	defer func() { _ = logger.Close() }()
+	defer func() { _ = logger.Close(context.Background()) }()
 
 	var svc gas.Service = logger
 	if svc.Name() != "central-logs" {
 		t.Errorf("name = %q", svc.Name())
 	}
-	if err := svc.Init(); err != nil {
+	if err := svc.Init(t.Context()); err != nil {
 		t.Errorf("init: %v", err)
 	}
 }
@@ -182,7 +183,7 @@ func TestShippingLogger_DeliveryErrorReported(t *testing.T) {
 
 	logger.Info("will-fail").Send()
 	logger.Flush()
-	_ = logger.Close()
+	_ = logger.Close(context.Background())
 
 	mu.Lock()
 	defer mu.Unlock()

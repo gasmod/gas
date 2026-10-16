@@ -85,7 +85,7 @@ type Service struct {
 
 func (s *Service) Name() string { return "notes" }
 
-func (s *Service) Init() error {
+func (s *Service) Init(_ context.Context) error {
 	s.migrations.Register(s, gas.Migration{
 		Version:     "20250216001",
 		Description: "create notes table",
@@ -95,6 +95,6 @@ func (s *Service) Init() error {
 	return nil
 }
 
-func (s *Service) Close() error { return nil }
+func (s *Service) Close(_ context.Context) error { return nil }
 
 // #endregion migrations

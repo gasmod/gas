@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING:** `memory.Service` and `valkey.Service` implement the
+  context-aware `gas.Service` (`Init(ctx context.Context) error`,
+  `Close(ctx context.Context) error`). In `valkey.Service`, the connection
+  ping derives from the Init context, and connection retries stop when that
+  context is canceled or its deadline passes; the returned error wraps
+  `ctx.Err()`. The memory backend's cleanup goroutine keeps its own lifetime
+  and is still stopped by `Close`, not by the Init context.
+
 ## [0.3.0] - 2026-07-03
 
 First open source release. Versions prior to 0.3.0 were developed in a private

@@ -243,7 +243,7 @@ func TestNewProvider_DIWiring(t *testing.T) {
 		gas.WithServiceInstance[gas.ConfigProvider](mock),
 		gas.WithSingletonService[storage.Provider](NewProvider(WithRoot(root))),
 	)
-	if initErr := w.InitServices(); initErr != nil {
+	if initErr := w.InitServices(context.Background()); initErr != nil {
 		t.Fatalf("InitServices() error: %v", initErr)
 	}
 	p, err := w.ServiceContainer().Resolve[storage.Provider]()
@@ -269,9 +269,9 @@ func TestNewProvider_DIMissingConfigProvider(t *testing.T) {
 	w := gas.NewWorker(
 		gas.WithSingletonService[storage.Provider](NewProvider(WithRoot(root))),
 	)
-	err := w.InitServices()
-	// gas has no sentinel for a missing registration, so match the message.
-	if err == nil || !strings.Contains(err.Error(), "no registration for gas.ConfigProvider") {
+	err := w.InitServices(context.Background())
+	if !errors.Is(err, gas.ErrNotRegistered) ||
+		!strings.Contains(err.Error(), "no registration for gas.ConfigProvider") {
 		t.Fatalf("InitServices() error = %v, want no registration for gas.ConfigProvider", err)
 	}
 }

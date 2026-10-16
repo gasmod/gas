@@ -19,13 +19,13 @@ type testService struct {
 
 func (s *testService) Name() string { return s.name }
 
-func (s *testService) Init() error {
+func (s *testService) Init(context.Context) error {
 	s.initCount.Add(1)
 	s.closed.Store(false)
 	return s.initErr
 }
 
-func (s *testService) Close() error {
+func (s *testService) Close(context.Context) error {
 	s.closed.Store(true)
 	return s.closeErr
 }
@@ -42,8 +42,8 @@ type reporterService[K any] struct {
 }
 
 func (s *reporterService[K]) Name() string                        { return s.name }
-func (s *reporterService[K]) Init() error                         { return nil }
-func (s *reporterService[K]) Close() error                        { return nil }
+func (s *reporterService[K]) Init(context.Context) error          { return nil }
+func (s *reporterService[K]) Close(context.Context) error         { return nil }
 func (s *reporterService[K]) CheckHealth(_ context.Context) error { return s.healthErr }
 func (s *reporterService[K]) CheckReady(_ context.Context) error  { return s.readyErr }
 
@@ -60,8 +60,8 @@ type healthOnlyService[K any] struct {
 }
 
 func (s *healthOnlyService[K]) Name() string                        { return s.name }
-func (s *healthOnlyService[K]) Init() error                         { return nil }
-func (s *healthOnlyService[K]) Close() error                        { return nil }
+func (s *healthOnlyService[K]) Init(context.Context) error          { return nil }
+func (s *healthOnlyService[K]) Close(context.Context) error         { return nil }
 func (s *healthOnlyService[K]) CheckHealth(_ context.Context) error { return s.err }
 
 // readyOnlyService implements ReadyReporter but not HealthReporter.
@@ -71,8 +71,8 @@ type readyOnlyService[K any] struct {
 }
 
 func (s *readyOnlyService[K]) Name() string                       { return s.name }
-func (s *readyOnlyService[K]) Init() error                        { return nil }
-func (s *readyOnlyService[K]) Close() error                       { return nil }
+func (s *readyOnlyService[K]) Init(context.Context) error         { return nil }
+func (s *readyOnlyService[K]) Close(context.Context) error        { return nil }
 func (s *readyOnlyService[K]) CheckReady(_ context.Context) error { return s.err }
 
 // slowReporter blocks inside CheckHealth for the given delay. Used to verify
@@ -83,9 +83,9 @@ type slowReporter[K any] struct {
 	delay   time.Duration
 }
 
-func (s *slowReporter[K]) Name() string { return s.name }
-func (s *slowReporter[K]) Init() error  { return nil }
-func (s *slowReporter[K]) Close() error { return nil }
+func (s *slowReporter[K]) Name() string                { return s.name }
+func (s *slowReporter[K]) Init(context.Context) error  { return nil }
+func (s *slowReporter[K]) Close(context.Context) error { return nil }
 func (s *slowReporter[K]) CheckHealth(ctx context.Context) error {
 	if s.started != nil {
 		select {
@@ -109,8 +109,8 @@ type panicReporter[K any] struct {
 }
 
 func (s *panicReporter[K]) Name() string                        { return s.name }
-func (s *panicReporter[K]) Init() error                         { return nil }
-func (s *panicReporter[K]) Close() error                        { return nil }
+func (s *panicReporter[K]) Init(context.Context) error          { return nil }
+func (s *panicReporter[K]) Close(context.Context) error         { return nil }
 func (s *panicReporter[K]) CheckHealth(_ context.Context) error { panic(s.message) }
 
 // ctxObservingReporter records the context it was called with.
@@ -119,9 +119,9 @@ type ctxObservingReporter[K any] struct {
 	name string
 }
 
-func (s *ctxObservingReporter[K]) Name() string { return s.name }
-func (s *ctxObservingReporter[K]) Init() error  { return nil }
-func (s *ctxObservingReporter[K]) Close() error { return nil }
+func (s *ctxObservingReporter[K]) Name() string                { return s.name }
+func (s *ctxObservingReporter[K]) Init(context.Context) error  { return nil }
+func (s *ctxObservingReporter[K]) Close(context.Context) error { return nil }
 func (s *ctxObservingReporter[K]) CheckHealth(ctx context.Context) error {
 	s.seen <- ctx
 	return nil

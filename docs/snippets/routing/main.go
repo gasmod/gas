@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/gasmod/gas"
@@ -9,13 +10,13 @@ import (
 
 type Service struct{ router *gas.Router }
 
-func (s *Service) Name() string { return "notes" }
-func (s *Service) Close() error { return nil }
+func (s *Service) Name() string                  { return "notes" }
+func (s *Service) Close(_ context.Context) error { return nil }
 
 // #region handle
 // Handle takes the owning service name, a method, a path, and either a plain
 // http.HandlerFunc or a DI-aware handler. Both forms coexist on one router.
-func (s *Service) Init() error {
+func (s *Service) Init(_ context.Context) error {
 	s.router.Handle(s, http.MethodGet, "/notes", s.list)
 
 	s.router.Handle(s, http.MethodPost, "/notes", s.create,

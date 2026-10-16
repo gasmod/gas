@@ -9,7 +9,7 @@ import { region } from '../../../lib/snippet';
 
 Services are registered with the DI container through constructors. The
 container resolves dependencies, topologically sorts them, validates lifetime
-rules, and calls `Init()` on every `Service` it holds.
+rules, and calls `Init(ctx)` on every `Service` it holds.
 
 ## Registering
 
@@ -27,8 +27,8 @@ gas.WithTransientService[*Nonce](NewNonce)
 
 Pre-built values are registered as instances and treated as singletons.
 Pre-built means pre-constructed, not pre-initialized: if the value implements
-`gas.Service`, the container still calls `Init()` at startup and `Close()` at
-shutdown, so do not call `Init()` yourself first.
+`gas.Service`, the container still calls `Init(ctx)` at startup and `Close(ctx)`
+at shutdown, so do not call `Init` yourself first.
 
 ```go
 gas.WithServiceInstance[gas.ConfigProvider](cfg)
@@ -74,15 +74,15 @@ module documents the assertion for its backend.
 
 ## Lifetimes
 
-| Lifetime | Created | `Init()` runs | Notes |
+| Lifetime | Created | `Init(ctx)` runs | Notes |
 |---|---|---|---|
-| Singleton | Once, shared everywhere | During `BuildAll()` | The default for infrastructure |
-| Scoped | Once per `Scope` | On first resolution in the scope | One instance per HTTP request |
+| Singleton | Once, shared everywhere | During `BuildAll(ctx)` | The default for infrastructure |
+| Scoped | Once per `Scope` | On first resolution in the scope, with the scope's context | One instance per HTTP request |
 | Transient | Fresh on every resolution | Never | **Cannot implement `Service`** |
 
 ### Why transient services cannot implement `Service`
 
-Because nothing would ever call `Close()` on them. Singletons are recorded in
+Because nothing would ever call `Close` on them. Singletons are recorded in
 the container and scoped instances in their `Scope`, which is what lets each be
 torn down. A transient is handed to the caller and no reference is kept, by
 design. Allowing a managed lifecycle there would mean either retaining every
@@ -108,10 +108,14 @@ methods:
 ```go
 type Service interface {
 	Name() string // Unique identifier, e.g. "gas/auth"
-	Init() error  // Register routes, middleware, subscriptions
-	Close() error // Clean up internal resources
+	Init(ctx context.Context) error  // Register routes, middleware, subscriptions
+	Close(ctx context.Context) error // Clean up internal resources
 }
 ```
+
+The container rejects a type whose `Init` or `Close` lacks the context
+parameter. For what the context carries, see
+[Init and Close contexts](/gas/concepts/lifecycle/#init-and-close-contexts).
 
 Anything short of that is rejected at startup with an error naming the missing
 or mistyped methods, rather than registering cleanly and then never being

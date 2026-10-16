@@ -28,7 +28,7 @@ func (p testPrincipal) Metadata() gas.PrincipalMetadata { return p.meta }
 func principalRouter(t *testing.T, attach bool, principal gas.Principal) (*gas.Router, *error) {
 	t.Helper()
 	app := gas.NewApp()
-	if err := app.InitServices(); err != nil {
+	if err := app.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if attach {

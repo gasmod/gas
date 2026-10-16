@@ -1,6 +1,7 @@
 package gas_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -395,7 +396,7 @@ func TestDefaultErrorHandler_RendersGasError(t *testing.T) {
 	t.Parallel()
 
 	app := gas.NewApp()
-	if err := app.InitServices(); err != nil {
+	if err := app.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -426,7 +427,7 @@ func TestDefaultErrorHandler_CollapsesPanic(t *testing.T) {
 	t.Parallel()
 
 	app := gas.NewApp()
-	if err := app.InitServices(); err != nil {
+	if err := app.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -460,7 +461,7 @@ func TestDefaultErrorHandler_CollapsesResolutionFailure(t *testing.T) {
 	t.Parallel()
 
 	app := gas.NewApp()
-	if err := app.InitServices(); err != nil {
+	if err := app.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -551,7 +552,7 @@ func TestDefaultErrorHandler_LogSeverityByStatus(t *testing.T) {
 			app := gas.NewApp(
 				gas.WithScopedService[gas.Logger](func() gas.Logger { return rec }),
 			)
-			if err := app.InitServices(); err != nil {
+			if err := app.InitServices(context.Background()); err != nil {
 				t.Fatal(err)
 			}
 
