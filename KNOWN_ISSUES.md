@@ -250,3 +250,63 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
 - **Next step**: return `cache.ErrClosed`, or a not-started error, when
   the client is nil, since §7 of `CLAUDE.md` reserves panics for wiring
   mistakes.
+
+## KI-018: migrate Down runs the down SQL of a dirty version
+
+- **Status**: open
+- **Area**: `migrate` (`manager.go`).
+- **Found**: 2026-10-16, while writing the migrate `doc.go`.
+- **Detail**: `Down` takes its versions from `getAppliedMigrations`
+  (`migrate/manager.go:188`), whose query has no `dirty` filter, so a
+  dirty version counts as applied. A dirty version's up SQL was rolled
+  back, so `Down` runs its down SQL against a schema that migration never
+  changed. Verified on SQLite: with 001 creating table `keep` and a failed
+  002 whose down SQL drops `keep`, `Down(1)` returned nil and dropped
+  `keep`.
+- **Next step**: skip dirty versions in `Down`, or refuse to run while
+  any version is dirty, as `RunPending` does.
+
+## KI-019: migrate Down is not atomic
+
+- **Status**: open
+- **Area**: `migrate` (`manager.go`).
+- **Found**: 2026-10-16, while writing the migrate `doc.go`.
+- **Detail**: `applyDown` commits the down SQL in its own transaction and
+  then deletes the tracking row outside it (`migrate/manager.go:316` to
+  `:335`), unlike the up path, where the SQL and the row commit together.
+  If the delete fails, the schema is reverted but the row remains, so
+  `RunPending` treats the migration as applied and never re-applies it.
+  Verified on SQLite by making the delete fail: `Down(1)` returned the
+  error with the table dropped and the row still present, and a later
+  `RunPending` returned nil without recreating the table.
+- **Next step**: delete the tracking row inside the same transaction as
+  the down SQL.
+
+## KI-020: a dirty migration can only be cleared by hand
+
+- **Status**: decision needed
+- **Area**: `migrate`.
+- **Found**: 2026-10-16, while writing the migrate `doc.go`.
+- **Detail**: a failed migration is recorded as dirty, and while any
+  version is dirty `RunPending` refuses to run. The `Service` exposes
+  `Register`, `RegisterSlice`, `RegisterFS`, `RunPending`, `Down`, and
+  `CheckReady`; none of them clears the mark, so recovery needs manual SQL
+  against `__gas_migrations`.
+- **Next step**: decide whether the module should offer a way to clear
+  or force a dirty version (a §3 API decision in `CLAUDE.md`).
+
+## KI-021: one service can register the same migration version twice
+
+- **Status**: open
+- **Area**: `migrate` (`manager.go`).
+- **Found**: 2026-10-16, while writing the migrate `doc.go`.
+- **Detail**: `allMigrationsSorted` (`migrate/manager.go:351`) rejects a
+  version registered by two different services but not one registered
+  twice by the same service. `RunPending` then applies the first, and
+  recording the second hits the tracking table's primary key; the failure
+  marks the version dirty, although its first migration did apply, which
+  blocks every later run.
+  Verified on SQLite: `UNIQUE constraint failed: __gas_migrations.version`,
+  then one dirty version.
+- **Next step**: reject a duplicate version from the same service at
+  registration or in `RunPending`.
