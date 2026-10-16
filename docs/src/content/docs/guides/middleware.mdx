@@ -24,11 +24,14 @@ a typo should not silently leave a route unguarded.
 ## Request logging
 
 ```go
-router.UseMiddlewareFunc(gas.RequestLogger[gas.Logger]())
+router.UseMiddlewareFunc(gas.RequestLogger[RequestLogger]())
 ```
 
 Logs method, path, status, bytes, duration, and remote address, at error level
-for statuses at 400 and above. Needs a scoped `gas.Logger` in the container.
+for statuses at 400 and above. It resolves its type parameter from the request
+scope, so register a scoped per-request logger type derived from the singleton
+`gas.Logger` and pass that type; given the singleton itself, it adds fields to
+the shared logger on every request (KI-026 in `KNOWN_ISSUES.md`).
 Covered in [Structured logging](/gas/guides/logging/).
 
 ## Security headers
