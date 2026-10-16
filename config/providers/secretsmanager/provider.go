@@ -1,6 +1,3 @@
-// Package secretsmanager provides a gas/config provider that loads
-// configuration from AWS Secrets Manager. Secrets are registered explicitly
-// and fetched eagerly when the configuration is loaded.
 package secretsmanager
 
 import (

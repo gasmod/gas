@@ -34,7 +34,9 @@ type DotEnvProvider struct {
 	*EnvProvider
 
 	filePath string
-	// flag to panic if the .env file is not found, default to true
+	// panicFileNotFound makes a missing .env file an error (true, the
+	// default); when false a missing file yields no values. Despite the name,
+	// nothing panics.
 	panicFileNotFound bool
 	// flag to append variables from the .env file to the OS's env vars.
 	appendToOSEnv bool
@@ -69,8 +71,10 @@ func WithDotEnvFileFS(fileFS fs.FS) DotEnvOption {
 	}
 }
 
-// WithDotEnvFileNotFoundPanic sets the flag to panic if the .env file
-// is not found.
+// WithDotEnvFileNotFoundPanic sets whether a missing .env file is an error.
+// When true, the default, Load returns an error wrapping
+// ErrDotEnvFileReadFailed; when false, a missing file yields no values.
+// Despite the name, nothing panics.
 //
 // Default: true.
 func WithDotEnvFileNotFoundPanic(panicIfNotFound bool) DotEnvOption {

@@ -1,5 +1,3 @@
-// Package config provides a flexible configuration management system
-// that supports reading from multiple providers and binding to user-defined types.
 package config
 
 import (
