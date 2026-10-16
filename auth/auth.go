@@ -1,5 +1,3 @@
-// Package auth provides authentication, authorization, and credential
-// management for the Gas ecosystem.
 package auth
 
 import (
@@ -70,10 +68,10 @@ func (p *BasePrincipal) CredentialID() string { return p.credentialID }
 func (p *BasePrincipal) Metadata() gas.PrincipalMetadata { return p.metadata }
 
 // Chain is a composite authenticator that tries each authenticator in
-// order. It satisfies gas.Authenticator.
-type Chain []gas.Authenticator
+// order. It satisfies Authenticator.
+type Chain []Authenticator
 
-var _ gas.Authenticator = Chain(nil)
+var _ Authenticator = Chain(nil)
 
 // Authenticate tries each authenticator in order. It returns the first
 // successful principal. If all fail, it returns the last error. If the

@@ -97,11 +97,13 @@ const (
 ```
 
 **Choosing a lifetime:**
-- **Singleton** — stateless services, routers, event subscriptions, anything
+- **Singleton**: stateless services, routers, event subscriptions, anything
   that survives the full app lifetime. Most services are singletons.
-- **Scoped** — per-request state like loggers with request-level fields, or
-  database connections with request-scoped transactions.
-- **Transient** — lightweight value objects that need fresh state on every
+- **Scoped**: per-request state like a request logger type with
+  request-level fields (derived from the singleton `gas.Logger`, which stays a
+  singleton because services depend on it), or database connections with
+  request-scoped transactions.
+- **Transient**: lightweight value objects that need fresh state on every
   injection. Cannot implement `Service` (no Init/Close lifecycle).
 
 ## Option Types
@@ -306,6 +308,23 @@ svc := c.MustResolve[*myservice.Service]()
 on scoped or transient services — this would "capture" a short-lived instance
 inside a long-lived one. Error: `captive dependency: singleton X depends on scoped Y`.
 
+### DI errors
+
+Resolution and startup errors wrap a sentinel; match them with `errors.Is`
+(the message text still names the types):
+
+| Sentinel | Returned when |
+|---|---|
+| `gas.ErrNotRegistered` | A type, or a constructor's dependency, has no registration or instance |
+| `gas.ErrCircularDependency` | Registered constructors depend on each other in a cycle |
+| `gas.ErrCaptiveDependency` | A singleton depends on a scoped or transient service |
+| `gas.ErrScopeRequired` | A scoped service is resolved from the container instead of a `Scope` |
+| `gas.ErrInvalidLifetime` | A registration's `ServiceLifetime` is not Singleton, Scoped, or Transient |
+| `gas.ErrInvalidServiceShape` | A registered type declares `Init` or `Close` but does not implement `Service` |
+| `gas.ErrNoConstructor` | The container is asked to construct a type it has no constructor for. It guards an internal invariant and is not returned through the public API today |
+
+`MustResolve` panics with a string carrying the same message, not an error.
+
 ## Request Scopes
 
 The App installs middleware that creates a DI `Scope` per HTTP request. Scoped
@@ -398,7 +417,9 @@ Gas provides three middleware constructors (see `references/middleware.md` for
 full option signatures):
 
 - **`RequestLogger[T Logger]`** — logs method, path, status, bytes, duration
-  per request. Resolves a scoped Logger from DI. Status >= 400 → error level.
+  per request. Resolves T from the request scope: pass a scoped per-request
+  logger type derived from the singleton `gas.Logger`, not the singleton
+  itself (KI-026). Status >= 400 → error level.
 - **`SecurityHeaders`** — sets X-Content-Type-Options, X-Frame-Options, etc.
   with secure defaults.
 - **`CacheControl`** — sets Cache-Control header based on path matching rules.
@@ -676,17 +697,16 @@ separate modules. See `references/providers.md` for full signatures.
 | `CacheProvider`    | Key-value caching                      | gas/cache               |
 | `JobQueueProvider` | Async job/message queues               | gas/queue               |
 | `EmailProvider`    | Email sending                          | gas/email               |
-| `StorageProvider`  | File storage (S3, etc.)                | gas/storage             |
 | `ConfigProvider`   | Configuration management               | gas/config              |
 | `TemplateProvider` | Template storage/retrieval             | gas/ui                  |
 | `UIProvider`       | Template rendering                     | gas/ui                  |
 | `Logger`           | Structured logging                     | gas/log                 |
 | `MigrationManager` | Database migrations                    | gas/migrate             |
-| `Authenticator`    | Request authentication                 | gas/auth                |
-| `Authorizer`       | Action authorization                   | gas/auth                |
-| `PrincipalRevoker` | Credential revocation                  | gas/auth                |
 | `HealthProvider`   | Aggregate health of active services    | core (Worker satisfies) |
 | `ReadyProvider`    | Aggregate readiness of active services | core (Worker satisfies) |
+
+Object storage is not a core interface: `storage.Provider` and
+`storage.Presigner` live in the gas/storage module (see the gas-storage skill).
 
 Services opt into health/readiness reporting by implementing `HealthReporter`
 (`CheckHealth(ctx) error`) and/or `ReadyReporter` (`CheckReady(ctx) error`).
@@ -699,7 +719,7 @@ or `/readyz` endpoint without coupling handlers to `*Worker`.
 Built-in no-op logger for tests or when logging isn't needed:
 
 ```go
-gas.WithScopedService[gas.Logger](gas.NewNopLogger())
+gas.WithSingletonService[gas.Logger](gas.NewNopLogger())
 ```
 
 ## Config (App only)

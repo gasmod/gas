@@ -319,7 +319,7 @@ func (c *ServiceContainer) resolveType(t reflect.Type) (reflect.Value, error) {
 	// 2. check registration
 	reg, ok := c.registrations[t]
 	if !ok {
-		return reflect.Value{}, fmt.Errorf("no registration for %v", t)
+		return reflect.Value{}, newDIError(ErrNotRegistered, "no registration for %v", t)
 	}
 
 	switch reg.lifetime {
@@ -335,13 +335,14 @@ func (c *ServiceContainer) resolveType(t reflect.Type) (reflect.Value, error) {
 		return c.invoke(t, c)
 
 	case ServiceLifetimeScoped:
-		return reflect.Value{}, fmt.Errorf(
+		return reflect.Value{}, newDIError(
+			ErrScopeRequired,
 			"scoped service %v cannot be resolved outside a scope; use container.NewScope()",
 			t,
 		)
 	}
 
-	return reflect.Value{}, fmt.Errorf("unknown lifetime for %v", t)
+	return reflect.Value{}, newDIError(ErrInvalidLifetime, "unknown lifetime for %v", t)
 }
 
 func (c *ServiceContainer) lookupInstance(t reflect.Type) (reflect.Value, bool) {
@@ -404,7 +405,7 @@ func (s *Scope) resolveType(t reflect.Type) (reflect.Value, error) {
 	// 3. check registration and build
 	reg, ok := s.container.registrations[t]
 	if !ok {
-		return reflect.Value{}, fmt.Errorf("no registration for %v", t)
+		return reflect.Value{}, newDIError(ErrNotRegistered, "no registration for %v", t)
 	}
 
 	switch reg.lifetime {
@@ -425,7 +426,7 @@ func (s *Scope) resolveType(t reflect.Type) (reflect.Value, error) {
 		return s.container.invoke(t, s)
 	}
 
-	return reflect.Value{}, fmt.Errorf("unknown lifetime for %v", t)
+	return reflect.Value{}, newDIError(ErrInvalidLifetime, "unknown lifetime for %v", t)
 }
 
 // Close calls Close() on all scoped Service instances resolved in this scope,
@@ -461,7 +462,7 @@ func (s *Scope) lookupScoped(t reflect.Type) (reflect.Value, bool) {
 func (c *ServiceContainer) invoke(t reflect.Type, r Resolver) (reflect.Value, error) {
 	reg, ok := c.registrations[t]
 	if !ok {
-		return reflect.Value{}, fmt.Errorf("no constructor for %v", t)
+		return reflect.Value{}, newDIError(ErrNoConstructor, "no constructor for %v", t)
 	}
 
 	ctorVal := reflect.ValueOf(reg.ctor)
@@ -542,13 +543,15 @@ func (c *ServiceContainer) validateLifetimes() error {
 
 			if reg.lifetime == ServiceLifetimeSingleton &&
 				depReg.lifetime == ServiceLifetimeScoped {
-				return fmt.Errorf(
+				return newDIError(
+					ErrCaptiveDependency,
 					"captive dependency: singleton %v depends on scoped %v", t, dep,
 				)
 			}
 			if reg.lifetime == ServiceLifetimeSingleton &&
 				depReg.lifetime == ServiceLifetimeTransient {
-				return fmt.Errorf(
+				return newDIError(
+					ErrCaptiveDependency,
 					"captive dependency: singleton %v depends on transient %v", t, dep,
 				)
 			}
@@ -622,7 +625,7 @@ func (c *ServiceContainer) topoSort() ([]reflect.Type, error) {
 	order := c.topoSortOrder(queue, deps, inDegree)
 
 	if len(order) != len(c.registrations) {
-		return nil, fmt.Errorf("circular dependency detected")
+		return nil, newDIError(ErrCircularDependency, "circular dependency detected")
 	}
 	return order, nil
 }
@@ -834,7 +837,8 @@ func validateServiceShape(t reflect.Type) error {
 	// asks for the value type when the service is written against the pointer.
 	if t.Kind() != reflect.Pointer && t.Kind() != reflect.Interface {
 		if ptr := reflect.PointerTo(t); ptr.Implements(serviceType) {
-			return fmt.Errorf(
+			return newDIError(
+				ErrInvalidServiceShape,
 				"gas: %v does not implement gas.Service because its methods are declared on *%v; register it as *%v",
 				t,
 				t,
@@ -862,7 +866,8 @@ func validateServiceShape(t reflect.Type) error {
 		}
 	}
 
-	return fmt.Errorf(
+	return newDIError(
+		ErrInvalidServiceShape,
 		"gas: %v declares %s but does not implement gas.Service (%s); "+
 			"Init and Close are the managed lifecycle, so a type declaring either must "+
 			"implement all of gas.Service — otherwise it is never initialized, never "+

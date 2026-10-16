@@ -20,6 +20,7 @@ import (
 	"github.com/gasmod/gas/example/api-server/app"
 	"github.com/gasmod/gas/migrate/migratetest"
 	"github.com/gasmod/gas/queue/queuetest"
+	"github.com/gasmod/gas/storage"
 	"github.com/gasmod/gas/storage/storagetest"
 )
 
@@ -80,12 +81,13 @@ func newTestApp(t *testing.T) *testEnv {
 	c.RegisterServiceInstance[gas.ConfigProvider](testConfig(t))
 	c.RegisterSingletonService[gas.DatabaseProvider](fakeDatabase(conn))
 	c.RegisterServiceInstance[gas.MigrationManager](&migratetest.MockMigrationManager{})
-	c.RegisterServiceInstance[gas.StorageProvider](&storagetest.MockStorage{})
+	c.RegisterServiceInstance[storage.Provider](&storagetest.MockProvider{})
+	c.RegisterServiceInstance[storage.Presigner](&storagetest.MockPresigner{})
 	c.RegisterServiceInstance[gas.JobQueueProvider](&queuetest.MockQueue{})
 	c.RegisterServiceInstance[gas.EmailProvider](&emailtest.MockEmail{})
 	c.RegisterServiceInstance[gas.CacheProvider](cache.provider())
 
-	// Start builds all 15 registered services in dependency order, runs each
+	// Start builds all 16 registered services in dependency order, runs each
 	// Init (route and migration registration), seals the router, and validates
 	// that every DI-aware handler's dependencies resolve.
 	if err := a.Start(); err != nil {
