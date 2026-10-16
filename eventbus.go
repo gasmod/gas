@@ -1,6 +1,7 @@
 package gas
 
 import (
+	"context"
 	"sync"
 )
 
@@ -72,10 +73,10 @@ func (bus *EventBus) Name() string { return "gas/eventbus" }
 
 // Init is a no-op. It exists so the EventBus satisfies Service and can be
 // passed as an owner.
-func (bus *EventBus) Init() error { return nil }
+func (bus *EventBus) Init(context.Context) error { return nil }
 
 // Close is a no-op; subscriptions are removed through RemoveByService.
-func (bus *EventBus) Close() error { return nil }
+func (bus *EventBus) Close(context.Context) error { return nil }
 
 // Emit dispatches data to every subscriber of event type E, each on its own
 // goroutine, and returns a WaitGroup that completes once they all return:

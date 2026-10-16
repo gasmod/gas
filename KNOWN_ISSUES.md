@@ -114,3 +114,39 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   `CLAUDE.md`, which asks for `errors.Is` or `errors.As`; the core's own
   `unhappy_path_test.go:31`, `:55`, and `:78` use `strings.Contains`.
 - **Next step**: one §3 decision covering sentinels for all of these.
+
+## KI-014: the Worker's lazy logger races with the kill switch
+
+- **Status**: decision needed
+- **Area**: core (`worker.go`, `service_management.go`).
+- **Found**: 2026-10-16, in review of the context-aware lifecycle change.
+- **Detail**: `Worker.getLogger` resolves the logger on first use and
+  stores it in `w.logger` without a lock (`worker.go:230`). With no
+  `Logger` registered it also registers a slog fallback
+  (`worker.go:237`), which writes the container's `instances` map
+  (`service_registry.go:158`). `CloseService` logs after releasing `w.mu`
+  (`service_management.go:140` and `:145`), while `RestartService` reads
+  the same map under `w.mu` (`resolveBuilt`, `service_registry.go:259`).
+  Run concurrently, this is a data race under `go test -race`, and
+  without it an intermittent `fatal error: concurrent map read and map
+  write` (about one in fifteen runs of a 300-iteration probe). Lines are
+  as on `main`.
+- **Next step**: making a `NopLogger` the Worker's default, set at
+  construction, should remove the lazy registration and the lazy field
+  write; verify that when that change lands.
+
+## KI-015: a failed Start leaves initialized services open
+
+- **Status**: decision needed
+- **Area**: core (`worker.go`).
+- **Found**: 2026-10-16, in review of the context-aware lifecycle change.
+- **Detail**: `InitServices` records services for shutdown only after
+  `BuildAll` succeeds (`worker.go:105` to `:122` on `main`), so when one
+  service's Init fails, the services already initialized are never
+  closed, by the failed start or by a later `Shutdown`. `InitServices`
+  also runs once (`initOnce`), so a second `Start` after a failure gets
+  nil from it and goes on to run migrations and ready hooks against a
+  half-built container.
+- **Next step**: decide whether a failed start closes what it
+  initialized, and whether a later `Start` returns the original error (a
+  §3 lifecycle decision in `CLAUDE.md`).

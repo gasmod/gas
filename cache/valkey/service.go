@@ -2,6 +2,7 @@ package valkey
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sync/atomic"
@@ -64,8 +65,9 @@ func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) *Service {
 func (s *Service) Name() string { return serviceName }
 
 // Init validates the configuration, creates the Valkey client, and
-// verifies connectivity.
-func (s *Service) Init() error {
+// verifies connectivity. The ping and the retry backoff use ctx, so a
+// canceled or expired ctx stops the retries.
+func (s *Service) Init(ctx context.Context) error {
 	if !s.customConfigProvided {
 		if s.cfgProvider != nil {
 			if err := s.cfgProvider.Bind(s.cfg); err != nil {
@@ -79,7 +81,7 @@ func (s *Service) Init() error {
 		return err
 	}
 
-	if err := s.connectWithRetry(); err != nil {
+	if err := s.connectWithRetry(ctx); err != nil {
 		return err
 	}
 
@@ -88,8 +90,8 @@ func (s *Service) Init() error {
 	return nil
 }
 
-func (s *Service) connectWithRetry() error {
-	err := s.connect()
+func (s *Service) connectWithRetry(ctx context.Context) error {
+	err := s.connect(ctx)
 	if err == nil {
 		return nil
 	}
@@ -112,10 +114,15 @@ func (s *Service) connectWithRetry() error {
 			Str("next_retry_in", interval.String()).
 			Send()
 
-		time.Sleep(interval)
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("%s: connect canceled after %d attempts: %w",
+				s.Name(), attempt, errors.Join(ctx.Err(), err))
+		case <-time.After(interval):
+		}
 		interval *= 2
 
-		err = s.connect()
+		err = s.connect(ctx)
 		if err == nil {
 			return nil
 		}
@@ -128,7 +135,7 @@ func (s *Service) connectWithRetry() error {
 	return fmt.Errorf("%s: connect failed after %d retries: %w", s.Name(), maxRetries, err)
 }
 
-func (s *Service) connect() error {
+func (s *Service) connect(ctx context.Context) error {
 	client, err := valkey.NewClient(valkey.ClientOption{
 		InitAddress:      []string{s.cfg.Cache.Addr},
 		Password:         s.cfg.Cache.Password,
@@ -142,10 +149,10 @@ func (s *Service) connect() error {
 	}
 
 	// verify connectivity
-	ctx, cancel := context.WithTimeout(context.Background(), s.cfg.Cache.DialTimeout)
+	pingCtx, cancel := context.WithTimeout(ctx, s.cfg.Cache.DialTimeout)
 	defer cancel()
 
-	if pErr := client.Do(ctx, client.B().Ping().Build()).Error(); pErr != nil {
+	if pErr := client.Do(pingCtx, client.B().Ping().Build()).Error(); pErr != nil {
 		client.Close()
 		s.logger.Error("failed to ping valkey").Err("error", pErr).Send()
 		return fmt.Errorf("%s: ping: %w", s.Name(), pErr)
@@ -161,7 +168,7 @@ func (s *Service) connect() error {
 }
 
 // Close shuts down the Valkey client.
-func (s *Service) Close() error {
+func (s *Service) Close(context.Context) error {
 	s.closed.Store(true)
 
 	if s.client != nil {

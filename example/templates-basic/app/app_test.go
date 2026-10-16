@@ -1,6 +1,7 @@
 package app_test
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,14 +25,14 @@ func TestApp(t *testing.T) {
 
 	// Start seals the router (until then it has no routes), binds the UI config
 	// that registers the static route, and validates handler dependencies.
-	if err := a.Start(); err != nil {
+	if err := a.Start(t.Context()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
 	stopped := false
 	t.Cleanup(func() {
 		if !stopped {
-			_ = a.Stop()
+			_ = a.Stop(context.Background())
 		}
 	})
 
@@ -45,7 +46,7 @@ func TestApp(t *testing.T) {
 	t.Run("static assets", func(t *testing.T) { testStaticAssets(t, srv) })
 
 	stopped = true
-	if err := a.Stop(); err != nil {
+	if err := a.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
 }

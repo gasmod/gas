@@ -115,8 +115,9 @@ func NewWithCustomProvider[T gas.TemplateProvider](
 // Name returns the service identifier.
 func (s *Service) Name() string { return serviceName }
 
-// Init validates the configuration and creates the SES client.
-func (s *Service) Init() error {
+// Init validates the configuration and creates the SES client. ctx bounds
+// loading the AWS configuration and credentials.
+func (s *Service) Init(ctx context.Context) error {
 	if !s.customConfigProvided {
 		if s.cfgProvider != nil {
 			if err := s.cfgProvider.Bind(s.cfg); err != nil {
@@ -131,7 +132,7 @@ func (s *Service) Init() error {
 	}
 
 	if !s.customClientProvided {
-		if err := s.createClient(); err != nil {
+		if err := s.createClient(ctx); err != nil {
 			return err
 		}
 	}
@@ -141,7 +142,8 @@ func (s *Service) Init() error {
 	return nil
 }
 
-func (s *Service) createClient() error {
+// createClient loads the AWS configuration under ctx and builds the SES client.
+func (s *Service) createClient(ctx context.Context) error {
 	opts := []func(*awsconfig.LoadOptions) error{
 		awsconfig.WithRegion(s.cfg.Email.Region),
 	}
@@ -156,7 +158,7 @@ func (s *Service) createClient() error {
 		))
 	}
 
-	awsCfg, err := awsconfig.LoadDefaultConfig(context.Background(), opts...)
+	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
 	if err != nil {
 		return fmt.Errorf("%s: load aws config: %w", s.Name(), err)
 	}
@@ -183,7 +185,7 @@ func (s *Service) CheckReady(_ context.Context) error {
 }
 
 // Close marks the service as closed.
-func (s *Service) Close() error {
+func (s *Service) Close(_ context.Context) error {
 	s.closed.Store(true)
 	s.logger.Info("ses email service closed").Send()
 	return nil

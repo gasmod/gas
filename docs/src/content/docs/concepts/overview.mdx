@@ -13,14 +13,16 @@ implementing three methods:
 ```go
 type Service interface {
 	Name() string // Unique identifier, e.g. "gas/auth"
-	Init() error  // Register routes, middleware, subscriptions
-	Close() error // Clean up internal resources
+	Init(ctx context.Context) error  // Register routes, middleware, subscriptions
+	Close(ctx context.Context) error // Clean up internal resources
 }
 ```
 
 `Init` and `Close` are the managed lifecycle. The container calls `Init` on
 every service it holds during startup, and `Close` in reverse initialization
-order at shutdown.
+order at shutdown. `Init` gets a context with a per-service deadline and `Close`
+gets the caller's shutdown context; see
+[Init and Close contexts](/gas/concepts/lifecycle/#init-and-close-contexts).
 
 ## Infrastructure flows inward
 

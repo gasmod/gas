@@ -1,11 +1,13 @@
 package gas
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"reflect"
 	"strings"
+	"time"
 )
 
 // ServiceLifetime controls how a service instance is created and cached.
@@ -43,12 +45,14 @@ type registration struct {
 // Resolver is implemented by ServiceContainer and Scope to provide dependency resolution.
 // The unexported method restricts implementation to this package.
 type Resolver interface {
-	resolveType(reflect.Type) (reflect.Value, error)
+	resolveType(ctx context.Context, t reflect.Type) (reflect.Value, error)
 }
 
 // ServiceContainer is a dependency injection container that manages service registration,
 // construction, and lifetime-scoped resolution.
 type ServiceContainer struct {
+	opt *ServiceContainerOptions
+
 	registrations map[reflect.Type]registration
 	instances     map[reflect.Type]reflect.Value // singletons + pre-registered instances
 
@@ -67,12 +71,56 @@ type ServiceContainer struct {
 	instanceOrder []reflect.Type
 }
 
+// ServiceContainerOptions holds the settings a ServiceContainer is built
+// with. Its fields are set through ServiceContainerOption values passed to
+// NewServiceContainer.
+type ServiceContainerOptions struct {
+	serviceInitTimeout time.Duration
+}
+
+// ServiceContainerOption configures a ServiceContainer at construction.
+type ServiceContainerOption func(*ServiceContainerOptions)
+
+// WithServiceContainerServiceTimeout sets the deadline the container gives
+// each singleton service's Init. The default is 15 seconds, and 0 disables
+// the deadline so only the caller's context applies. A service that
+// implements ServiceInitTimeout overrides it for itself.
+//
+// Panics if timeout is negative.
+func WithServiceContainerServiceTimeout(timeout time.Duration) ServiceContainerOption {
+	mustNotBeNegativeInitTimeout("WithServiceContainerServiceTimeout", timeout)
+	return func(opts *ServiceContainerOptions) {
+		opts.serviceInitTimeout = timeout
+	}
+}
+
+// mustNotBeNegativeInitTimeout panics when an init-timeout option is given a
+// negative duration, which is a wiring mistake: 0 already means "no deadline".
+func mustNotBeNegativeInitTimeout(option string, timeout time.Duration) {
+	if timeout < 0 {
+		panic(fmt.Sprintf(
+			"gas: %s got a negative timeout %s; pass a positive duration, or 0 to disable the init deadline",
+			option,
+			timeout,
+		))
+	}
+}
+
 // NewServiceContainer creates a new ServiceContainer.
-func NewServiceContainer() *ServiceContainer {
+func NewServiceContainer(opts ...ServiceContainerOption) *ServiceContainer {
+	options := &ServiceContainerOptions{
+		serviceInitTimeout: 15 * time.Second,
+	}
+
+	for _, opt := range opts {
+		opt(options)
+	}
+
 	return &ServiceContainer{
 		registrations:   make(map[reflect.Type]registration),
 		instances:       make(map[reflect.Type]reflect.Value),
 		initedInstances: make(map[reflect.Type]struct{}),
+		opt:             options,
 	}
 }
 
@@ -170,7 +218,7 @@ func (c *ServiceContainer) setInstance(t reflect.Type, v reflect.Value) {
 // pre-built instance is initialized like any other service. It is initialized
 // before anything the container constructs, matching the order it became
 // available, so reversing that order at shutdown stays correct.
-func (c *ServiceContainer) BuildAll() error {
+func (c *ServiceContainer) BuildAll(ctx context.Context) error {
 	if err := c.validateServiceShapes(); err != nil {
 		return err
 	}
@@ -179,7 +227,7 @@ func (c *ServiceContainer) BuildAll() error {
 		return err
 	}
 
-	if err := c.initInstances(); err != nil {
+	if err := c.initInstances(ctx); err != nil {
 		return err
 	}
 
@@ -196,7 +244,7 @@ func (c *ServiceContainer) BuildAll() error {
 		if reg.lifetime != ServiceLifetimeSingleton {
 			continue
 		}
-		val, err := c.invoke(t, c)
+		val, err := c.invoke(ctx, t, c)
 		if err != nil {
 			return fmt.Errorf("building %v: %w", t, err)
 		}
@@ -209,7 +257,7 @@ func (c *ServiceContainer) BuildAll() error {
 // not been initialized yet, in registration order. Instances bypass invoke —
 // BuildAll skips types already present in the instance map — so this is the
 // only place their Init can run.
-func (c *ServiceContainer) initInstances() error {
+func (c *ServiceContainer) initInstances(ctx context.Context) error {
 	for _, t := range c.instanceOrder {
 		if _, done := c.initedInstances[t]; done {
 			continue
@@ -223,17 +271,82 @@ func (c *ServiceContainer) initInstances() error {
 			continue
 		}
 		c.initedInstances[t] = struct{}{}
-		if err := svc.Init(); err != nil {
-			return fmt.Errorf("init %v: %w", t, err)
+		if err := c.initService(ctx, t, svc); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
+// initService runs svc.Init under the service's init deadline: the
+// container default, or the service's own InitTimeout. Init runs on the
+// caller's goroutine, so when the deadline passes its context is canceled
+// and initService waits for it to return; no Init outlives the call. A
+// timeout of 0 adds no deadline beyond ctx's own.
+//
+// An Init that ignores the cancellation and returns nil after the deadline
+// has acquired whatever it acquires, but the caller treats the timeout as a
+// failure and will never close it, so initService closes it here, with ctx
+// stripped of its cancellation, and reports both the timeout and any Close
+// error.
+func (c *ServiceContainer) initService(ctx context.Context, t reflect.Type, svc Service) error {
+	timeout := c.opt.serviceInitTimeout
+	if tout, ok := svc.(ServiceInitTimeout); ok {
+		timeout = tout.InitTimeout()
+		if timeout < 0 {
+			return fmt.Errorf("init %v: InitTimeout returned a negative duration %s", t, timeout)
+		}
+	}
+
+	initCtx, cancel := ctx, context.CancelFunc(func() {})
+	if timeout > 0 {
+		initCtx, cancel = context.WithTimeout(ctx, timeout)
+	}
+	defer cancel()
+
+	err := svc.Init(initCtx)
+
+	// Only this deadline is reported as a timeout. A caller's own deadline or
+	// cancellation reaches Init through ctx and comes back in err.
+	if ctx.Err() != nil || !errors.Is(initCtx.Err(), context.DeadlineExceeded) {
+		if err != nil {
+			return fmt.Errorf("init %v: %w", t, err)
+		}
+		return nil
+	}
+
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("init %v: timed out after %s: %w", t, timeout, err)
+		}
+		return fmt.Errorf(
+			"init %v: timed out after %s: %w: %w",
+			t,
+			timeout,
+			context.DeadlineExceeded,
+			err,
+		)
+	}
+
+	timeoutErr := fmt.Errorf(
+		"init %v: timed out after %s: %w",
+		t,
+		timeout,
+		context.DeadlineExceeded,
+	)
+	if closeErr := svc.Close(context.WithoutCancel(ctx)); closeErr != nil {
+		return errors.Join(timeoutErr, fmt.Errorf("close %v after late init: %w", t, closeErr))
+	}
+	return timeoutErr
+}
+
 // NewScope creates a scoped resolution context. Scoped services resolved within
-// this scope share instances; singletons delegate to the container.
-func (c *ServiceContainer) NewScope() *Scope {
+// this scope share instances; singletons delegate to the container. ctx is
+// passed to the Init of every scoped service the scope builds; in an App it
+// is the request's context.
+func (c *ServiceContainer) NewScope(ctx context.Context) *Scope {
 	return &Scope{
+		ctx:       ctx,
 		container: c,
 		resolved:  make(map[reflect.Type]reflect.Value),
 	}
@@ -244,12 +357,12 @@ func (c *ServiceContainer) NewScope() *Scope {
 // registrations cannot be resolved here and return an error; call NewScope and
 // resolve from the Scope instead.
 func (c *ServiceContainer) Resolve[T any]() (T, error) {
-	return resolveFrom[T](c)
+	return resolveFrom[T](context.Background(), c)
 }
 
 // MustResolve is like Resolve but panics if the service cannot be resolved.
 func (c *ServiceContainer) MustResolve[T any]() T {
-	return mustResolveFrom[T](c)
+	return mustResolveFrom[T](context.Background(), c)
 }
 
 // resolveBuilt returns the instance already built for T, without invoking any
@@ -270,25 +383,25 @@ func (c *ServiceContainer) resolveBuilt[T any]() (T, bool) {
 // ResolveFromRequestScope retrieves or builds a service of type T from the per-request scope in the provided *http.Request.
 func ResolveFromRequestScope[T any](r *http.Request) (T, error) {
 	//goland:noinspection GoResourceLeak
-	return resolveFrom[T](RequestScope(r))
+	return resolveFrom[T](r.Context(), RequestScope(r))
 }
 
 // MustResolveFromRequestScope retrieves a service of type T from the request's Scope and panics if it cannot be resolved.
 func MustResolveFromRequestScope[T any](r *http.Request) T {
 	//goland:noinspection GoResourceLeak
-	return mustResolveFrom[T](RequestScope(r))
+	return mustResolveFrom[T](r.Context(), RequestScope(r))
 }
 
 // --- ServiceContainer as Resolver ---
 
-func resolveFrom[T any](r Resolver) (T, error) {
+func resolveFrom[T any](ctx context.Context, r Resolver) (T, error) {
 	if r == nil {
 		var zero T
 		return zero, fmt.Errorf("gas: resolver is nil")
 	}
 
 	t := reflect.TypeFor[T]()
-	v, err := r.resolveType(t)
+	v, err := r.resolveType(ctx, t)
 	if err != nil {
 		var zero T
 		return zero, err
@@ -302,15 +415,15 @@ func resolveFrom[T any](r Resolver) (T, error) {
 	return zero, fmt.Errorf("gas: resolved incorrect type for %v", t)
 }
 
-func mustResolveFrom[T any](r Resolver) T {
-	v, err := resolveFrom[T](r)
+func mustResolveFrom[T any](ctx context.Context, r Resolver) T {
+	v, err := resolveFrom[T](ctx, r)
 	if err != nil {
 		panic(fmt.Sprintf("gas: failed to resolve %v: %v", reflect.TypeFor[T](), err))
 	}
 	return v
 }
 
-func (c *ServiceContainer) resolveType(t reflect.Type) (reflect.Value, error) {
+func (c *ServiceContainer) resolveType(ctx context.Context, t reflect.Type) (reflect.Value, error) {
 	// 1. check cached instances (singletons + registered)
 	if v, ok := c.lookupInstance(t); ok {
 		return v, nil
@@ -324,7 +437,7 @@ func (c *ServiceContainer) resolveType(t reflect.Type) (reflect.Value, error) {
 
 	switch reg.lifetime {
 	case ServiceLifetimeSingleton:
-		val, err := c.invoke(t, c)
+		val, err := c.invoke(ctx, t, c)
 		if err != nil {
 			return reflect.Value{}, err
 		}
@@ -332,11 +445,11 @@ func (c *ServiceContainer) resolveType(t reflect.Type) (reflect.Value, error) {
 		return val, nil
 
 	case ServiceLifetimeTransient:
-		return c.invoke(t, c)
+		return c.invoke(ctx, t, c)
 
 	case ServiceLifetimeScoped:
 		return reflect.Value{}, fmt.Errorf(
-			"scoped service %v cannot be resolved outside a scope; use container.NewScope()",
+			"scoped service %v cannot be resolved outside a scope; use container.NewScope(ctx)",
 			t,
 		)
 	}
@@ -368,6 +481,10 @@ func (c *ServiceContainer) EachInstance(fn func(reflect.Value)) {
 
 // Scope is a resolution context for scoped service lifetimes.
 type Scope struct {
+	// ctx is the context the scope was created with. Scope.Resolve has no
+	// context parameter, so the Init of each scoped service it builds gets
+	// this one.
+	ctx       context.Context
 	container *ServiceContainer
 	resolved  map[reflect.Type]reflect.Value
 
@@ -382,15 +499,15 @@ type Scope struct {
 // instances that implement Service are closed in reverse resolution order by
 // Scope.Close.
 func (s *Scope) Resolve[T any]() (T, error) {
-	return resolveFrom[T](s)
+	return resolveFrom[T](s.ctx, s)
 }
 
 // MustResolve is like Resolve but panics if the service cannot be resolved.
 func (s *Scope) MustResolve[T any]() T {
-	return mustResolveFrom[T](s)
+	return mustResolveFrom[T](s.ctx, s)
 }
 
-func (s *Scope) resolveType(t reflect.Type) (reflect.Value, error) {
+func (s *Scope) resolveType(ctx context.Context, t reflect.Type) (reflect.Value, error) {
 	// 1. check scope cache
 	if v, ok := s.lookupScoped(t); ok {
 		return v, nil
@@ -410,10 +527,10 @@ func (s *Scope) resolveType(t reflect.Type) (reflect.Value, error) {
 	switch reg.lifetime {
 	case ServiceLifetimeSingleton:
 		// delegate fully to container (it caches there)
-		return s.container.resolveType(t)
+		return s.container.resolveType(ctx, t)
 
 	case ServiceLifetimeScoped:
-		val, err := s.container.invoke(t, s)
+		val, err := s.container.invoke(ctx, t, s)
 		if err != nil {
 			return reflect.Value{}, err
 		}
@@ -422,16 +539,16 @@ func (s *Scope) resolveType(t reflect.Type) (reflect.Value, error) {
 		return val, nil
 
 	case ServiceLifetimeTransient:
-		return s.container.invoke(t, s)
+		return s.container.invoke(ctx, t, s)
 	}
 
 	return reflect.Value{}, fmt.Errorf("unknown lifetime for %v", t)
 }
 
-// Close calls Close() on all scoped Service instances resolved in this scope,
-// in reverse resolution order, so a scoped service can still use the scoped
-// dependencies it was built from.
-func (s *Scope) Close() error {
+// Close calls Close(ctx) on all scoped Service instances resolved in this
+// scope, in reverse resolution order, so a scoped service can still use the
+// scoped dependencies it was built from.
+func (s *Scope) Close(ctx context.Context) error {
 	var errs []error
 	for i := len(s.order) - 1; i >= 0; i-- {
 		v, ok := s.resolved[s.order[i]]
@@ -439,7 +556,7 @@ func (s *Scope) Close() error {
 			continue
 		}
 		if svc, ok := v.Interface().(Service); ok {
-			if err := svc.Close(); err != nil {
+			if err := svc.Close(ctx); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -458,7 +575,11 @@ func (s *Scope) lookupScoped(t reflect.Type) (reflect.Value, bool) {
 // --- internal: constructor invocation ---
 
 // invoke calls the constructor for type t, resolving its dependencies through r.
-func (c *ServiceContainer) invoke(t reflect.Type, r Resolver) (reflect.Value, error) {
+func (c *ServiceContainer) invoke(
+	ctx context.Context,
+	t reflect.Type,
+	r Resolver,
+) (reflect.Value, error) {
 	reg, ok := c.registrations[t]
 	if !ok {
 		return reflect.Value{}, fmt.Errorf("no constructor for %v", t)
@@ -467,7 +588,7 @@ func (c *ServiceContainer) invoke(t reflect.Type, r Resolver) (reflect.Value, er
 	ctorVal := reflect.ValueOf(reg.ctor)
 	ctorType := ctorVal.Type()
 
-	args, err := c.resolveCtorArgs(ctorType, t, r)
+	args, err := c.resolveCtorArgs(ctx, ctorType, t, r)
 	if err != nil {
 		return reflect.Value{}, err
 	}
@@ -494,24 +615,44 @@ func (c *ServiceContainer) invoke(t reflect.Type, r Resolver) (reflect.Value, er
 		result = result.Convert(t)
 	}
 
-	// Auto-Init: if the constructed value implements Service, call Init().
-	if svc, ok := result.Interface().(Service); ok {
-		if err := svc.Init(); err != nil {
-			return reflect.Value{}, fmt.Errorf("init %v: %w", t, err)
-		}
+	if err := c.initConstructed(ctx, t, reg.lifetime, result); err != nil {
+		return reflect.Value{}, err
 	}
 
 	return result, nil
 }
 
+// initConstructed calls Init(ctx) on a freshly constructed value that
+// implements Service. A singleton gets the container's init deadline through
+// initService; a scoped service gets the scope's context as is.
+func (c *ServiceContainer) initConstructed(
+	ctx context.Context,
+	t reflect.Type,
+	lifetime ServiceLifetime,
+	result reflect.Value,
+) error {
+	svc, ok := result.Interface().(Service)
+	if !ok {
+		return nil
+	}
+	if lifetime == ServiceLifetimeSingleton {
+		return c.initService(ctx, t, svc)
+	}
+	if err := svc.Init(ctx); err != nil {
+		return fmt.Errorf("init %v: %w", t, err)
+	}
+	return nil
+}
+
 func (c *ServiceContainer) resolveCtorArgs(
+	ctx context.Context,
 	ctor, t reflect.Type,
 	r Resolver,
 ) ([]reflect.Value, error) {
 	args := make([]reflect.Value, ctor.NumIn())
 	for i := range args {
 		dep := ctor.In(i)
-		resolved, err := r.resolveType(dep)
+		resolved, err := r.resolveType(ctx, dep)
 		if err != nil {
 			return nil, fmt.Errorf("resolving dep %v for %v: %w", dep, t, err)
 		}
@@ -793,23 +934,39 @@ func declaredLifecycleMethods(t reflect.Type) []string {
 	return found
 }
 
-// serviceMethodProblem describes how t fails to supply one Service method.
-// Returns "" when the method is present with the right signature.
-func serviceMethodProblem(t reflect.Type, name string, out reflect.Type) string {
+// serviceMethodProblem describes how t fails to supply one Service method,
+// which must take exactly the parameters in and return out. Returns "" when
+// the method is present with the right signature.
+func serviceMethodProblem(t reflect.Type, name string, in []reflect.Type, out reflect.Type) string {
+	want := serviceMethodSignature(name, in, out)
 	m, ok := t.MethodByName(name)
 	if !ok {
-		return fmt.Sprintf("missing %s() %v", name, out)
+		return "missing " + want
 	}
 	// A method on a concrete type carries its receiver as In(0); an interface
 	// method does not.
-	in := m.Type.NumIn()
+	first := 0
 	if t.Kind() != reflect.Interface {
-		in--
+		first = 1
 	}
-	if in != 0 || m.Type.NumOut() != 1 || m.Type.Out(0) != out {
-		return fmt.Sprintf("%s has signature %v, want %s() %v", name, m.Type, name, out)
+	ok = m.Type.NumIn()-first == len(in) && m.Type.NumOut() == 1 && m.Type.Out(0) == out
+	for i := 0; ok && i < len(in); i++ {
+		ok = m.Type.In(first+i) == in[i]
+	}
+	if !ok {
+		return fmt.Sprintf("%s has signature %v, want %s", name, m.Type, want)
 	}
 	return ""
+}
+
+// serviceMethodSignature renders a Service method for an error message, such
+// as "Init(context.Context) error".
+func serviceMethodSignature(name string, in []reflect.Type, out reflect.Type) string {
+	params := make([]string, len(in))
+	for i, p := range in {
+		params[i] = p.String()
+	}
+	return fmt.Sprintf("%s(%s) %v", name, strings.Join(params, ", "), out)
 }
 
 // validateServiceShape rejects a type that declares Init or Close but does not
@@ -848,16 +1005,18 @@ func validateServiceShape(t reflect.Type) error {
 		return nil
 	}
 
+	ctxParam := []reflect.Type{reflect.TypeFor[context.Context]()}
 	problems := make([]string, 0, 3)
 	for _, m := range []struct {
 		out  reflect.Type
 		name string
+		in   []reflect.Type
 	}{
-		{reflect.TypeFor[string](), "Name"},
-		{reflect.TypeFor[error](), "Init"},
-		{reflect.TypeFor[error](), "Close"},
+		{reflect.TypeFor[string](), "Name", nil},
+		{reflect.TypeFor[error](), "Init", ctxParam},
+		{reflect.TypeFor[error](), "Close", ctxParam},
 	} {
-		if p := serviceMethodProblem(t, m.name, m.out); p != "" {
+		if p := serviceMethodProblem(t, m.name, m.in, m.out); p != "" {
 			problems = append(problems, p)
 		}
 	}

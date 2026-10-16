@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING:** `s3.Service` and `dir.Service` implement the context-aware
+  `gas.Service` (`Init(ctx context.Context) error`,
+  `Close(ctx context.Context) error`). `s3.Service.Init` loads the AWS
+  configuration under ctx, so a slow credential chain is bounded by the
+  container's Init deadline. `dir.Service` and both `Close` methods ignore
+  ctx.
+
 ## [0.3.0] - 2026-07-03
 
 First open source release. Versions prior to 0.3.0 were developed in a private

@@ -31,11 +31,11 @@ func newTestService(t *testing.T) *database.Service {
 	cfg.Database.DSN = filepath.Join(t.TempDir(), "test.db")
 
 	s := database.New(database.WithConfig(cfg))(nil, gas.NewNopLogger()())
-	if err := s.Init(); err != nil {
+	if err := s.Init(t.Context()); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := s.Close(); err != nil {
+		if err := s.Close(context.Background()); err != nil {
 			t.Errorf("Close: %v", err)
 		}
 	})
@@ -51,7 +51,7 @@ func TestName(t *testing.T) {
 
 func TestInit_NoDSN(t *testing.T) {
 	s := database.New()(nil, gas.NewNopLogger()())
-	if err := s.Init(); err == nil {
+	if err := s.Init(t.Context()); err == nil {
 		t.Fatal("expected error for missing DSN")
 	}
 }
@@ -154,7 +154,7 @@ func TestExec(t *testing.T) {
 
 func TestQuery_Closed(t *testing.T) {
 	s := newTestService(t)
-	if err := s.Close(); err != nil {
+	if err := s.Close(context.Background()); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 
@@ -166,7 +166,7 @@ func TestQuery_Closed(t *testing.T) {
 
 func TestExec_Closed(t *testing.T) {
 	s := newTestService(t)
-	if err := s.Close(); err != nil {
+	if err := s.Close(context.Background()); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 
@@ -219,7 +219,7 @@ func TestBeginTx(t *testing.T) {
 
 func TestBeginTx_Closed(t *testing.T) {
 	s := newTestService(t)
-	if err := s.Close(); err != nil {
+	if err := s.Close(context.Background()); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 
@@ -346,7 +346,7 @@ func TestWithTx_Panic(t *testing.T) {
 
 func TestWithTx_Closed(t *testing.T) {
 	s := newTestService(t)
-	if err := s.Close(); err != nil {
+	if err := s.Close(context.Background()); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 
@@ -372,7 +372,7 @@ func TestCheckHealth(t *testing.T) {
 	}
 
 	// After Close: unhealthy.
-	if err := s.Close(); err != nil {
+	if err := s.Close(context.Background()); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 	if err := s.CheckHealth(context.Background()); err == nil {
@@ -386,7 +386,7 @@ func TestCheckReady(t *testing.T) {
 		t.Fatalf("CheckReady: %v", err)
 	}
 
-	if err := s.Close(); err != nil {
+	if err := s.Close(context.Background()); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 	if err := s.CheckReady(context.Background()); err == nil {
@@ -402,11 +402,11 @@ func TestInit_RetrySuccess(t *testing.T) {
 	cfg.Database.ConnRetryInterval = 1 * time.Millisecond
 
 	s := database.New(database.WithConfig(cfg))(nil, gas.NewNopLogger()())
-	if err := s.Init(); err != nil {
+	if err := s.Init(t.Context()); err != nil {
 		t.Fatalf("Init with retries enabled should succeed: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := s.Close(); err != nil {
+		if err := s.Close(context.Background()); err != nil {
 			t.Errorf("Close: %v", err)
 		}
 	})
@@ -424,7 +424,7 @@ func TestInit_RetryExhausted(t *testing.T) {
 	cfg.Database.ConnRetryInterval = 1 * time.Millisecond
 
 	s := database.New(database.WithConfig(cfg))(nil, gas.NewNopLogger()())
-	err := s.Init()
+	err := s.Init(t.Context())
 	if err == nil {
 		t.Fatal("expected error after exhausting retries")
 	}
@@ -483,11 +483,11 @@ func TestWithConnector(t *testing.T) {
 		database.WithConnector(sqliteConnector{drv: drv, dsn: dsn}),
 	)(nil, gas.NewNopLogger()())
 
-	if err := s.Init(); err != nil {
+	if err := s.Init(t.Context()); err != nil {
 		t.Fatalf("Init with connector: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := s.Close(); err != nil {
+		if err := s.Close(context.Background()); err != nil {
 			t.Errorf("Close: %v", err)
 		}
 	})
@@ -508,7 +508,7 @@ func TestInit_UnregisteredDriver(t *testing.T) {
 	cfg.Database.DSN = "postgres://user:pass@localhost:5432/db"
 
 	s := database.New(database.WithConfig(cfg))(nil, gas.NewNopLogger()())
-	if err := s.Init(); err == nil {
+	if err := s.Init(t.Context()); err == nil {
 		t.Fatal("expected error for an unregistered driver")
 	}
 }
@@ -521,7 +521,7 @@ func TestInit_PingFailure(t *testing.T) {
 	cfg.Database.DSN = t.TempDir()
 
 	s := database.New(database.WithConfig(cfg))(nil, gas.NewNopLogger()())
-	if err := s.Init(); err == nil {
+	if err := s.Init(t.Context()); err == nil {
 		t.Fatal("expected error when the ping fails")
 	}
 }
@@ -532,14 +532,14 @@ func TestInit_PgxInvalidDSN(t *testing.T) {
 	cfg.Database.DSN = "::::not a dsn::::"
 
 	s := database.New(database.WithConfig(cfg))(nil, gas.NewNopLogger()())
-	if err := s.Init(); err == nil {
+	if err := s.Init(t.Context()); err == nil {
 		t.Fatal("expected error for an unparseable pgx DSN")
 	}
 }
 
 func TestClose_Uninitialized(t *testing.T) {
 	s := database.New()(nil, gas.NewNopLogger()())
-	if err := s.Close(); err != nil {
+	if err := s.Close(context.Background()); err != nil {
 		t.Fatalf("Close on an uninitialized service: %v", err)
 	}
 }
@@ -547,17 +547,17 @@ func TestClose_Uninitialized(t *testing.T) {
 func TestClose_Repeated(t *testing.T) {
 	s := newTestService(t)
 
-	if err := s.Close(); err != nil {
+	if err := s.Close(context.Background()); err != nil {
 		t.Fatalf("first Close: %v", err)
 	}
-	if err := s.Close(); err != nil {
+	if err := s.Close(context.Background()); err != nil {
 		t.Fatalf("second Close: %v", err)
 	}
 }
 
 func TestPing_Closed(t *testing.T) {
 	s := newTestService(t)
-	if err := s.Close(); err != nil {
+	if err := s.Close(context.Background()); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 
@@ -721,7 +721,7 @@ func TestQuery_AfterFailedInit(t *testing.T) {
 	cfg.Database.DSN = t.TempDir()
 
 	s := database.New(database.WithConfig(cfg))(nil, gas.NewNopLogger()())
-	if err := s.Init(); err == nil {
+	if err := s.Init(t.Context()); err == nil {
 		t.Fatal("expected Init to fail")
 	}
 

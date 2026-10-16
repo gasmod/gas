@@ -9,6 +9,7 @@
 package migratetest
 
 import (
+	"context"
 	"io/fs"
 	"sync"
 
@@ -56,7 +57,7 @@ func (m *MockMigrationManager) Name() string {
 }
 
 // Init records the call and delegates to InitFn if set.
-func (m *MockMigrationManager) Init() error {
+func (m *MockMigrationManager) Init(context.Context) error {
 	m.record("Init")
 	if m.InitFn != nil {
 		return m.InitFn()
@@ -65,7 +66,7 @@ func (m *MockMigrationManager) Init() error {
 }
 
 // Close records the call and delegates to CloseFn if set.
-func (m *MockMigrationManager) Close() error {
+func (m *MockMigrationManager) Close(context.Context) error {
 	m.record("Close")
 	if m.CloseFn != nil {
 		return m.CloseFn()

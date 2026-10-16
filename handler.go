@@ -144,7 +144,7 @@ func adaptedHandler(
 		args[0] = reflect.ValueOf(ctx)
 
 		for i, depType := range meta.depTypes {
-			val, err := scope.resolveType(depType)
+			val, err := scope.resolveType(r.Context(), depType)
 			if err != nil {
 				eh := getErrorHandler()
 				eh(ctx, fmt.Errorf("gas: resolving %v: %w", depType, err))

@@ -28,10 +28,10 @@ func newTestDB(t *testing.T) gas.DatabaseProvider {
 	cfg.Database.DSN = dsn
 	factory := database.New(database.WithConfig(cfg))
 	db := factory(nil, gas.NewNopLogger()())
-	if err := db.Init(); err != nil {
+	if err := db.Init(t.Context()); err != nil {
 		t.Fatalf("database Init: %v", err)
 	}
-	t.Cleanup(func() { _ = db.Close() })
+	t.Cleanup(func() { _ = db.Close(context.Background()) })
 	return db
 }
 
@@ -39,10 +39,10 @@ func newTestService(t *testing.T) (*Service, gas.DatabaseProvider) {
 	t.Helper()
 	db := newTestDB(t)
 	s := New()(db)
-	if err := s.Init(); err != nil {
+	if err := s.Init(t.Context()); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	t.Cleanup(func() { _ = s.Close() })
+	t.Cleanup(func() { _ = s.Close(context.Background()) })
 	return s, db
 }
 
@@ -55,7 +55,7 @@ func TestName(t *testing.T) {
 
 func TestInit_NoDB(t *testing.T) {
 	s := New()(nil)
-	if err := s.Init(); err == nil {
+	if err := s.Init(t.Context()); err == nil {
 		t.Fatal("expected error for missing DatabaseProvider")
 	}
 }
@@ -81,9 +81,9 @@ type testService struct {
 
 var _ gas.Service = (*testService)(nil)
 
-func (s *testService) Name() string { return s.name }
-func (s *testService) Init() error  { return s.init() }
-func (s *testService) Close() error { return s.close() }
+func (s *testService) Name() string                { return s.name }
+func (s *testService) Init(context.Context) error  { return s.init() }
+func (s *testService) Close(context.Context) error { return s.close() }
 
 //goland:noinspection SqlResolve,SqlNoDataSourceInspection
 func TestRegister(t *testing.T) {
@@ -379,7 +379,7 @@ func TestDown_MoreThanApplied(t *testing.T) {
 
 func TestRunPending_Closed(t *testing.T) {
 	s, _ := newTestService(t)
-	_ = s.Close()
+	_ = s.Close(context.Background())
 
 	if err := s.RunPending(); err == nil {
 		t.Fatal("expected error when service is closed")
@@ -388,7 +388,7 @@ func TestRunPending_Closed(t *testing.T) {
 
 func TestDown_Closed(t *testing.T) {
 	s, _ := newTestService(t)
-	_ = s.Close()
+	_ = s.Close(context.Background())
 
 	if err := s.Down(1); err == nil {
 		t.Fatal("expected error when service is closed")
@@ -648,7 +648,7 @@ func TestCheckReady_NotInitialized(t *testing.T) {
 
 func TestCheckReady_Closed(t *testing.T) {
 	s, _ := newTestService(t)
-	_ = s.Close()
+	_ = s.Close(context.Background())
 	if err := s.CheckReady(context.Background()); err == nil {
 		t.Fatal("expected error when closed")
 	}

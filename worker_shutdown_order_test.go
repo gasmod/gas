@@ -1,6 +1,7 @@
 package gas_test
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"testing"
@@ -20,7 +21,7 @@ import (
 // walks the topological sort); only the close order is lost.
 //
 // Consequence: a service can be closed AFTER a dependency it uses inside
-// Close(), so Close() runs against an already-torn-down dependency. Which
+// Close, so Close runs against an already-torn-down dependency. Which
 // services are affected changes from process to process, so this surfaces as
 // an intermittent shutdown failure in production rather than a reproducible
 // one.
@@ -69,9 +70,9 @@ type ordService[K any] struct {
 	name string
 }
 
-func (s *ordService[K]) Name() string { return s.name }
-func (s *ordService[K]) Init() error  { s.log.init(s.name); return nil }
-func (s *ordService[K]) Close() error { s.log.close(s.name); return nil }
+func (s *ordService[K]) Name() string                { return s.name }
+func (s *ordService[K]) Init(context.Context) error  { s.log.init(s.name); return nil }
+func (s *ordService[K]) Close(context.Context) error { s.log.close(s.name); return nil }
 
 func newOrdWorker(log *ordLog) *gas.Worker {
 	return gas.NewWorker(
@@ -122,10 +123,10 @@ func TestShutdownClosesServicesInReverseInitOrder(t *testing.T) {
 		log := &ordLog{}
 		w := newOrdWorker(log)
 
-		if err := w.InitServices(); err != nil {
+		if err := w.InitServices(context.Background()); err != nil {
 			t.Fatalf("run %d: InitServices: %v", run, err)
 		}
-		if err := w.Shutdown(); err != nil {
+		if err := w.Shutdown(context.Background()); err != nil {
 			t.Fatalf("run %d: Shutdown: %v", run, err)
 		}
 
@@ -148,7 +149,7 @@ func TestShutdownClosesServicesInReverseInitOrder(t *testing.T) {
 
 // TestShutdownNeverClosesADependencyFirst states the safety property the
 // ordering exists to guarantee, independent of the exact permutation: when
-// Close() runs for a service, every dependency it was built from must still be
+// Close runs for a service, every dependency it was built from must still be
 // open.
 func TestShutdownNeverClosesADependencyFirst(t *testing.T) {
 	const repeats = 20
@@ -160,10 +161,10 @@ func TestShutdownNeverClosesADependencyFirst(t *testing.T) {
 		log := &ordLog{}
 		w := newOrdWorker(log)
 
-		if err := w.InitServices(); err != nil {
+		if err := w.InitServices(context.Background()); err != nil {
 			t.Fatalf("run %d: InitServices: %v", run, err)
 		}
-		if err := w.Shutdown(); err != nil {
+		if err := w.Shutdown(context.Background()); err != nil {
 			t.Fatalf("run %d: Shutdown: %v", run, err)
 		}
 
@@ -184,7 +185,7 @@ func TestShutdownNeverClosesADependencyFirst(t *testing.T) {
 
 // Scope.Close had the identical defect on the per-request path: it ranged over
 // the scope's resolved map, so scoped services were torn down in a random
-// order and one could be closed before a scoped dependency it uses in Close().
+// order and one could be closed before a scoped dependency it uses in Close.
 func TestScopeClosesInReverseResolutionOrder(t *testing.T) {
 	const repeats = 20
 
@@ -204,11 +205,11 @@ func TestScopeClosesInReverseResolutionOrder(t *testing.T) {
 			return &ordService[ordTag2]{log: log, name: "S2"}
 		}, gas.ServiceLifetimeScoped)
 
-		scope := c.NewScope()
+		scope := c.NewScope(context.Background())
 		if _, err := scope.Resolve[*ordService[ordTag2]](); err != nil {
 			t.Fatalf("run %d: resolve: %v", run, err)
 		}
-		if err := scope.Close(); err != nil {
+		if err := scope.Close(context.Background()); err != nil {
 			t.Fatalf("run %d: scope close: %v", run, err)
 		}
 

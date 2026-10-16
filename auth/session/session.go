@@ -73,8 +73,10 @@ func New(
 func (s *Service) Name() string { return serviceName }
 
 // Init validates configuration, initializes the store, and starts the
-// background cleanup goroutine.
-func (s *Service) Init() error {
+// background cleanup goroutine. The context is unused: the cleanup goroutine
+// runs until Close and deliberately does not derive from the Init context,
+// which the framework cancels as soon as Init returns.
+func (s *Service) Init(_ context.Context) error {
 	if !s.customConfigProvided {
 		if s.cfgProvider != nil {
 			if err := s.cfgProvider.Bind(s.cfg); err != nil {
@@ -94,15 +96,16 @@ func (s *Service) Init() error {
 	}
 
 	if s.cfg.Session.CleanupInterval > 0 {
-		go s.cleanupLoop()
+		go s.cleanupLoop() //nolint:gosec,contextcheck // G118: runs until Close; must not inherit the Init ctx, which is canceled when Init returns
 	}
 
 	s.logger.Info("service initialized").Send()
 	return nil
 }
 
-// Close stops the background cleanup goroutine.
-func (s *Service) Close() error {
+// Close stops the background cleanup goroutine. It does not wait for the
+// goroutine to exit, so the context is unused.
+func (s *Service) Close(_ context.Context) error {
 	s.doneOnce.Do(func() { close(s.done) })
 	return nil
 }

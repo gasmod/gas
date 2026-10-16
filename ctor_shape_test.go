@@ -1,6 +1,7 @@
 package gas_test
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -119,7 +120,7 @@ func TestRegisterCtor_AcceptsValidShapes(t *testing.T) {
 			c := gas.NewServiceContainer()
 			tt.register(c)
 
-			if err := c.BuildAll(); err != nil {
+			if err := c.BuildAll(context.Background()); err != nil {
 				t.Fatalf("BuildAll: %v", err)
 			}
 		})
@@ -135,7 +136,7 @@ func TestRegisterCtor_InterfaceRegistrationResolves(t *testing.T) {
 	c := gas.NewServiceContainer()
 	c.RegisterService[greeter](newConcreteGreeter, gas.ServiceLifetimeSingleton)
 
-	if err := c.BuildAll(); err != nil {
+	if err := c.BuildAll(context.Background()); err != nil {
 		t.Fatalf("BuildAll: %v", err)
 	}
 
@@ -265,7 +266,7 @@ func TestRegisterCtor_RejectedCtorIsNotRegistered(t *testing.T) {
 		c.RegisterService[greeter](func() {}, gas.ServiceLifetimeSingleton)
 	})
 
-	if err := c.BuildAll(); err != nil {
+	if err := c.BuildAll(context.Background()); err != nil {
 		t.Fatalf("BuildAll after a rejected registration: %v", err)
 	}
 

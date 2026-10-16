@@ -35,10 +35,10 @@ func newPgxService(t *testing.T) *database.Service {
 	cfg.Database.DSN = dsn
 
 	s := database.New(database.WithConfig(cfg))(nil, gas.NewNopLogger()())
-	if err := s.Init(); err != nil {
+	if err := s.Init(t.Context()); err != nil {
 		t.Fatalf("Init in pgx mode: %v", err)
 	}
-	t.Cleanup(func() { _ = s.Close() })
+	t.Cleanup(func() { _ = s.Close(context.Background()) })
 	return s
 }
 
@@ -106,7 +106,7 @@ func TestBeginPgxTx_NotPgxMode(t *testing.T) {
 
 func TestBeginPgxTx_Closed(t *testing.T) {
 	s := newTestService(t)
-	_ = s.Close()
+	_ = s.Close(context.Background())
 
 	if _, err := s.BeginPgxTx(context.Background(), nil); err == nil {
 		t.Fatal("expected error when service is closed")
@@ -131,7 +131,7 @@ func TestWithPgxTx_NotPgxMode(t *testing.T) {
 
 func TestWithPgxTx_Closed(t *testing.T) {
 	s := newTestService(t)
-	_ = s.Close()
+	_ = s.Close(context.Background())
 
 	called := false
 	err := s.WithPgxTx(context.Background(), nil, func(pgx.Tx) error {
@@ -185,7 +185,7 @@ func TestPgx_Probes(t *testing.T) {
 		t.Fatalf("CheckReady: %v", err)
 	}
 
-	_ = s.Close()
+	_ = s.Close(context.Background())
 	if err := s.CheckHealth(ctx); err == nil {
 		t.Error("expected CheckHealth to fail after Close")
 	}

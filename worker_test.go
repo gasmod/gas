@@ -34,7 +34,7 @@ func TestNewWorker_WithOptions(t *testing.T) {
 		gas.WithServiceInstance[*testService](svc),
 	)
 
-	if err := w.InitServices(); err != nil {
+	if err := w.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -66,7 +66,7 @@ func TestWorker_StartAndShutdown(t *testing.T) {
 		gas.WithSingletonService[*testService](func() *testService { return svc }),
 	)
 
-	if err := w.Start(); err != nil {
+	if err := w.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -75,7 +75,7 @@ func TestWorker_StartAndShutdown(t *testing.T) {
 		t.Fatalf("expected Init called once, got %d", svc.initCount.Load())
 	}
 
-	if err := w.Shutdown(); err != nil {
+	if err := w.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -94,7 +94,7 @@ func TestWorker_Start_InitFailure(t *testing.T) {
 		),
 	)
 
-	err := w.Start()
+	err := w.Start(context.Background())
 	if err == nil {
 		t.Fatal("expected error from failing service init")
 	}
@@ -107,7 +107,7 @@ func TestWorker_Start_ReadyHookFailure(t *testing.T) {
 		}),
 	)
 
-	err := w.Start()
+	err := w.Start(context.Background())
 	if err == nil || err.Error() != "gas: ready hook: hook failed" {
 		t.Fatalf("expected ready hook error, got: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestWorker_Start_ReadyHooksRunInOrder(t *testing.T) {
 		}),
 	)
 
-	if err := w.Start(); err != nil {
+	if err := w.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -151,7 +151,7 @@ func TestWorker_Shutdown_ReverseOrder(t *testing.T) {
 		gas.WithServiceInstance[*svcB](b),
 	)
 
-	if err := w.Start(); err != nil {
+	if err := w.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -162,7 +162,7 @@ func TestWorker_Shutdown_ReverseOrder(t *testing.T) {
 	})
 
 	_ = closeOrder // tracking would require hooking into Close, but we verify the event fires
-	if err := w.Shutdown(); err != nil {
+	if err := w.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -173,7 +173,7 @@ func TestWorker_Shutdown_ReverseOrder(t *testing.T) {
 
 func TestWorker_Shutdown_EmitsSystemShuttingDown(t *testing.T) {
 	w := gas.NewWorker()
-	if err := w.Start(); err != nil {
+	if err := w.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -182,7 +182,7 @@ func TestWorker_Shutdown_EmitsSystemShuttingDown(t *testing.T) {
 		emitted.Store(true)
 	})
 
-	if err := w.Shutdown(); err != nil {
+	if err := w.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -205,7 +205,7 @@ func TestWorker_InitServices_EmitsAllServicesInitialized(t *testing.T) {
 		},
 	)
 
-	if err := w.InitServices(); err != nil {
+	if err := w.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -225,10 +225,10 @@ func TestWorker_InitServices_Idempotent(t *testing.T) {
 		}),
 	)
 
-	if err := w.InitServices(); err != nil {
+	if err := w.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.InitServices(); err != nil {
+	if err := w.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -248,7 +248,7 @@ func TestWorker_CloseService(t *testing.T) {
 		gas.WithServiceInstance[*testService](svc),
 	)
 
-	if err := w.InitServices(); err != nil {
+	if err := w.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -257,7 +257,7 @@ func TestWorker_CloseService(t *testing.T) {
 		closedName = data.ServiceName
 	})
 
-	if err := w.CloseService[*testService](); err != nil {
+	if err := w.CloseService[*testService](context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -276,7 +276,7 @@ func TestWorker_CloseService(t *testing.T) {
 
 func TestWorker_CloseService_NotActive(t *testing.T) {
 	w := gas.NewWorker()
-	err := w.CloseService[*testService]()
+	err := w.CloseService[*testService](context.Background())
 	if err == nil {
 		t.Fatal("expected error for non-active service")
 	}
@@ -288,10 +288,10 @@ func TestWorker_RestartService(t *testing.T) {
 		gas.WithServiceInstance[*testService](svc),
 	)
 
-	if err := w.InitServices(); err != nil {
+	if err := w.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.CloseService[*testService](); err != nil {
+	if err := w.CloseService[*testService](context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -302,7 +302,7 @@ func TestWorker_RestartService(t *testing.T) {
 		},
 	)
 
-	if err := w.RestartService[*testService](); err != nil {
+	if err := w.RestartService[*testService](context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -323,11 +323,11 @@ func TestWorker_RestartService_AlreadyActive(t *testing.T) {
 	svc := &testService{name: "test-svc"}
 	w := gas.NewWorker(gas.WithServiceInstance[*testService](svc))
 
-	if err := w.InitServices(); err != nil {
+	if err := w.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
-	err := w.RestartService[*testService]()
+	err := w.RestartService[*testService](context.Background())
 	if err == nil {
 		t.Fatal("expected error for already-active service")
 	}
@@ -335,10 +335,10 @@ func TestWorker_RestartService_AlreadyActive(t *testing.T) {
 
 func TestWorker_RestartService_NotFound(t *testing.T) {
 	w := gas.NewWorker()
-	if err := w.InitServices(); err != nil {
+	if err := w.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	err := w.RestartService[*testService]()
+	err := w.RestartService[*testService](context.Background())
 	if err == nil {
 		t.Fatal("expected error for unknown service")
 	}
@@ -350,7 +350,7 @@ func TestWorker_ActiveServices(t *testing.T) {
 		gas.WithServiceInstance[*testService](svc),
 	)
 
-	if err := w.InitServices(); err != nil {
+	if err := w.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -380,11 +380,11 @@ func TestWorker_CloseService_CloseError(t *testing.T) {
 	svc := &testService{name: "failing-close", closeErr: errors.New("close failed")}
 	w := gas.NewWorker(gas.WithServiceInstance[*testService](svc))
 
-	if err := w.InitServices(); err != nil {
+	if err := w.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
-	err := w.CloseService[*testService]()
+	err := w.CloseService[*testService](context.Background())
 	if err != nil {
 		t.Fatalf("expected nil error from CloseService even if Close() fails, got %v", err)
 	}
@@ -422,7 +422,7 @@ func TestWorker_CheckHealth(t *testing.T) {
 		gas.WithServiceInstance[*reporterService[tagB]](sick),
 		gas.WithServiceInstance[*testService](plain),
 	)
-	if err := w.InitServices(); err != nil {
+	if err := w.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -449,7 +449,7 @@ func TestWorker_CheckReady(t *testing.T) {
 		gas.WithServiceInstance[*reporterService[tagA]](ready),
 		gas.WithServiceInstance[*reporterService[tagB]](waiting),
 	)
-	if err := w.InitServices(); err != nil {
+	if err := w.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -467,7 +467,7 @@ func TestWorker_CheckReady(t *testing.T) {
 
 func TestWorker_CheckHealth_EmptyWhenNoReporters(t *testing.T) {
 	w := gas.NewWorker(gas.WithServiceInstance[*testService](&testService{name: "plain"}))
-	if err := w.InitServices(); err != nil {
+	if err := w.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if got := w.CheckHealth(context.Background()); len(got) != 0 {
@@ -481,7 +481,7 @@ func TestWorker_CheckHealth_EmptyWhenNoReporters(t *testing.T) {
 func TestWorker_CheckHealth_ResolvableAsProvider(t *testing.T) {
 	svc := &reporterService[tagA]{name: "svc"}
 	w := gas.NewWorker(gas.WithServiceInstance[*reporterService[tagA]](svc))
-	if err := w.InitServices(); err != nil {
+	if err := w.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -519,10 +519,10 @@ func TestWorker_CheckHealth_AfterCloseService(t *testing.T) {
 		gas.WithServiceInstance[*reporterService[tagA]](a),
 		gas.WithServiceInstance[*reporterService[tagB]](b),
 	)
-	if err := w.InitServices(); err != nil {
+	if err := w.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.CloseService[*reporterService[tagA]](); err != nil {
+	if err := w.CloseService[*reporterService[tagA]](context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	results := w.CheckHealth(context.Background())
@@ -544,7 +544,7 @@ func TestWorker_CheckHealth_HealthOnlyReporter(t *testing.T) {
 		gas.WithServiceInstance[*readyOnlyService[tagB]](ro),
 		gas.WithServiceInstance[*reporterService[tagC]](both),
 	)
-	if err := w.InitServices(); err != nil {
+	if err := w.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -579,7 +579,7 @@ func TestWorker_CheckHealth_PanicRecovered(t *testing.T) {
 		gas.WithServiceInstance[*reporterService[tagA]](good),
 		gas.WithServiceInstance[*panicReporter[tagB]](boom),
 	)
-	if err := w.InitServices(); err != nil {
+	if err := w.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -610,7 +610,7 @@ func TestWorker_CheckHealth_RunsConcurrently(t *testing.T) {
 		gas.WithServiceInstance[*slowReporter[tagB]](b),
 		gas.WithServiceInstance[*slowReporter[tagC]](c),
 	)
-	if err := w.InitServices(); err != nil {
+	if err := w.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -629,7 +629,7 @@ func TestWorker_CheckHealth_RunsConcurrently(t *testing.T) {
 func TestWorker_CheckHealth_ContextPropagates(t *testing.T) {
 	obs := &ctxObservingReporter[tagA]{name: "obs", seen: make(chan context.Context, 1)}
 	w := gas.NewWorker(gas.WithServiceInstance[*ctxObservingReporter[tagA]](obs))
-	if err := w.InitServices(); err != nil {
+	if err := w.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -650,7 +650,7 @@ func TestWorker_CheckHealth_ContextCancellation(t *testing.T) {
 		started: make(chan struct{}, 1),
 	}
 	w := gas.NewWorker(gas.WithServiceInstance[*slowReporter[tagA]](slow))
-	if err := w.InitServices(); err != nil {
+	if err := w.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -685,7 +685,7 @@ func TestWorker_CheckHealth_Concurrent(t *testing.T) {
 		gas.WithServiceInstance[*reporterService[tagB]](b),
 		gas.WithServiceInstance[*reporterService[tagC]](c),
 	)
-	if err := w.InitServices(); err != nil {
+	if err := w.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 

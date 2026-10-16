@@ -36,10 +36,10 @@ func setupAPIKeyService(t *testing.T) *apikey.Service {
 	cfg := apikey.DefaultConfig()
 	svc := apikey.New(apikey.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
 
-	require.NoError(t, svc.Init())
+	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
 
-	t.Cleanup(func() { _ = svc.Close() })
+	t.Cleanup(func() { _ = svc.Close(context.Background()) })
 	return svc
 }
 
@@ -53,10 +53,10 @@ func setupAPIKeyServiceWithConfig(t *testing.T, cfg *apikey.Config) *apikey.Serv
 	migMgr := pg.MigrationManager()
 
 	svc := apikey.New(apikey.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
-	require.NoError(t, svc.Init())
+	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
 
-	t.Cleanup(func() { _ = svc.Close() })
+	t.Cleanup(func() { _ = svc.Close(context.Background()) })
 	return svc
 }
 
@@ -559,10 +559,10 @@ func setupAPIKeyServiceWithProvider(t *testing.T) (*apikey.Service, *testutil.Po
 	migMgr := pg.MigrationManager()
 
 	svc := apikey.New(apikey.WithConfig(apikey.DefaultConfig()))(pg.Provider(), logger, migMgr, nil)
-	require.NoError(t, svc.Init())
+	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
 
-	t.Cleanup(func() { _ = svc.Close() })
+	t.Cleanup(func() { _ = svc.Close(context.Background()) })
 	return svc, pg
 }
 

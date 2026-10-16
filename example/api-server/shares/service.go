@@ -81,13 +81,13 @@ func (s *Service) Name() string { return "shares" }
 
 // Init registers migrations and the notification template, then the
 // authenticated share-creation route and the public share-lookup route.
-func (s *Service) Init() error {
+func (s *Service) Init(ctx context.Context) error {
 	if err := s.mgr.RegisterFS(s, migrationsFS); err != nil {
 		return fmt.Errorf("registering shares migrations: %w", err)
 	}
 
 	// Register email templates into the shared TemplateProvider.
-	if err := s.tmpl.RegisterFS(context.Background(), templatesFS); err != nil {
+	if err := s.tmpl.RegisterFS(ctx, templatesFS); err != nil {
 		return fmt.Errorf("registering share templates: %w", err)
 	}
 
@@ -104,7 +104,7 @@ func (s *Service) Init() error {
 }
 
 // Close releases service resources at shutdown. This service holds none.
-func (s *Service) Close() error { return nil }
+func (s *Service) Close(_ context.Context) error { return nil }
 
 // --- Request/Response types ---
 

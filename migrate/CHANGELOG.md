@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING:** `Service` and `migratetest.MockMigrationManager` implement the
+  context-aware `gas.Service` (`Init(ctx context.Context) error`,
+  `Close(ctx context.Context) error`). `Service.Init` creates the
+  `__gas_migrations` tracking table under the Init context, so a canceled or
+  expired Init context aborts it. The mock's `InitFn` and `CloseFn` fields keep
+  their `func() error` type.
+
 ## [0.3.0] - 2026-07-03
 
 First open source release. Versions prior to 0.3.0 were developed in a private

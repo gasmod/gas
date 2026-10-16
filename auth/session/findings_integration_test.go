@@ -32,9 +32,9 @@ func TestSQLiteTimeParsing_MalformedTimestamp(t *testing.T) {
 	cfg.Session.CookieSecure = false
 
 	svc := session.New(session.WithConfig(cfg))(provider, logger, migMgr, nil)
-	require.NoError(t, svc.Init())
+	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
-	t.Cleanup(func() { _ = svc.Close() })
+	t.Cleanup(func() { _ = svc.Close(context.Background()) })
 
 	// Insert a session with a valid timestamp format.
 	validExpiry := time.Now().Add(24 * time.Hour).UTC().Format("2006-01-02 15:04:05")
@@ -113,9 +113,9 @@ func TestSQLiteTimeParsing_TruncatedTimestamp(t *testing.T) {
 	cfg.Session.CookieSecure = false
 
 	svc := session.New(session.WithConfig(cfg))(provider, logger, migMgr, nil)
-	require.NoError(t, svc.Init())
+	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
-	t.Cleanup(func() { _ = svc.Close() })
+	t.Cleanup(func() { _ = svc.Close(context.Background()) })
 
 	validCreated := time.Now().UTC().Format("2006-01-02 15:04:05")
 
@@ -164,9 +164,9 @@ func TestSessionPostgresHasMetadataDefault(t *testing.T) {
 	cfg.Session.CookieSecure = false
 
 	svc := session.New(session.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
-	require.NoError(t, svc.Init())
+	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
-	t.Cleanup(func() { _ = svc.Close() })
+	t.Cleanup(func() { _ = svc.Close(context.Background()) })
 
 	db := pg.Provider().DB()
 
@@ -230,7 +230,7 @@ func TestSessionCleanupGracefulShutdown(t *testing.T) {
 	cfg.Session.CleanupTimeout = 5 * time.Second
 
 	svc := session.New(session.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
-	require.NoError(t, svc.Init())
+	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
 
 	// Let cleanup run a few cycles.
@@ -238,7 +238,7 @@ func TestSessionCleanupGracefulShutdown(t *testing.T) {
 
 	// Verify Close shuts down cleanly (doesn't hang).
 	done := make(chan error, 1)
-	go func() { done <- svc.Close() }()
+	go func() { done <- svc.Close(context.Background()) }()
 
 	select {
 	case err := <-done:

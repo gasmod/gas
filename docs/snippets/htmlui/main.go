@@ -3,6 +3,7 @@ package main
 
 // #region imports
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
@@ -81,7 +82,7 @@ func (s *Service) notes(w http.ResponseWriter, r *http.Request) {
 // #region funcs
 // Any service can contribute template helpers during Init. Templates are built
 // lazily on first render, so registrations made in Init are always in time.
-func (s *Service) Init() error {
+func (s *Service) Init(_ context.Context) error {
 	s.ui.RegisterFuncs(map[string]any{
 		"formatDate": func(layout string) string { return layout },
 	})

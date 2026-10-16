@@ -20,3 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plus an `io.Closer`, for adding shipping to an existing slog setup (e.g.
   `slog.SetDefault`) without adopting the `gas.Logger` wrapper.
 
+
+### Changed
+
+- `ShippingLogger` implements the context-aware `gas.Service`: `Init(ctx)` and
+  `Close(ctx)`. `Init` stays a no-op (the delivery goroutine starts at
+  construction and never derives from the Init ctx). `Close` ignores ctx; the
+  drain is bounded by the HTTP client timeout. Not marked breaking because
+  `ShippingLogger` has not been released yet.

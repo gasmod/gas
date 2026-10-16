@@ -552,7 +552,7 @@ func New(cfg gas.ConfigProvider) *Service {
     return &Service{cfg: cfg}
 }
 
-func (s *Service) Init() error {
+func (s *Service) Init(ctx context.Context) error {
     var myCfg MyConfig
     return s.cfg.Bind(&myCfg)
 }

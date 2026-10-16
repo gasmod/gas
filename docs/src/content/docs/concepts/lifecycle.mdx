@@ -18,7 +18,7 @@ every DI registration option works with both; only HTTP-specific options such as
 1. **Build singletons.** The container topologically sorts registrations,
    validates lifetimes, and constructs every singleton. `Init` runs on each
    service as it is built, so a service can rely on its dependencies already
-   being initialized.
+   being initialized. See [Init and Close contexts](#init-and-close-contexts).
 2. **Validate.** Registered instances are initialized, the router is sealed, and
    every DI-aware handler's parameters are checked against the container.
 3. **Emit `SystemAllServicesInitialized`.**
@@ -29,6 +29,36 @@ every DI registration option works with both; only HTTP-specific options such as
 
 Anything failing in steps 1 through 5 aborts startup and returns an error. The
 server never accepts a request against a half-built application.
+
+## Init and Close contexts
+
+Every lifecycle method takes a caller context: `Start`, `InitServices`,
+`Shutdown`, and `Stop`, as well as `ServiceContainer.BuildAll`,
+`ServiceContainer.NewScope`, `Scope.Close`, `CloseService`, and
+`RestartService`. `Run` takes none and is unchanged. A service receives that
+context in both of its lifecycle methods:
+
+```go
+func (s *Service) Init(ctx context.Context) error { /* ... */ }
+func (s *Service) Close(ctx context.Context) error { /* ... */ }
+```
+
+The container rejects a type whose `Init` or `Close` lacks the context
+parameter.
+
+The `ctx` passed to `Init` carries a per-service deadline, 15 seconds by
+default. `gas.WithServiceInitTimeout` changes it, `0` disables it, and a
+service implementing `gas.ServiceInitTimeout` sets its own. The context is
+canceled as soon as `Init` returns. When the deadline passes, the container
+cancels the context, waits for `Init` to return, and fails startup.
+
+Use `ctx` for synchronous work in `Init`. A background goroutine started in
+`Init` must not derive its context from it, because that context is canceled
+the moment `Init` returns.
+
+`Close` receives the caller's shutdown context, the one passed to `Shutdown`,
+`Stop`, `CloseService`, or `Scope.Close`. In an `App`, scoped services get the
+request's context for `Init`.
 
 ## Ready hooks
 
@@ -52,10 +82,10 @@ observes the half-seeded state. Any error aborts startup.
 pieces:
 
 ```go
-if err := app.Start(); err != nil { // services, migrations, hooks; does not block
+if err := app.Start(t.Context()); err != nil { // services, migrations, hooks; does not block
 	t.Fatal(err)
 }
-defer app.Stop()
+defer app.Stop(context.Background())
 
 srv := httptest.NewServer(app.Handler()) // router behind CSRF protection
 defer srv.Close()
@@ -70,7 +100,9 @@ same middleware stack without binding a port. See
 `Stop` emits `SystemServerShuttingDown`, gives in-flight requests up to
 `Server.ShutdownTimeout` to finish, then shuts the worker down: emit
 `SystemShuttingDown`, and `Close` every service in **reverse initialization
-order**, so a service can still use its dependencies while closing.
+order**, so a service can still use its dependencies while closing. The `ctx`
+passed to `Stop` or `Shutdown` is handed to every `Close`. `Worker.Shutdown`
+runs once; later calls return nil.
 
 <Aside type="note" title="Worker.Run and Worker.Start">
 `Worker.Run` blocks on SIGINT or SIGTERM and shuts down afterwards, which suits

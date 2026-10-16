@@ -1,6 +1,7 @@
 package gas
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"slices"
@@ -44,9 +45,12 @@ func MiddlewareFuncWithName(name string, fn func(http.Handler) http.Handler) Mid
 func requestScopeMiddleware(container *ServiceContainer) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			scope := container.NewScope()
-			defer func() { _ = scope.Close() }()
-			next.ServeHTTP(w, r.WithContext(WithRequestScope(r.Context(), scope)))
+			ctx := r.Context()
+			scope := container.NewScope(ctx)
+			// Close runs after the response is written, when a disconnected client
+			// may already have canceled ctx; scoped services still get to clean up.
+			defer func() { _ = scope.Close(context.WithoutCancel(ctx)) }()
+			next.ServeHTTP(w, r.WithContext(WithRequestScope(ctx, scope)))
 		})
 	}
 }

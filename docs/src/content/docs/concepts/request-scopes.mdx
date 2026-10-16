@@ -44,7 +44,7 @@ audit := scope.MustResolve[*AuditBuffer]()
 
 ## Closing order
 
-`Scope.Close()` closes scoped services in **reverse resolution order**, so a
+`Scope.Close(ctx)` closes scoped services in **reverse resolution order**, so a
 service can still use the scoped dependencies it was built from while shutting
 down. It mirrors how the container closes singletons in reverse initialization
 order at process shutdown.
@@ -62,8 +62,8 @@ dependency in the handler instead, where the scope is live.
 Background jobs and tests make scopes explicitly:
 
 ```go
-scope := container.NewScope()
-defer scope.Close()
+scope := container.NewScope(ctx)
+defer scope.Close(ctx)
 
 svc, err := scope.Resolve[*MyScopedService]()
 ```

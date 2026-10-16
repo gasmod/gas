@@ -43,11 +43,11 @@ func newTestService(t *testing.T, opts ...dir.Option) (*dir.Service, string) {
 	})
 
 	svc := dir.New(append([]dir.Option{dir.WithRoot(root)}, opts...)...)(nil, gas.NewNopLogger()())
-	if err := svc.Init(); err != nil {
+	if err := svc.Init(context.Background()); err != nil {
 		t.Fatalf("init service: %v", err)
 	}
 	t.Cleanup(func() {
-		if closeErr := svc.Close(); closeErr != nil {
+		if closeErr := svc.Close(context.Background()); closeErr != nil {
 			t.Logf("close service: %v", closeErr)
 		}
 	})
@@ -142,7 +142,7 @@ func TestName(t *testing.T) {
 
 func TestInit_NoRoot(t *testing.T) {
 	svc := dir.New()(nil, gas.NewNopLogger()())
-	if err := svc.Init(); !errors.Is(err, storage.ErrNotInitialized) {
+	if err := svc.Init(context.Background()); !errors.Is(err, storage.ErrNotInitialized) {
 		t.Errorf("Init = %v, want ErrNotInitialized", err)
 	}
 	if err := svc.CheckReady(context.Background()); !errors.Is(err, storage.ErrNotInitialized) {
@@ -152,7 +152,7 @@ func TestInit_NoRoot(t *testing.T) {
 
 func TestClose_RejectsOperations(t *testing.T) {
 	svc, _ := newTestService(t)
-	if err := svc.Close(); err != nil {
+	if err := svc.Close(context.Background()); err != nil {
 		t.Fatalf("close: %v", err)
 	}
 
@@ -199,10 +199,10 @@ func TestClose_RejectsOperations(t *testing.T) {
 
 func TestInit_AfterClose(t *testing.T) {
 	svc, _ := newTestService(t)
-	if err := svc.Close(); err != nil {
+	if err := svc.Close(context.Background()); err != nil {
 		t.Fatalf("close: %v", err)
 	}
-	if err := svc.Init(); err != nil {
+	if err := svc.Init(context.Background()); err != nil {
 		t.Fatalf("re-init: %v", err)
 	}
 	if err := svc.CheckReady(context.Background()); err != nil {

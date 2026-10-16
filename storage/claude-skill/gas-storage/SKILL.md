@@ -300,7 +300,7 @@ func New(storage gas.StorageProvider) *Service {
     return &Service{storage: storage}
 }
 
-func (s *Service) Init() error {
+func (s *Service) Init(_ context.Context) error {
     // use s.storage.Upload, Download, Delete, Head, PresignDownloadURL, PresignUploadURL
     return nil
 }

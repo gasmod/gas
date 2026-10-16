@@ -10,8 +10,8 @@ that registered it. That bookkeeping exists for one reason: a single service can
 be shut down at runtime without restarting the process.
 
 ```go
-app.CloseService[*auth.Service]()   // everything auth registered now returns 503
-app.RestartService[*auth.Service]() // re-initializes and re-arms it
+app.CloseService[*auth.Service](ctx)   // everything auth registered now returns 503
+app.RestartService[*auth.Service](ctx) // re-initializes and re-arms it
 ```
 
 The type argument is the type the service was registered under, matched
@@ -34,7 +34,7 @@ router.Route("/api", func(sub *gas.Router) {
 	sub.Handle(billingSvc, http.MethodGet, "/invoices", handler) // owned by billing
 })
 
-app.CloseService[*auth.Service]()
+app.CloseService[*auth.Service](ctx)
 // GET /api/invoices -> 503, even though billing is still running.
 ```
 

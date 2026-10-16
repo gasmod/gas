@@ -1,6 +1,7 @@
 package gas
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -54,7 +55,7 @@ type pendingHandler struct {
 //
 // Top-level routers created via NewRouter() start unsealed: Use, Handle,
 // Group, and Route calls are deferred until Seal() is called. This lets
-// services register middleware and routes in any order during Init().
+// services register middleware and routes in any order during Init.
 // Seal() flushes all pending middleware first (via chi.Use), then replays
 // pending route operations — guaranteeing middleware-before-routes ordering
 // that Chi requires.
@@ -146,13 +147,12 @@ func (r *Router) Name() string {
 	return "gas/router"
 }
 
-// Init initializes the Router instance and prepares it for handling requests.
-// It returns an error if initialization fails.
-func (r *Router) Init() error { return nil }
+// Init is a no-op. It exists so the Router satisfies Service and can be
+// passed as an owner.
+func (r *Router) Init(context.Context) error { return nil }
 
-// Close terminates any active connections and releases associated resources.
-// It returns an error if the operation fails.
-func (r *Router) Close() error { return nil }
+// Close is a no-op; routes are removed through RemoveByService.
+func (r *Router) Close(context.Context) error { return nil }
 
 // muxSnapshot wraps a chi.Router so it can be stored in an atomic.Pointer
 // (chi.Router is an interface, which atomic.Pointer cannot hold directly).

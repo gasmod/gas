@@ -70,8 +70,10 @@ func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) *Service {
 // Name returns the service identifier.
 func (s *Service) Name() string { return serviceName }
 
-// Init validates the configuration and creates the S3 client.
-func (s *Service) Init() error {
+// Init validates the configuration and creates the S3 client. The AWS
+// configuration is loaded under ctx, so a slow credential chain is bounded by
+// the container's Init deadline.
+func (s *Service) Init(ctx context.Context) error {
 	if !s.customConfigProvided {
 		if s.cfgProvider != nil {
 			if err := s.cfgProvider.Bind(s.cfg); err != nil {
@@ -85,7 +87,7 @@ func (s *Service) Init() error {
 		return err
 	}
 
-	if err := s.connect(); err != nil {
+	if err := s.connect(ctx); err != nil {
 		return err
 	}
 
@@ -97,7 +99,7 @@ func (s *Service) Init() error {
 	return nil
 }
 
-func (s *Service) connect() error {
+func (s *Service) connect(ctx context.Context) error {
 	opts := []func(*awsconfig.LoadOptions) error{
 		awsconfig.WithRegion(s.cfg.Storage.Region),
 	}
@@ -112,7 +114,7 @@ func (s *Service) connect() error {
 		))
 	}
 
-	awsCfg, err := awsconfig.LoadDefaultConfig(context.Background(), opts...)
+	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
 	if err != nil {
 		s.logger.Error("failed to load AWS config").Err("error", err).Send()
 		return fmt.Errorf("%s: load AWS config: %w", s.Name(), err)
@@ -172,8 +174,8 @@ func (s *Service) CheckReady(ctx context.Context) error {
 	return nil
 }
 
-// Close marks the service as closed.
-func (s *Service) Close() error {
+// Close marks the service as closed. The context is unused.
+func (s *Service) Close(context.Context) error {
 	s.closed.Store(true)
 	s.logger.Info("s3 storage closed").Send()
 	return nil

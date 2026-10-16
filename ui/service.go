@@ -80,7 +80,7 @@ func New[T gas.TemplateProvider](
 func (s *Service) Name() string { return "gas/ui" }
 
 // Init initializes the template engine and registers the static file route.
-func (s *Service) Init() error {
+func (s *Service) Init(_ context.Context) error {
 	if err := s.bindConfig(); err != nil {
 		s.logger.Error("failed to bind config").Err("error", err).Send()
 		return err
@@ -165,7 +165,7 @@ func (s *Service) initStaticRoute() error {
 }
 
 // Close marks the service as closed. Subsequent Render calls return 503.
-func (s *Service) Close() error {
+func (s *Service) Close(_ context.Context) error {
 	s.closed.Store(true)
 	return nil
 }
@@ -213,7 +213,7 @@ func (s *Service) RenderFragment(w http.ResponseWriter, name string, data any) e
 
 // RegisterFuncs merges the given functions into the template engine's funcmap.
 // Templates are rebuilt lazily on the next Render call. Safe to call during
-// Init() from other services.
+// Init from other services.
 func (s *Service) RegisterFuncs(funcs template.FuncMap) {
 	if s.engine == nil {
 		s.logger.Warn("template engine not initialized, skipping func registration").Send()

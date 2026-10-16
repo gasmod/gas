@@ -89,8 +89,9 @@ func (s *Service) Name() string {
 	return serviceName
 }
 
-// Init checks that a root is configured and marks the service as open.
-func (s *Service) Init() error {
+// Init checks that a root is configured and marks the service as open. The
+// context is unused.
+func (s *Service) Init(context.Context) error {
 	if s.root == nil {
 		return fmt.Errorf("%s: %w", s.Name(), storage.ErrNotInitialized)
 	}
@@ -98,8 +99,8 @@ func (s *Service) Init() error {
 	return nil
 }
 
-// Close marks the service as closed.
-func (s *Service) Close() error {
+// Close marks the service as closed. The context is unused.
+func (s *Service) Close(context.Context) error {
 	s.closed.Store(true)
 	return nil
 }

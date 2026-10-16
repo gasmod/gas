@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING:** `db.Store` implements the context-aware `gas.Service`
+  (`Init(ctx context.Context) error`, `Close(ctx context.Context) error`).
+  Both are synchronous and do not use the context. `dir.Store.Close` is an
+  `io.Closer` and keeps its `Close() error` signature.
+
 ## [0.3.0] - 2026-07-03
 
 First open source release. Versions prior to 0.3.0 were developed in a private

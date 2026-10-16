@@ -17,10 +17,10 @@ func newTestService(t *testing.T, _ ...Option) *Service {
 	cfg.Cache.CleanupInterval = 0 // disable background cleanup in tests
 
 	svc := New(WithConfig(cfg))(nil, gas.NewNopLogger()())
-	if err := svc.Init(); err != nil {
+	if err := svc.Init(t.Context()); err != nil {
 		t.Fatalf("Init() failed: %v", err)
 	}
-	t.Cleanup(func() { _ = svc.Close() })
+	t.Cleanup(func() { _ = svc.Close(context.Background()) })
 	return svc
 }
 
@@ -164,10 +164,10 @@ func TestMaxEntries(t *testing.T) {
 	cfg.Cache.CleanupInterval = 0
 
 	svc := New(WithConfig(cfg))(nil, gas.NewNopLogger()())
-	if err := svc.Init(); err != nil {
+	if err := svc.Init(t.Context()); err != nil {
 		t.Fatalf("Init() error: %v", err)
 	}
-	t.Cleanup(func() { _ = svc.Close() })
+	t.Cleanup(func() { _ = svc.Close(context.Background()) })
 
 	ctx := context.Background()
 	_ = svc.Set(ctx, "k1", []byte("v1"), 5*time.Minute)
@@ -189,7 +189,7 @@ func TestClosedServiceReturnsError(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	_ = svc.Close()
+	_ = svc.Close(context.Background())
 
 	if _, err := svc.Get(ctx, "k"); !errors.Is(err, cache.ErrClosed) {
 		t.Errorf("Get() on closed = %v, want %v", err, cache.ErrClosed)
@@ -212,10 +212,10 @@ func TestCleanup(t *testing.T) {
 	cfg.Cache.CleanupInterval = 10 * time.Millisecond
 
 	svc := New(WithConfig(cfg))(nil, gas.NewNopLogger()())
-	if err := svc.Init(); err != nil {
+	if err := svc.Init(t.Context()); err != nil {
 		t.Fatalf("Init() error: %v", err)
 	}
-	t.Cleanup(func() { _ = svc.Close() })
+	t.Cleanup(func() { _ = svc.Close(context.Background()) })
 
 	ctx := context.Background()
 	_ = svc.Set(ctx, "key1", []byte("v1"), 1*time.Millisecond)
@@ -239,10 +239,10 @@ func TestDefaultTTL(t *testing.T) {
 	cfg.Cache.CleanupInterval = 0
 
 	svc := New(WithConfig(cfg))(nil, gas.NewNopLogger()())
-	if err := svc.Init(); err != nil {
+	if err := svc.Init(t.Context()); err != nil {
 		t.Fatalf("Init() error: %v", err)
 	}
-	t.Cleanup(func() { _ = svc.Close() })
+	t.Cleanup(func() { _ = svc.Close(context.Background()) })
 
 	ctx := context.Background()
 	_ = svc.Set(ctx, "key1", []byte("v1"), 0) // uses DefaultTTL

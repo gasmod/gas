@@ -47,17 +47,35 @@ CacheControl), see `references/middleware.md`.
 ## Service Interface
 
 Any type registered with the DI container that implements `Service` gets
-automatic lifecycle management: `Init()` after construction, `Close()` at
-shutdown (singletons) or scope end (scoped). Transient services **cannot**
+automatic lifecycle management: `Init(ctx)` after construction, `Close(ctx)`
+at shutdown (singletons) or scope end (scoped). Transient services **cannot**
 implement `Service` — registration panics.
 
 ```go
 type Service interface {
-	Name() string // unique identifier, e.g. "gas/auth"
-	Init() error  // register routes, middleware, subscriptions
-	Close() error // cleanup internal resources
+	Name() string                    // unique identifier, e.g. "gas/auth"
+	Init(ctx context.Context) error  // register routes, middleware, subscriptions
+	Close(ctx context.Context) error // cleanup internal resources
 }
 ```
+
+**Init's context.** A singleton's Init gets the caller's startup context
+(`Start(ctx)` / `RestartService(ctx)`) plus an init deadline, 15s by default
+(`gas.WithServiceInitTimeout`, 0 disables it, negative panics; a service
+implementing `gas.ServiceInitTimeout` sets its own). When the deadline passes
+the container cancels ctx, **waits for Init to return**, and fails with an
+error wrapping `context.DeadlineExceeded`; an Init that ignores ctx and
+returns nil late is closed again. So:
+
+- Do synchronous startup work (dial, ping, retry loops, migrations) with ctx.
+- Never derive a background goroutine from Init's ctx: it is canceled as soon
+  as Init returns. Give the goroutine its own context and cancel it in Close.
+- A scoped service's Init gets the scope's context (the request's, in an App),
+  with no added deadline.
+
+Close gets the caller's shutdown context (`Shutdown(ctx)` / `Stop(ctx)` /
+`CloseService(ctx)`; a request scope passes the request context without its
+cancellation).
 
 **Declare `Init` or `Close` and you owe all three.** They are the managed
 lifecycle, so a registered type declaring either one must implement the full
@@ -66,14 +84,16 @@ at startup — `BuildAll` returns an error naming what is missing or mis-typed:
 
 ```
 gas: *app.Foo declares Close but does not implement gas.Service
-(missing Name() string; missing Init() error); Init and Close are the
+(missing Name() string; missing Init(context.Context) error); Init and Close are the
 managed lifecycle, so a type declaring either must implement all of
 gas.Service — otherwise it is never initialized, never closed, and
 invisible to the kill switch
 ```
 
 Watch for these, all of which are rejected:
-- `func (s *Foo) Init()` — no `error` return, so it is not the interface method
+- `func (s *Foo) Init() error` — the pre-context signature; the error says
+  `want Init(context.Context) error`
+- `func (s *Foo) Init(ctx context.Context)` — no `error` return, so it is not the interface method
 - any two of the three, or just one: `Init` alone, `Close` alone, `Name`+`Close`
 - registering the value type (`WithSingletonService[Foo]`) when the methods are
   declared on `*Foo` — register `*Foo`
@@ -128,10 +148,11 @@ gas.WithReadyFunc(fn func(*ServiceContainer) error) WorkerOption
 ```
 
 `WithServiceInstance` means pre-**constructed**, not pre-**initialized**. If the
-value implements `Service`, the container calls `Init()` on it during
+value implements `Service`, the container calls `Init(ctx)` on it during
 `InitServices` (before anything it constructs, so reverse-order shutdown stays
-correct) and `Close()` at shutdown, exactly as for a constructor-registered
-service. Do not call `Init()` yourself before registering, or it runs twice.
+correct) and `Close(ctx)` at shutdown, exactly as for a constructor-registered
+service, with the same init deadline. Do not call `Init` yourself before
+registering, or it runs twice.
 
 ### AppOption functions (only work with NewApp)
 
@@ -173,8 +194,8 @@ w := gas.NewWorker(opts ...Option) *Worker
 | `RegisterServiceInstance[T]` | `(val T)`      | Registers a pre-built value under `T`, the static type at the call site          |
 | `ReadyFunc`        | `(fn func(*ServiceContainer) error)` | Imperative form of `WithReadyFunc`; panics if called after the ready hooks ran |
 | `ActiveServices`   | `() []string`            | Names of active services, including the framework ones (`gas/worker`, `gas/eventbus`, `gas/router` in an App) |
-| `CloseService[T Service]`   | `() error`      | Kill switch: 503 the service's routes and middleware, remove subs, `Close()`, emit event |
-| `RestartService[T Service]` | `() error`      | Re-initialize a previously closed service, re-arming its routes and middleware   |
+| `CloseService[T Service]`   | `(ctx) error`   | Kill switch: 503 the service's routes and middleware, remove subs, `Close(ctx)`, emit event |
+| `RestartService[T Service]` | `(ctx) error`   | Re-initialize a previously closed service under the init deadline, re-arming its routes and middleware |
 | `CheckHealth`      | `(ctx) map[string]error` | Concurrently polls all active `HealthReporter`s; also satisfies `HealthProvider` |
 | `CheckReady`       | `(ctx) map[string]error` | Concurrently polls all active `ReadyReporter`s; also satisfies `ReadyProvider`   |
 
@@ -185,12 +206,12 @@ w := gas.NewWorker(
     gas.WithSingletonService[*database.Service](database.New()),
     gas.WithSingletonService[*myservice.Service](myservice.New),
 )
-if err := w.Start(); err != nil { log.Fatal(err) }
-defer w.Shutdown()
+if err := w.Start(context.Background()); err != nil { log.Fatal(err) }
+defer func() { _ = w.Shutdown(context.Background()) }() // runs once; returns Close errors joined
 
 lambda.Start(func(ctx context.Context, event MyEvent) error {
-    scope := w.ServiceContainer().NewScope()
-    defer scope.Close()
+    scope := w.ServiceContainer().NewScope(ctx)
+    defer func() { _ = scope.Close(context.WithoutCancel(ctx)) }()
     svc := scope.MustResolve[*myservice.Service]()
     return svc.Handle(ctx, event)
 })
@@ -286,7 +307,7 @@ scope.MustResolve[T any]() T
 ```
 
 Scoped registrations cannot be resolved from the container; resolve them from
-a `Scope` (`c.NewScope()`), which also serves singletons and transients.
+a `Scope` (`c.NewScope(ctx)`), which also serves singletons and transients.
 
 ```go
 svc := c.MustResolve[*myservice.Service]()
@@ -296,21 +317,22 @@ svc := c.MustResolve[*myservice.Service]()
 
 | Method                                 | Description                                                   |
 |----------------------------------------|---------------------------------------------------------------|
-| `NewServiceContainer()`                | Create new container                                          |
-| `BuildAll() error`                     | Validate lifetimes, topo-sort, eagerly resolve all singletons |
-| `NewScope() *Scope`                    | Create a scoped resolution context                            |
+| `NewServiceContainer(opts ...ServiceContainerOption)` | Create new container (`WithServiceContainerServiceTimeout` sets the init deadline) |
+| `BuildAll(ctx) error`                  | Validate lifetimes, topo-sort, eagerly resolve all singletons |
+| `NewScope(ctx) *Scope`                 | Create a scoped resolution context; ctx goes to scoped Inits  |
 | `EachInstance(fn func(reflect.Value))` | Iterate all built singleton instances                         |
 | `CanResolve[T any]() bool`             | Check if `T` can be resolved; builds nothing                  |
 
-**Captive dependency validation:** `BuildAll()` rejects singletons that depend
+**Captive dependency validation:** `BuildAll(ctx)` rejects singletons that depend
 on scoped or transient services — this would "capture" a short-lived instance
 inside a long-lived one. Error: `captive dependency: singleton X depends on scoped Y`.
 
 ## Request Scopes
 
 The App installs middleware that creates a DI `Scope` per HTTP request. Scoped
-services get a fresh instance per request — `Init()` on first resolution,
-`Close()` when the request completes.
+services get a fresh instance per request — `Init(ctx)` with the request
+context on first resolution, `Close(ctx)` when the request completes (with the
+request context minus its cancellation, so cleanup runs after a disconnect).
 
 DI-aware handlers resolve scoped services automatically via their parameter
 list. For classic `http.HandlerFunc` handlers:
@@ -329,9 +351,9 @@ scope := gas.RequestScope(r) // panics outside scope middleware
 For non-HTTP contexts (background jobs, tests):
 
 ```go
-scope := container.NewScope()
-defer scope.Close()
-ctx := gas.WithRequestScope(context.Background(), scope)
+scope := container.NewScope(ctx)
+defer func() { _ = scope.Close(context.WithoutCancel(ctx)) }()
+ctx = gas.WithRequestScope(ctx, scope)
 ```
 
 ## Router
@@ -418,7 +440,7 @@ registered in that block, not to sibling blocks on the same pattern.
 
 ### Kill switch
 
-`Worker.CloseService[T]()` tears down the service registered under `T` at
+`Worker.CloseService[T](ctx)` tears down the service registered under `T` at
 runtime; the App wires it to `Router.RemoveByService(service)`. `T` must be the
 exact type the service was registered under (no interface matching), and the
 service must already be built. **Everything the service registered is
@@ -440,7 +462,7 @@ router.Route("/api", func(sub *gas.Router) {
     sub.Handle(billingSvc, "GET", "/invoices", handler) // owned by billingSvc
 })
 
-worker.CloseService[*auth.Service]()
+worker.CloseService[*auth.Service](ctx)
 // GET /api/invoices -> 503, even though billing is still running.
 ```
 
@@ -453,14 +475,14 @@ Ownership is only tracked for names passed to `Register`. An inline
 `MiddlewareFunc` (and `MiddlewareFuncWithName`, which carries its own func) has
 no owner and survives any teardown.
 
-`RestartService[T]()` reverses it: re-registering the name re-arms the
+`RestartService[T](ctx)` reverses it: re-registering the name re-arms the
 middleware everywhere, and re-registering the routes brings them back.
 
 ### Deferred registration
 
 Top-level routers start **unsealed** — `Use`, `Handle`, `Group`, and `Route`
 calls are deferred until `Seal()`. This lets services register in any order
-during `Init()`. The App calls `Seal()` automatically after all services init.
+during `Init`. The App calls `Seal()` automatically after all services init.
 
 ### Other Router methods
 
@@ -724,7 +746,7 @@ config.Validate() error
 ```
 
 Worker does not have a `Config` struct. Individual services bind their own
-configuration from `gas.ConfigProvider` during `Init()`.
+configuration from `gas.ConfigProvider` during `Init`.
 
 ## Writing a Service (Complete Example)
 
@@ -732,6 +754,7 @@ configuration from `gas.ConfigProvider` during `Init()`.
 package myservice
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/gasmod/gas"
@@ -748,7 +771,7 @@ func New(router *gas.Router, bus *gas.EventBus) *Service {
 
 func (s *Service) Name() string { return "myservice" }
 
-func (s *Service) Init() error {
+func (s *Service) Init(_ context.Context) error {
 	// DI-aware handler — db is resolved per-request from the scoped container.
 	s.router.Handle(s, "GET", "/hello", s.handleHello)
 
@@ -771,7 +794,7 @@ func (s *Service) handleHello(ctx gas.Context, db gas.DatabaseProvider) error {
 	return ctx.JSON(http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func (s *Service) Close() error { return nil }
+func (s *Service) Close(_ context.Context) error { return nil }
 ```
 
 ```go

@@ -171,7 +171,7 @@ func (e *Engine) RenderFragment(w http.ResponseWriter, name string, data any) er
 
 // lookup returns the compiled template for the given page name. On the first
 // call it triggers Build() lazily so that template funcs registered by other
-// services during Init() are available. In dev mode templates are rebuilt on
+// services during Init are available. In dev mode templates are rebuilt on
 // every call.
 func (e *Engine) lookup(name string) (*template.Template, error) {
 	e.mu.RLock()

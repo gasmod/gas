@@ -66,8 +66,8 @@ func receives `gas.ConfigProvider` and `gas.Logger` from the DI container.
 | Method    | Signature        | Description                              |
 |-----------|------------------|------------------------------------------|
 | `Name`    | `() string`      | Returns `"gas/database"`                 |
-| `Init`    | `() error`       | Opens connection, configures pool, pings |
-| `Close`   | `() error`       | Closes underlying connections            |
+| `Init`    | `(context.Context) error` | Opens connection, configures pool, pings |
+| `Close`   | `(context.Context) error` | Closes underlying connections |
 
 ### Database Access
 
@@ -160,7 +160,8 @@ func (c *Config) Validate() error
 When `ConnRetries > 0`, the service retries the initial connection with
 exponential backoff. The interval starts at `ConnRetryInterval` (default 2s)
 and doubles after each failed attempt. If all retries are exhausted, `Init`
-returns an error.
+returns an error. The ping uses the Init context, and retries stop early when
+that context is canceled or its deadline passes (the error wraps `ctx.Err()`).
 
 ## Driver Constants
 
@@ -199,7 +200,7 @@ database.New(database.WithConfig(&database.Config{
         DSN:  "postgres://user:pass@localhost:5432/mydb?sslmode=disable",
     },
 }))
-// After Init(): svc.DB() -> *sql.DB, svc.Pool() -> *pgxpool.Pool
+// After Init(ctx): svc.DB() -> *sql.DB, svc.Pool() -> *pgxpool.Pool
 ```
 
 ### SQLite
@@ -251,7 +252,7 @@ func New(db gas.DatabaseProvider) *Service {
     return &Service{db: db}
 }
 
-func (s *Service) Init() error {
+func (s *Service) Init(ctx context.Context) error {
     s.queries = authdb.New(s.db.DB()) // sqlc database/sql mode
     return nil
 }
@@ -263,7 +264,7 @@ func (s *Service) Init() error {
 `false` when the provider is not pgx-backed or is running in `ModeSQL`:
 
 ```go
-func (s *Service) Init() error {
+func (s *Service) Init(ctx context.Context) error {
     if pool, ok := database.PoolFrom(s.db); ok {
         s.queries = authdb.New(pool) // sqlc pgx mode
     } else {

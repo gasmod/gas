@@ -929,7 +929,7 @@ func TestApp_CloseService(t *testing.T) {
 		gas.WithServiceInstance[*testService](svc),
 	)
 
-	if err := app.InitServices(); err != nil {
+	if err := app.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -947,7 +947,7 @@ func TestApp_CloseService(t *testing.T) {
 	})
 
 	// Kill-switch.
-	if err := app.CloseService[*testService](); err != nil {
+	if err := app.CloseService[*testService](context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -985,11 +985,11 @@ func TestApp_RestartService(t *testing.T) {
 		gas.WithServiceInstance[*testService](svc),
 	)
 
-	if err := app.InitServices(); err != nil {
+	if err := app.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := app.CloseService[*testService](); err != nil {
+	if err := app.CloseService[*testService](context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1002,7 +1002,7 @@ func TestApp_RestartService(t *testing.T) {
 	)
 
 	// Restart.
-	if err := app.RestartService[*testService](); err != nil {
+	if err := app.RestartService[*testService](context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1021,7 +1021,7 @@ func TestApp_RestartService(t *testing.T) {
 
 func TestApp_CloseService_NotActive(t *testing.T) {
 	app := gas.NewApp()
-	err := app.CloseService[*testService]()
+	err := app.CloseService[*testService](context.Background())
 	if err == nil {
 		t.Fatal("expected error for non-active service")
 	}
@@ -1031,11 +1031,11 @@ func TestApp_RestartService_AlreadyActive(t *testing.T) {
 	svc := &testService{name: "test-svc"}
 	app := gas.NewApp(gas.WithServiceInstance[*testService](svc))
 
-	if err := app.InitServices(); err != nil {
+	if err := app.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
-	err := app.RestartService[*testService]()
+	err := app.RestartService[*testService](context.Background())
 	if err == nil {
 		t.Fatal("expected error for already-active service")
 	}
@@ -1043,10 +1043,10 @@ func TestApp_RestartService_AlreadyActive(t *testing.T) {
 
 func TestApp_RestartService_NotFound(t *testing.T) {
 	app := gas.NewApp()
-	if err := app.InitServices(); err != nil {
+	if err := app.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	err := app.RestartService[*testService]()
+	err := app.RestartService[*testService](context.Background())
 	if err == nil {
 		t.Fatal("expected error for unknown service")
 	}
@@ -1062,7 +1062,7 @@ func TestApp_InitFailure(t *testing.T) {
 		),
 	)
 
-	err := app.InitServices()
+	err := app.InitServices(context.Background())
 	if err == nil {
 		t.Fatal("expected error from failing service init")
 	}
@@ -1075,7 +1075,7 @@ func TestApp_ActiveServices(t *testing.T) {
 		gas.WithServiceInstance[*testService](svc1),
 	)
 
-	if err := app.InitServices(); err != nil {
+	if err := app.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1106,7 +1106,7 @@ func TestApp_TransientServiceRejected(t *testing.T) {
 
 // requestLogger is a scoped Service that captures log lines for a single
 // HTTP request. A new instance is created per scope (i.e. per request),
-// Init() prepares it, and Close() flushes or discards the buffer.
+// Init prepares it, and Close flushes or discards the buffer.
 type requestLogger struct {
 	lines  []string
 	closed bool
@@ -1116,7 +1116,7 @@ func newRequestLogger() *requestLogger { return &requestLogger{} }
 
 func (r *requestLogger) Name() string { return "request-logger" }
 
-func (r *requestLogger) Init() error {
+func (r *requestLogger) Init(context.Context) error {
 	r.lines = nil
 	r.closed = false
 	return nil
@@ -1124,7 +1124,7 @@ func (r *requestLogger) Init() error {
 
 func (r *requestLogger) Log(msg string) { r.lines = append(r.lines, msg) }
 
-func (r *requestLogger) Close() error {
+func (r *requestLogger) Close(context.Context) error {
 	r.closed = true
 	return nil
 }
@@ -1142,14 +1142,14 @@ func TestScopedService_PerRequestLifecycle(t *testing.T) {
 
 	// BuildAll validates lifetimes and builds singletons (none here besides
 	// whatever is pre-registered). Scoped ctors are validated but not called.
-	if err := c.BuildAll(); err != nil {
+	if err := c.BuildAll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
 	// --- simulate two HTTP requests ---
 
 	// Request 1
-	scope1 := c.NewScope()
+	scope1 := c.NewScope(context.Background())
 
 	rl1, err := scope1.Resolve[*requestLogger]()
 	if err != nil {
@@ -1164,7 +1164,7 @@ func TestScopedService_PerRequestLifecycle(t *testing.T) {
 		t.Fatal("expected same instance within a single scope")
 	}
 
-	if s1Err := scope1.Close(); s1Err != nil {
+	if s1Err := scope1.Close(context.Background()); s1Err != nil {
 		t.Fatal(s1Err)
 	}
 	if !rl1.closed {
@@ -1175,7 +1175,7 @@ func TestScopedService_PerRequestLifecycle(t *testing.T) {
 	}
 
 	// Request 2 — gets a completely fresh instance.
-	scope2 := c.NewScope()
+	scope2 := c.NewScope(context.Background())
 
 	rl2, err := scope2.Resolve[*requestLogger]()
 	if err != nil {
@@ -1186,7 +1186,7 @@ func TestScopedService_PerRequestLifecycle(t *testing.T) {
 	}
 	rl2.Log("request 2: only line")
 
-	if s2Err := scope2.Close(); s2Err != nil {
+	if s2Err := scope2.Close(context.Background()); s2Err != nil {
 		t.Fatal(s2Err)
 	}
 	if len(rl2.lines) != 1 {
@@ -1201,7 +1201,7 @@ func TestScopedService_HTTPMiddleware(t *testing.T) {
 	c := gas.NewServiceContainer()
 	c.RegisterService[*requestLogger](newRequestLogger, gas.ServiceLifetimeScoped)
 
-	if err := c.BuildAll(); err != nil {
+	if err := c.BuildAll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1210,8 +1210,8 @@ func TestScopedService_HTTPMiddleware(t *testing.T) {
 	type scopeKey struct{}
 	scopeMiddleware := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			scope := c.NewScope()
-			defer func() { _ = scope.Close() }()
+			scope := c.NewScope(r.Context())
+			defer func() { _ = scope.Close(context.WithoutCancel(r.Context())) }() //nolint:contextcheck // detached on purpose
 			ctx := context.WithValue(r.Context(), scopeKey{}, scope)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
@@ -1244,13 +1244,13 @@ func TestScopedService_HTTPMiddleware(t *testing.T) {
 
 // TestApp_RequestScopeMiddleware verifies that App automatically installs
 // per-request scope middleware and that scoped services get a fresh instance
-// per request with Close() called after each request completes.
+// per request with Close called after each request completes.
 func TestApp_RequestScopeMiddleware(t *testing.T) {
 	app := gas.NewApp(
 		gas.WithService[*requestLogger](newRequestLogger, gas.ServiceLifetimeScoped),
 	)
 
-	if err := app.InitServices(); err != nil {
+	if err := app.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1294,7 +1294,7 @@ func TestApp_RequestScopeClose(t *testing.T) {
 		gas.WithService[*requestLogger](newRequestLogger, gas.ServiceLifetimeScoped),
 	)
 
-	if err := app.InitServices(); err != nil {
+	if err := app.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 

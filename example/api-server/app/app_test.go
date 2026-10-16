@@ -88,7 +88,7 @@ func newTestApp(t *testing.T) *testEnv {
 	// Start builds all 15 registered services in dependency order, runs each
 	// Init (route and migration registration), seals the router, and validates
 	// that every DI-aware handler's dependencies resolve.
-	if err := a.Start(); err != nil {
+	if err := a.Start(t.Context()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -98,7 +98,7 @@ func newTestApp(t *testing.T) *testEnv {
 	// each one having to remember.
 	t.Cleanup(func() {
 		srv.Close()
-		if err := a.Stop(); err != nil {
+		if err := a.Stop(context.Background()); err != nil {
 			t.Errorf("Stop: %v", err)
 		}
 	})

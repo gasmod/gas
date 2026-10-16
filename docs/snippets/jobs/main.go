@@ -80,7 +80,7 @@ func lambdaSetup() *gas.Worker {
 	w := gas.NewWorker(
 		gas.WithSingletonService[gas.Logger](gaslog.NewSlogLogger()),
 	)
-	if err := w.Start(); err != nil { // Start does not block
+	if err := w.Start(context.Background()); err != nil { // Start does not block
 		log.Fatal(err)
 	}
 	return w

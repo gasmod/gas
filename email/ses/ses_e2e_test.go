@@ -135,10 +135,10 @@ func newE2EService(t *testing.T, endpoint string, tmpl gas.TemplateProvider) *se
 	cfg.GasEnv = "production"
 	ctor := ses.New(ses.WithConfig(cfg))
 	svc := ctor(tmpl, nil, gas.NewNopLogger()())
-	if err := svc.Init(); err != nil {
+	if err := svc.Init(t.Context()); err != nil {
 		t.Fatalf("init: %v", err)
 	}
-	t.Cleanup(func() { _ = svc.Close() })
+	t.Cleanup(func() { _ = svc.Close(context.Background()) })
 	return svc
 }
 

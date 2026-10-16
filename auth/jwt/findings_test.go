@@ -1,6 +1,7 @@
 package jwt_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -66,7 +67,7 @@ func TestSignUsesValidatedExpiry_SignWithExpiryBypasses(t *testing.T) {
 	// But a running service with valid config still allows negative expiry via SignWithExpiry.
 	cfg.JWT.Expiry = 15 * time.Minute
 	svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, gas.NewNopLogger()())
-	require.NoError(t, svc.Init())
+	require.NoError(t, svc.Init(context.Background()))
 
 	_, err := svc.SignWithExpiry("user-1", nil, -1*time.Hour)
 	assert.NoError(t, err, "SignWithExpiry does not validate its expiry parameter")

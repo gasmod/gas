@@ -39,10 +39,10 @@ func setupSessionService(t *testing.T) *session.Service {
 
 	svc := session.New(session.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
 
-	require.NoError(t, svc.Init())
+	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
 
-	t.Cleanup(func() { _ = svc.Close() })
+	t.Cleanup(func() { _ = svc.Close(context.Background()) })
 	return svc
 }
 
@@ -56,9 +56,9 @@ func setupSessionServiceWithCfg(t *testing.T, cfg *session.Config) *session.Serv
 	migMgr := pg.MigrationManager()
 
 	svc := session.New(session.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
-	require.NoError(t, svc.Init())
+	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
-	t.Cleanup(func() { _ = svc.Close() })
+	t.Cleanup(func() { _ = svc.Close(context.Background()) })
 	return svc
 }
 

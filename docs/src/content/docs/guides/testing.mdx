@@ -55,8 +55,8 @@ Scoped services normally come from the per-request scope. In a test or a
 background job, make one yourself:
 
 ```go
-scope := container.NewScope()
-defer scope.Close() // calls Close on every scoped Service resolved here
+scope := container.NewScope(t.Context())
+defer scope.Close(context.Background()) // calls Close on every scoped Service resolved here
 
 svc := scope.MustResolve[*MyScopedService]()
 ```

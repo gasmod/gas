@@ -26,10 +26,10 @@ func New(storage gas.StorageProvider, router *gas.Router) *Service {
 	return &Service{storage: storage, router: router}
 }
 
-func (s *Service) Name() string { return "files" }
-func (s *Service) Close() error { return nil }
+func (s *Service) Name() string                { return "files" }
+func (s *Service) Close(context.Context) error { return nil }
 
-func (s *Service) Init() error {
+func (s *Service) Init(context.Context) error {
 	s.router.Handle(s, http.MethodGet, "/files/{key}", s.download)
 	return nil
 }
@@ -89,10 +89,10 @@ func TestDownloadRoute(t *testing.T) {
 		gas.WithServiceInstance[gas.StorageProvider](mock),
 		gas.WithSingletonService[*Service](New),
 	)
-	if err := app.Start(); err != nil {
+	if err := app.Start(t.Context()); err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	t.Cleanup(func() { _ = app.Shutdown() })
+	t.Cleanup(func() { _ = app.Shutdown(context.Background()) })
 
 	srv := httptest.NewServer(app.Handler())
 	t.Cleanup(srv.Close)
