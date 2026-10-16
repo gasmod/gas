@@ -1,43 +1,54 @@
-// Package main demonstrates the gas/storage provider interface.
+// Package main demonstrates the gas/storage provider interfaces.
 package main
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
 	"github.com/gasmod/gas"
-	storage "github.com/gasmod/gas/storage"
+	"github.com/gasmod/gas/storage"
 )
 
 // #region service
-// A consuming service depends on the interface, never on a backend package,
-// so it can be tested against storagetest.MockStorage.
+// A consuming service depends on the interfaces, never on a backend package,
+// so it can be tested against storagetest.MockProvider and
+// storagetest.MockPresigner.
 type Service struct {
-	storage gas.StorageProvider
+	storage   storage.Provider
+	presigner storage.Presigner
 }
 
-func New(provider gas.StorageProvider) *Service {
-	return &Service{storage: provider}
+func New(provider storage.Provider, presigner storage.Presigner) *Service {
+	return &Service{storage: provider, presigner: presigner}
 }
 
 // #endregion service
 
 // #region upload
 func (s *Service) Upload(ctx context.Context, key, body string) error {
-	return s.storage.Upload(ctx, key, strings.NewReader(body),
-		gas.WithContentType("text/plain"),
-		gas.WithMetadata(map[string]string{"source": "api"}),
-	)
+	contentType := "text/plain"
+	_, err := s.storage.PutObject(ctx, &storage.PutObjectInput{
+		Body:            strings.NewReader(body),
+		ContentType:     &contentType,
+		Metadata:        map[string]string{"source": "api"},
+		BaseObjectInput: storage.BaseObjectInput{Key: key},
+	})
+	return err
 }
 
 // #endregion upload
 
 // #region download
 func (s *Service) Read(ctx context.Context, key string) ([]byte, error) {
-	obj, err := s.storage.Download(ctx, key)
+	obj, err := s.storage.GetObject(ctx, &storage.GetObjectInput{
+		HeadObjectInput: storage.HeadObjectInput{
+			BaseObjectInput: storage.BaseObjectInput{Key: key},
+		},
+	})
 	if errors.Is(err, storage.ErrKeyNotFound) {
 		return nil, gas.NotFound("file not found").WithCause(err)
 	}
@@ -46,20 +57,25 @@ func (s *Service) Read(ctx context.Context, key string) ([]byte, error) {
 	}
 	defer obj.Body.Close() //nolint:errcheck // documentation snippet
 
-	buf := make([]byte, obj.Size)
-	_, err = obj.Body.Read(buf)
-	return buf, err
+	return io.ReadAll(obj.Body)
 }
 
 // #endregion download
 
 // #region presign
 // Presigned URLs let the browser transfer bytes straight to S3, so large
-// files never pass through your server.
-func (s *Service) UploadLink(ctx context.Context, key string) (string, error) {
-	return s.storage.PresignUploadURL(ctx, key, 15*time.Minute,
-		gas.WithContentType("image/png"),
-	)
+// files never pass through your server. The client must send the returned
+// method and signed headers.
+func (s *Service) UploadLink(ctx context.Context, key string) (*storage.PresignURLResponse, error) {
+	ttl := 15 * time.Minute
+	contentType := "image/png"
+	return s.presigner.PresignUploadURL(ctx, &storage.PresignUploadURLInput{
+		TTL: &ttl,
+		PutObjectInput: storage.PutObjectInput{
+			ContentType:     &contentType,
+			BaseObjectInput: storage.BaseObjectInput{Key: key},
+		},
+	})
 }
 
 // #endregion presign

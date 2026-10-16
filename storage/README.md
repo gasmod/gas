@@ -5,24 +5,27 @@
 Part of the [Gas](../README.md) monorepo · [Documentation](https://gasmod.github.io/gas) · [All modules](../README.md#modules)
 
 Object storage for the [Gas](../README.md) framework, on AWS S3 and S3-compatible services
-such as MinIO, LocalStack, and DigitalOcean Spaces.
+such as MinIO and LocalStack, or on a local directory.
 
-Implements `gas.StorageProvider`.
+Defines `storage.Provider` and `storage.Presigner`.
 
 ```bash
 go get github.com/gasmod/gas/storage
 ```
 
 ```go
-gas.WithSingletonService[gas.StorageProvider](s3.New()),
+gas.WithSingletonService[storage.Provider](s3.NewProvider()),
+gas.WithSingletonService[storage.Presigner](s3.NewPresigner()),
 ```
 
-`s3.New()` needs `gas.ConfigProvider` and `gas.Logger`.
+Both constructors need a `gas.ConfigProvider`.
 
-| Package | Provides |
-|---|---|
-| `storage/s3` | AWS S3 and any S3-compatible object store |
-| `storage/storagetest` | Recording mock of `gas.StorageProvider` |
+| Package               | Provides                                                                     |
+|-----------------------|------------------------------------------------------------------------------|
+| `storage`             | The `Provider` and `Presigner` interfaces, their inputs, and sentinel errors |
+| `storage/s3`          | AWS S3 and any S3-compatible object store                                    |
+| `storage/dir`         | A directory on local disk, through an `os.Root`                              |
+| `storage/storagetest` | Recording mocks of `storage.Provider` and `storage.Presigner`                |
 
 ## Documentation
 
