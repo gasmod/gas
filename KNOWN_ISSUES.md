@@ -73,33 +73,21 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   ```
 
   `CONVENTIONS.md` keeps built-in modules off this path by declaring
-  dependencies as parameters; app code can still reach it.
+  dependencies as parameters; app code can still reach it. An `Init` that
+  resolves its own type through a captured container recurses the same
+  way, because `invoke` runs `Init` before `setInstance` caches the value.
+
+  `Resolve` takes no chain or context, so a resolve from a captured
+  container cannot be told apart from a concurrent one without goroutine
+  identity or an API change. Options considered: tracking a build stack
+  while `BuildAll` runs (exact, and covers the repro above, since
+  `BuildAll` is single-goroutine), plus a depth bound as a backstop for
+  resolves outside `BuildAll` (turns the overflow into an error but cannot
+  name the cycle). Either one interacts with KI-011, since a concurrent
+  resolve during a build would see a false cycle.
 - **Next step**: decide whether resolution should detect re-entrant
-  construction of a type and return a cycle error (a §3 decision in
-  `CLAUDE.md`).
-
-## KI-006: DI errors have no sentinel
-
-- **Status**: decision needed
-- **Area**: core DI (`service_registry.go`).
-- **Found**: 2026-10-16, while writing DI tests.
-- **Detail**: the core package defines no exported `Err*` sentinels, and
-  every DI error is a plain `fmt.Errorf` in `service_registry.go`:
-
-  - `:287` resolver is nil
-  - `:302` resolved incorrect type
-  - `:322` and `:407` no registration
-  - `:338` scoped service resolved outside a scope
-  - `:344` and `:428` unknown lifetime
-  - `:464` no constructor
-  - `:546` and `:552` captive dependency
-  - `:625` circular dependency
-  - `:837` and `:865` startup service-shape errors
-
-  Callers and tests can only match message text, contrary to §2 of
-  `CLAUDE.md`, which asks for `errors.Is` or `errors.As`; the core's own
-  `unhappy_path_test.go:31`, `:55`, and `:78` use `strings.Contains`.
-- **Next step**: one §3 decision covering sentinels for all of these.
+  construction of a type and return a cycle error, and how (a §3
+  decision in `CLAUDE.md`); see KI-011 for the concurrency half.
 
 ## KI-007: `auth.Middleware` treats a nil principal as authenticated
 
@@ -172,3 +160,22 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   assertion is fragile under transport errors.
 - **Next step**: if it recurs, make the fake read the whole part before it
   replies, or accept a transport error in that case.
+
+## KI-011: concurrent lazy singleton resolution is a data race
+
+- **Status**: decision needed
+- **Area**: core DI (`service_registry.go`).
+- **Found**: 2026-10-16, while designing the KI-005 cycle guard.
+- **Detail**: `ServiceContainer` has no mutex; `registrations`,
+  `instances`, and `instanceOrder` are plain maps and slices. `BuildAll`
+  builds every singleton on one goroutine, and after that resolution only
+  reads them, but a singleton resolved lazily (before `InitServices`,
+  registered after it, or from a constructor through a captured
+  container) is built on whichever goroutine asks. With four goroutines
+  calling `Resolve` on the same unbuilt singleton, whose constructor
+  sleeps 20ms, the constructor ran four times and `go test -race`
+  reported three data races.
+- **Next step**: decide whether lazy resolution becomes concurrency-safe,
+  for example one in-flight build per type under a container lock with
+  later callers waiting, weighing the deadlock risk of holding it while a
+  constructor and `Init` run (a §3 decision in `CLAUDE.md`).
