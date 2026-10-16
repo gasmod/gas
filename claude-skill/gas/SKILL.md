@@ -183,10 +183,10 @@ w := gas.NewWorker(opts ...Option) *Worker
 
 | Method             | Signature                | Description                                                                      |
 |--------------------|--------------------------|----------------------------------------------------------------------------------|
-| `Start`            | `() error`               | InitServices → migrations → ready hooks (non-blocking)                           |
-| `Shutdown`         | `() error`               | Emit SystemShuttingDown, close services in reverse order                         |
+| `Start`            | `(ctx) error`            | InitServices → migrations → ready hooks (non-blocking)                           |
+| `Shutdown`         | `(ctx) error`            | Emit SystemShuttingDown, close services in reverse order                         |
 | `Run`              | `() error`               | Start → block on SIGINT/SIGTERM → Shutdown                                       |
-| `InitServices`     | `() error`               | Build singletons, collect services, emit init event                              |
+| `InitServices`     | `(ctx) error`            | Build singletons, collect services, emit init event                              |
 | `EventBus`         | `() *EventBus`           | The worker's event bus                                                           |
 | `ServiceContainer` | `() *ServiceContainer`   | The DI container                                                                 |
 | `MigrationManager` | `() MigrationManager`    | Resolved from DI, nil if unregistered                                            |
@@ -251,9 +251,9 @@ yourself, or grab the `*http.Server` / `http.Handler` directly.
 | Method    | Signature         | Description                                                           |
 |-----------|-------------------|-----------------------------------------------------------------------|
 | `Run`     | `() error`        | Full lifecycle: Start → Serve → block on signal → Stop                |
-| `Start`   | `() error`        | `Worker.Start` + `bindConfig`. Does not start the HTTP server         |
+| `Start`   | `(ctx) error`     | `Worker.Start` + `bindConfig`. Does not start the HTTP server         |
 | `Serve`   | `() error`        | Starts the HTTP server and blocks until it stops (blocking)           |
-| `Stop`    | `() error`        | Emit shutdown event → graceful HTTP shutdown → `Worker.Shutdown`      |
+| `Stop`    | `(ctx) error`     | Emit shutdown event → graceful HTTP shutdown → `Worker.Shutdown`      |
 | `Server`  | `() *http.Server` | Lazily-built `*http.Server` from current Config (cached, thread-safe) |
 | `Handler` | `() http.Handler` | Router wrapped in CSRF protection — useful for `httptest.NewServer`   |
 | `Config`  | `() *Config`      | Application configuration (with ServerSettings)                       |

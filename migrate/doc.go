@@ -16,7 +16,8 @@
 // Starting the service picks the query adapter for the provider's driver
 // ("postgres" and "pgx", "mysql", or "sqlite" and "sqlite3"; any other
 // driver fails) and creates the __gas_migrations tracking table if it does
-// not exist. Stopping it makes RunPending, Down, and CheckReady return an
+// not exist, under the start context, so the container's init deadline
+// bounds it. Stopping it makes RunPending, Down, and CheckReady return an
 // error.
 //
 // # Registering

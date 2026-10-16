@@ -25,7 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `gas.ErrScopeRequired`, `gas.ErrNoConstructor`, `gas.ErrInvalidLifetime`,
   and `gas.ErrInvalidServiceShape`. Errors from `Resolve`, `BuildAll`, and
   startup wrap the matching sentinel, so callers can use `errors.Is` instead
-  of matching message text. The messages are unchanged.
+  of matching message text. The messages are unchanged, except that the
+  scoped-service error now says to use `container.NewScope(ctx)`.
 
 ### Changed
 

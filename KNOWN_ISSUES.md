@@ -69,7 +69,7 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   	_, err := w.ServiceContainer().Resolve[*T]()
   	return &T{}, err
   }))
-  w.InitServices() // fatal error: stack overflow
+  w.InitServices(context.Background()) // fatal error: stack overflow
   ```
 
   `CONVENTIONS.md` keeps built-in modules off this path by declaring
