@@ -1,4 +1,3 @@
-// Package providers implements a base FS-based configuration provider.
 package providers
 
 import (

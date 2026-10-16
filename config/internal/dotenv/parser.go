@@ -1,8 +1,3 @@
-// Package dotenv provides functionality for parsing dotenv-style configuration files.
-// It supports parsing key-value pairs from a byte slice, handling quoted values,
-// multi-line continuations within quotes, and inline comments starting with #.
-// Values can be enclosed in double or single quotes, with proper escape handling
-// and multiline support for complex configuration scenarios.
 package dotenv
 
 import (

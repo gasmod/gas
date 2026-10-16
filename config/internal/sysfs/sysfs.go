@@ -1,4 +1,3 @@
-// Package sysfs provides a file system implementation that ensures safe file operations.
 package sysfs
 
 import "io/fs"

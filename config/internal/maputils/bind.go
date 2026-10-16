@@ -1,20 +1,3 @@
-// Package maputils provides utilities for deep binding and merging of maps into Go data structures.
-// It supports recursive binding of map[string]any into structs with handling for nested types:
-// structs, slices, arrays, maps and pointers. Field matching uses json tags (if present) then
-// case-insensitive field names.
-//
-// The package includes:
-//   - Bind: converts map[string]any to struct handling nested types
-//   - Unbind: converts struct to map[string]any handling nested types
-//   - Merge: deep merges maps while normalizing and filtering keys
-//
-// Key features:
-//   - Type conversion between common Go types
-//   - Support for json struct tags
-//   - Case-insensitive field matching
-//   - Handling of nested types (structs, slices, arrays, maps)
-//   - Pointer auto-initialization
-//   - Detailed error reporting
 package maputils
 
 import (

@@ -1,6 +1,3 @@
-// Package env provides utilities for parsing environment variables into nested Go data structures.
-// It includes functions to filter unsafe variables, normalize keys, and construct hierarchical
-// maps from environment variable names using specified separators.
 package env
 
 import (
