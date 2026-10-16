@@ -1,5 +1,3 @@
-// Package shares implements the api-server example's share links and
-// asynchronous email notifications.
 package shares
 
 import (

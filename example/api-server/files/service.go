@@ -1,5 +1,3 @@
-// Package files implements the api-server example's authenticated file
-// upload, listing, download, and deletion routes.
 package files
 
 import (
