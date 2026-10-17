@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dirty version as applied and run its down SQL, although that
   migration's up SQL had been rolled back, which could drop tables an
   earlier migration created.
+- `Down` deletes each tracking row in the same transaction as the down SQL.
+  If the delete fails, the down SQL rolls back and `Down` returns the error;
+  it used to commit the down SQL first, so a failed delete left the schema
+  reverted under a row that still marked the migration applied, and
+  `RunPending` never re-applied it. On MySQL, DDL commits implicitly, so a
+  migration containing DDL is still not atomic with its tracking row.
 - The dirty-migration errors from `RunPending` and `CheckReady` now wrap
   `ErrDirty`; their messages are unchanged.
 

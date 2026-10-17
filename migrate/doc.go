@@ -45,9 +45,15 @@
 // Down reverts the n highest versions in the tracking table, highest first,
 // and runs nothing while any version is dirty, since a dirty version's up
 // SQL was rolled back and its down SQL would act on a schema it never
-// changed. For each it commits the down SQL in its own
-// transaction and then deletes the tracking row separately (KI-019). Every
+// changed. For each it runs the down SQL and deletes the tracking row in
+// one transaction, so a failure leaves both the schema and the row as they
+// were and returns the error, without marking the version dirty. Every
 // reverted version must still be registered.
+//
+// On MySQL, DDL such as CREATE TABLE, DROP TABLE, and ALTER TABLE commits
+// any open transaction implicitly, so a migration containing DDL is not
+// atomic with its tracking row in either direction: a failure after the
+// DDL leaves the schema changed whatever the tracking table says.
 //
 // CheckReady fails while any version is dirty or any registered migration
 // has not been applied. Each tracking row also records the version of this

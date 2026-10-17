@@ -337,11 +337,20 @@ func (s *Service) applyDown(ctx context.Context, migration gas.Migration) error 
 		return fmt.Errorf("gas/migrate: down migration %s failed: %w", migration.Version, err)
 	}
 
+	// Delete the tracking row inside the same transaction as the down SQL,
+	// so a failed delete rolls the schema change back rather than leaving
+	// the schema reverted under a row that still says the migration is
+	// applied, which RunPending would never re-apply.
+	if err := s.removeMigration(ctx, tx, migration.Version); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("gas/migrate: commit failed for down %s: %w", migration.Version, err)
 	}
 
-	return s.removeMigration(ctx, migration.Version)
+	return nil
 }
 
 func (s *Service) allMigrationsSorted() ([]gas.Migration, error) {

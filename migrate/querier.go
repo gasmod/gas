@@ -21,5 +21,7 @@ type querier interface {
 		ctx context.Context,
 		version, service, description, migrateVersion, moduleVersion string,
 	) error
-	removeMigration(ctx context.Context, version string) error
+	// removeMigration deletes a migration's tracking row within tx, so the
+	// deletion commits atomically with the migration's down SQL.
+	removeMigration(ctx context.Context, tx *sql.Tx, version string) error
 }

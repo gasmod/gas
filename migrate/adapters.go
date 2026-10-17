@@ -89,9 +89,9 @@ func (a *postgresAdapter) markMigrationDirty(
 	})
 }
 
-func (a *postgresAdapter) removeMigration(ctx context.Context, version string) error {
+func (a *postgresAdapter) removeMigration(ctx context.Context, tx *sql.Tx, version string) error {
 	//nolint:wrapcheck // wrapped by the caller
-	return a.q.RemoveMigration(ctx, version)
+	return a.q.WithTx(tx).RemoveMigration(ctx, version)
 }
 
 type mysqlAdapter struct {
@@ -173,9 +173,9 @@ func (a *mysqlAdapter) markMigrationDirty(
 	})
 }
 
-func (a *mysqlAdapter) removeMigration(ctx context.Context, version string) error {
+func (a *mysqlAdapter) removeMigration(ctx context.Context, tx *sql.Tx, version string) error {
 	//nolint:wrapcheck // wrapped by the caller
-	return a.q.RemoveMigration(ctx, version)
+	return a.q.WithTx(tx).RemoveMigration(ctx, version)
 }
 
 type sqliteAdapter struct {
@@ -257,9 +257,9 @@ func (a *sqliteAdapter) markMigrationDirty(
 	})
 }
 
-func (a *sqliteAdapter) removeMigration(ctx context.Context, version string) error {
+func (a *sqliteAdapter) removeMigration(ctx context.Context, tx *sql.Tx, version string) error {
 	//nolint:wrapcheck // wrapped by the caller
-	return a.q.RemoveMigration(ctx, version)
+	return a.q.WithTx(tx).RemoveMigration(ctx, version)
 }
 
 func parseSQLiteTime(s string) time.Time {
