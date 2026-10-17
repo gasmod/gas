@@ -12,6 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING:** `Service` implements the context-aware `gas.Service`:
   `Init(ctx)` and `Close(ctx)`. Both do only in-memory work and ignore ctx.
 
+### Fixed
+
+- Concurrent renders in a development-like environment, where every render
+  rebuilds the templates, no longer race on the engine's template lists, and
+  `AddFuncs` no longer races with a rebuild. `Engine.Build` now compiles into
+  fresh values and swaps them in under the lock; if it fails, the previously
+  built templates stay in place instead of an emptied cache.
+
 ## [0.3.0] - 2026-07-02
 
 First open source release. Versions prior to 0.3.0 were developed in a private

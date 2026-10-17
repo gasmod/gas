@@ -55,8 +55,10 @@
 // it. Templates are compiled on the first render, so functions other services
 // add with RegisterFuncs while starting are available; RegisterFuncs before
 // the service has started logs a warning and drops the functions. In a
-// development-like environment templates are recompiled on every render,
-// which is not safe for concurrent renders (KI-013). Engine
+// development-like environment templates are recompiled on every render.
+// A rebuild compiles into fresh values and swaps them in under the
+// Engine's lock, so concurrent renders, rebuilds, and RegisterFuncs are
+// safe, and a failed rebuild leaves the previous templates in place. Engine
 // errors start with "ui:", and the Service's own render and readiness errors
 // with "gas/ui:"; the package defines no sentinel errors.
 //
