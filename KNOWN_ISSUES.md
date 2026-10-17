@@ -66,19 +66,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
 - **Next step**: if it recurs, make the fake read the whole part before it
   replies, or accept a transport error in that case.
 
-## KI-020: a dirty migration can only be cleared by hand
-
-- **Status**: decision needed
-- **Area**: `migrate`.
-- **Found**: 2026-10-16, while writing the migrate `doc.go`.
-- **Detail**: a failed migration is recorded as dirty, and while any
-  version is dirty `RunPending` refuses to run. The `Service` exposes
-  `Register`, `RegisterSlice`, `RegisterFS`, `RunPending`, `Down`, and
-  `CheckReady`; none of them clears the mark, so recovery needs manual SQL
-  against `__gas_migrations`.
-- **Next step**: decide whether the module should offer a way to clear
-  or force a dirty version (a §3 API decision in `CLAUDE.md`).
-
 ## KI-030: core and the modules import the config module
 
 - **Status**: decision needed
