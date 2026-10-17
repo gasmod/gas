@@ -11,6 +11,10 @@ import (
 // may use JWTs, server-side sessions, API keys, or any other credential scheme.
 // Middleware runs an Authenticator and stores the principal it returns on the
 // request context, where handlers read it with gas.Context.Principal.
+//
+// An implementation returns a non-nil principal on success and an error,
+// such as ErrUnauthenticated, otherwise. Middleware and Chain treat a nil
+// principal with a nil error as ErrUnauthenticated, never as a success.
 type Authenticator interface {
 	Authenticate(ctx context.Context, r *http.Request) (gas.Principal, error)
 }

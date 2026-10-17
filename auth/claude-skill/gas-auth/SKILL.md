@@ -51,7 +51,9 @@ Package `auth` defines the three authentication interfaces. Core keeps only
 (`gas.WithPrincipal`, `gas.PrincipalFromContext`, `gas.Context.Principal`).
 
 ```go
-// Authenticator extracts a principal from an HTTP request.
+// Authenticator extracts a principal from an HTTP request. It returns a
+// non-nil principal on success and an error otherwise; Middleware and Chain
+// treat (nil, nil) as ErrUnauthenticated.
 type Authenticator interface {
     Authenticate(ctx context.Context, r *http.Request) (gas.Principal, error)
 }
@@ -167,7 +169,9 @@ If `meta` is nil, an empty `gas.BasePrincipalMetadata{}` is used.
 ## Chain
 
 Composite authenticator. Tries each authenticator in order, returns the first
-success or the last error. Empty chain returns `ErrUnauthenticated`.
+success or the last error. Empty chain returns `ErrUnauthenticated`. A member
+that returns a nil principal with a nil error has failed with
+`ErrUnauthenticated`, and the chain moves on.
 
 ```go
 type Chain []auth.Authenticator
@@ -183,7 +187,9 @@ func Middleware(provider auth.Authenticator, opts ...MiddlewareOption) func(http
 
 Calls `provider.Authenticate`, sets principal in context via
 `gas.WithPrincipal` on success, invokes the error handler on failure
-(defaults to plain 401 Unauthorized).
+(defaults to plain 401 Unauthorized). A nil principal with a nil error is a
+failure with `ErrUnauthenticated`; the next handler never runs without a
+principal.
 
 ### MiddlewareOption
 
@@ -618,7 +624,7 @@ type MockAuthenticator struct {
 }
 ```
 
-If `AuthenticateFn` is nil, returns `(nil, nil)`.
+If `AuthenticateFn` is nil, returns `(nil, auth.ErrUnauthenticated)`.
 
 ### MockAuthorizer
 

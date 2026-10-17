@@ -17,13 +17,13 @@ import (
 )
 
 func TestMockAuthenticator_NilFn(t *testing.T) {
-	t.Run("returns nil principal and nil error when AuthenticateFn is nil", func(t *testing.T) {
+	t.Run("returns ErrUnauthenticated when AuthenticateFn is nil", func(t *testing.T) {
 		m := &authtest.MockAuthenticator{}
 		r := httptest.NewRequest(http.MethodGet, "/", nil)
 
 		principal, err := m.Authenticate(context.Background(), r)
 
-		assert.NoError(t, err)
+		assert.ErrorIs(t, err, auth.ErrUnauthenticated)
 		assert.Nil(t, principal)
 	})
 }

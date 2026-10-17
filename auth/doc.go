@@ -26,7 +26,8 @@
 // Middleware runs an Authenticator on each request. On success it stores
 // the principal with gas.WithPrincipal and calls the next handler; on
 // failure it calls the WithOnError handler, which by default writes a plain
-// 401. RequireScheme answers 403 when the principal is missing or of another
+// 401. An Authenticator that returns a nil principal with a nil error has
+// failed: Middleware and Chain treat it as ErrUnauthenticated. RequireScheme answers 403 when the principal is missing or of another
 // scheme.
 // The services are registered with the DI container by the app; see each
 // sub-package for its constructor and configuration.

@@ -196,14 +196,16 @@ func TestChain(t *testing.T) {
 		assert.NotErrorIs(t, err, errSecond)
 	})
 
-	t.Run("first returns nil principal and nil error treated as success", func(t *testing.T) {
+	t.Run("first returns nil principal and nil error treated as failure", func(t *testing.T) {
 		first := &authtest.MockAuthenticator{
-			// AuthenticateFn is nil, so it returns (nil, nil).
+			AuthenticateFn: func(_ context.Context, _ *http.Request) (gas.Principal, error) {
+				return nil, nil
+			},
 		}
+		want := auth.NewPrincipal("user-2", "session", "cred-2", nil)
 		second := &authtest.MockAuthenticator{
 			AuthenticateFn: func(_ context.Context, _ *http.Request) (gas.Principal, error) {
-				t.Fatal("second authenticator should not be called when first succeeds")
-				return nil, nil
+				return want, nil
 			},
 		}
 		chain := auth.Chain{first, second}
@@ -214,9 +216,9 @@ func TestChain(t *testing.T) {
 		)
 
 		require.NoError(t, err)
-		assert.Nil(t, principal, "nil principal with nil error is a valid success")
+		assert.Equal(t, want, principal, "the chain moves on to the next authenticator")
 		assert.Equal(t, 1, first.CallCount("Authenticate"))
-		assert.Equal(t, 0, second.CallCount("Authenticate"))
+		assert.Equal(t, 1, second.CallCount("Authenticate"))
 	})
 
 	t.Run("chain with nil request still works if authenticators handle it", func(t *testing.T) {
@@ -267,4 +269,32 @@ func TestChain(t *testing.T) {
 			)
 		}
 	})
+}
+
+// A Chain member that returns no principal and no error counts as a failed
+// attempt: the chain moves on, and a chain where every member does so
+// returns ErrUnauthenticated.
+func TestChain_NilPrincipalMember(t *testing.T) {
+	t.Parallel()
+
+	empty := &authtest.MockAuthenticator{
+		AuthenticateFn: func(context.Context, *http.Request) (gas.Principal, error) {
+			return nil, nil
+		},
+	}
+	want := auth.NewPrincipal("user-1", "jwt", "cred-1", nil)
+	good := &authtest.MockAuthenticator{
+		AuthenticateFn: func(context.Context, *http.Request) (gas.Principal, error) {
+			return want, nil
+		},
+	}
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+
+	got, err := auth.Chain{empty, good}.Authenticate(context.Background(), r)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+
+	got, err = auth.Chain{empty, empty}.Authenticate(context.Background(), r)
+	assert.ErrorIs(t, err, auth.ErrUnauthenticated)
+	assert.Nil(t, got)
 }

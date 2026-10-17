@@ -89,48 +89,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   construction of a type and return a cycle error, and how (a §3
   decision in `CLAUDE.md`); see KI-011 for the concurrency half.
 
-## KI-007: `auth.Middleware` treats a nil principal as authenticated
-
-- **Status**: decision needed
-- **Area**: `auth` (`middleware.go`, `auth.go`).
-- **Found**: 2026-10-16, while moving the auth interfaces into the auth
-  module.
-- **Detail**: `Middleware` treats any nil error from `Authenticate` as
-  success. At `auth/middleware.go:49` it calls `Authenticate`, and at
-  `:55` and `:56` it stores the returned principal with `gas.WithPrincipal`
-  and calls the next handler, even when that principal is nil. `Chain`
-  passes the same result on (`auth/auth.go:89` and `:90`), so one member
-  returning `(nil, nil)` ends the chain as a success. A handler that calls
-  `Context.Principal` still gets a 401, and `RequireScheme` still answers
-  403, but a route that relies on `Middleware` alone runs for a caller
-  with no credentials. The `jwt`, `session`, and `apikey` services never
-  return `(nil, nil)`; `authtest.MockAuthenticator` does when
-  `AuthenticateFn` is nil (`auth/authtest/mock.go:45`), and so can any
-  app-written `Authenticator`. Repro sketch:
-
-  ```go
-  type none struct{}
-
-  func (none) Authenticate(
-      context.Context, *http.Request,
-  ) (gas.Principal, error) {
-      return nil, nil
-  }
-
-  ok := func(w http.ResponseWriter, _ *http.Request) {
-      w.WriteHeader(http.StatusOK)
-  }
-  h := auth.Middleware(none{})(http.HandlerFunc(ok))
-  rr := httptest.NewRecorder()
-  h.ServeHTTP(rr, httptest.NewRequest("GET", "/", nil))
-  // rr.Code == 200: the protected handler ran without a principal.
-  ```
-
-- **Next step**: decide the contract (a §3 security decision in
-  `CLAUDE.md`): whether `Middleware` and `Chain` reject a nil principal
-  with `ErrUnauthenticated`, and whether the `Authenticator` doc and the
-  `authtest` mock's default change to match.
-
 ## KI-010: suspected flake in the s3 multipart content-length test
 
 - **Status**: open

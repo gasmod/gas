@@ -26,7 +26,8 @@ func WithOnError(fn func(w http.ResponseWriter, r *http.Request, err error)) Mid
 // Middleware extracts and validates credentials from the request using
 // the given authenticator. On success it sets the principal in the request
 // context via gas.WithPrincipal and calls the next handler. On failure it
-// invokes the OnError handler or writes a 401 Unauthorized response.
+// invokes the OnError handler or writes a 401 Unauthorized response. A nil
+// principal with a nil error is a failure with ErrUnauthenticated.
 //
 // Panics if provider is nil, since that is a wiring mistake caught at
 // startup.
@@ -50,7 +51,7 @@ func Middleware(
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			principal, err := provider.Authenticate(r.Context(), r)
+			principal, err := authenticate(r.Context(), provider, r)
 			if err != nil {
 				o.onError(w, r, err)
 				return

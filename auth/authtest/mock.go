@@ -20,7 +20,7 @@ type Call struct {
 // MockAuthenticator is a test double for auth.Authenticator.
 type MockAuthenticator struct {
 	// AuthenticateFn is called when Authenticate is invoked. If nil,
-	// Authenticate returns (nil, nil).
+	// Authenticate returns auth.ErrUnauthenticated.
 	AuthenticateFn func(ctx context.Context, r *http.Request) (gas.Principal, error)
 	// Calls records every method invocation.
 	Calls []Call
@@ -30,7 +30,8 @@ type MockAuthenticator struct {
 
 var _ auth.Authenticator = (*MockAuthenticator)(nil)
 
-// Authenticate delegates to AuthenticateFn if set, otherwise returns zero values.
+// Authenticate delegates to AuthenticateFn if set, otherwise returns
+// auth.ErrUnauthenticated.
 func (m *MockAuthenticator) Authenticate(
 	ctx context.Context,
 	r *http.Request,
@@ -42,7 +43,7 @@ func (m *MockAuthenticator) Authenticate(
 	if m.AuthenticateFn != nil {
 		return m.AuthenticateFn(ctx, r)
 	}
-	return nil, nil
+	return nil, auth.ErrUnauthenticated
 }
 
 // Reset clears all recorded calls.
