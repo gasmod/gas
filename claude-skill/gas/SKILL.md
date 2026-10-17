@@ -240,7 +240,9 @@ protection (`net/http.CrossOriginProtection`) is enabled by default.
 
 On shutdown (SIGINT/SIGTERM): emit `SystemServerShuttingDown` → graceful
 HTTP shutdown → `Worker.Shutdown` (emit `SystemShuttingDown`, close services
-in reverse init order).
+in reverse init order). If the server fails instead (for example the port is
+taken), `Run` runs the same `Stop` and returns the server error joined with any
+`Stop` error.
 
 `Run` is the convenience path. For embedding scenarios (tests, custom
 listeners, Lambda with HTTP, etc.), compose `Start` → `Serve` → `Stop`

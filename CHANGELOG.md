@@ -83,6 +83,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`App.Run` stops the App when the server fails.** When `Serve` returned an
+  error, such as a port already in use, `Run` returned it without calling
+  `Stop`, leaving every service `Start` had initialized open. It now runs
+  `Stop` and returns the server error joined with any `Stop` error. The
+  server error is no longer wrapped a second time in `gas: server error:`
+  (part of #12).
 - **A failed `Start` no longer leaves services running.** When a service's
   `Init` failed, the services initialized before it were never tracked, so
   neither the failed `Start` nor a later `Shutdown` closed them; a failing
