@@ -265,22 +265,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
 - **Next step**: decide whether the module should offer a way to clear
   or force a dirty version (a §3 API decision in `CLAUDE.md`).
 
-## KI-024: template db store cannot be written to while services start
-
-- **Status**: open
-- **Area**: `template/db` (`store.go`), with the Worker's startup order.
-- **Found**: 2026-10-16, while writing the template `doc.go`.
-- **Detail**: the store's table comes from a migration it registers when
-  it starts, and the Worker applies migrations only after every service
-  has started. A service that registers templates into the store from its
-  own start-up, as services are told to do, writes before the table
-  exists on a fresh database. Verified on SQLite: `Register` before
-  `RunPending` failed with `no such table: __gas_templates`, and succeeded
-  after it.
-- **Next step**: create the table when the store starts instead of
-  through a deferred migration, or document that templates can only be
-  written once startup has finished.
-
 ## KI-025: a ShippingLogger sub-logger's Flush does nothing
 
 - **Status**: open
