@@ -42,9 +42,11 @@
 //
 // The static handler strips StaticStripPrefix from the request path and
 // serves the rest from the static directory or FS; directory listings answer
-// 404. StaticStripPrefix is not derived from StaticPath, so with the defaults
-// a request for /static/app.css is looked up as static/app.css inside the
-// static root (KI-012).
+// 404. An empty StaticStripPrefix defaults to StaticPath's literal part up to
+// its first wildcard, so with the defaults a request for /static/app.css is
+// served from app.css at the root of the static directory or FS. With
+// StaticPaths set and no StaticStripPrefix nothing is stripped, so /css/app.css
+// is served from css/app.css.
 //
 // # Templates
 //
