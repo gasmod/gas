@@ -123,8 +123,7 @@ func (s *Service) Init(ctx context.Context) error {
 	}
 
 	if err := s.cfg.Validate(); err != nil {
-		s.logger.Error("invalid queue configuration").Err("error", err).Send()
-		return err
+		return fmt.Errorf("%s: invalid configuration: %w", s.Name(), err)
 	}
 
 	if !s.customClientProvided {

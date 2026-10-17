@@ -128,8 +128,7 @@ func (s *Service) Init(ctx context.Context) error {
 	}
 
 	if err := s.cfg.Validate(); err != nil {
-		s.logger.Error("invalid email configuration").Err("error", err).Send()
-		return err
+		return fmt.Errorf("%s: invalid configuration: %w", s.Name(), err)
 	}
 
 	if !s.customClientProvided {
@@ -242,7 +241,6 @@ func (s *Service) Send(ctx context.Context, msg *gas.Email) error {
 		ReplyToAddresses: replyTo,
 	})
 	if err != nil {
-		s.logger.Error("failed to send email").Err("error", err).Send()
 		return fmt.Errorf("%s: failed to send email: %w", s.Name(), err)
 	}
 

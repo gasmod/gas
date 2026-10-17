@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `Service.Init` no longer logs a config binding, validation, or static route
+  error it also returns; the caller logs it once. A validation error is
+  returned as `gas/ui: invalid configuration: <cause>`.
 - **BREAKING:** `Service` implements the context-aware `gas.Service`:
   `Init(ctx)` and `Close(ctx)`. Both do only in-memory work and ignore ctx.
 

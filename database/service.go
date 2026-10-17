@@ -99,8 +99,7 @@ func (s *Service) Init(ctx context.Context) error {
 	s.cfg.hasConnector = s.connector != nil
 
 	if err := s.cfg.Validate(); err != nil {
-		s.logger.Error("invalid database configuration").Err("error", err).Send()
-		return err
+		return fmt.Errorf("%s: invalid configuration: %w", s.Name(), err)
 	}
 
 	var initFn func(context.Context) error
@@ -110,7 +109,6 @@ func (s *Service) Init(ctx context.Context) error {
 	case ModeSQL, "":
 		initFn = s.initSQL
 	default:
-		s.logger.Error("unknown database mode").Str("mode", s.cfg.Database.Mode).Send()
 		return fmt.Errorf("%s: unknown mode %q", s.Name(), s.cfg.Database.Mode)
 	}
 
@@ -160,10 +158,6 @@ func (s *Service) connectWithRetry(ctx context.Context, initFn func(context.Cont
 		}
 	}
 
-	s.logger.Error("database connection failed after all retries").
-		Err("error", err).
-		Int("retries", maxRetries).
-		Send()
 	return fmt.Errorf("%s: connect failed after %d retries: %w", s.Name(), maxRetries, err)
 }
 
@@ -175,7 +169,6 @@ func (s *Service) initSQL(ctx context.Context) error {
 		var err error
 		db, err = sql.Open(s.cfg.Database.Driver, s.cfg.Database.DSN)
 		if err != nil {
-			s.logger.Error("failed to open database connection").Err("error", err).Send()
 			return fmt.Errorf("%s: open: %w", s.Name(), err)
 		}
 	}
@@ -194,7 +187,6 @@ func (s *Service) initSQL(ctx context.Context) error {
 				Err("error", cErr).
 				Send()
 		}
-		s.logger.Error("failed to ping database connection").Err("error", err).Send()
 		return fmt.Errorf("%s: ping: %w", s.Name(), err)
 	}
 
@@ -210,7 +202,6 @@ func (s *Service) initPgx(ctx context.Context) error {
 
 	poolCfg, err := pgxpool.ParseConfig(s.cfg.Database.DSN)
 	if err != nil {
-		s.logger.Error("failed to parse pgx config").Err("error", err).Send()
 		return fmt.Errorf("%s: parse pgx config: %w", s.Name(), err)
 	}
 
@@ -226,13 +217,11 @@ func (s *Service) initPgx(ctx context.Context) error {
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
-		s.logger.Error("failed to create pgx pool").Err("error", err).Send()
 		return fmt.Errorf("%s: pgxpool: %w", s.Name(), err)
 	}
 
 	if pErr := pool.Ping(ctx); pErr != nil {
 		pool.Close()
-		s.logger.Error("failed to ping pgx pool").Err("error", pErr).Send()
 		return fmt.Errorf("%s: ping: %w", s.Name(), pErr)
 	}
 
@@ -249,7 +238,6 @@ func (s *Service) Close(context.Context) error {
 
 	if s.db != nil {
 		if err := s.db.Close(); err != nil {
-			s.logger.Error("failed to close database connection").Err("error", err).Send()
 			return fmt.Errorf("%s: close: %w", s.Name(), err)
 		}
 

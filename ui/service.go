@@ -82,20 +82,17 @@ func (s *Service) Name() string { return "gas/ui" }
 // Init initializes the template engine and registers the static file route.
 func (s *Service) Init(_ context.Context) error {
 	if err := s.bindConfig(); err != nil {
-		s.logger.Error("failed to bind config").Err("error", err).Send()
 		return err
 	}
 
 	hasStaticFS := s.staticFS != nil
 	if err := s.cfg.Validate(hasStaticFS); err != nil {
-		s.logger.Error("invalid config").Err("error", err).Send()
-		return err
+		return fmt.Errorf("%s: invalid configuration: %w", s.Name(), err)
 	}
 
 	s.initEngine()
 
 	if err := s.initStaticRoute(); err != nil {
-		s.logger.Error("failed to initialize static route").Err("error", err).Send()
 		return err
 	}
 

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `ses.Service` no longer logs an error it also returns: an invalid
+  configuration and a failed send. The caller that handles the error logs it
+  once. An invalid configuration is returned as
+  `gas/email/ses: invalid configuration: <cause>`.
 - **BREAKING:** `ses.Service` implements the context-aware `gas.Service`:
   `Init(ctx)` and `Close(ctx)`. `Init` loads the AWS configuration and
   fetches the credentials under the caller ctx. `Close` ignores ctx.

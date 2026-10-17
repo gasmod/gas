@@ -113,8 +113,8 @@ Error handling in `WithTx` / `WithPgxTx`:
 
 - `fn` returns nil — the transaction is committed; a commit failure is returned wrapped.
 - `fn` returns an error — the transaction is rolled back and `fn`'s error is
-  returned. A rollback that itself fails is logged and joined onto that error
-  with `errors.Join`; `sql.ErrTxDone` / `pgx.ErrTxClosed` are treated as
+  returned. A rollback that itself fails is joined onto that error with
+  `errors.Join` (not logged); `sql.ErrTxDone` / `pgx.ErrTxClosed` are treated as
   success, so `fn` may commit or roll back itself.
 - `fn` panics — the transaction is rolled back and the panic propagates
   unchanged; a failed rollback is logged rather than returned.

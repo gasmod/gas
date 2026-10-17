@@ -636,6 +636,20 @@ func TestEngine_AddFuncsDuringRenders(t *testing.T) {
 	wg.Wait()
 }
 
+// A configuration that fails validation is returned with the service name,
+// so the error is identifiable without a log line.
+func TestService_InvalidConfigNamesService(t *testing.T) {
+	cfg := ui.DefaultConfig()
+	cfg.UI.LayoutName = ""
+	svc := ui.New[*testProvider](ui.WithConfig(cfg))(
+		newTestProvider(map[string]string{"home.html": "ok"}), nil, nil, gas.NewNopLogger()(),
+	)
+	err := svc.Init(t.Context())
+	if err == nil || !strings.HasPrefix(err.Error(), "gas/ui: invalid configuration: ") {
+		t.Errorf("Init() error = %v, want it prefixed with the service name", err)
+	}
+}
+
 // newStaticService starts a ui service over fsys with cfg and returns the
 // router it registered its static route on.
 func newStaticService(t *testing.T, cfg *ui.Config, fsys fs.FS) *gas.Router {

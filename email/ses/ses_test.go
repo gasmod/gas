@@ -516,6 +516,20 @@ func TestIsErrClosed(t *testing.T) {
 	}
 }
 
+// A configuration that fails validation is returned with the service name,
+// so the error is identifiable without a log line.
+func TestInit_InvalidConfigNamesService(t *testing.T) {
+	t.Parallel()
+
+	cfg := validConfig()
+	cfg.Email.FromEmail = ""
+	err := New(WithConfig(cfg), WithClient(&mockSESClient{}))(nil, nil, gas.NewNopLogger()()).
+		Init(t.Context())
+	if err == nil || !strings.HasPrefix(err.Error(), serviceName+": invalid configuration: ") {
+		t.Errorf("Init() error = %v, want it prefixed with the service name", err)
+	}
+}
+
 // isolateAWSCredentials points the AWS SDK at empty config and credentials
 // files, clears credential environment variables, and turns off the EC2
 // instance metadata lookup, so the default credential chain finds nothing

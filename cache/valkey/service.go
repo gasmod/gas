@@ -97,8 +97,7 @@ func (s *Service) Init(ctx context.Context) error {
 	}
 
 	if err := s.cfg.Validate(); err != nil {
-		s.logger.Error("invalid cache configuration").Err("error", err).Send()
-		return err
+		return fmt.Errorf("%s: invalid configuration: %w", s.Name(), err)
 	}
 
 	if err := s.connectWithRetry(ctx); err != nil {
@@ -148,10 +147,6 @@ func (s *Service) connectWithRetry(ctx context.Context) error {
 		}
 	}
 
-	s.logger.Error("valkey connection failed after all retries").
-		Err("error", err).
-		Int("retries", maxRetries).
-		Send()
 	return fmt.Errorf("%s: connect failed after %d retries: %w", s.Name(), maxRetries, err)
 }
 
@@ -164,7 +159,6 @@ func (s *Service) connect(ctx context.Context) error {
 		ConnWriteTimeout: s.cfg.Cache.WriteTimeout,
 	})
 	if err != nil {
-		s.logger.Error("failed to create valkey client").Err("error", err).Send()
 		return fmt.Errorf("%s: new client: %w", s.Name(), err)
 	}
 
@@ -174,7 +168,6 @@ func (s *Service) connect(ctx context.Context) error {
 
 	if pErr := client.Do(pingCtx, client.B().Ping().Build()).Error(); pErr != nil {
 		client.Close()
-		s.logger.Error("failed to ping valkey").Err("error", pErr).Send()
 		return fmt.Errorf("%s: ping: %w", s.Name(), pErr)
 	}
 

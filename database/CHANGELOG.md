@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `Service` no longer logs an error it also returns: an invalid
+  configuration, an unknown mode, open, ping, pgx config and pool failures,
+  running out of connection retries, a failed `Close`, and a failed rollback
+  joined onto `WithTx`'s error. The caller that handles the error logs it
+  once. An invalid configuration is returned as
+  `gas/database: invalid configuration: <cause>`. A rollback that fails
+  during a panic is still logged, since it is not returned; the per-attempt
+  retry warning and the close error after a failed ping also stay.
 - **BREAKING:** `Service` implements the context-aware `gas.Service`
   (`Init(ctx context.Context) error`, `Close(ctx context.Context) error`).
   The connection ping (and pgx pool creation) derives from the Init context,
@@ -28,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   passes; the returned error wraps `ctx.Err()`.
 - **Transaction errors are no longer discarded** — `WithTx` previously dropped
   rollback failures and returned commit errors unwrapped. Rollback failures are
-  now logged and joined onto the caller's error with `errors.Join`, except
+  now joined onto the caller's error with `errors.Join`, except
   `sql.ErrTxDone` / `pgx.ErrTxClosed` (a transaction the callback settled
   itself), which stay silent. A rollback that fails during a panic is logged
   rather than returned, so the panic propagates unchanged.
