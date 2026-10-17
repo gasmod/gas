@@ -178,8 +178,12 @@ settings:
 - `StaticPath` registers a single route. `StaticPaths` registers multiple.
   When `StaticPaths` is set, `StaticPath` is ignored.
 - If both `StaticPath` and `StaticPaths` are provided, only `StaticPaths` is used.
-- `StaticStripPrefix` controls `http.StripPrefix`. When empty (default), no
-  prefix is stripped — request URL maps directly to file paths in the FS/dir.
+- `StaticStripPrefix` controls `http.StripPrefix`. When empty (default) it is
+  derived from `StaticPath`'s literal part up to the first wildcard
+  (`"/static/*"` strips `"/static/"`), so `/static/app.css` serves `app.css`
+  from the static root. With `StaticPaths` set and no `StaticStripPrefix`,
+  nothing is stripped. Set it to `"/"` to strip nothing, when the FS mirrors
+  the URLs (`static/app.css` served at `/static/app.css`).
 - Directory listing is blocked.
 
 ## Built-in Template Functions
@@ -230,7 +234,7 @@ type Settings struct {
     StaticDir       string    // root dir for static files (empty = disabled)
     StaticPath      string    // URL route pattern, default "/static/*"
     StaticPaths     []string  // multiple URL route patterns; overrides StaticPath when non-empty
-    StaticStripPrefix string  // URL prefix stripped before file lookup (empty = no stripping)
+    StaticStripPrefix string  // URL prefix stripped before file lookup (empty = StaticPath's literal prefix; "/" = no stripping)
     LayoutName      string    // entry-point template name, default "base"
 }
 

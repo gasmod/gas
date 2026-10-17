@@ -123,6 +123,10 @@ func (a *App) Router() *Router { return a.router }
 // binds configuration. It does not start the HTTP server; call Serve for that,
 // or use Run to do both and block until shutdown. ctx is passed to the Init
 // of every service built during startup.
+//
+// Like Worker.Start, a Start that fails, including when the config does not
+// bind or validate, closes every service it had initialized and returns the
+// error; every later Start returns the same error.
 func (a *App) Start(ctx context.Context) error {
 	if err := a.Worker.Start(ctx); err != nil {
 		return err
@@ -130,7 +134,15 @@ func (a *App) Start(ctx context.Context) error {
 
 	//nolint:contextcheck // every singleton is built by now, so resolving the provider runs no Init
 	if err := a.bindConfig(); err != nil {
-		return fmt.Errorf("gas: failed to bind config: %w", err)
+		// Like a failed Worker.Start, leave nothing running and make every
+		// later Start return this error.
+		//nolint:contextcheck // cleanup must run even when ctx is what failed
+		err = errors.Join(
+			fmt.Errorf("gas: failed to bind config: %w", err),
+			a.closeActive(context.WithoutCancel(ctx)),
+		)
+		a.failStart(err)
+		return err
 	}
 
 	return nil

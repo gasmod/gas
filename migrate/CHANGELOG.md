@@ -40,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Service.ClearDirty(version)` removes a dirty mark by deleting the version's
+  tracking row, so the next `RunPending` applies that migration again. It
+  returns an error wrapping the new `ErrNotDirty`, and changes nothing, for a
+  version that is not dirty. Recovering from a failed migration used to need
+  manual SQL against `__gas_migrations`.
 - `ErrDirty`, wrapped by `RunPending`, `Down`, and `CheckReady` while any
   migration is dirty.
 - `ErrDuplicateVersion`, wrapped by `RunPending`, `Down`, and `CheckReady`

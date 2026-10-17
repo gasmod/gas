@@ -27,9 +27,9 @@
 // The provider builds its AWS client on the first load and reuses it. Load
 // without a context bounds the whole fetch with a timeout, 10 seconds
 // (DefaultTimeout) unless WithTimeout says otherwise; LoadContext uses the
-// caller's context as is. WithTimeout does not validate its value: zero or a
-// negative duration makes every Load fail with context.DeadlineExceeded
-// (KI-028 in KNOWN_ISSUES.md). The provider starts no goroutines and holds
+// caller's context as is. A WithTimeout of zero or a negative duration means
+// no timeout, so Load waits as long as the AWS client does. The provider
+// starts no goroutines and holds
 // nothing that needs closing.
 //
 // # Errors
