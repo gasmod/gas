@@ -83,6 +83,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A dependency cycle through a captured container no longer crashes the
+  process.** A constructor or `Init` that resolved the type being built
+  through a captured `*ServiceContainer` or `Scope` recursed until `fatal
+  error: stack overflow`, which `recover` cannot catch. Resolution now tracks
+  the types each goroutine is building and returns `ErrCircularDependency`
+  naming the cycle (`A -> B -> A`), for every lifetime. Constructors nested
+  more than 256 deep also return `ErrCircularDependency`.
+- **Concurrent resolution of a lazy singleton builds it once.** The container
+  had no lock, so goroutines resolving an unbuilt singleton at the same time
+  raced and each ran its constructor and `Init`. One goroutine now builds it
+  while the others wait for that build and share its instance; two builds on
+  different goroutines that would wait on each other return
+  `ErrCircularDependency` instead of deadlocking. The container's instance
+  maps are guarded by a mutex, and constructors and `Init` run without it
+  held.
 - **The Worker's logger no longer races with the kill switch.** `Worker`
   resolved its logger lazily and unsynchronized on first use and, with no
   `Logger` registered, registered a slog fallback in the container, so
