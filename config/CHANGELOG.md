@@ -36,6 +36,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   overrides it has not. Provider I/O also no longer runs while the config lock
   is held.
 
+### Fixed
+
+- **`.env` values with non-ASCII text are no longer corrupted.** The
+  inline-comment scan re-encoded every byte above 0x7F as a separate
+  character, so `café` loaded as `cafÃ©` and any non-ASCII password or
+  secret was silently changed. Found by the new fuzz target.
+
 ## [0.3.0] - 2026-07-02
 
 First open source release. Versions prior to 0.3.0 were developed in a private

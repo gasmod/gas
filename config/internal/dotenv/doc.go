@@ -7,7 +7,13 @@
 // no closing quote on the line starts a value that continues over the
 // following lines until a line ends with the same quote. Backslashes are
 // kept as written: escapes such as \" or \n are not interpreted. An
-// "export " prefix is not recognized and stays part of the key.
+// "export " prefix is not recognized and stays part of the key. Bytes are
+// kept as written, so UTF-8 and any other non-ASCII text in keys and values
+// comes through unchanged.
+//
+// The tests pin each syntax rule, and two fuzz targets check that Parse
+// never panics, is deterministic, returns only non-empty trimmed keys, and
+// returns any single-line double-quoted value unchanged.
 //
 // A quote that is never closed swallows the rest of the file without an
 // error (KI-029 in KNOWN_ISSUES.md). Parse returns an error only when the

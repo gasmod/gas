@@ -387,18 +387,3 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   decision in `CLAUDE.md`), for example moving the bind-option and provider
   types and the environment type into core so neither core nor the modules
   import config.
-
-## KI-031: the .env parser and the safe file system have no tests or fuzz targets
-
-- **Status**: open
-- **Area**: `config` (`internal/dotenv`, `internal/sysfs`).
-- **Found**: 2026-10-16, while writing the config packages' `doc.go`.
-- **Detail**: `config/internal/dotenv` and `config/internal/sysfs` have no
-  test files of their own (`go test` reports "no test files"); they are
-  reached only through the provider tests. No fuzz target covers .env or
-  JSON parsing, although §2 of `CLAUDE.md` asks for native fuzzing wherever
-  configuration sources are parsed. KI-029, an unclosed quote silently
-  dropping the rest of a .env file, is the kind of defect a fuzz target
-  finds.
-- **Next step**: add unit tests for both packages and fuzz targets for
-  `dotenv.Parse` and the JSON provider's decoding.
