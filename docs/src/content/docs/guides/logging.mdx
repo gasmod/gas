@@ -28,12 +28,14 @@ container.
 
 <Code code={region(lg, 'register')} lang="go" title="main.go" />
 
-<Aside type="note" title="Singleton">
+<Aside type="note" title="Singleton or scoped?">
 Register `gas.Logger` as a **singleton**. Most services take a `gas.Logger` in
 their constructor, and the container rejects a singleton that depends on a
-scoped service. Loggers are never changed in place: request fields go on a
-logger derived with `With()`, which the request middleware puts on the request
-context, so nothing leaks between requests.
+scoped service. For request-specific fields, register a separate **scoped**
+type derived from it, as above, and give that type to the request middleware:
+each request gets its own logger, and handlers and services that take the
+scoped type get the request's fields. Loggers are never changed in place, so
+nothing leaks between requests.
 </Aside>
 
 ## Logging
@@ -58,8 +60,12 @@ and services log through `gas.LoggerFromContext(r.Context())`.
 
 Logs method, path, status, bytes written, duration, and remote address for every
 request, at error level for statuses at 400 and above. It derives a per-request
-logger from the one it resolves and puts it on the request context, so handlers
-get it from `gas.LoggerFromContext`. If chi's `RequestID` middleware is mounted
+logger from the one it resolves and puts it on the request context
+(`gas.LoggerFromContext`). When its type is scoped, as `RequestLogger` above, it
+also puts that logger in the request scope, so handlers and services that take
+`RequestLogger` as a dependency get it. Given the singleton `gas.Logger`
+instead, the singleton is left unchanged and the request logger is only on the
+context. If chi's `RequestID` middleware is mounted
 upstream, that logger carries the request id; pass
 `gas.WithRequestLoggerAppendRequestID(false)` to turn that off.
 

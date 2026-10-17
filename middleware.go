@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -80,11 +81,17 @@ func WithRequestLoggerBuilder(fn func(Logger, *http.Request) Logger) RequestLogg
 }
 
 // RequestLogger is middleware that logs HTTP requests and responses. It resolves T
-// from the request's DI scope (a singleton or a scoped registration both work),
-// derives a per-request logger from it with With, and stores that logger on the
-// request context with WithLogger, so handlers and later middleware log through
-// it with LoggerFromContext. The resolved logger itself is never changed, so a
-// singleton shared by every request is safe. When the request finishes it logs
+// from the request's DI scope, derives a per-request logger from it with With,
+// and stores that logger on the request context with WithLogger, so handlers and
+// later middleware log through it with LoggerFromContext. The resolved logger
+// itself is never changed, so a singleton shared by every request is safe.
+//
+// When T is registered scoped (the usual pattern: a request-logger type built
+// from the singleton gas.Logger with With), the per-request logger also replaces
+// T's instance in the request scope, so handlers and services that take T as a
+// dependency later in the request get it, request fields included. A singleton T
+// is not shadowed, and a scoped T whose instance is a Service is not replaced,
+// so the scope still closes it. When the request finishes it logs
 // method, path, status, bytes written, duration, and remote address: at error
 // level for a status >= 400, at info level otherwise.
 //
@@ -124,6 +131,10 @@ func RequestLogger[T Logger](opt ...RequestLoggerOption) func(next http.Handler)
 
 			if hasLogger {
 				r = r.WithContext(WithLogger(r.Context(), logger))
+				// For a scoped T, also put the per-request logger into the
+				// scope's slot for T, so handlers and services resolving T
+				// later in the request get it. A singleton T is left alone.
+				RequestScope(r).replaceScoped(reflect.TypeFor[T](), reflect.ValueOf(logger))
 			}
 
 			defer func() {

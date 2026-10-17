@@ -47,6 +47,7 @@ func New() *gas.App {
 	app.RegisterServiceInstance[gas.ConfigProvider](cfg)
 
 	app.RegisterSingletonService[gas.Logger](gaslog.NewZeroLogLogger())
+	app.RegisterScopedService[RequestLogger](requestLogger)
 
 	app.RegisterSingletonService[gas.DatabaseProvider](database.New())
 	app.RegisterSingletonService[*migrate.Service](migrate.New())
@@ -77,7 +78,7 @@ func New() *gas.App {
 	// Global middleware: security headers + request logging.
 	app.Router().Use(
 		gas.MiddlewareFunc(gas.SecurityHeaders()),
-		gas.MiddlewareFunc(gas.RequestLogger[gas.Logger]()),
+		gas.MiddlewareFunc(gas.RequestLogger[RequestLogger]()),
 	)
 
 	return app

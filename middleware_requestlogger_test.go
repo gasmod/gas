@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/go-chi/chi/v5/middleware"
@@ -133,5 +134,164 @@ func TestRequestLogger_HandlerLoggerCarriesRequestID(t *testing.T) {
 	if handlerID == nil || handlerID != requestID {
 		t.Errorf("handler request_id = %v, request line request_id = %v, want equal and set",
 			handlerID, requestID)
+	}
+}
+
+// scopedRequestLogger is the per-request logger type of the documented
+// pattern: registered scoped, built from the singleton with With.
+type scopedRequestLogger interface{ Logger }
+
+// newScopedPatternApp registers a singleton Logger writing JSON to buf and a
+// scoped scopedRequestLogger derived from it, and mounts chi's RequestID and
+// RequestLogger[scopedRequestLogger].
+func newScopedPatternApp(t *testing.T, buf *lockedBuffer) *App {
+	t.Helper()
+
+	shared := Logger(newSlogLogger(slog.New(slog.NewJSONHandler(buf, nil))))
+	app := NewApp(
+		WithServiceInstance[Logger](shared),
+		WithScopedService[scopedRequestLogger](func(l Logger) scopedRequestLogger {
+			return l.With().Logger()
+		}),
+	)
+	if err := app.InitServices(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	app.Router().UseMiddlewareFunc(middleware.RequestID)
+	app.Router().UseMiddlewareFunc(RequestLogger[scopedRequestLogger]())
+	return app
+}
+
+// With a scoped request-logger type, a handler that takes it as a DI
+// parameter gets the logger carrying the request's request_id, for every
+// one of many concurrent requests.
+func TestRequestLogger_ScopedTypeInjectedWithRequestID(t *testing.T) {
+	t.Parallel()
+
+	buf := &lockedBuffer{}
+	app := newScopedPatternApp(t, buf)
+	app.Router().Get(nil, "/hi", func(_ Context, l scopedRequestLogger) error {
+		l.Info("handler").Send()
+		return nil
+	})
+
+	var wg sync.WaitGroup
+	for range 20 {
+		wg.Go(func() {
+			rr := httptest.NewRecorder()
+			app.Router().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/hi", nil))
+			if rr.Code != http.StatusOK {
+				t.Errorf("GET /hi = %d %q, want 200", rr.Code, rr.Body.String())
+			}
+		})
+	}
+	wg.Wait()
+
+	lines := buf.lines()
+	if len(lines) != 40 {
+		t.Fatalf("log lines = %d, want 40", len(lines))
+	}
+	handlerIDs := map[any]int{}
+	requestIDs := map[any]int{}
+	for _, l := range lines {
+		id := l["request_id"]
+		if id == nil {
+			t.Errorf("line without request_id: %v", l)
+			continue
+		}
+		if l["msg"] == "handler" {
+			handlerIDs[id]++
+		} else {
+			requestIDs[id]++
+		}
+	}
+	if len(handlerIDs) != 20 {
+		t.Errorf("distinct handler request_ids = %d, want 20", len(handlerIDs))
+	}
+	for id := range handlerIDs {
+		if requestIDs[id] != 1 {
+			t.Errorf("handler request_id %v has %d request lines, want 1", id, requestIDs[id])
+		}
+	}
+	buf.mu.Lock()
+	raw := buf.buf.String()
+	buf.mu.Unlock()
+	for line := range strings.SplitSeq(strings.TrimSpace(raw), "\n") {
+		if n := countKey(line, "request_id"); n != 1 {
+			t.Errorf("line has %d request_id fields, want 1: %s", n, line)
+		}
+	}
+}
+
+// With the singleton Logger as T, the request scope still resolves the
+// singleton itself: the request logger lives only on the context.
+func TestRequestLogger_SingletonTypeIsNotShadowed(t *testing.T) {
+	t.Parallel()
+
+	buf := &lockedBuffer{}
+	shared := Logger(newSlogLogger(slog.New(slog.NewJSONHandler(buf, nil))))
+	app := NewApp(WithServiceInstance[Logger](shared))
+	if err := app.InitServices(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	app.Router().UseMiddlewareFunc(middleware.RequestID)
+	app.Router().UseMiddlewareFunc(RequestLogger[Logger]())
+	app.Router().Get(nil, "/hi", func(_ Context, l Logger) error {
+		if l != shared {
+			return NewError(http.StatusInternalServerError, "shadowed", "singleton shadowed")
+		}
+		return nil
+	})
+
+	rr := httptest.NewRecorder()
+	app.Router().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/hi", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /hi = %d %q, want 200", rr.Code, rr.Body.String())
+	}
+}
+
+// closingRequestLogger is a scoped request logger that is also a Service,
+// so the scope closes it when the request ends.
+type closingRequestLogger struct {
+	Logger
+	closed *atomic.Bool
+}
+
+func (l *closingRequestLogger) Name() string                { return "closing-request-logger" }
+func (l *closingRequestLogger) Init(context.Context) error  { return nil }
+func (l *closingRequestLogger) Close(context.Context) error { l.closed.Store(true); return nil }
+
+// A scoped request logger that is a Service is not replaced, so the scope
+// still closes the instance it built.
+func TestRequestLogger_ScopedServiceIsNotReplaced(t *testing.T) {
+	t.Parallel()
+
+	buf := &lockedBuffer{}
+	closed := &atomic.Bool{}
+	shared := Logger(newSlogLogger(slog.New(slog.NewJSONHandler(buf, nil))))
+	app := NewApp(
+		WithServiceInstance[Logger](shared),
+		WithScopedService[scopedRequestLogger](func(l Logger) scopedRequestLogger {
+			return &closingRequestLogger{Logger: l.With().Logger(), closed: closed}
+		}),
+	)
+	if err := app.InitServices(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	app.Router().UseMiddlewareFunc(RequestLogger[scopedRequestLogger]())
+	app.Router().Get(nil, "/hi", func(_ Context, l scopedRequestLogger) error {
+		if _, ok := l.(*closingRequestLogger); !ok {
+			return NewError(http.StatusInternalServerError, "replaced", "service replaced")
+		}
+		return nil
+	})
+
+	rr := httptest.NewRecorder()
+	app.Router().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/hi", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /hi = %d %q, want 200", rr.Code, rr.Body.String())
+	}
+	if !closed.Load() {
+		t.Error("the scoped request logger was not closed at the end of the request")
 	}
 }

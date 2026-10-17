@@ -222,7 +222,9 @@ next.ServeHTTP(w, r.WithContext(gas.WithLogger(r.Context(), logger)))
 gas.LoggerFromContext(r.Context()).Info("note created").Send()
 ```
 
-`gas.RequestLogger` already does this for `request_id`.
+`gas.RequestLogger` already does this for `request_id`, and for a scoped
+request-logger type it also puts the result in the request scope, so code
+that takes that type as a dependency gets the fields.
 
 ## LoggerContext
 

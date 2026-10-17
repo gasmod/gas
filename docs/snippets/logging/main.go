@@ -12,12 +12,18 @@ import (
 // #endregion imports
 
 // #region register
-// gas.Logger is a singleton: services take it in their constructors. Request
-// fields never change it; request middleware derives a per-request logger from
-// it instead.
+// gas.Logger is a singleton: services take it in their constructors, and the
+// container rejects a singleton that depends on a scoped service. Per-request
+// fields go on a separate scoped type derived from it, which the request
+// middleware fills with the request's logger.
+type RequestLogger interface{ gas.Logger }
+
 func register() []gas.Option {
 	return []gas.Option{
 		gas.WithSingletonService[gas.Logger](gaslog.NewSlogLogger()),
+		gas.WithScopedService[RequestLogger](func(l gas.Logger) RequestLogger {
+			return l.With().Logger()
+		}),
 	}
 }
 
@@ -69,9 +75,17 @@ func handler(w http.ResponseWriter, r *http.Request) {
 // #region request-logger
 // The built-in request logger records method, path, status, bytes, duration
 // and remote address. Responses at 400 and above log at error level. It also
-// puts a per-request logger carrying the request ID on the request context.
+// derives a logger carrying the request ID and puts it in the request scope as
+// RequestLogger and on the request context.
 func requestLogging(router *gas.Router) {
-	router.UseMiddlewareFunc(gas.RequestLogger[gas.Logger]())
+	router.UseMiddlewareFunc(gas.RequestLogger[RequestLogger]())
+}
+
+// injected takes the request's logger as a DI parameter; it carries the
+// request ID.
+func injected(_ gas.Context, logger RequestLogger) error {
+	logger.Info("note listed").Send()
+	return nil
 }
 
 // #endregion request-logger

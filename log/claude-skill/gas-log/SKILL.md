@@ -177,7 +177,9 @@ func userFields(next http.Handler) http.Handler {
 ```
 
 `gas.RequestLogger` does this for `request_id`, so mounting it upstream gives
-every handler a request logger without extra code.
+every handler a request logger without extra code. With a scoped
+request-logger type (see DI Registration), it also puts that logger in the
+request scope, so handlers that take the type as a parameter get it.
 
 ## Context-Scoped Logging
 
@@ -439,17 +441,27 @@ app := gas.NewApp(
 )
 ```
 
-For per-request fields, give the singleton to the request middleware. It
-derives a per-request logger carrying `request_id` and puts it on the request
-context, leaving the singleton unchanged:
+For per-request fields, register a separate scoped type derived from the
+singleton and give it to the request middleware. It derives a logger carrying
+`request_id` from the request's instance and puts it back in the request scope
+and on the request context, leaving the singleton unchanged:
 
 ```go
+type RequestLogger interface{ gas.Logger }
+
 app := gas.NewApp(
     gas.WithSingletonService[gas.Logger](gaslog.NewSlogLogger()),
+    gas.WithScopedService[RequestLogger](func(l gas.Logger) RequestLogger {
+        return l.With().Logger()
+    }),
 )
-app.Router().UseMiddlewareFunc(gas.RequestLogger[gas.Logger]())
-// In a handler: gas.LoggerFromContext(r.Context()).Info("...").Send()
+app.Router().UseMiddlewareFunc(gas.RequestLogger[RequestLogger]())
+// A handler taking RequestLogger gets the request_id:
+//   func list(ctx gas.Context, logger RequestLogger) error
 ```
+
+`gas.RequestLogger[gas.Logger]()` with the singleton is also safe: the
+singleton is left unchanged and the request logger is only on the context.
 
 ## Complete Example
 

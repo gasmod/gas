@@ -88,11 +88,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   concurrent requests raced and every request added one more `request_id` to
   the shared logger. It now derives a per-request logger with `With()`, runs
   the builder on it, and stores it on the request context with
-  `gas.WithLogger`. Handlers get the request logger, with its `request_id`,
-  from `gas.LoggerFromContext(r.Context())`; resolving `T` from the request
-  scope returns the logger without the request fields. The scoped
-  `RequestLogger` type the docs used to recommend is no longer needed:
-  `gas.RequestLogger[gas.Logger]()` is safe.
+  `gas.WithLogger`. When `T` is registered scoped (the documented
+  `RequestLogger` type built from the singleton with `With()`), the request
+  logger also replaces `T`'s instance in the request scope, so handlers and
+  services that take `T` get its `request_id`, as they did before. A
+  singleton `T` is never shadowed, and a scoped `T` whose instance is a
+  `Service` is not replaced, so the scope still closes it.
+  `gas.RequestLogger[gas.Logger]()` with the singleton is now safe too, with
+  the request logger on the context only.
 
 ## [0.5.0] - 2026-09-19
 
