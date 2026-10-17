@@ -10,6 +10,9 @@ import (
 // Parse parses dotenv-style configuration and returns a map of key->value.
 // It supports quoted values and multi-line continuations inside quotes.
 // It also supports inline comments starting with #, which are ignored except when inside quotes.
+// A quoted value whose quote is never closed is an error naming the key and
+// the line it starts on; the value is left out of the error, since it may be
+// a secret.
 func Parse(data []byte) (map[string]string, error) {
 	env := make(map[string]string)
 	scanner := bufio.NewScanner(bytes.NewReader(data))
@@ -19,10 +22,13 @@ func Parse(data []byte) (map[string]string, error) {
 		valueBuilder strings.Builder
 		inMultiline  bool
 		quoteChar    rune
+		lineNo       int
+		startLine    int
 	)
 
 	for scanner.Scan() {
 		line := scanner.Text()
+		lineNo++
 
 		if inMultiline {
 			handleMultiline(line, &valueBuilder, key, quoteChar, &inMultiline, env)
@@ -39,6 +45,7 @@ func Parse(data []byte) (map[string]string, error) {
 			inMultiline = true
 			key = k
 			quoteChar = q
+			startLine = lineNo
 
 			valueBuilder.WriteString(val)
 
@@ -50,6 +57,15 @@ func Parse(data []byte) (map[string]string, error) {
 
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("scanning dotenv: %w", err)
+	}
+
+	if inMultiline {
+		return nil, fmt.Errorf(
+			"dotenv: unclosed %c quote in value of %q starting on line %d",
+			quoteChar,
+			key,
+			startLine,
+		)
 	}
 
 	return env, nil

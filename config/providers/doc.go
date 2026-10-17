@@ -37,10 +37,10 @@
 //
 // By default JSONProvider and DotEnvProvider read through a file system that
 // accepts only paths inside the working directory, rejects a path whose last
-// element is a symlink, and rejects files over 1 MB. It does not resolve
-// symlinked directories along the path, so a file reached through one is
-// read even when it lies outside the working directory (KI-027 in
-// KNOWN_ISSUES.md). WithJSONFileFS and WithDotEnvFileFS read from any fs.FS
+// element is a symlink, and rejects files over 1 MB. The working-directory
+// check is made on the path as written and again after resolving symlinked
+// directories along it, so a symlinked directory cannot lead outside the
+// working directory. WithJSONFileFS and WithDotEnvFileFS read from any fs.FS
 // instead, such as an embed.FS, without those checks.
 //
 // # Wiring and lifecycle

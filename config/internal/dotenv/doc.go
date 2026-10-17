@@ -11,11 +11,12 @@
 // kept as written, so UTF-8 and any other non-ASCII text in keys and values
 // comes through unchanged.
 //
+// A quote that is never closed is an error naming the key and the line the
+// value starts on; the value itself is left out of the error, since it may
+// be a secret. Parse also returns an error when the scanner fails, for
+// example on a line longer than 64 KB.
+//
 // The tests pin each syntax rule, and two fuzz targets check that Parse
 // never panics, is deterministic, returns only non-empty trimmed keys, and
 // returns any single-line double-quoted value unchanged.
-//
-// A quote that is never closed swallows the rest of the file without an
-// error (KI-029 in KNOWN_ISSUES.md). Parse returns an error only when the
-// scanner fails, for example on a line longer than 64 KB.
 package dotenv

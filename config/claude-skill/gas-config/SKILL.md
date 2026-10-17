@@ -239,7 +239,9 @@ Same key conventions as `EnvProvider`, including the denylist: flat
 when building the config map and when exporting to the OS environment.
 
 Errors: `ErrDotEnvFilePathNotSet`, `ErrDotEnvFileReadFailed`,
-`ErrDotEnvParseFailed`, `ErrSetEnv`
+`ErrDotEnvParseFailed`, `ErrSetEnv`. A quoted value whose quote is never closed
+fails `Load()` with `ErrDotEnvParseFailed`, naming the key and the line it
+starts on (not the value).
 
 ### AWS SecretsManager
 
