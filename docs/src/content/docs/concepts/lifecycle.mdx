@@ -28,7 +28,12 @@ every DI registration option works with both; only HTTP-specific options such as
 6. **Bind config**, then start the HTTP server (App only).
 
 Anything failing in steps 1 through 5 aborts startup and returns an error. The
-server never accepts a request against a half-built application.
+server never accepts a request against a half-built application. A failed
+`Start` also leaves nothing running: it closes, in reverse order, every service
+it had initialized (with a context that is not canceled, even if yours was) and
+returns the startup error joined with any `Close` errors. The Worker or App
+cannot be started again; a later `Start` returns the same error, so build a new
+one to retry.
 
 ## Init and Close contexts
 

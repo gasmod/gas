@@ -270,12 +270,46 @@ func (c *ServiceContainer) initInstances(ctx context.Context) error {
 		if !ok {
 			continue
 		}
-		c.initedInstances[t] = struct{}{}
 		if err := c.initService(ctx, t, svc); err != nil {
 			return err
 		}
+		// Marked only once Init succeeds, so initializedServices never
+		// reports an instance whose Init failed.
+		c.initedInstances[t] = struct{}{}
 	}
 	return nil
+}
+
+// initializedServices returns, in the order they became available, the
+// singleton Services whose Init has succeeded: pre-registered instances the
+// container initialized and singletons it built. Each instance appears once,
+// even when it is registered under several types. A Worker uses it to close
+// what a failed startup had already initialized.
+func (c *ServiceContainer) initializedServices() []Service {
+	var out []Service
+	seen := make(map[Service]struct{})
+	for _, t := range c.instanceOrder {
+		v, ok := c.instances[t]
+		if !ok {
+			continue
+		}
+		svc, ok := v.Interface().(Service)
+		if !ok {
+			continue
+		}
+		_, inited := c.initedInstances[t]
+		reg, registered := c.registrations[t]
+		built := registered && reg.lifetime == ServiceLifetimeSingleton
+		if !inited && !built {
+			continue
+		}
+		if _, dup := seen[svc]; dup {
+			continue
+		}
+		seen[svc] = struct{}{}
+		out = append(out, svc)
+	}
+	return out
 }
 
 // initService runs svc.Init under the service's init deadline: the

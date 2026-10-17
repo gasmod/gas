@@ -83,6 +83,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A failed `Start` no longer leaves services running.** When a service's
+  `Init` failed, the services initialized before it were never tracked, so
+  neither the failed `Start` nor a later `Shutdown` closed them; a failing
+  migration or ready hook left every service running until the caller called
+  `Shutdown`; and a second `Start` got nil from the run-once `InitServices`
+  and ran migrations and ready hooks against a half-built container. Now a
+  failed `Start` (or `InitServices`) closes, in reverse order, every service
+  it had initialized, with `context.WithoutCancel` of its context, and
+  returns the startup error joined with any `Close` errors. Later calls
+  return that same error, and a later `Shutdown` has nothing to close. A
+  pre-registered instance whose `Init` failed is not closed. `App.Start` does
+  the same when its config fails to bind or validate after the Worker
+  started.
 - **The Worker's logger no longer races with the kill switch.** `Worker`
   resolved its logger lazily and unsynchronized on first use and, with no
   `Logger` registered, registered a slog fallback in the container, so
