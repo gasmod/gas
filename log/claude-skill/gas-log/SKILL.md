@@ -9,7 +9,8 @@ description: >
   fluent gas.Logger / gas.LogEvent / gas.LoggerContext interfaces,
   constructor options, sub-loggers via With(), per-request loggers on the
   request context via gas.WithLogger / gas.LoggerFromContext, DI registration
-  of a singleton gas.Logger, level mapping across backends,
+  via a singleton gas.Logger plus a scoped per-request logger type, level
+  mapping across backends,
   and the log-shipping subsystem: NewShippingLogger / NewShippingHandler, the
   batching HTTP sender, per-sink level thresholds, the Marshaler interface and
   Record type, the OTLP/HTTP JSON marshaler (NewOTLPMarshaler), the fanout and
