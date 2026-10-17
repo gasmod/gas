@@ -70,7 +70,10 @@ pairs out of an `embed.FS` using the naming convention
 
 `Run` (or `Worker.Start`) applies everything pending in global version order
 across all services, after services initialize and before traffic is accepted.
-Each migration runs in its own transaction.
+Each migration runs in its own transaction together with its row in the
+`__gas_migrations` table, and so does each `Down`. On MySQL, DDL statements such
+as `CREATE TABLE` commit implicitly, so a migration containing DDL is not atomic
+with its tracking row there.
 
 <Aside type="danger" title="Dirty migrations block startup">
 A migration that fails is recorded as dirty, and every later run, and every

@@ -252,22 +252,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   initialized, and whether a later `Start` returns the original error (a
   §3 lifecycle decision in `CLAUDE.md`).
 
-## KI-019: migrate Down is not atomic
-
-- **Status**: open
-- **Area**: `migrate` (`manager.go`).
-- **Found**: 2026-10-16, while writing the migrate `doc.go`.
-- **Detail**: `applyDown` commits the down SQL in its own transaction and
-  then deletes the tracking row outside it (`migrate/manager.go:316` to
-  `:335`), unlike the up path, where the SQL and the row commit together.
-  If the delete fails, the schema is reverted but the row remains, so
-  `RunPending` treats the migration as applied and never re-applies it.
-  Verified on SQLite by making the delete fail: `Down(1)` returned the
-  error with the table dropped and the row still present, and a later
-  `RunPending` returned nil without recreating the table.
-- **Next step**: delete the tracking row inside the same transaction as
-  the down SQL.
-
 ## KI-020: a dirty migration can only be cleared by hand
 
 - **Status**: decision needed

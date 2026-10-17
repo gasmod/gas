@@ -68,8 +68,8 @@ func (s *Service) markDirty(ctx context.Context, version, service, description s
 	return nil
 }
 
-func (s *Service) removeMigration(ctx context.Context, version string) error {
-	if err := s.q.removeMigration(ctx, version); err != nil {
+func (s *Service) removeMigration(ctx context.Context, tx *sql.Tx, version string) error {
+	if err := s.q.removeMigration(ctx, tx, version); err != nil {
 		return fmt.Errorf("gas/migrate: failed to remove migration %s: %w", version, err)
 	}
 	return nil

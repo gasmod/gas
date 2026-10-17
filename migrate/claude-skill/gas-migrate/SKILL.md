@@ -29,7 +29,10 @@ import migrate "github.com/gasmod/gas/migrate"
 - **Global version ordering** — migrations from all services are sorted by
   version and applied in a single global sequence.
 - **Per-migration transactions** — each migration runs in its own `BEGIN`/`COMMIT`
-  block; a failure marks that migration dirty and halts further execution.
+  block together with its tracking row, for both `RunPending` and `Down`; a
+  failure while applying marks that migration dirty and halts further
+  execution. On MySQL, DDL commits implicitly, so a migration containing DDL
+  is not atomic with its tracking row.
 - **Ownership tracking** — every migration is tagged with its owning service name,
   enabling per-service registration while maintaining global ordering.
 - **Multi-driver support** — uses sqlc code generation with dialect-specific
@@ -181,9 +184,13 @@ func (s *MyService) Init(ctx context.Context) error {
 3. All registered migrations are collected, checked for duplicate versions across
    services, and sorted globally by version.
 4. Each unapplied migration runs in its own transaction (`BeginTx` → `Exec` →
-   `Commit`). On failure, the migration is marked dirty and an error is returned.
-5. On success, a tracking row is inserted with the version, service, description,
-   gas/migrate version, and the owning module's version.
+   insert tracking row → `Commit`). On failure, the transaction rolls back, the
+   migration is marked dirty, and an error is returned.
+5. The tracking row records the version, service, description, gas/migrate
+   version, and the owning module's version.
+6. `Down()` runs each down SQL and deletes its tracking row in one transaction;
+   a failure rolls both back and returns the error without marking the
+   migration dirty.
 
 ### Tracking Table Schema
 
