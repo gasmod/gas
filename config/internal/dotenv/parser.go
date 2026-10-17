@@ -72,35 +72,30 @@ func Parse(data []byte) (map[string]string, error) {
 }
 
 // removeInlineComment removes inline comments starting with #, ignoring those inside quotes.
+// It scans bytes, which is safe for UTF-8 because quotes and # are single-byte ASCII
+// and never occur inside a multi-byte sequence; it returns the line up to the comment
+// unchanged, so non-ASCII text is kept byte for byte.
 func removeInlineComment(line string) string {
 	inQuote := false
-	quoteChar := rune(0)
+	quoteChar := byte(0)
 
-	var result strings.Builder
-
-loop:
 	for i := range len(line) {
-		r := rune(line[i])
+		c := line[i]
 		switch {
-		case r == '"' || r == '\'':
+		case c == '"' || c == '\'':
 			if !inQuote {
 				inQuote = true
-				quoteChar = r
-			} else if r == quoteChar {
+				quoteChar = c
+			} else if c == quoteChar {
 				inQuote = false
 			}
 
-			result.WriteRune(r)
-
-		case r == '#' && !inQuote:
-			break loop
-
-		default:
-			result.WriteRune(r)
+		case c == '#' && !inQuote:
+			return line[:i]
 		}
 	}
 
-	return result.String()
+	return line
 }
 
 // parseSingleLine processes a single line when not in multiline mode and extracts key-value pair.

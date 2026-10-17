@@ -42,6 +42,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   removed the configuration below it. A `.env` file with this mistake that
   loaded before now fails to load.
 
+### Fixed
+
+- **`.env` values with non-ASCII text are no longer corrupted.** The
+  inline-comment scan re-encoded every byte above 0x7F as a separate
+  character, so `café` loaded as `cafÃ©` and any non-ASCII password or
+  secret was silently changed. Found by the new fuzz target.
+
 ### Security
 
 - **The default file system no longer follows a symlinked directory out of
