@@ -42,6 +42,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   removed the configuration below it. A `.env` file with this mistake that
   loaded before now fails to load.
 
+### Security
+
+- **The default file system no longer follows a symlinked directory out of
+  the working directory.** `JSONProvider` and `DotEnvProvider` checked the
+  path only as written, so `link/secret.json`, with `link` a symlink to a
+  directory outside the working directory, was read. The check now runs
+  again after resolving symlinked directories, and such a path fails with
+  `ErrJSONFileReadFailed` or `ErrDotEnvFileReadFailed`. A symlinked
+  directory that stays inside the working directory still works.
+
 ## [0.3.0] - 2026-07-02
 
 First open source release. Versions prior to 0.3.0 were developed in a private
