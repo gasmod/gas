@@ -83,6 +83,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`Config.Validate` no longer does a DNS lookup.** It checked
+  `Server.Host` with `net.LookupHost`, so startup depended on the resolver:
+  slow or offline DNS delayed or failed `Start`, and a well-formed name that
+  only resolves later (such as a container hostname) was rejected. It now
+  accepts an IP address or a syntactically valid RFC 1123 hostname without
+  resolving it; a host that does not resolve fails when the server listens.
+  The error now reads `"..." is not a valid IP or hostname` (part of #12).
 - **A failed `Start` no longer leaves services running.** When a service's
   `Init` failed, the services initialized before it were never tracked, so
   neither the failed `Start` nor a later `Shutdown` closed them; a failing

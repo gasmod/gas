@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	env "github.com/gasmod/gas/config/extensions/gasenv"
@@ -71,13 +72,44 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+// validateHost accepts an IP address or a syntactically valid hostname. It
+// checks shape only and does no DNS lookup, so validation is fast, works
+// offline, and does not depend on the resolver at startup; a host that does
+// not resolve fails when the server listens.
 func validateHost(host string) error {
 	if host == "" {
 		return errors.New("must not be empty")
 	}
-	// Valid if it's a resolvable hostname, this also checks IPv4 and IPv6
-	if _, err := net.LookupHost(host); err == nil {
+	if net.ParseIP(host) != nil || isHostname(host) {
 		return nil
 	}
-	return fmt.Errorf("%q is not a valid IP or resolvable hostname", host)
+	return fmt.Errorf("%q is not a valid IP or hostname", host)
+}
+
+// isHostname reports whether host is a hostname in the RFC 1123 sense: at
+// most 253 characters (one more for a trailing dot), made of dot-separated
+// labels of 1 to 63 letters, digits, and hyphens that neither start nor end
+// with a hyphen.
+func isHostname(host string) bool {
+	host = strings.TrimSuffix(host, ".")
+	if host == "" || len(host) > 253 {
+		return false
+	}
+	for label := range strings.SplitSeq(host, ".") {
+		if !isHostnameLabel(label) {
+			return false
+		}
+	}
+	return true
+}
+
+func isHostnameLabel(label string) bool {
+	if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+		return false
+	}
+	return !strings.ContainsFunc(label, func(r rune) bool { return !isHostnameRune(r) })
+}
+
+func isHostnameRune(r rune) bool {
+	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-'
 }
