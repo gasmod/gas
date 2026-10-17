@@ -183,7 +183,7 @@ w := gas.NewWorker(opts ...Option) *Worker
 
 | Method             | Signature                | Description                                                                      |
 |--------------------|--------------------------|----------------------------------------------------------------------------------|
-| `Start`            | `(ctx) error`            | InitServices → migrations → ready hooks (non-blocking)                           |
+| `Start`            | `(ctx) error`            | InitServices → migrations → ready hooks (non-blocking); on failure closes what it started and later calls return the same error |
 | `Shutdown`         | `(ctx) error`            | Emit SystemShuttingDown, close services in reverse order                         |
 | `Run`              | `() error`               | Start → block on SIGINT/SIGTERM → Shutdown                                       |
 | `InitServices`     | `(ctx) error`            | Build singletons, collect services, emit init event                              |

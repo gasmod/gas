@@ -58,8 +58,9 @@ type ServiceContainer struct {
 	registrations map[reflect.Type]registration
 	instances     map[reflect.Type]reflect.Value // singletons + pre-registered instances
 
-	// initedInstances tracks pre-registered instances whose Init has run, so a
-	// repeated BuildAll does not initialize them twice. Constructed singletons
+	// initedInstances tracks pre-registered instances whose Init is running or
+	// has succeeded, so a repeated BuildAll does not initialize them twice. An
+	// instance whose Init failed is removed again. Constructed singletons
 	// need no equivalent: they are initialized inside invoke, which runs once
 	// per type because the result is cached.
 	initedInstances map[reflect.Type]struct{}
@@ -286,11 +287,51 @@ func (c *ServiceContainer) initInstances(ctx context.Context) error {
 	for _, t := range order {
 		if svc, ok := c.claimInstanceInit(t); ok {
 			if err := c.initService(ctx, t, svc); err != nil {
+				// Unmarked so initializedServices never reports an
+				// instance whose Init failed.
+				c.mu.Lock()
+				delete(c.initedInstances, t)
+				c.mu.Unlock()
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+// initializedServices returns, in the order they became available, the
+// singleton Services whose Init has succeeded: pre-registered instances the
+// container initialized and singletons it built. Each instance appears once,
+// even when it is registered under several types. A Worker uses it to close
+// what a failed startup had already initialized.
+func (c *ServiceContainer) initializedServices() []Service {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	var out []Service
+	seen := make(map[Service]struct{})
+	for _, t := range c.instanceOrder {
+		v, ok := c.instances[t]
+		if !ok {
+			continue
+		}
+		svc, ok := v.Interface().(Service)
+		if !ok {
+			continue
+		}
+		_, inited := c.initedInstances[t]
+		reg, registered := c.registrations[t]
+		built := registered && reg.lifetime == ServiceLifetimeSingleton
+		if !inited && !built {
+			continue
+		}
+		if _, dup := seen[svc]; dup {
+			continue
+		}
+		seen[svc] = struct{}{}
+		out = append(out, svc)
+	}
+	return out
 }
 
 // claimInstanceInit returns the pre-registered instance for t as a Service

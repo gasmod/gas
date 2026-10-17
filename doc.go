@@ -49,6 +49,12 @@
 // context, and Close gets it without its cancellation, so scoped services
 // clean up even after the client has gone.
 //
+// A Start that fails closes, in reverse order, every service it had
+// initialized, with its context stripped of cancellation, and returns the
+// startup error joined with any Close errors. It leaves nothing running, and
+// the Worker cannot be started again: later calls to Start, and to
+// InitServices after a failed InitServices, return the same error.
+//
 // Worker.Shutdown emits SystemShuttingDown and closes every service still
 // active, in reverse initialization order, passing its context to Close.
 // Services already closed by CloseService are skipped. A Close error does

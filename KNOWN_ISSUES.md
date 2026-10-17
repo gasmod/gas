@@ -86,22 +86,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   documentation. Either changes which URLs serve which files, so it is a
   decision for Ahmed.
 
-## KI-015: a failed Start leaves initialized services open
-
-- **Status**: decision needed
-- **Area**: core (`worker.go`).
-- **Found**: 2026-10-16, in review of the context-aware lifecycle change.
-- **Detail**: `InitServices` records services for shutdown only after
-  `BuildAll` succeeds (`worker.go:105` to `:122` on `main`), so when one
-  service's Init fails, the services already initialized are never
-  closed, by the failed start or by a later `Shutdown`. `InitServices`
-  also runs once (`initOnce`), so a second `Start` after a failure gets
-  nil from it and goes on to run migrations and ready hooks against a
-  half-built container.
-- **Next step**: decide whether a failed start closes what it
-  initialized, and whether a later `Start` returns the original error (a
-  §3 lifecycle decision in `CLAUDE.md`).
-
 ## KI-020: a dirty migration can only be cleared by hand
 
 - **Status**: decision needed
