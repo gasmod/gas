@@ -144,7 +144,9 @@ broken-state condition that a process restart would resolve.
   field on the embedded `Email` is used directly.
 - **Credential chain:** If both `AccessKeyID` and `SecretAccessKey` are set,
   static credentials are used. Otherwise, the default AWS credential chain
-  is used (environment variables, shared config, IAM roles, etc.).
+  is used (environment variables, shared config, IAM roles, etc.). `Init`
+  fetches the credentials under its context, so a setup with no usable
+  credentials fails startup (`retrieve aws credentials` in the error).
 - **No upfront connection:** The AWS SES client is stateless HTTP — Init
   creates the client but does not verify connectivity. Connection errors
   surface at call time.

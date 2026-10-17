@@ -105,7 +105,7 @@ func receives `gas.ConfigProvider` and `gas.Logger` from the DI container.
 | Method  | Signature   | Description                                           |
 |---------|-------------|-------------------------------------------------------|
 | `Name`  | `() string` | Returns `"gas/queue/sqs"`                             |
-| `Init`  | `(ctx context.Context) error` | Validates config, creates AWS SQS client (ctx bounds AWS config loading) |
+| `Init`  | `(ctx context.Context) error` | Validates config, creates AWS SQS client, fetches AWS credentials (ctx bounds both); fails when none can be found |
 | `Close` | `(ctx context.Context) error` | Marks service as closed (ctx unused) |
 
 ### Behavior
