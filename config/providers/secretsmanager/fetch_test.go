@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awssm "github.com/aws/aws-sdk-go-v2/service/secretsmanager"
@@ -207,4 +208,29 @@ func TestLoad_AppliesTimeoutDeadline(t *testing.T) {
 
 	_, hasDeadline := mock.gotCtx.Deadline()
 	assert.True(t, hasDeadline, "Load must bound the context with the configured timeout")
+}
+
+// WithTimeout of zero or a negative duration means no timeout: Load must
+// not fail with an already-expired context.
+func TestLoad_NonPositiveTimeoutMeansNoTimeout(t *testing.T) {
+	t.Parallel()
+
+	for _, d := range []time.Duration{0, -time.Second} {
+		mock := &mockAPI{secrets: map[string]*awssm.GetSecretValueOutput{
+			"s": stringSecret(`{"a": 1}`),
+		}}
+		p := secretsmanager.NewProvider(
+			secretsmanager.WithClient(mock),
+			secretsmanager.WithSecret("s"),
+			secretsmanager.WithTimeout(d),
+		)
+
+		values, err := p.Load()
+		require.NoError(t, err, "WithTimeout(%s)", d)
+		assert.InDelta(t, 1.0, values["a"], 0, "WithTimeout(%s)", d)
+		require.NotNil(t, mock.gotCtx)
+		_, hasDeadline := mock.gotCtx.Deadline()
+		assert.False(t, hasDeadline, "WithTimeout(%s) must not set a deadline", d)
+		assert.NoError(t, mock.gotCtx.Err(), "WithTimeout(%s) context already done", d)
+	}
 }

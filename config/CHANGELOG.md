@@ -44,6 +44,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`secretsmanager.WithTimeout` with zero or a negative duration means no
+  timeout.** `Load` passed the value to `context.WithTimeout` as is, so a
+  zero or negative timeout gave an already-expired context and every `Load`
+  failed with `context.DeadlineExceeded`. `Load` now adds no deadline when the
+  timeout is not positive. `LoadContext` is unchanged.
 - **`.env` values with non-ASCII text are no longer corrupted.** The
   inline-comment scan re-encoded every byte above 0x7F as a separate
   character, so `café` loaded as `cafÃ©` and any non-ASCII password or

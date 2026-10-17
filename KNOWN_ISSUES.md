@@ -173,23 +173,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
 - **Next step**: decide whether the module should offer a way to clear
   or force a dirty version (a §3 API decision in `CLAUDE.md`).
 
-## KI-028: secretsmanager `WithTimeout(0)` makes every Load fail
-
-- **Status**: decision needed
-- **Area**: `config` (`providers/secretsmanager`).
-- **Found**: 2026-10-16, while writing the config packages' `doc.go`.
-- **Detail**: `WithTimeout` stores any duration
-  (`config/providers/secretsmanager/provider.go:120`), and `Load` uses it
-  as `context.WithTimeout(context.Background(), p.timeout)` (`:147`). Zero
-  or a negative value gives a context that has already expired. Repro: a
-  provider with an injected client that checks its context,
-  `WithSecret("s")` and `WithTimeout(0)` (or `-1`): `Load` returns
-  `failed to fetch secret s: context deadline exceeded`. Other gas options
-  treat 0 as "no limit" or ignore values that are not positive.
-- **Next step**: decide what zero and negative values mean here (a §3
-  default-value decision in `CLAUDE.md`): no timeout, the default, or an
-  error.
-
 ## KI-030: core and the modules import the config module
 
 - **Status**: decision needed

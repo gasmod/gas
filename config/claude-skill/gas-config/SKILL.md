@@ -259,7 +259,7 @@ secretsmanager.NewProvider(opts ...Option) *Provider
 | Static credentials | `WithStaticCredentials(id, secret string)` | Default AWS chain when unset |
 | Endpoint | `WithEndpoint(url string)` | Custom endpoint (LocalStack) |
 | Client | `WithClient(client API)` | Inject client/mock; other client options ignored |
-| Timeout | `WithTimeout(d time.Duration)` | Bounds `Load()` without caller context (default 10s) |
+| Timeout | `WithTimeout(d time.Duration)` | Bounds `Load()` without caller context (default 10s); 0 or negative means no timeout |
 
 Implements `providers.ContextProvider`: `Config.LoadWithContext` passes its
 context through. Eager fetch at load time; no caching or rotation.
