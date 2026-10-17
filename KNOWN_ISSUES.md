@@ -265,22 +265,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
 - **Next step**: decide whether the module should offer a way to clear
   or force a dirty version (a §3 API decision in `CLAUDE.md`).
 
-## KI-024: template db store cannot be written to while services start
-
-- **Status**: open
-- **Area**: `template/db` (`store.go`), with the Worker's startup order.
-- **Found**: 2026-10-16, while writing the template `doc.go`.
-- **Detail**: the store's table comes from a migration it registers when
-  it starts, and the Worker applies migrations only after every service
-  has started. A service that registers templates into the store from its
-  own start-up, as services are told to do, writes before the table
-  exists on a fresh database. Verified on SQLite: `Register` before
-  `RunPending` failed with `no such table: __gas_templates`, and succeeded
-  after it.
-- **Next step**: create the table when the store starts instead of
-  through a deferred migration, or document that templates can only be
-  written once startup has finished.
-
 ## KI-026: `SetBaseFields` on a shared logger races and accumulates fields
 
 - **Status**: decision needed
@@ -305,26 +289,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   and storing the result on the request), synchronized and non-accumulating
   `SetBaseFields`, or a documented requirement that the logger be scoped.
 
-## KI-027: config file reads follow symlinked directories out of the working directory
-
-- **Status**: open
-- **Area**: `config` (`internal/sysfs`).
-- **Found**: 2026-10-16, while writing the config packages' `doc.go`.
-- **Detail**: the default file system for `JSONProvider` and
-  `DotEnvProvider` refuses paths outside the working directory and paths
-  whose last element is a symlink. The directory check compares the path
-  as written (`config/internal/sysfs/safe_readfile.go:41`), and only the
-  last element is checked with `Lstat` (`:46`), so a symlinked directory
-  along the path is followed. Repro: in the working directory, a
-  directory `link` that is a symlink to a temporary directory outside it,
-  holding `secret.json`; `NewJSONProvider(WithJSONFilePath("link/secret.json")).Load()`
-  returns the file's values. A symlinked file and an absolute path outside
-  the directory are both refused, as documented. The path comes from the
-  app, so this weakens a defense rather than opening one to request input.
-- **Next step**: resolve symlinks before the directory check (for example
-  `filepath.EvalSymlinks`), or open through an `os.Root` on the working
-  directory.
-
 ## KI-028: secretsmanager `WithTimeout(0)` makes every Load fail
 
 - **Status**: decision needed
@@ -341,24 +305,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
 - **Next step**: decide what zero and negative values mean here (a §3
   default-value decision in `CLAUDE.md`): no timeout, the default, or an
   error.
-
-## KI-029: an unclosed quote in a .env file drops the rest of the file silently
-
-- **Status**: open
-- **Area**: `config` (`internal/dotenv`).
-- **Found**: 2026-10-16, while writing the config packages' `doc.go`.
-- **Detail**: a value that opens a quote without closing it on its line
-  starts a multi-line value (`config/internal/dotenv/parser.go:27`,
-  `handleMultiline` at `:134`). If no later line ends with that quote,
-  every following line is absorbed and, at the end of the file, the value
-  is discarded with no error (`:55`). Repro: `Parse` of
-  `A=1\nB="unterminated\nC=3\n` returns only `A`; `B` and `C` are gone and
-  the error is nil. A typo in one `.env` line can silently remove the
-  configuration below it, contrary to the §7 rule that bad configuration
-  produces an error.
-- **Next step**: return an error wrapping `ErrDotEnvParseFailed` for a
-  value whose quote is never closed. Files that load today with this
-  mistake would then fail to load.
 
 ## KI-030: core and the modules import the config module
 
@@ -394,8 +340,8 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   test files of their own (`go test` reports "no test files"); they are
   reached only through the provider tests. No fuzz target covers .env or
   JSON parsing, although §2 of `CLAUDE.md` asks for native fuzzing wherever
-  configuration sources are parsed. KI-029, an unclosed quote silently
-  dropping the rest of a .env file, is the kind of defect a fuzz target
+  configuration sources are parsed. An unclosed quote that silently
+  dropped the rest of a .env file was the kind of defect a fuzz target
   finds.
 - **Next step**: add unit tests for both packages and fuzz targets for
   `dotenv.Parse` and the JSON provider's decoding.

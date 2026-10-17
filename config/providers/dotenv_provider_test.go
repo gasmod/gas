@@ -180,3 +180,18 @@ func TestDotEnvProvider_NoAppendToOSEnv(t *testing.T) {
 	assert.Equal(t, "test_value", values["my_key"])
 	assert.Empty(t, os.Getenv("MY_KEY"), "Expected os.Getenv(\"MY_KEY\") to be empty")
 }
+
+func TestDotEnvProvider_UnclosedQuote(t *testing.T) {
+	t.Parallel()
+
+	fsys := fstest.MapFS{
+		".env": &fstest.MapFile{Data: []byte("A=1\nB=\"unterminated\nC=3\n")},
+	}
+	p := providers.NewDotEnvProvider(
+		providers.WithDotEnvFilePath(".env"),
+		providers.WithDotEnvFileFS(&fsys),
+	)
+
+	_, err := p.Load()
+	require.ErrorIs(t, err, providers.ErrDotEnvParseFailed)
+}

@@ -41,6 +41,10 @@ The composite store is the interesting one. Put a database store first and an
 embedded store behind it, and you get user-editable templates that fall back to
 the versions you shipped.
 
+The `template/db` store's table is created by a migration, and migrations run
+after every service has started. On a fresh database, write templates into it
+from a ready function (`gas.WithReadyFunc`), not from another service's `Init`.
+
 ## Directory convention
 
 <FileTree>

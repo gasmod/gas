@@ -9,7 +9,8 @@
 // kept as written: escapes such as \" or \n are not interpreted. An
 // "export " prefix is not recognized and stays part of the key.
 //
-// A quote that is never closed swallows the rest of the file without an
-// error (KI-029 in KNOWN_ISSUES.md). Parse returns an error only when the
-// scanner fails, for example on a line longer than 64 KB.
+// A quote that is never closed is an error naming the key and the line the
+// value starts on; the value itself is left out of the error, since it may
+// be a secret. Parse also returns an error when the scanner fails, for
+// example on a line longer than 64 KB.
 package dotenv
