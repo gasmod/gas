@@ -8,7 +8,7 @@ var (
 	// exist or has expired.
 	ErrKeyNotFound = errors.New("cache: key not found")
 
-	// ErrClosed is returned when an operation is attempted on a closed
-	// cache service.
+	// ErrClosed is returned when an operation is attempted on a cache
+	// service that has not been started or has been closed.
 	ErrClosed = errors.New("cache: service is closed")
 )

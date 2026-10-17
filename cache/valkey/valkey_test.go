@@ -3,10 +3,12 @@ package valkey
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/gasmod/gas"
+	cache "github.com/gasmod/gas/cache"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -99,5 +101,43 @@ func TestInit_RetryStopsWhenContextEnds(t *testing.T) {
 				t.Errorf("Init took %v, want it to stop when the context ends", elapsed)
 			}
 		})
+	}
+}
+
+func TestUnstartedServiceReturnsErrClosed(t *testing.T) {
+	t.Parallel()
+
+	s := New(WithConfig(DefaultConfig()))(nil, gas.NewNopLogger()())
+	ctx := context.Background()
+
+	// call turns a panic into an error, so every operation is checked
+	// even when one of them panics.
+	call := func(op func() error) (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("panic: %v", r)
+			}
+		}()
+		return op()
+	}
+
+	ops := map[string]func() error{
+		"Get": func() error {
+			_, err := s.Get(ctx, "k")
+			return err
+		},
+		"Set":    func() error { return s.Set(ctx, "k", []byte("v"), 0) },
+		"Delete": func() error { return s.Delete(ctx, "k") },
+		"Exists": func() error {
+			_, err := s.Exists(ctx, "k")
+			return err
+		},
+		"CheckHealth": func() error { return s.CheckHealth(ctx) },
+		"CheckReady":  func() error { return s.CheckReady(ctx) },
+	}
+	for name, op := range ops {
+		if err := call(op); !errors.Is(err, cache.ErrClosed) {
+			t.Errorf("%s() before Init = %v, want %v", name, err, cache.ErrClosed)
+		}
 	}
 }

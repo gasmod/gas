@@ -19,13 +19,33 @@ const serviceName = "gas/cache/valkey"
 // Service is a Valkey-backed cache implementing gas.Service and
 // gas.CacheProvider.
 type Service struct {
-	client valkey.Client
 	cfg    *Config
 	logger gas.Logger
 
-	cfgProvider          gas.ConfigProvider
+	cfgProvider gas.ConfigProvider
+
+	// testHookBeforeCall, when set by a test, runs in each cache
+	// operation after its open check and before it uses the client, so a
+	// test can close the service in that window.
+	testHookBeforeCall func()
+
+	// client holds the current Valkey client. It is nil until Init first
+	// connects, and Close keeps it so Client still returns it. Init and
+	// Close swap and read it while operations run, so it is atomic.
+	client atomic.Pointer[clientRef]
+
+	// closed is true from Close until the next successful Init. It
+	// starts false, so an operation also checks that client is set.
+	closed atomic.Bool
+
 	customConfigProvided bool
-	closed               atomic.Bool
+}
+
+// clientRef boxes a valkey.Client so it can be held in an
+// atomic.Pointer. Comparing two *clientRef values tells whether Init
+// replaced the client while an operation was using it.
+type clientRef struct {
+	c valkey.Client
 }
 
 var (
@@ -159,11 +179,9 @@ func (s *Service) connect(ctx context.Context) error {
 	}
 
 	// close previous client if reconnecting
-	if s.client != nil {
-		s.client.Close()
+	if prev := s.client.Swap(&clientRef{c: client}); prev != nil {
+		prev.c.Close()
 	}
-
-	s.client = client
 	return nil
 }
 
@@ -171,25 +189,53 @@ func (s *Service) connect(ctx context.Context) error {
 func (s *Service) Close(context.Context) error {
 	s.closed.Store(true)
 
-	if s.client != nil {
-		s.client.Close()
+	if ref := s.client.Load(); ref != nil {
+		ref.c.Close()
 		s.logger.Info("valkey cache closed").Send()
 	}
 
 	return nil
 }
 
-// Get returns the value for the given key, or cache.ErrKeyNotFound if
-// the key does not exist.
-func (s *Service) Get(ctx context.Context, key string) ([]byte, error) {
+// acquire returns the current client, or cache.ErrClosed if the service
+// was never started or has been closed.
+func (s *Service) acquire() (*clientRef, error) {
 	if s.closed.Load() {
 		return nil, cache.ErrClosed
 	}
+	ref := s.client.Load()
+	if ref == nil {
+		return nil, cache.ErrClosed
+	}
+	return ref, nil
+}
 
-	resp := s.client.Do(ctx, s.client.B().Get().Key(key).Build())
-	if err := resp.Error(); err != nil {
+// closedDuring reports whether the service was closed, or its client
+// replaced, after acquire returned ref. A command that fails because of
+// that reports cache.ErrClosed rather than the client's own error, which
+// valkey-go also uses for connection failures.
+func (s *Service) closedDuring(ref *clientRef) bool {
+	return s.closed.Load() || s.client.Load() != ref
+}
+
+// Get returns the value for the given key, or cache.ErrKeyNotFound if
+// the key does not exist. It returns cache.ErrClosed if the service was
+// never started or is closed before the command completes.
+func (s *Service) Get(ctx context.Context, key string) ([]byte, error) {
+	ref, err := s.acquire()
+	if err != nil {
+		return nil, err
+	}
+
+	s.runTestHookBeforeCall()
+
+	resp := ref.c.Do(ctx, ref.c.B().Get().Key(key).Build())
+	if err = resp.Error(); err != nil {
 		if valkey.IsValkeyNil(err) {
 			return nil, cache.ErrKeyNotFound
+		}
+		if s.closedDuring(ref) {
+			return nil, cache.ErrClosed
 		}
 		return nil, fmt.Errorf("%s: get %q: %w", s.Name(), key, err)
 	}
@@ -202,45 +248,67 @@ func (s *Service) Get(ctx context.Context, key string) ([]byte, error) {
 }
 
 // Set stores a value with the given TTL. If ttl is 0, the key is set
-// without expiration.
+// without expiration. It returns cache.ErrClosed if the service was never
+// started or is closed before the command completes.
 func (s *Service) Set(ctx context.Context, key string, value []byte, ttl time.Duration) error {
-	if s.closed.Load() {
-		return cache.ErrClosed
+	ref, err := s.acquire()
+	if err != nil {
+		return err
 	}
+
+	s.runTestHookBeforeCall()
 
 	var cmd valkey.Completed
 	if ttl > 0 {
-		cmd = s.client.B().Set().Key(key).Value(string(value)).Px(ttl).Build()
+		cmd = ref.c.B().Set().Key(key).Value(string(value)).Px(ttl).Build()
 	} else {
-		cmd = s.client.B().Set().Key(key).Value(string(value)).Build()
+		cmd = ref.c.B().Set().Key(key).Value(string(value)).Build()
 	}
 
-	if err := s.client.Do(ctx, cmd).Error(); err != nil {
+	if err = ref.c.Do(ctx, cmd).Error(); err != nil {
+		if s.closedDuring(ref) {
+			return cache.ErrClosed
+		}
 		return fmt.Errorf("%s: set %q: %w", s.Name(), key, err)
 	}
 	return nil
 }
 
-// Delete removes a key from the cache.
+// Delete removes a key from the cache. It returns cache.ErrClosed if the
+// service was never started or is closed before the command completes.
 func (s *Service) Delete(ctx context.Context, key string) error {
-	if s.closed.Load() {
-		return cache.ErrClosed
+	ref, err := s.acquire()
+	if err != nil {
+		return err
 	}
 
-	if err := s.client.Do(ctx, s.client.B().Del().Key(key).Build()).Error(); err != nil {
+	s.runTestHookBeforeCall()
+
+	if err = ref.c.Do(ctx, ref.c.B().Del().Key(key).Build()).Error(); err != nil {
+		if s.closedDuring(ref) {
+			return cache.ErrClosed
+		}
 		return fmt.Errorf("%s: del %q: %w", s.Name(), key, err)
 	}
 	return nil
 }
 
-// Exists checks whether a key exists in the cache.
+// Exists checks whether a key exists in the cache. It returns
+// cache.ErrClosed if the service was never started or is closed before the
+// command completes.
 func (s *Service) Exists(ctx context.Context, key string) (bool, error) {
-	if s.closed.Load() {
-		return false, cache.ErrClosed
+	ref, err := s.acquire()
+	if err != nil {
+		return false, err
 	}
 
-	n, err := s.client.Do(ctx, s.client.B().Exists().Key(key).Build()).AsInt64()
+	s.runTestHookBeforeCall()
+
+	n, err := ref.c.Do(ctx, ref.c.B().Exists().Key(key).Build()).AsInt64()
 	if err != nil {
+		if s.closedDuring(ref) {
+			return false, cache.ErrClosed
+		}
 		return false, fmt.Errorf("%s: exists %q: %w", s.Name(), key, err)
 	}
 	return n > 0, nil
@@ -248,27 +316,47 @@ func (s *Service) Exists(ctx context.Context, key string) (bool, error) {
 
 // CheckHealth reports liveness. The valkey-go client reconnects
 // internally, so a transient network failure is not a liveness failure;
-// only a closed service is.
+// only a service that was never started or has been closed is, and it
+// reports cache.ErrClosed.
 func (s *Service) CheckHealth(_ context.Context) error {
-	if s.closed.Load() {
-		return cache.ErrClosed
-	}
-	return nil
+	_, err := s.acquire()
+	return err
 }
 
 // CheckReady reports readiness by pinging the Valkey server with the
-// caller's context.
+// caller's context. It returns cache.ErrClosed if the service was never
+// started or is closed before the ping completes.
 func (s *Service) CheckReady(ctx context.Context) error {
-	if s.closed.Load() {
-		return cache.ErrClosed
+	ref, err := s.acquire()
+	if err != nil {
+		return err
 	}
-	if err := s.client.Do(ctx, s.client.B().Ping().Build()).Error(); err != nil {
+
+	s.runTestHookBeforeCall()
+
+	if err = ref.c.Do(ctx, ref.c.B().Ping().Build()).Error(); err != nil {
+		if s.closedDuring(ref) {
+			return cache.ErrClosed
+		}
 		return fmt.Errorf("%s: ping: %w", s.Name(), err)
 	}
 	return nil
 }
 
+// runTestHookBeforeCall runs testHookBeforeCall if a test has set it.
+func (s *Service) runTestHookBeforeCall() {
+	if s.testHookBeforeCall != nil {
+		s.testHookBeforeCall()
+	}
+}
+
 // Client returns the underlying valkey.Client for advanced operations.
+// It returns nil before Init first connects; after Close it returns the
+// closed client.
 func (s *Service) Client() valkey.Client {
-	return s.client
+	ref := s.client.Load()
+	if ref == nil {
+		return nil
+	}
+	return ref.c
 }

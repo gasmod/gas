@@ -55,7 +55,7 @@ The root `cache` package defines sentinel errors used by both backends:
 
 ```go
 cache.ErrKeyNotFound // Get returns this when the key does not exist or has expired
-cache.ErrClosed      // returned when an operation is attempted on a closed service
+cache.ErrClosed      // returned when an operation is attempted on a service that is not started or is closed
 ```
 
 ## In-Memory Backend
@@ -147,6 +147,10 @@ func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) *Service
   `ConnRetryInterval` (default 2s) and doubles after each failed attempt.
   The ping uses the Init context, and retries stop when that context is
   canceled or its deadline passes (the error wraps `ctx.Err()`).
+- **Not open:** `Get`, `Set`, `Delete`, `Exists`, `CheckHealth`, and
+  `CheckReady` return `ErrClosed` before `Init` and after `Close`. A command
+  that fails because `Close` or a restart happened while it ran also
+  returns `ErrClosed`.
 
 ### Health and Readiness
 
@@ -154,8 +158,8 @@ The Valkey `*Service` implements `gas.HealthReporter` and `gas.ReadyReporter`:
 
 | Method        | Signature                        | Behavior                                                                 |
 |---------------|----------------------------------|--------------------------------------------------------------------------|
-| `CheckHealth` | `(ctx context.Context) error`   | Returns `cache.ErrClosed` when closed, `nil` otherwise. Does not probe the server — the valkey-go client reconnects internally, so transient network errors are not liveness failures. |
-| `CheckReady`  | `(ctx context.Context) error`   | Returns `cache.ErrClosed` when closed, otherwise issues `PING` against the server using the caller's context and returns its error. |
+| `CheckHealth` | `(ctx context.Context) error`   | Returns `cache.ErrClosed` before `Init` or when closed, `nil` otherwise. Does not probe the server; the valkey-go client reconnects internally, so transient network errors are not liveness failures. |
+| `CheckReady`  | `(ctx context.Context) error`   | Returns `cache.ErrClosed` before `Init` or when closed, otherwise issues `PING` against the server using the caller's context and returns its error. |
 
 The in-memory backend does **not** implement these interfaces: with no external
 dependency and no warmup, liveness and readiness are fully covered by the gas
@@ -166,6 +170,9 @@ service lifecycle.
 ```go
 func (s *Service) Client() valkey.Client
 ```
+
+`Client` returns nil before `Init` first connects, and the closed client
+after `Close`.
 
 For operations beyond `CacheProvider` (pub/sub, Lua, pipelines), define a
 local interface and type-assert:

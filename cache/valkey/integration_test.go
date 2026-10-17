@@ -245,6 +245,125 @@ func TestIntegration_ClosedService(t *testing.T) {
 	}
 }
 
+func TestIntegration_CloseDuringOperation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	ops := []struct {
+		call func() error
+		name string
+	}{
+		{func() error {
+			_, err := svc.Get(ctx, "k")
+			return err
+		}, "Get"},
+		{func() error { return svc.Set(ctx, "k", []byte("v"), 0) }, "Set"},
+		{func() error { return svc.Delete(ctx, "k") }, "Delete"},
+		{func() error {
+			_, err := svc.Exists(ctx, "k")
+			return err
+		}, "Exists"},
+		{func() error { return svc.CheckReady(ctx) }, "CheckReady"},
+	}
+
+	for _, op := range ops {
+		// Each case closes the service, so start it again first; this
+		// also covers restarting after Close.
+		if err := svc.Init(t.Context()); err != nil {
+			t.Fatalf("Init before %s: %v", op.name, err)
+		}
+		vk.SetTestHookBeforeCall(svc, func() {
+			_ = svc.Close(context.Background())
+		})
+		if err := op.call(); !errors.Is(err, cache.ErrClosed) {
+			t.Errorf("%s() with Close before the call = %v, want %v", op.name, err, cache.ErrClosed)
+		}
+		vk.SetTestHookBeforeCall(svc, nil)
+	}
+}
+
+func TestIntegration_ReinitAfterClose(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	if err := svc.Close(ctx); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := svc.Init(t.Context()); err != nil {
+		t.Fatalf("Init after Close: %v", err)
+	}
+	if err := svc.Set(ctx, "k", []byte("v"), 0); err != nil {
+		t.Fatalf("Set after re-Init: %v", err)
+	}
+	got, err := svc.Get(ctx, "k")
+	if err != nil || string(got) != "v" {
+		t.Errorf("Get after re-Init = %q, %v, want %q, nil", got, err, "v")
+	}
+	if err := svc.CheckHealth(ctx); err != nil {
+		t.Errorf("CheckHealth after re-Init = %v, want nil", err)
+	}
+}
+
+// Operations running while the service is closed and started again must
+// see either the old client, the new one, or cache.ErrClosed, without a
+// data race on the client.
+func TestIntegration_RestartWhileInUse(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	stop := make(chan struct{})
+	errs := make(chan error, 64)
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Go(func() {
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				_, err := svc.Get(ctx, "k")
+				if err != nil && !errors.Is(err, cache.ErrKeyNotFound) &&
+					!errors.Is(err, cache.ErrClosed) {
+					select {
+					case errs <- err:
+					default:
+					}
+				}
+			}
+		})
+	}
+
+	for range 5 {
+		if err := svc.Close(ctx); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+		if err := svc.Init(t.Context()); err != nil {
+			t.Errorf("Init: %v", err)
+		}
+	}
+	close(stop)
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		t.Errorf("Get during restart = %v, want nil, %v or %v",
+			err, cache.ErrKeyNotFound, cache.ErrClosed)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Adversarial: binary and weird data
 // ---------------------------------------------------------------------------
