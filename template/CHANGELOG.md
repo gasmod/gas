@@ -13,6 +13,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`Init(ctx context.Context) error`, `Close(ctx context.Context) error`).
   Both are synchronous and do not use the context. `dir.Store.Close` is an
   `io.Closer` and keeps its `Close() error` signature.
+- After `dir.Store.Close`, `Register`, `RegisterFS`, and a `Get` of an
+  overlay template return `template.ErrClosed`; they used to keep working.
+  `Close` also drops the overlay and waits for disk reads in flight, and a
+  closed store cannot be opened again.
+
+### Added
+
+- `template.ErrClosed`, returned by every `dir.Store` operation after
+  `Close`.
+
+### Fixed
+
+- `dir.Store` `Get` and `List` no longer panic with a nil pointer
+  dereference after `Close`; they return `template.ErrClosed`. `Close` no
+  longer races with concurrent reads.
 
 ## [0.3.0] - 2026-07-03
 

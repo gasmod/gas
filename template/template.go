@@ -12,6 +12,10 @@ var (
 	// providers (e.g. the fs backend). Wrap such providers in a composite
 	// store with a writable provider if mutation is required.
 	ErrReadOnly = errors.New("template: read-only provider")
+
+	// ErrClosed is returned by every operation on a store that has been
+	// closed.
+	ErrClosed = errors.New("template: store is closed")
 )
 
 // IsNotFound returns true if the given error is an ErrTemplateNotFound.
