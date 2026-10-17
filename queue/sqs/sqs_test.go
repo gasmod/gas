@@ -3,6 +3,9 @@ package sqs
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -389,5 +392,60 @@ func TestCheckReadyAfterClose(t *testing.T) {
 	err := svc.CheckReady(context.Background())
 	if !errors.Is(err, queue.ErrClosed) {
 		t.Errorf("got %v, want ErrClosed", err)
+	}
+}
+
+// isolateAWSCredentials points the AWS SDK at empty config and credentials
+// files, clears credential environment variables, and turns off the EC2
+// instance metadata lookup, so the default credential chain finds nothing
+// and fails fast. It uses t.Setenv, so callers cannot run in parallel.
+func isolateAWSCredentials(t *testing.T) {
+	t.Helper()
+	empty := filepath.Join(t.TempDir(), "empty")
+	if err := os.WriteFile(empty, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for k, v := range map[string]string{
+		"AWS_CONFIG_FILE":                        empty,
+		"AWS_SHARED_CREDENTIALS_FILE":            empty,
+		"AWS_EC2_METADATA_DISABLED":              "true",
+		"AWS_ACCESS_KEY_ID":                      "",
+		"AWS_SECRET_ACCESS_KEY":                  "",
+		"AWS_SESSION_TOKEN":                      "",
+		"AWS_PROFILE":                            "",
+		"AWS_WEB_IDENTITY_TOKEN_FILE":            "",
+		"AWS_CONTAINER_CREDENTIALS_RELATIVE_URI": "",
+		"AWS_CONTAINER_CREDENTIALS_FULL_URI":     "",
+	} {
+		t.Setenv(k, v)
+	}
+}
+
+// With no credentials anywhere in the default chain, Init fails instead of
+// leaving the failure for the first queue call.
+func TestInit_NoCredentialsFails(t *testing.T) {
+	isolateAWSCredentials(t)
+
+	svc := New(WithConfig(DefaultConfig()))(nil, gas.NewNopLogger()())
+	err := svc.Init(t.Context())
+	if err == nil {
+		t.Fatal("Init() = nil, want an error for missing AWS credentials")
+	}
+	if !strings.Contains(err.Error(), "retrieve aws credentials") {
+		t.Errorf("Init() error = %v, want it to name the credential lookup", err)
+	}
+}
+
+// Static credentials from the config are retrieved without any network
+// call, so Init succeeds.
+func TestInit_StaticCredentials(t *testing.T) {
+	isolateAWSCredentials(t)
+
+	cfg := DefaultConfig()
+	cfg.Queue.AccessKeyID = "AKIDEXAMPLE"
+	cfg.Queue.SecretAccessKey = "secret"
+	svc := New(WithConfig(cfg))(nil, gas.NewNopLogger()())
+	if err := svc.Init(t.Context()); err != nil {
+		t.Fatalf("Init() = %v, want nil", err)
 	}
 }

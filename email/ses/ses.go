@@ -116,8 +116,8 @@ func NewWithCustomProvider[T gas.TemplateProvider](
 func (s *Service) Name() string { return serviceName }
 
 // Init validates the configuration and creates the SES client. ctx bounds
-// loading the AWS configuration; credentials are fetched on the first call,
-// not in Init.
+// loading the AWS configuration and fetching the credentials, so Init fails
+// when no credentials can be found.
 func (s *Service) Init(ctx context.Context) error {
 	if !s.customConfigProvided {
 		if s.cfgProvider != nil {
@@ -162,6 +162,14 @@ func (s *Service) createClient(ctx context.Context) error {
 	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
 	if err != nil {
 		return fmt.Errorf("%s: load aws config: %w", s.Name(), err)
+	}
+
+	// Loading the config does not fetch credentials; the SDK fetches them on
+	// the first request. Fetch them now, under Init's ctx and deadline, so a
+	// missing or broken credential setup fails startup. The result is cached
+	// by the config's credential cache, which still refreshes them on expiry.
+	if _, err := awsCfg.Credentials.Retrieve(ctx); err != nil {
+		return fmt.Errorf("%s: retrieve aws credentials: %w", s.Name(), err)
 	}
 
 	var sesOpts []func(*awsses.Options)
