@@ -66,26 +66,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
 - **Next step**: if it recurs, make the fake read the whole part before it
   replies, or accept a transport error in that case.
 
-## KI-012: ui static files are unreachable with the default settings
-
-- **Status**: open
-- **Area**: `ui` (`config.go`, `service.go`).
-- **Found**: 2026-10-16, while writing the ui `doc.go`.
-- **Detail**: the comment on `Settings.StaticStripPrefix`
-  (`ui/config.go:46`) says it defaults to `StaticPath` when empty, but
-  `initStaticRoute` passes it unchanged (`ui/service.go:147` and `:149`),
-  so with the defaults nothing is stripped. A request for
-  `/static/app.css` is looked up as `static/app.css` inside the static
-  root, which for the default `StaticDir` of `static/` is
-  `./static/static/app.css`; a file at `./static/app.css` is reachable at
-  no URL. Verified with the service built over an `fstest.MapFS` holding
-  `app.css` and `static/app.css`, default config: `GET /static/app.css`
-  served the nested file and `GET /app.css` answered 404.
-- **Next step**: apply the documented default (strip `StaticPath`'s
-  literal prefix when `StaticStripPrefix` is empty) or change the
-  documentation. Either changes which URLs serve which files, so it is a
-  decision for Ahmed.
-
 ## KI-020: a dirty migration can only be cleared by hand
 
 - **Status**: decision needed

@@ -44,8 +44,10 @@ type Settings struct {
 	LayoutName string
 
 	// StaticStripPrefix is the URL prefix stripped from requests before looking
-	// up files in the static directory or FS. Defaults to StaticPath when empty.
-	// Set this independently when the route paths differ from the FS layout.
+	// up files in the static directory or FS. When empty, it defaults to
+	// StaticPath's literal part up to its first wildcard ("/static/*" strips
+	// "/static/"), or, when StaticPaths is set, to nothing. Set this
+	// independently when the route paths differ from the FS layout.
 	StaticStripPrefix string
 
 	// StaticPaths is a slice of URL patterns for static assets (e.g. ["/css/*", "/js/*"]).
