@@ -141,8 +141,11 @@ segment (no underscore separator).
 
 Migrations are sorted globally by version string across all services. **Versions
 must be unique across all services.** If two services register the same version,
-`RunPending()` and `Down()` return an error identifying the conflicting version
-and both service names.
+or one service registers two different migrations under one version,
+`RunPending()`, `Down()`, and `CheckReady()` return an error wrapping
+`migrate.ErrDuplicateVersion` that names the version and the services, and
+nothing runs. A service that registers an identical migration (same version,
+description, up SQL, and down SQL) more than once gets it applied once.
 
 ## Embedded SQL Files (RegisterFS)
 

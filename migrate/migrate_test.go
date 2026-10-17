@@ -788,11 +788,106 @@ func TestRunPending_DuplicateVersion(t *testing.T) {
 	})
 
 	err := s.RunPending()
-	if err == nil {
-		t.Fatal("expected error for duplicate version across services")
+	if !errors.Is(err, ErrDuplicateVersion) {
+		t.Fatalf("RunPending() = %v, want %v", err, ErrDuplicateVersion)
 	}
-	if !strings.Contains(err.Error(), "duplicate migration version") {
-		t.Errorf("expected duplicate version error, got: %v", err)
+	if !strings.Contains(err.Error(), `registered by services "service-a" and "service-b"`) &&
+		!strings.Contains(err.Error(), `registered by services "service-b" and "service-a"`) {
+		t.Errorf("RunPending() error %q does not name both services", err)
+	}
+}
+
+// A service that registers the same migration twice, as two template db
+// stores do, gets it applied once.
+//
+//goland:noinspection SqlResolve,SqlNoDataSourceInspection
+func TestRunPending_SameServiceIdenticalDuplicate(t *testing.T) {
+	mod := &testService{name: "mod-a"}
+
+	s, db := newTestService(t)
+
+	mig := gas.Migration{
+		Version:     "20250216001",
+		Description: "create users table",
+		Up:          "CREATE TABLE users (id INTEGER PRIMARY KEY)",
+		Down:        "DROP TABLE users",
+	}
+	s.Register(mod, mig)
+	s.RegisterSlice(mod, []gas.Migration{mig})
+
+	ctx := context.Background()
+	if err := s.CheckReady(ctx); err == nil ||
+		!strings.Contains(err.Error(), "1 pending migration") {
+		t.Errorf("CheckReady() before RunPending = %v, want 1 pending migration", err)
+	}
+	if err := s.RunPending(); err != nil {
+		t.Fatalf("RunPending() = %v, want nil", err)
+	}
+	if _, err := db.Exec(ctx, "INSERT INTO users (id) VALUES (1)"); err != nil {
+		t.Errorf("users table missing: %v", err)
+	}
+	dirty, err := s.getDirtyMigrations(ctx)
+	if err != nil {
+		t.Fatalf("getDirtyMigrations: %v", err)
+	}
+	if len(dirty) != 0 {
+		t.Errorf("dirty migrations = %v, want none", dirty)
+	}
+	if err := s.CheckReady(ctx); err != nil {
+		t.Errorf("CheckReady() after RunPending = %v, want nil", err)
+	}
+	if err := s.Down(1); err != nil {
+		t.Errorf("Down(1) = %v, want nil", err)
+	}
+}
+
+// One service registering two different migrations under one version is
+// rejected before anything runs.
+func TestRunPending_SameServiceConflictingDuplicate(t *testing.T) {
+	mod := &testService{name: "mod-a"}
+
+	s, _ := newTestService(t)
+
+	s.Register(mod, gas.Migration{
+		Version:     "20250216001",
+		Description: "create users table",
+		Up:          "CREATE TABLE users (id INTEGER PRIMARY KEY)",
+		Down:        "DROP TABLE users",
+	})
+	s.Register(mod, gas.Migration{
+		Version:     "20250216001",
+		Description: "create posts table",
+		Up:          "CREATE TABLE posts (id INTEGER PRIMARY KEY)",
+		Down:        "DROP TABLE posts",
+	})
+
+	ctx := context.Background()
+	for _, c := range []struct {
+		call func() error
+		name string
+	}{
+		{s.RunPending, "RunPending"},
+		{func() error { return s.Down(1) }, "Down"},
+		{func() error { return s.CheckReady(ctx) }, "CheckReady"},
+	} {
+		name := c.name
+		err := c.call()
+		if !errors.Is(err, ErrDuplicateVersion) {
+			t.Errorf("%s() = %v, want %v", name, err, ErrDuplicateVersion)
+			continue
+		}
+		if !strings.Contains(err.Error(), `"20250216001"`) ||
+			!strings.Contains(err.Error(), `"mod-a"`) {
+			t.Errorf("%s() error %q does not name the version and service", name, err)
+		}
+	}
+
+	applied, err := s.getAppliedMigrations(ctx)
+	if err != nil {
+		t.Fatalf("getAppliedMigrations: %v", err)
+	}
+	if len(applied) != 0 {
+		t.Errorf("tracking rows = %v, want none", applied)
 	}
 }
 
@@ -823,10 +918,11 @@ func TestDown_DuplicateVersion(t *testing.T) {
 	})
 
 	err := s.Down(1)
-	if err == nil {
-		t.Fatal("expected error for duplicate version across services")
+	if !errors.Is(err, ErrDuplicateVersion) {
+		t.Fatalf("Down(1) = %v, want %v", err, ErrDuplicateVersion)
 	}
-	if !strings.Contains(err.Error(), "duplicate migration version") {
-		t.Errorf("expected duplicate version error, got: %v", err)
+	if !strings.Contains(err.Error(), `"service-a"`) ||
+		!strings.Contains(err.Error(), `"service-b"`) {
+		t.Errorf("Down(1) error %q does not name both services", err)
 	}
 }

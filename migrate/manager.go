@@ -151,7 +151,7 @@ func (s *Service) RunPending() error {
 	}
 	appliedSet := versionSet(applied)
 
-	all, err := s.allMigrationsSorted()
+	all, err := s.registeredMigrations()
 	if err != nil {
 		return err
 	}
@@ -199,9 +199,13 @@ func (s *Service) Down(n int) error {
 		return err
 	}
 
-	registered, err := s.migrationsByVersion()
+	all, err := s.registeredMigrations()
 	if err != nil {
 		return err
+	}
+	registered := make(map[string]gas.Migration, len(all))
+	for _, mig := range all {
+		registered[mig.Version] = mig
 	}
 
 	// Reverse order: most recently applied first.
@@ -353,50 +357,57 @@ func (s *Service) applyDown(ctx context.Context, migration gas.Migration) error 
 	return nil
 }
 
-func (s *Service) allMigrationsSorted() ([]gas.Migration, error) {
-	total := 0
-	for _, migs := range s.migrations {
-		total += len(migs)
+// registeredMigrations returns every registered migration once, sorted by
+// version. A service that registers an identical migration (same version,
+// description, up SQL, and down SQL) more than once gets one copy. Two
+// services registering one version, or one service registering it with
+// different content, is an error wrapping ErrDuplicateVersion. Must be
+// called with s.mu held.
+func (s *Service) registeredMigrations() ([]gas.Migration, error) {
+	// Visit services in name order so a conflict is reported the same way
+	// on every run.
+	names := make([]string, 0, len(s.migrations))
+	for name := range s.migrations {
+		names = append(names, name)
 	}
-	all := make([]gas.Migration, 0, total)
-	for _, migs := range s.migrations {
-		all = append(all, migs...)
-	}
+	sort.Strings(names)
 
-	// Check for duplicate versions across services.
-	seen := make(map[string]string, len(all)) // version → service
-	for _, mig := range all {
-		if owner, ok := seen[mig.Version]; ok && owner != mig.Service.Name() {
-			return nil, fmt.Errorf(
-				"gas/migrate: duplicate migration version %q registered by services %q and %q",
-				mig.Version,
-				owner,
-				mig.Service.Name(),
-			)
+	byVersion := make(map[string]gas.Migration)
+	for _, name := range names {
+		for _, mig := range s.migrations[name] {
+			existing, ok := byVersion[mig.Version]
+			if !ok {
+				byVersion[mig.Version] = mig
+				continue
+			}
+			if owner := existing.Service.Name(); owner != mig.Service.Name() {
+				return nil, fmt.Errorf(
+					"%w %q registered by services %q and %q",
+					ErrDuplicateVersion,
+					mig.Version,
+					owner,
+					mig.Service.Name(),
+				)
+			}
+			if existing.Description != mig.Description ||
+				existing.Up != mig.Up ||
+				existing.Down != mig.Down {
+				return nil, fmt.Errorf(
+					"%w %q registered twice by service %q with different content",
+					ErrDuplicateVersion,
+					mig.Version,
+					name,
+				)
+			}
 		}
-		seen[mig.Version] = mig.Service.Name()
 	}
 
+	all := make([]gas.Migration, 0, len(byVersion))
+	for _, mig := range byVersion {
+		all = append(all, mig)
+	}
 	sort.Slice(all, func(i, j int) bool {
 		return all[i].Version < all[j].Version
 	})
 	return all, nil
-}
-
-func (s *Service) migrationsByVersion() (map[string]gas.Migration, error) {
-	byVersion := make(map[string]gas.Migration)
-	for _, migs := range s.migrations {
-		for _, mig := range migs {
-			if existing, ok := byVersion[mig.Version]; ok && existing.Service != mig.Service {
-				return nil, fmt.Errorf(
-					"gas/migrate: duplicate migration version %q registered by services %q and %q",
-					mig.Version,
-					existing.Service,
-					mig.Service,
-				)
-			}
-			byVersion[mig.Version] = mig
-		}
-	}
-	return byVersion, nil
 }
