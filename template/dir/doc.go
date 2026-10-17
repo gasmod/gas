@@ -15,9 +15,13 @@
 // deduplicated; if walking the directory fails, it stops there and returns
 // what it found without reporting the error.
 //
-// Close releases the os.Root. The store does not implement gas.Service, so
-// the container does not call Close; whoever owns the store closes it. A
-// Get or List after Close panics (KI-022).
+// Close releases the os.Root and drops the overlay; it waits for disk reads
+// in flight, and a second Close returns nil. After Close, Get, List,
+// Register, and RegisterFS return template.ErrClosed, and the store cannot
+// be opened again. The store does not implement gas.Service, so the
+// container does not call Close; whoever owns the store closes it. A mutex
+// guards the overlay and the root, so the store is safe for concurrent
+// use, including a Close while other calls run.
 //
 // SPDX-License-Identifier: MIT
 package dir

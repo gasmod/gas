@@ -3,8 +3,10 @@ package dir
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"testing/fstest"
 
@@ -263,5 +265,130 @@ func TestListDeduplicatesDiskAndOverlay(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("home.html appeared %d times, want 1; names = %v", count, names)
+	}
+}
+
+// callNoPanic turns a panic into an error, so a test can check every
+// operation even when one of them panics.
+func callNoPanic(op func() error) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic: %v", r)
+		}
+	}()
+	return op()
+}
+
+// closedStoreOps returns every Store operation as a func returning its
+// error.
+func closedStoreOps(s *Store) map[string]func() error {
+	ctx := context.Background()
+	return map[string]func() error{
+		"Get disk": func() error {
+			_, err := s.Get(ctx, "home.html")
+			return err
+		},
+		"Get overlay": func() error {
+			_, err := s.Get(ctx, "mem.html")
+			return err
+		},
+		"List": func() error {
+			_, err := s.List(ctx)
+			return err
+		},
+		"Register": func() error {
+			return s.Register(ctx, "new.html", []byte("new"))
+		},
+		"RegisterFS": func() error {
+			return s.RegisterFS(ctx, fstest.MapFS{
+				"fs.html": &fstest.MapFile{Data: []byte("fs")},
+			})
+		},
+	}
+}
+
+func TestClosedStoreReturnsErrClosed(t *testing.T) {
+	t.Parallel()
+
+	for _, opened := range []bool{true, false} {
+		t.Run(fmt.Sprintf("opened=%v", opened), func(t *testing.T) {
+			t.Parallel()
+			s := NewStore(newTestDir(t))()
+			ctx := context.Background()
+			if err := s.Register(ctx, "mem.html", []byte("mem")); err != nil {
+				t.Fatalf("Register() error: %v", err)
+			}
+			if opened {
+				if _, err := s.Get(ctx, "home.html"); err != nil {
+					t.Fatalf("Get() before Close error: %v", err)
+				}
+			}
+			if err := s.Close(); err != nil {
+				t.Fatalf("Close() error: %v", err)
+			}
+
+			for name, op := range closedStoreOps(s) {
+				if err := callNoPanic(op); !errors.Is(err, template.ErrClosed) {
+					t.Errorf("%s after Close = %v, want %v", name, err, template.ErrClosed)
+				}
+			}
+		})
+	}
+}
+
+func TestCloseTwice(t *testing.T) {
+	t.Parallel()
+	s := NewStore(newTestDir(t))()
+	if _, err := s.Get(context.Background(), "home.html"); err != nil {
+		t.Fatalf("Get() error: %v", err)
+	}
+
+	if err := s.Close(); err != nil {
+		t.Fatalf("first Close() = %v, want nil", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Errorf("second Close() = %v, want nil", err)
+	}
+}
+
+// Close while reads are in flight must not race or panic; each read
+// either completes or reports template.ErrClosed.
+func TestCloseDuringReads(t *testing.T) {
+	t.Parallel()
+	s := NewStore(newTestDir(t))()
+	ctx := context.Background()
+
+	start := make(chan struct{})
+	errs := make(chan error, 64)
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Go(func() {
+			<-start
+			for range 50 {
+				var err error
+				if i%2 == 0 {
+					_, err = s.Get(ctx, "home.html")
+				} else {
+					_, err = s.List(ctx)
+				}
+				if err != nil && !errors.Is(err, template.ErrClosed) {
+					select {
+					case errs <- err:
+					default:
+					}
+				}
+			}
+		})
+	}
+
+	close(start)
+	if err := s.Close(); err != nil {
+		t.Errorf("Close() error: %v", err)
+	}
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		t.Errorf("read during Close = %v, want nil or %v", err, template.ErrClosed)
 	}
 }

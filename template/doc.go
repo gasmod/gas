@@ -15,8 +15,9 @@
 //
 // This package holds what the stores share: ErrTemplateNotFound, returned
 // by Get for a name no store has, ErrReadOnly, returned by Register and
-// RegisterFS on the fs store, and IsNotFound, which reports whether an
-// error wraps ErrTemplateNotFound. The file-based stores and RegisterFS
+// RegisterFS on the fs store, ErrClosed, returned by every operation on a
+// dir store after Close, and IsNotFound, which reports whether an error
+// wraps ErrTemplateNotFound. The file-based stores and RegisterFS
 // recognize only files ending in .html, and name templates by their
 // slash-separated path relative to the root, such as "layouts/base.html".
 //

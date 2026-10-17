@@ -312,22 +312,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
 - **Next step**: reject a duplicate version from the same service at
   registration or in `RunPending`.
 
-## KI-022: template dir store panics after Close
-
-- **Status**: open
-- **Area**: `template/dir` (`store.go`).
-- **Found**: 2026-10-16, while writing the template `doc.go`.
-- **Detail**: the store opens its `os.Root` once, through a `sync.Once`
-  (`template/dir/store.go:50`), and `Close` sets it to nil (`:135`). The
-  `Once` does not run again, so a `Get` or `List` after `Close` calls
-  `FS()` on the nil root (`:69`, `:86`) and panics with `invalid memory
-  address or nil pointer dereference`. Verified with a throwaway test for
-  `Get`. `Close` also writes `s.root` without the store's lock, so a `Close`
-  concurrent with a read is a data race.
-- **Next step**: return an error after `Close` (for example a closed flag
-  checked under the lock), since §7 of `CLAUDE.md` reserves panics for
-  wiring mistakes.
-
 ## KI-023: two template db stores register the same migration
 
 - **Status**: open

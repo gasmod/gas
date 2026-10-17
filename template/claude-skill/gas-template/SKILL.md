@@ -66,6 +66,7 @@ The root `template` package defines:
 template.ErrTemplateNotFound // Get returns this when the template does not exist
 template.IsNotFound(err)     // helper: errors.Is(err, ErrTemplateNotFound)
 template.ErrReadOnly         // Register/RegisterFS return this on read-only providers (fs backend)
+template.ErrClosed           // every operation returns this on a dir store after Close
 ```
 
 ## Memory Backend
@@ -101,13 +102,17 @@ call `Close()` when done.
 ### Behavior
 
 - **Sandboxed I/O:** Uses `os.OpenRoot` for path traversal protection.
-- **Lazy initialization:** The root directory is opened on first `Get` or `List`
-  call via `sync.Once`.
+- **Lazy initialization:** The root directory is opened on the first `Get`
+  or `List` that reaches disk. A failure to open it is returned by every
+  later call.
 - **In-memory overlay:** `Register` and `RegisterFS` add to an overlay map.
   `Get` checks the overlay first, then falls back to disk.
 - **List merges:** `List` returns deduplicated, sorted names from both disk and
   overlay.
-- `Close` releases the `os.Root` handle.
+- `Close` releases the `os.Root` handle, drops the overlay, and waits for
+  disk reads in flight. Afterwards `Get`, `List`, `Register`, and
+  `RegisterFS` return `template.ErrClosed`; the store cannot be reopened. A
+  second `Close` returns nil.
 
 ## FS Backend
 
