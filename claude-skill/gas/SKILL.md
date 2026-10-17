@@ -337,7 +337,7 @@ Resolution and startup errors wrap a sentinel; match them with `errors.Is`
 | Sentinel | Returned when |
 |---|---|
 | `gas.ErrNotRegistered` | A type, or a constructor's dependency, has no registration or instance |
-| `gas.ErrCircularDependency` | Registered constructors depend on each other in a cycle |
+| `gas.ErrCircularDependency` | Registered constructors depend on each other in a cycle, a constructor or `Init` resolves the type being built through a captured container or scope, two goroutines' builds would wait on each other, or constructors nest deeper than 256 |
 | `gas.ErrCaptiveDependency` | A singleton depends on a scoped or transient service |
 | `gas.ErrScopeRequired` | A scoped service is resolved from the container instead of a `Scope` |
 | `gas.ErrInvalidLifetime` | A registration's `ServiceLifetime` is not Singleton, Scoped, or Transient |
