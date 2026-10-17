@@ -18,6 +18,17 @@
 // ErrScopeRequired, ErrNoConstructor, ErrInvalidLifetime, and
 // ErrInvalidServiceShape, so callers classify them with errors.Is.
 //
+// The container is safe for concurrent resolution. A singleton is built by
+// one goroutine at a time: other goroutines asking for it while it is built
+// wait and get the same instance, so its constructor and Init run once.
+// Besides the cycles BuildAll finds in constructor parameters, resolution
+// catches a constructor or Init that resolves the type being built through a
+// captured container or scope, and two builds on different goroutines that
+// would wait on each other; both return ErrCircularDependency naming the
+// types. To tell a re-entrant resolution from a concurrent one, the container
+// reads the calling goroutine's ID from runtime.Stack, once per constructor
+// call and once per wait.
+//
 // # Lifecycle
 //
 // Every lifecycle method takes the caller's context: Worker.Start,
@@ -37,6 +48,12 @@
 // the scope's context with no added deadline; in an App that is the request
 // context, and Close gets it without its cancellation, so scoped services
 // clean up even after the client has gone.
+//
+// A Start that fails closes, in reverse order, every service it had
+// initialized, with its context stripped of cancellation, and returns the
+// startup error joined with any Close errors. It leaves nothing running, and
+// the Worker cannot be started again: later calls to Start, and to
+// InitServices after a failed InitServices, return the same error.
 //
 // Worker.Shutdown emits SystemShuttingDown and closes every service still
 // active, in reverse initialization order, passing its context to Close.

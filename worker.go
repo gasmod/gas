@@ -23,6 +23,12 @@ type Worker struct {
 	serviceContainer *ServiceContainer
 	eventBus         *EventBus
 
+	// initErr is the result of the one run of InitServices, and startErr the
+	// error of a failed Start, which every later Start returns; startErr is
+	// guarded by mu.
+	initErr  error
+	startErr error
+
 	// postBuildHook is called by InitServices after BuildAll and service
 	// collection but before emitting SystemAllServicesInitialized. App sets
 	// this to seal the router and validate DI handler dependencies.
@@ -111,46 +117,91 @@ func (w *Worker) ConfigProvider() ConfigProvider {
 // so serviceOrder is a genuine initialization order and Shutdown can reverse
 // it safely. ctx is passed to the Init of every singleton, each under its
 // init deadline (see WithServiceInitTimeout).
-func (w *Worker) InitServices(ctx context.Context) (err error) {
-	w.initOnce.Do(func() {
-		if err = w.serviceContainer.BuildAll(ctx); err != nil {
-			return
-		}
+//
+// InitServices runs once. If it fails, it closes, in reverse order, every
+// service it had initialized, with ctx stripped of its cancellation, and
+// returns the error joined with any Close errors; later calls return that
+// same error.
+func (w *Worker) InitServices(ctx context.Context) error {
+	w.initOnce.Do(func() { w.initErr = w.initServices(ctx) })
+	return w.initErr
+}
 
-		// Collect all singleton Service instances for tracking.
-		w.serviceContainer.EachInstance(func(v reflect.Value) {
-			if svc, ok := v.Interface().(Service); ok {
-				w.mu.Lock()
-				// An instance registered under several types (the Worker is both
-				// HealthProvider and ReadyProvider) is tracked once, so shutdown
-				// does not close it twice.
-				if _, tracked := w.activeServices[svc.Name()]; tracked {
-					w.mu.Unlock()
-					return
-				}
-				w.activeServices[svc.Name()] = svc
-				w.serviceOrder = append(w.serviceOrder, svc)
+// initServices is the one run of InitServices.
+func (w *Worker) initServices(ctx context.Context) error {
+	if err := w.serviceContainer.BuildAll(ctx); err != nil {
+		// Nothing is tracked yet, so close what the container had
+		// initialized before the failure.
+		built := w.serviceContainer.initializedServices()
+		slices.Reverse(built)
+		//nolint:contextcheck // cleanup must run even when ctx is what failed
+		return errors.Join(err, w.closeServices(context.WithoutCancel(ctx), built))
+	}
+
+	// Collect all singleton Service instances for tracking.
+	w.serviceContainer.EachInstance(func(v reflect.Value) {
+		if svc, ok := v.Interface().(Service); ok {
+			w.mu.Lock()
+			// An instance registered under several types (the Worker is both
+			// HealthProvider and ReadyProvider) is tracked once, so shutdown
+			// does not close it twice.
+			if _, tracked := w.activeServices[svc.Name()]; tracked {
 				w.mu.Unlock()
-			}
-		})
-
-		// App injects router seal + handler validation via this hook.
-		if w.postBuildHook != nil {
-			if err = w.postBuildHook(); err != nil {
 				return
 			}
+			w.activeServices[svc.Name()] = svc
+			w.serviceOrder = append(w.serviceOrder, svc)
+			w.mu.Unlock()
 		}
-
-		w.eventBus.Emit[SystemAllServicesInitialized](SystemAllServicesInitializedPayload{}).Wait()
 	})
-	return
+
+	// App injects router seal + handler validation via this hook.
+	if w.postBuildHook != nil {
+		if err := w.postBuildHook(); err != nil {
+			//nolint:contextcheck // cleanup must run even when ctx is what failed
+			return errors.Join(err, w.closeActive(context.WithoutCancel(ctx)))
+		}
+	}
+
+	w.eventBus.Emit[SystemAllServicesInitialized](SystemAllServicesInitializedPayload{}).Wait()
+	return nil
 }
 
 // Start initializes all services, runs pending migrations, and executes
 // ready hooks. It does NOT block — use it when you need explicit lifecycle
 // control (e.g. AWS Lambda). Call Shutdown when done. ctx is passed to the
 // Init of every service built during startup; canceling it aborts startup.
+//
+// A Start that fails leaves nothing running: it closes, in reverse order,
+// every service it had initialized, with ctx stripped of its cancellation,
+// and returns the startup error joined with any Close errors. The Worker
+// cannot be started again: every later Start returns the same error, and a
+// later Shutdown has nothing to close.
 func (w *Worker) Start(ctx context.Context) error {
+	w.mu.Lock()
+	failed := w.startErr
+	w.mu.Unlock()
+	if failed != nil {
+		return failed
+	}
+
+	err := w.start(ctx)
+	if err != nil {
+		w.failStart(err)
+	}
+	return err
+}
+
+// failStart records err as the result of a failed Start, which every later
+// Start returns.
+func (w *Worker) failStart(err error) {
+	w.mu.Lock()
+	w.startErr = err
+	w.mu.Unlock()
+}
+
+// start is one attempt of Start.
+func (w *Worker) start(ctx context.Context) error {
 	if err := w.InitServices(ctx); err != nil {
 		return err
 	}
@@ -161,7 +212,11 @@ func (w *Worker) Start(ctx context.Context) error {
 	if migrationMgr := w.MigrationManager(); migrationMgr != nil {
 		w.getLogger().Info("applying pending migrations").Send()
 		if mErr := migrationMgr.RunPending(); mErr != nil {
-			return fmt.Errorf("gas: migrations: %w", mErr)
+			//nolint:contextcheck // cleanup must run even when ctx is what failed
+			return errors.Join(
+				fmt.Errorf("gas: migrations: %w", mErr),
+				w.closeActive(context.WithoutCancel(ctx)),
+			)
 		}
 	}
 
@@ -176,7 +231,11 @@ func (w *Worker) Start(ctx context.Context) error {
 		if fnErr := fn(w.serviceContainer); fnErr != nil {
 			//nolint:contextcheck // getLogger resolves the logger, which needs no caller ctx
 			w.getLogger().Error("ready hook failed").Err("error", fnErr).Send()
-			return fmt.Errorf("gas: ready hook: %w", fnErr)
+			//nolint:contextcheck // cleanup must run even when ctx is what failed
+			return errors.Join(
+				fmt.Errorf("gas: ready hook: %w", fnErr),
+				w.closeActive(context.WithoutCancel(ctx)),
+			)
 		}
 	}
 
@@ -200,30 +259,44 @@ func (w *Worker) Shutdown(ctx context.Context) (err error) {
 
 		w.eventBus.Emit[SystemShuttingDown](SystemShuttingDownPayload{}).Wait()
 
-		// Snapshot the services still active, newest first, and mark them
-		// closed so a CloseService racing with shutdown cannot close one again.
-		w.mu.Lock()
-		closing := make([]Service, 0, len(w.activeServices))
-		for _, svc := range slices.Backward(w.serviceOrder) {
-			if _, active := w.activeServices[svc.Name()]; active {
-				closing = append(closing, svc)
-				delete(w.activeServices, svc.Name())
-			}
-		}
-		w.mu.Unlock()
-
-		for _, svc := range closing {
-			//nolint:contextcheck // getLogger resolves the logger, which needs no caller ctx
-			w.getLogger().Info("closing service").Str("service", svc.Name()).Send()
-			if svcErr := svc.Close(ctx); svcErr != nil {
-				err = errors.Join(err, fmt.Errorf("gas: close %s: %w", svc.Name(), svcErr))
-			}
-		}
+		err = w.closeActive(ctx)
 
 		//nolint:contextcheck // getLogger resolves the logger, which needs no caller ctx
 		w.getLogger().Info("shutdown complete").Send()
 	})
 	return
+}
+
+// closeActive closes every service still active, newest first, and removes
+// each from ActiveServices first, so a CloseService racing with it cannot
+// close one again. Every Close error is returned, joined.
+func (w *Worker) closeActive(ctx context.Context) error {
+	w.mu.Lock()
+	closing := make([]Service, 0, len(w.activeServices))
+	for _, svc := range slices.Backward(w.serviceOrder) {
+		if _, active := w.activeServices[svc.Name()]; active {
+			closing = append(closing, svc)
+			delete(w.activeServices, svc.Name())
+		}
+	}
+	w.mu.Unlock()
+
+	return w.closeServices(ctx, closing)
+}
+
+// closeServices closes each service in order, passing ctx to every Close.
+// A failing Close does not stop the rest; every Close error is returned,
+// joined, and not logged.
+func (w *Worker) closeServices(ctx context.Context, services []Service) error {
+	var err error
+	for _, svc := range services {
+		//nolint:contextcheck // getLogger resolves the logger, which needs no caller ctx
+		w.getLogger().Info("closing service").Str("service", svc.Name()).Send()
+		if svcErr := svc.Close(ctx); svcErr != nil {
+			err = errors.Join(err, fmt.Errorf("gas: close %s: %w", svc.Name(), svcErr))
+		}
+	}
+	return err
 }
 
 // Run initializes services, runs migrations and ready hooks, then blocks

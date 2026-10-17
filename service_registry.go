@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -56,19 +58,31 @@ type ServiceContainer struct {
 	registrations map[reflect.Type]registration
 	instances     map[reflect.Type]reflect.Value // singletons + pre-registered instances
 
-	// initedInstances tracks pre-registered instances whose Init has run, so a
-	// repeated BuildAll does not initialize them twice. Constructed singletons
+	// initedInstances tracks pre-registered instances whose Init is running or
+	// has succeeded, so a repeated BuildAll does not initialize them twice. An
+	// instance whose Init failed is removed again. Constructed singletons
 	// need no equivalent: they are initialized inside invoke, which runs once
 	// per type because the result is cached.
 	initedInstances map[reflect.Type]struct{}
+
+	// builds holds the singletons under construction, stacks the types each
+	// goroutine is constructing (for cycle detection), and waiting the build
+	// each goroutine is blocked on (for deadlock detection).
+	builds  map[reflect.Type]*singletonBuild
+	stacks  map[uint64][]reflect.Type
+	waiting map[uint64]*singletonBuild
 
 	// instanceOrder records the order instances became available: registered
 	// values first, then singletons in construction order. Ranging over the
 	// instances map instead would be randomized by Go, which is what made
 	// Worker.Shutdown close services in an arbitrary order rather than the
-	// documented reverse-initialization order. Kept last: it carries inline
+	// documented reverse-initialization order. Kept after the maps: it carries inline
 	// len/cap, which govet fieldalignment wants after the pure-pointer fields.
 	instanceOrder []reflect.Type
+
+	// mu guards instances, initedInstances, instanceOrder, builds, stacks,
+	// and waiting. Constructors and Init run without it held.
+	mu sync.Mutex
 }
 
 // ServiceContainerOptions holds the settings a ServiceContainer is built
@@ -120,6 +134,9 @@ func NewServiceContainer(opts ...ServiceContainerOption) *ServiceContainer {
 		registrations:   make(map[reflect.Type]registration),
 		instances:       make(map[reflect.Type]reflect.Value),
 		initedInstances: make(map[reflect.Type]struct{}),
+		builds:          make(map[reflect.Type]*singletonBuild),
+		stacks:          make(map[uint64][]reflect.Type),
+		waiting:         make(map[uint64]*singletonBuild),
 		opt:             options,
 	}
 }
@@ -204,6 +221,13 @@ func (c *ServiceContainer) RegisterServiceInstance[T any](val T) {
 // type keeps its original position: it was already available from that point
 // on, so anything built afterwards may depend on it.
 func (c *ServiceContainer) setInstance(t reflect.Type, v reflect.Value) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.setInstanceLocked(t, v)
+}
+
+// setInstanceLocked is setInstance for a caller that holds c.mu.
+func (c *ServiceContainer) setInstanceLocked(t reflect.Type, v reflect.Value) {
 	if _, exists := c.instances[t]; !exists {
 		c.instanceOrder = append(c.instanceOrder, t)
 	}
@@ -237,18 +261,16 @@ func (c *ServiceContainer) BuildAll(ctx context.Context) error {
 	}
 
 	for _, t := range order {
-		if _, ok := c.instances[t]; ok {
+		if _, ok := c.lookupInstance(t); ok {
 			continue
 		}
 		reg := c.registrations[t]
 		if reg.lifetime != ServiceLifetimeSingleton {
 			continue
 		}
-		val, err := c.invoke(ctx, t, c)
-		if err != nil {
+		if _, err := c.resolveSingleton(ctx, t); err != nil {
 			return fmt.Errorf("building %v: %w", t, err)
 		}
-		c.setInstance(t, val)
 	}
 	return nil
 }
@@ -258,10 +280,37 @@ func (c *ServiceContainer) BuildAll(ctx context.Context) error {
 // BuildAll skips types already present in the instance map — so this is the
 // only place their Init can run.
 func (c *ServiceContainer) initInstances(ctx context.Context) error {
-	for _, t := range c.instanceOrder {
-		if _, done := c.initedInstances[t]; done {
-			continue
+	c.mu.Lock()
+	order := slices.Clone(c.instanceOrder)
+	c.mu.Unlock()
+
+	for _, t := range order {
+		if svc, ok := c.claimInstanceInit(t); ok {
+			if err := c.initService(ctx, t, svc); err != nil {
+				// Unmarked so initializedServices never reports an
+				// instance whose Init failed.
+				c.mu.Lock()
+				delete(c.initedInstances, t)
+				c.mu.Unlock()
+				return err
+			}
 		}
+	}
+	return nil
+}
+
+// initializedServices returns, in the order they became available, the
+// singleton Services whose Init has succeeded: pre-registered instances the
+// container initialized and singletons it built. Each instance appears once,
+// even when it is registered under several types. A Worker uses it to close
+// what a failed startup had already initialized.
+func (c *ServiceContainer) initializedServices() []Service {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	var out []Service
+	seen := make(map[Service]struct{})
+	for _, t := range c.instanceOrder {
 		v, ok := c.instances[t]
 		if !ok {
 			continue
@@ -270,12 +319,41 @@ func (c *ServiceContainer) initInstances(ctx context.Context) error {
 		if !ok {
 			continue
 		}
-		c.initedInstances[t] = struct{}{}
-		if err := c.initService(ctx, t, svc); err != nil {
-			return err
+		_, inited := c.initedInstances[t]
+		reg, registered := c.registrations[t]
+		built := registered && reg.lifetime == ServiceLifetimeSingleton
+		if !inited && !built {
+			continue
 		}
+		if _, dup := seen[svc]; dup {
+			continue
+		}
+		seen[svc] = struct{}{}
+		out = append(out, svc)
 	}
-	return nil
+	return out
+}
+
+// claimInstanceInit returns the pre-registered instance for t as a Service
+// and marks it initialized, or reports false when it is not a Service or
+// was initialized already.
+func (c *ServiceContainer) claimInstanceInit(t reflect.Type) (Service, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if _, done := c.initedInstances[t]; done {
+		return nil, false
+	}
+	v, ok := c.instances[t]
+	if !ok {
+		return nil, false
+	}
+	svc, ok := v.Interface().(Service)
+	if !ok {
+		return nil, false
+	}
+	c.initedInstances[t] = struct{}{}
+	return svc, true
 }
 
 // initService runs svc.Init under the service's init deadline: the
@@ -437,12 +515,7 @@ func (c *ServiceContainer) resolveType(ctx context.Context, t reflect.Type) (ref
 
 	switch reg.lifetime {
 	case ServiceLifetimeSingleton:
-		val, err := c.invoke(ctx, t, c)
-		if err != nil {
-			return reflect.Value{}, err
-		}
-		c.setInstance(t, val)
-		return val, nil
+		return c.resolveSingleton(ctx, t)
 
 	case ServiceLifetimeTransient:
 		return c.invoke(ctx, t, c)
@@ -458,7 +531,89 @@ func (c *ServiceContainer) resolveType(ctx context.Context, t reflect.Type) (ref
 	return reflect.Value{}, newDIError(ErrInvalidLifetime, "unknown lifetime for %v", t)
 }
 
+// resolveSingleton returns the singleton for t, building it if needed. One
+// goroutine builds it at a time: a caller on another goroutine waits for that
+// build and shares its result, so the constructor and Init run once. A
+// constructor or Init that comes back for its own type gets
+// ErrCircularDependency, and so does a wait that would deadlock because the
+// builder is itself waiting on the caller. A failed build is not cached, so
+// the next call builds again.
+func (c *ServiceContainer) resolveSingleton(
+	ctx context.Context,
+	t reflect.Type,
+) (reflect.Value, error) {
+	c.mu.Lock()
+	if v, ok := c.instances[t]; ok {
+		c.mu.Unlock()
+		return v, nil
+	}
+
+	gid := curGoroutineID()
+	if b, ok := c.builds[t]; ok {
+		return c.awaitBuild(t, b, gid)
+	}
+
+	b := &singletonBuild{gid: gid, done: make(chan struct{})}
+	c.builds[t] = b
+	c.mu.Unlock()
+
+	val, err := c.invoke(ctx, t, c)
+
+	c.mu.Lock()
+	if err == nil {
+		c.setInstanceLocked(t, val)
+	}
+	delete(c.builds, t)
+	b.val, b.err = val, err
+	c.mu.Unlock()
+	close(b.done)
+
+	return val, err
+}
+
+// awaitBuild waits for the in-flight build b of t on behalf of goroutine gid
+// and returns its result, or returns ErrCircularDependency if gid is the
+// builder itself or waiting would deadlock. It is called with c.mu held and
+// releases it.
+func (c *ServiceContainer) awaitBuild(
+	t reflect.Type,
+	b *singletonBuild,
+	gid uint64,
+) (reflect.Value, error) {
+	if b.gid == gid {
+		err := cycleIn(c.stacks[gid], t)
+		c.mu.Unlock()
+		if err == nil {
+			err = newDIError(
+				ErrCircularDependency,
+				"circular dependency: %v resolved while it is being built",
+				t,
+			)
+		}
+		return reflect.Value{}, err
+	}
+	if c.waitsOn(b, gid) {
+		c.mu.Unlock()
+		return reflect.Value{}, newDIError(
+			ErrCircularDependency,
+			"circular dependency: %v is being built by a goroutine that is waiting on this one",
+			t,
+		)
+	}
+	c.waiting[gid] = b
+	c.mu.Unlock()
+
+	<-b.done
+
+	c.mu.Lock()
+	delete(c.waiting, gid)
+	c.mu.Unlock()
+	return b.val, b.err
+}
+
 func (c *ServiceContainer) lookupInstance(t reflect.Type) (reflect.Value, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if v, ok := c.instances[t]; ok {
 		return v, true
 	}
@@ -471,10 +626,18 @@ func (c *ServiceContainer) lookupInstance(t reflect.Type) (reflect.Value, bool) 
 // and cached before the constructor that consumes it returns, so this order is
 // a valid initialization order: reversing it is safe for shutdown.
 func (c *ServiceContainer) EachInstance(fn func(reflect.Value)) {
+	// Snapshot under the lock and call fn without it, so fn may resolve.
+	c.mu.Lock()
+	vals := make([]reflect.Value, 0, len(c.instanceOrder))
 	for _, t := range c.instanceOrder {
 		if v, ok := c.instances[t]; ok {
-			fn(v)
+			vals = append(vals, v)
 		}
+	}
+	c.mu.Unlock()
+
+	for _, v := range vals {
+		fn(v)
 	}
 }
 
@@ -610,6 +773,12 @@ func (c *ServiceContainer) invoke(
 	if !ok {
 		return reflect.Value{}, newDIError(ErrNoConstructor, "no constructor for %v", t)
 	}
+
+	gid, err := c.enterBuild(t)
+	if err != nil {
+		return reflect.Value{}, err
+	}
+	defer c.leaveBuild(gid)
 
 	ctorVal := reflect.ValueOf(reg.ctor)
 	ctorType := ctorVal.Type()
@@ -1067,7 +1236,13 @@ func (c *ServiceContainer) validateServiceShapes() error {
 			return err
 		}
 	}
+	c.mu.Lock()
+	instances := make([]reflect.Value, 0, len(c.instances))
 	for _, v := range c.instances {
+		instances = append(instances, v)
+	}
+	c.mu.Unlock()
+	for _, v := range instances {
 		if err := validateServiceShape(concreteType(v)); err != nil {
 			return err
 		}
