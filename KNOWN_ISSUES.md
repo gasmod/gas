@@ -265,22 +265,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
 - **Next step**: decide whether the module should offer a way to clear
   or force a dirty version (a §3 API decision in `CLAUDE.md`).
 
-## KI-021: one service can register the same migration version twice
-
-- **Status**: open
-- **Area**: `migrate` (`manager.go`).
-- **Found**: 2026-10-16, while writing the migrate `doc.go`.
-- **Detail**: `allMigrationsSorted` (`migrate/manager.go:351`) rejects a
-  version registered by two different services but not one registered
-  twice by the same service. `RunPending` then applies the first, and
-  recording the second hits the tracking table's primary key; the failure
-  marks the version dirty, although its first migration did apply, which
-  blocks every later run.
-  Verified on SQLite: `UNIQUE constraint failed: __gas_migrations.version`,
-  then one dirty version.
-- **Next step**: reject a duplicate version from the same service at
-  registration or in `RunPending`.
-
 ## KI-023: two template db stores register the same migration
 
 - **Status**: open
@@ -290,14 +274,16 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   stores to share the `__gas_templates` table, but every store registers
   the table's migration, version `20260322235959`, under the same service
   name, `gas/template/db` (`template/db/store.go:79` and `:105`). Two
-  stores therefore register one version twice under one service, which
-  is the case in KI-021: `RunPending` applies it once, fails on the
-  tracking table's primary key for the second, and marks the version
-  dirty. Verified with a recording migration manager (two stores, two
-  registrations of `gas/template/db@20260322235959`); the `RunPending`
-  outcome is KI-021's, verified separately.
-- **Next step**: register the migration once however many stores exist,
-  or have the migration manager accept an identical re-registration.
+  stores therefore register one version twice under one service. Before
+  the migrate fix for same-service duplicates, `RunPending` applied it
+  once, failed on the tracking table's primary key for the second, and
+  marked the version dirty. Verified with a recording migration manager
+  (two stores, two registrations of `gas/template/db@20260322235959`).
+  migrate now applies an identical re-registration once, which should
+  resolve this if the two stores register byte-identical migrations.
+- **Next step**: verify end to end with two stores against a real
+  migrate service, then remove this entry, or register the migration once
+  however many stores exist.
 
 ## KI-024: template db store cannot be written to while services start
 

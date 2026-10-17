@@ -28,11 +28,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   migration containing DDL is still not atomic with its tracking row.
 - The dirty-migration errors from `RunPending` and `CheckReady` now wrap
   `ErrDirty`; their messages are unchanged.
+- A service that registers an identical migration more than once gets it
+  applied once. Registering two different migrations under one version in
+  one service is now an error wrapping `ErrDuplicateVersion`, returned by
+  `RunPending`, `Down`, and `CheckReady` before anything runs; it used to
+  apply the first, fail to record the second, and leave the version dirty.
+- The cross-service duplicate-version error from `RunPending` and `Down`
+  wraps `ErrDuplicateVersion`, and `CheckReady` now returns it too. `Down`'s
+  message names the services rather than printing their values.
+- `CheckReady` counts each pending version once.
 
 ### Added
 
 - `ErrDirty`, wrapped by `RunPending`, `Down`, and `CheckReady` while any
   migration is dirty.
+- `ErrDuplicateVersion`, wrapped by `RunPending`, `Down`, and `CheckReady`
+  when two different migrations share a version.
 
 ## [0.3.0] - 2026-07-03
 

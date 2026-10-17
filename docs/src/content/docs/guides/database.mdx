@@ -80,8 +80,9 @@ A migration that fails is recorded as dirty, and every later run, and every
 `Down`, refuses to proceed until you resolve it, returning an error that wraps
 `migrate.ErrDirty`. Fix the cause, remove or correct the row in the
 `__gas_migrations` table, then run again. If two services register the same
-version, both `RunPending` and `Down` fail with an error naming the version and
-both services.
+version, or one service registers two different migrations under one version,
+`RunPending` and `Down` fail before running anything, with an error that wraps
+`migrate.ErrDuplicateVersion` and names the version and the services.
 </Aside>
 
 Roll back with `Down(n)`, which reverses the last `n` applied migrations in

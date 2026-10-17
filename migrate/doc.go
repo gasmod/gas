@@ -38,9 +38,12 @@
 // version is recorded as dirty; while any version is dirty, RunPending,
 // Down, and CheckReady return an error wrapping ErrDirty that names the
 // dirty versions, and the package offers no call that clears the mark
-// (KI-020). Two services registering the same version is an error; one
-// service registering it twice is not caught until it marks the version
-// dirty (KI-021).
+// (KI-020). Two services registering the same version, or one service
+// registering two different migrations under one version, is an error
+// wrapping ErrDuplicateVersion from RunPending, Down, and CheckReady, and
+// nothing runs. A service that registers an identical migration (same
+// version, description, up SQL, and down SQL) more than once gets it
+// applied once.
 //
 // Down reverts the n highest versions in the tracking table, highest first,
 // and runs nothing while any version is dirty, since a dirty version's up

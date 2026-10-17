@@ -116,15 +116,18 @@ func (s *Service) CheckReady(ctx context.Context) error {
 	appliedSet := versionSet(applied)
 
 	s.mu.Lock()
+	all, err := s.registeredMigrations()
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
+
 	pending := 0
-	for _, migs := range s.migrations {
-		for _, m := range migs {
-			if _, ok := appliedSet[m.Version]; !ok {
-				pending++
-			}
+	for _, m := range all {
+		if _, ok := appliedSet[m.Version]; !ok {
+			pending++
 		}
 	}
-	s.mu.Unlock()
 
 	if pending > 0 {
 		return fmt.Errorf("gas/migrate: %d pending migration(s)", pending)
