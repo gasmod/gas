@@ -114,7 +114,9 @@ func WithClient(client API) Option {
 	}
 }
 
-// WithTimeout bounds Load when no caller context is supplied.
+// WithTimeout bounds Load when no caller context is supplied. Zero or a
+// negative duration means no timeout: Load then waits as long as the AWS
+// client does.
 //
 // Default: DefaultTimeout.
 func WithTimeout(d time.Duration) Option {
@@ -142,10 +144,14 @@ func (p *Provider) Name() string {
 }
 
 // Load implements the Provider interface using a background context bounded
-// by the configured timeout.
+// by the configured timeout, or unbounded when the timeout is not positive.
 func (p *Provider) Load() (map[string]any, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), p.timeout)
-	defer cancel()
+	ctx := context.Background()
+	if p.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, p.timeout)
+		defer cancel()
+	}
 
 	return p.LoadContext(ctx)
 }
