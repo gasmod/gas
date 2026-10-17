@@ -103,5 +103,7 @@ attached.
 | `Warn` | `WarnLevel` | `LevelWarn` |
 | `Error` | `ErrorLevel` | `LevelError` |
 
-If no logger is registered at all, Gas falls back to a slog-backed one and warns
-once, so startup diagnostics are never silently lost.
+If no logger is registered at all, Gas logs its own lifecycle messages through a
+slog-backed fallback and warns once, so startup diagnostics are never silently
+lost. The fallback is not registered in the container: services that need a
+`gas.Logger` still need one registered.
