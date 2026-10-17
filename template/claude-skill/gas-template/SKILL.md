@@ -186,7 +186,10 @@ Unsupported drivers cause `Init` to return an error.
 `Init` registers a single migration (version `20260322235959`, "create __gas_templates
 table") with the `gas.MigrationManager`. The migration SQL is driver-specific
 and embedded from `.sql` files. The `gas/migrate` service applies it during the
-app startup sequence.
+app startup sequence. Every store on one driver registers an identical copy under
+the service name `gas/template/db`, and `gas/migrate` applies an identical
+re-registration once, so several stores (for example with different namespaces)
+can share one database.
 
 ### Behavior
 

@@ -48,9 +48,11 @@ func (m *mockDB) WithTx(_ context.Context, _ *sql.TxOptions, _ func(*sql.Tx) err
 }
 
 // mockMigrationMgr satisfies gas.MigrationManager for tests.
-// It records registered migrations without executing them.
+// It records registered migrations, and the name of the service that
+// registered each, without executing them.
 type mockMigrationMgr struct {
 	migrations []gas.Migration
+	services   []string
 }
 
 func (m *mockMigrationMgr) Name() string                { return "mock-migrate" }
@@ -59,8 +61,9 @@ func (m *mockMigrationMgr) Close(context.Context) error { return nil }
 func (m *mockMigrationMgr) RunPending() error           { return nil }
 func (m *mockMigrationMgr) Down(_ int) error            { return nil }
 
-func (m *mockMigrationMgr) Register(_ gas.Service, migration gas.Migration) {
+func (m *mockMigrationMgr) Register(svc gas.Service, migration gas.Migration) {
 	m.migrations = append(m.migrations, migration)
+	m.services = append(m.services, svc.Name())
 }
 
 func (m *mockMigrationMgr) RegisterSlice(_ gas.Service, migrations []gas.Migration) {
@@ -658,5 +661,44 @@ func TestE2E_InitDrivers(t *testing.T) {
 	s := NewStore()(&mockDB{db: db, driver: "sqlite3"}, nopLog, nopMigrationMgr)
 	if err := s.Init(t.Context()); err != nil {
 		t.Fatalf("Init(sqlite3) error: %v", err)
+	}
+}
+
+// Several stores sharing one database each register the table migration.
+// gas/migrate applies a migration that one service registers more than
+// once only if every copy is identical, so the copies from two stores on
+// one driver must match in service name, version, description, and SQL.
+func TestTwoStoresRegisterIdenticalMigration(t *testing.T) {
+	t.Parallel()
+
+	for _, driver := range []string{"postgres", "pgx", "mysql", "sqlite", "sqlite3"} {
+		t.Run(driver, func(t *testing.T) {
+			t.Parallel()
+			mgr := &mockMigrationMgr{}
+			db := &mockDB{driver: driver}
+
+			for _, ns := range []string{"emails", "pages"} {
+				s := NewStore(WithNamespace(ns))(db, nopLog, mgr)
+				if err := s.Init(t.Context()); err != nil {
+					t.Fatalf("Init() for namespace %q error: %v", ns, err)
+				}
+			}
+
+			if len(mgr.migrations) != 2 {
+				t.Fatalf("registered migrations = %d, want 2", len(mgr.migrations))
+			}
+			if mgr.services[0] != mgr.services[1] {
+				t.Errorf(
+					"services = %q and %q, want the same name",
+					mgr.services[0],
+					mgr.services[1],
+				)
+			}
+			a, b := mgr.migrations[0], mgr.migrations[1]
+			if a.Version != b.Version || a.Description != b.Description ||
+				a.Up != b.Up || a.Down != b.Down {
+				t.Errorf("migrations differ:\n%+v\n%+v", a, b)
+			}
+		})
 	}
 }
