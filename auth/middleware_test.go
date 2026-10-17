@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -300,4 +301,25 @@ func TestRequireScheme(t *testing.T) {
 
 		assert.Equal(t, "Forbidden\n", rec.Body.String())
 	})
+}
+
+// Passing a nil Authenticator is a wiring mistake: it panics at
+// construction with a "gas:" message that says how to fix it.
+func TestMiddleware_NilAuthenticatorPanics(t *testing.T) {
+	t.Parallel()
+
+	defer func() {
+		r := recover()
+		msg, ok := r.(string)
+		if !ok {
+			t.Fatalf("recover() = %#v, want a string panic", r)
+		}
+		if !strings.HasPrefix(msg, "gas: auth.Middleware: ") ||
+			!strings.Contains(msg, "pass a configured Authenticator") {
+			t.Errorf("panic message = %q, want a gas: prefix and a fix", msg)
+		}
+	}()
+
+	auth.Middleware(nil)
+	t.Fatal("Middleware(nil) did not panic")
 }
