@@ -13,9 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the caller logs it once. It is returned as
   `gas/queue/sqs: invalid configuration: <cause>`.
 - **BREAKING:** `sqs.Service` implements the context-aware `gas.Service`:
-  `Init(ctx)` and `Close(ctx)`. `Init` loads the AWS configuration under the
-  caller ctx; credentials are fetched on the first call, not in `Init`.
-  `Close` ignores ctx.
+  `Init(ctx)` and `Close(ctx)`. `Init` loads the AWS configuration and
+  fetches the credentials under the caller ctx. `Close` ignores ctx.
+- `Init` fetches the AWS credentials, so a missing or broken credential setup
+  (no static keys, no environment variables, profile, web identity, or
+  instance role) fails startup with an error naming the credential lookup,
+  instead of failing the first call. With the default chain this can make a
+  network call at startup (for example to the instance metadata service).
+  Not applied when `WithClient` supplies the client.
 
 ## [0.3.0] - 2026-07-03
 

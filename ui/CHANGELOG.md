@@ -17,6 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`StaticStripPrefix` now applies its documented default.** The config
+  comment said an empty value defaults to `StaticPath`, but nothing was
+  stripped, so with the defaults `/static/app.css` was looked up as
+  `static/app.css` inside the static root and a file at `./static/app.css`
+  was reachable at no URL. An empty `StaticStripPrefix` now strips
+  `StaticPath`'s literal part up to its first wildcard (`/static/` for
+  `/static/*`); with `StaticPaths` set it still strips nothing. Apps whose
+  static FS mirrors the URLs (`static/app.css` served at `/static/app.css`)
+  must set `StaticStripPrefix: "/"` to keep that layout.
 - Concurrent renders in a development-like environment, where every render
   rebuilds the templates, no longer race on the engine's template lists, and
   `AddFuncs` no longer races with a rebuild. `Engine.Build` now compiles into

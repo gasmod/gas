@@ -114,8 +114,12 @@ three separate jobs:
 | `StaticPath` / `StaticPaths` | **Where** to serve it, as URL patterns |
 | `StaticStripPrefix` | **What to strip** before looking up the file |
 
-If the FS mirrors your URLs, strip nothing. If the FS is flat and the URLs are
-not, strip the prefix. When empty, nothing is stripped.
+When `StaticStripPrefix` is empty it defaults to the literal part of
+`StaticPath` up to the wildcard, so the default `/static/*` strips `/static/`
+and `/static/app.css` serves `app.css` from the root of the static directory. If
+the FS mirrors your URLs instead (`static/app.css` at `/static/app.css`), set
+`StaticStripPrefix: "/"` to strip nothing. With `StaticPaths` and no
+`StaticStripPrefix`, nothing is stripped.
 
 ## Development mode
 

@@ -132,18 +132,39 @@ func (s *Service) initEngine() {
 	)
 }
 
+// staticStripPrefix returns the prefix the static handler strips: the
+// configured StaticStripPrefix, or, when it is empty and the single
+// StaticPath route is used, StaticPath's literal part up to its first
+// wildcard or parameter ("/static/*" gives "/static/"). With StaticPaths set
+// and no StaticStripPrefix nothing is stripped, so each route maps to the
+// same path in the static root.
+func (s *Service) staticStripPrefix() string {
+	if s.cfg.UI.StaticStripPrefix != "" {
+		return s.cfg.UI.StaticStripPrefix
+	}
+	if len(s.cfg.UI.StaticPaths) > 0 {
+		return ""
+	}
+	prefix := s.cfg.UI.StaticPath
+	if i := strings.IndexAny(prefix, "*{"); i >= 0 {
+		prefix = prefix[:i]
+	}
+	return prefix
+}
+
 // initStaticRoute registers the static file serving route with the router.
 func (s *Service) initStaticRoute() error {
 	if s.router == nil {
 		return nil
 	}
 
+	prefix := s.staticStripPrefix()
 	var handler http.HandlerFunc
 	switch {
 	case s.staticFS != nil:
-		handler = StaticHandlerFS(s.cfg.UI.StaticStripPrefix, s.staticFS)
+		handler = StaticHandlerFS(prefix, s.staticFS)
 	case s.cfg.UI.StaticDir != "":
-		handler = StaticHandler(s.cfg.UI.StaticStripPrefix, s.cfg.UI.StaticDir)
+		handler = StaticHandler(prefix, s.cfg.UI.StaticDir)
 	}
 
 	if handler == nil {

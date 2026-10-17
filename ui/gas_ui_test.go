@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
 
 	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/config/extensions/gasenv"
@@ -646,5 +647,77 @@ func TestService_InvalidConfigNamesService(t *testing.T) {
 	err := svc.Init(t.Context())
 	if err == nil || !strings.HasPrefix(err.Error(), "gas/ui: invalid configuration: ") {
 		t.Errorf("Init() error = %v, want it prefixed with the service name", err)
+	}
+}
+
+// newStaticService starts a ui service over fsys with cfg and returns the
+// router it registered its static route on.
+func newStaticService(t *testing.T, cfg *ui.Config, fsys fs.FS) *gas.Router {
+	t.Helper()
+	router := gas.NewRouter()
+	svc := ui.New[*testProvider](ui.WithConfig(cfg), ui.WithStaticFS(fsys))(
+		newTestProvider(map[string]string{"home.html": "ok"}),
+		router,
+		nil,
+		gas.NewNopLogger()(),
+	)
+	if err := svc.Init(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	router.Seal()
+	return router
+}
+
+func getBody(t *testing.T, h http.Handler, path string) (int, string) {
+	t.Helper()
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
+	return rr.Code, rr.Body.String()
+}
+
+// With the defaults, StaticStripPrefix defaults to StaticPath's literal
+// prefix, so /static/app.css serves app.css from the root of the static FS.
+func TestService_StaticDefaultStripsStaticPath(t *testing.T) {
+	fsys := fstest.MapFS{
+		"app.css":        &fstest.MapFile{Data: []byte("root")},
+		"static/app.css": &fstest.MapFile{Data: []byte("nested")},
+	}
+	router := newStaticService(t, ui.DefaultConfig(), fsys)
+
+	code, body := getBody(t, router, "/static/app.css")
+	if code != http.StatusOK || body != "root" {
+		t.Errorf("GET /static/app.css = %d %q, want 200 %q", code, body, "root")
+	}
+}
+
+// An explicit StaticStripPrefix still wins over the default.
+func TestService_StaticExplicitStripPrefix(t *testing.T) {
+	fsys := fstest.MapFS{
+		"assets/app.css": &fstest.MapFile{Data: []byte("assets")},
+	}
+	cfg := ui.DefaultConfig()
+	cfg.UI.StaticPath = "/assets/*"
+	cfg.UI.StaticStripPrefix = "/"
+	router := newStaticService(t, cfg, fsys)
+
+	code, body := getBody(t, router, "/assets/app.css")
+	if code != http.StatusOK || body != "assets" {
+		t.Errorf("GET /assets/app.css = %d %q, want 200 %q", code, body, "assets")
+	}
+}
+
+// With StaticPaths set and no StaticStripPrefix, nothing is stripped, so
+// each path maps to the same path in the static FS.
+func TestService_StaticPathsKeepFSLayout(t *testing.T) {
+	fsys := fstest.MapFS{
+		"css/app.css": &fstest.MapFile{Data: []byte("css")},
+	}
+	cfg := ui.DefaultConfig()
+	cfg.UI.StaticPaths = []string{"/css/*"}
+	router := newStaticService(t, cfg, fsys)
+
+	code, body := getBody(t, router, "/css/app.css")
+	if code != http.StatusOK || body != "css" {
+		t.Errorf("GET /css/app.css = %d %q, want 200 %q", code, body, "css")
 	}
 }
