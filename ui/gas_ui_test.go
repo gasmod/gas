@@ -557,3 +557,80 @@ func TestService_Name(t *testing.T) {
 		t.Fatalf("got %q", svc.Name())
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Engine: concurrency
+// ---------------------------------------------------------------------------
+
+// In dev mode every render rebuilds the templates, so concurrent renders
+// rebuild concurrently. Each must still render its own page through the
+// layout and partial, without a data race.
+func TestEngine_ConcurrentDevModeRenders(t *testing.T) {
+	t.Parallel()
+
+	tp := newTestProvider(map[string]string{
+		"layouts/base.html":  `{{define "base"}}<main>{{block "content" .}}{{end}}</main>{{end}}`,
+		"partials/nav.html":  `{{define "nav"}}<nav>nav</nav>{{end}}`,
+		"home.html":          `{{define "content"}}{{template "nav"}}<p>home</p>{{end}}`,
+		"dashboard/top.html": `{{define "content"}}{{template "nav"}}<p>top</p>{{end}}`,
+	})
+	e := ui.NewEngine(tp, ui.DefaultFuncMap(gasenv.Development), "base", true, gas.NewNopLogger()())
+
+	pages := map[string]string{"home": "<p>home</p>", "dashboard/top": "<p>top</p>"}
+	var wg sync.WaitGroup
+	errs := make(chan error, 160)
+	for i := range 8 {
+		wg.Go(func() {
+			for j := range 20 {
+				name := "home"
+				if (i+j)%2 == 1 {
+					name = "dashboard/top"
+				}
+				w := httptest.NewRecorder()
+				if err := e.Render(w, name, nil); err != nil {
+					errs <- fmt.Errorf("Render(%q): %w", name, err)
+					continue
+				}
+				body := w.Body.String()
+				if !strings.Contains(body, "<main>") || !strings.Contains(body, "<nav>nav</nav>") ||
+					!strings.Contains(body, pages[name]) {
+					errs <- fmt.Errorf("Render(%q) body = %q", name, body)
+				}
+			}
+		})
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+}
+
+// AddFuncs while pages render must not race with the rebuild it triggers.
+func TestEngine_AddFuncsDuringRenders(t *testing.T) {
+	t.Parallel()
+
+	tp := newTestProvider(map[string]string{"page.html": `<p>{{greet}}</p>`})
+	funcs := ui.DefaultFuncMap(gasenv.Production)
+	funcs["greet"] = func() string { return "hi" }
+	e := ui.NewEngine(tp, funcs, "base", false, gas.NewNopLogger()())
+
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Go(func() {
+			for range 50 {
+				w := httptest.NewRecorder()
+				if err := e.Render(w, "page", nil); err != nil {
+					t.Errorf("Render: %v", err)
+					return
+				}
+			}
+		})
+	}
+	wg.Go(func() {
+		for i := range 50 {
+			e.AddFuncs(map[string]any{fmt.Sprintf("extra%d", i): func() string { return "" }})
+		}
+	})
+	wg.Wait()
+}

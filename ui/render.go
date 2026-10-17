@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"html/template"
+	"maps"
 	"net/http"
 	"strings"
 	"sync"
@@ -23,18 +24,28 @@ import (
 // A layout file typically defines an entry point template (default name "base")
 // using {{define "base"}} and declares blocks with {{block "content" .}}.
 // Page templates override those blocks with {{define "content"}}.
+//
+// mu guards funcMap, cache, hasLayouts, and built. Build reads the provider
+// and compiles into local values without holding mu, then swaps the result
+// in under it, so renders, AddFuncs, and concurrent rebuilds never see a
+// half-built set.
 type Engine struct {
-	provider gas.TemplateProvider
-	funcMap  template.FuncMap
-	logger   gas.Logger
-	cache    map[string]*template.Template
-	layout   string
+	provider   gas.TemplateProvider
+	funcMap    template.FuncMap
+	logger     gas.Logger
+	cache      map[string]*template.Template
+	layout     string
+	mu         sync.RWMutex
+	devMode    bool
+	built      bool
+	hasLayouts bool
+}
+
+// templateSet is the classified content of one Build.
+type templateSet struct {
 	layouts  []namedContent
 	partials []namedContent
 	pages    []string
-	mu       sync.RWMutex
-	devMode  bool
-	built    bool
 }
 
 type namedContent struct {
@@ -78,7 +89,9 @@ func (e *Engine) AddFuncs(funcs map[string]any) {
 }
 
 // Build loads all templates from the provider, classifies them, and compiles
-// page templates into cached *template.Template instances.
+// page templates into cached *template.Template instances. It is safe to call
+// concurrently with renders, AddFuncs, and other Builds. If it fails, the
+// previously built templates stay in place.
 func (e *Engine) Build() error {
 	ctx := context.Background()
 
@@ -87,32 +100,35 @@ func (e *Engine) Build() error {
 		return fmt.Errorf("ui: listing templates: %w", err)
 	}
 
-	e.layouts = e.layouts[:0]
-	e.partials = e.partials[:0]
-	e.pages = e.pages[:0]
-
+	var set templateSet
 	for _, name := range names {
 		content, getErr := e.provider.Get(ctx, name)
 		if getErr != nil {
 			return fmt.Errorf("ui: loading template %q: %w", name, getErr)
 		}
-		e.classify(namedContent{name: name, content: content})
+		set.classify(namedContent{name: name, content: content})
+	}
+
+	// Compile against a snapshot of the funcmap, so AddFuncs can run while
+	// this Build compiles.
+	e.mu.RLock()
+	funcs := make(template.FuncMap, len(e.funcMap))
+	maps.Copy(funcs, e.funcMap)
+	e.mu.RUnlock()
+
+	cache := make(map[string]*template.Template, len(set.pages))
+	for _, page := range set.pages {
+		t, compileErr := e.compile(&set, funcs, page)
+		if compileErr != nil {
+			return compileErr
+		}
+		cache[e.pageKey(page)] = t
 	}
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
-
-	// Clear existing cache.
-	e.cache = make(map[string]*template.Template, len(e.pages))
-
-	for _, page := range e.pages {
-		t, compileErr := e.compile(page)
-		if compileErr != nil {
-			return compileErr
-		}
-		key := e.pageKey(page)
-		e.cache[key] = t
-	}
+	e.cache = cache
+	e.hasLayouts = len(set.layouts) > 0
 	e.built = true
 	return nil
 }
@@ -126,7 +142,7 @@ func (e *Engine) Render(w http.ResponseWriter, name string, data any) error {
 
 // RenderWithStatus is like Render but sets the HTTP status code first.
 func (e *Engine) RenderWithStatus(w http.ResponseWriter, status int, name string, data any) error {
-	t, err := e.lookup(name)
+	t, hasLayouts, err := e.lookup(name)
 	if err != nil {
 		return err
 	}
@@ -134,7 +150,7 @@ func (e *Engine) RenderWithStatus(w http.ResponseWriter, status int, name string
 	// Render into a buffer so a template error doesn't produce partial output.
 	var buf bytes.Buffer
 	entry := e.layout
-	if len(e.layouts) == 0 {
+	if !hasLayouts {
 		entry = "__page__"
 	}
 	if execErr := t.ExecuteTemplate(&buf, entry, data); execErr != nil {
@@ -152,7 +168,7 @@ func (e *Engine) RenderWithStatus(w http.ResponseWriter, status int, name string
 // RenderFragment renders the page template's own content, bypassing the
 // layout. Useful for HTMX partial responses.
 func (e *Engine) RenderFragment(w http.ResponseWriter, name string, data any) error {
-	t, err := e.lookup(name)
+	t, _, err := e.lookup(name)
 	if err != nil {
 		return err
 	}
@@ -169,54 +185,59 @@ func (e *Engine) RenderFragment(w http.ResponseWriter, name string, data any) er
 	return nil
 }
 
-// lookup returns the compiled template for the given page name. On the first
-// call it triggers Build() lazily so that template funcs registered by other
-// services during Init are available. In dev mode templates are rebuilt on
-// every call.
-func (e *Engine) lookup(name string) (*template.Template, error) {
+// lookup returns the compiled template for the given page name, and whether
+// the build that produced it had layouts. On the first call it triggers
+// Build() lazily so that template funcs registered by other services during
+// Init are available. In dev mode templates are rebuilt on every call.
+func (e *Engine) lookup(name string) (*template.Template, bool, error) {
 	e.mu.RLock()
 	needsBuild := !e.built || e.devMode
 	e.mu.RUnlock()
 
 	if needsBuild {
 		if err := e.Build(); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 	}
 
 	e.mu.RLock()
 	t, ok := e.cache[name]
+	hasLayouts := e.hasLayouts
 	e.mu.RUnlock()
 	if !ok {
-		return nil, fmt.Errorf("ui: template %q not found", name)
+		return nil, false, fmt.Errorf("ui: template %q not found", name)
 	}
-	return t, nil
+	return t, hasLayouts, nil
 }
 
 // classify sorts a template into layouts, partials, or pages based on its
 // name prefix.
-func (e *Engine) classify(nc namedContent) {
+func (s *templateSet) classify(nc namedContent) {
 	switch {
 	case strings.HasPrefix(nc.name, "layouts/"):
-		e.layouts = append(e.layouts, nc)
+		s.layouts = append(s.layouts, nc)
 	case strings.HasPrefix(nc.name, "partials/"):
-		e.partials = append(e.partials, nc)
+		s.partials = append(s.partials, nc)
 	default:
-		e.pages = append(e.pages, nc.name)
+		s.pages = append(s.pages, nc.name)
 	}
 }
 
-// compile builds a single *template.Template for a page by combining
-// layouts + partials + the page itself.
-func (e *Engine) compile(page string) (*template.Template, error) {
-	t := template.New("__page__").Funcs(e.funcMap)
+// compile builds a single *template.Template for a page by combining the
+// set's layouts + partials + the page itself, with funcs as its funcmap.
+func (e *Engine) compile(
+	set *templateSet,
+	funcs template.FuncMap,
+	page string,
+) (*template.Template, error) {
+	t := template.New("__page__").Funcs(funcs)
 
-	for _, l := range e.layouts {
+	for _, l := range set.layouts {
 		if _, err := t.Parse(string(l.content)); err != nil {
 			return nil, fmt.Errorf("ui: parsing layout %q: %w", l.name, err)
 		}
 	}
-	for _, p := range e.partials {
+	for _, p := range set.partials {
 		if _, err := t.Parse(string(p.content)); err != nil {
 			return nil, fmt.Errorf("ui: parsing partial %q: %w", p.name, err)
 		}

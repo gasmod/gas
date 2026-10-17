@@ -200,22 +200,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   documentation. Either changes which URLs serve which files, so it is a
   decision for Ahmed.
 
-## KI-013: ui template rebuilds race with concurrent renders
-
-- **Status**: open
-- **Area**: `ui` (`render.go`).
-- **Found**: 2026-10-16, while writing the ui `doc.go`.
-- **Detail**: `Engine.Build` resets `layouts`, `partials`, and `pages`
-  (`ui/render.go:90`) and `classify` appends to them (`:201` to `:205`)
-  outside `e.mu`, while renders read them (`:124`, `:129`, `:182`). In a
-  development-like environment every render calls `Build`, so concurrent
-  renders race: 8 goroutines rendering 20 times each produced 28 data race
-  reports under `go test -race`. The same probe passes without `-race`,
-  so the failure is silent corruption rather than a crash.
-- **Next step**: hold `e.mu` across `Build`, or build into locals and
-  swap them in under the lock. A plain bug fix, outside the current task
-  list.
-
 ## KI-014: the Worker's lazy logger races with the kill switch
 
 - **Status**: decision needed
