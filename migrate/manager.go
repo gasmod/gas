@@ -125,7 +125,8 @@ func parseStem(stem string) (version, description string) {
 }
 
 // RunPending applies all unapplied migrations in global version order.
-// If any migration is marked dirty, execution is blocked until resolved.
+// If any migration is marked dirty, it runs nothing and returns an error
+// wrapping ErrDirty until the mark is cleared.
 func (s *Service) RunPending() error {
 	if s.closed.Load() {
 		return fmt.Errorf("gas/migrate: service is closed")
@@ -141,10 +142,7 @@ func (s *Service) RunPending() error {
 		return err
 	}
 	if len(dirty) > 0 {
-		return fmt.Errorf(
-			"gas/migrate: dirty migrations block execution: %s",
-			joinVersions(dirty),
-		)
+		return fmt.Errorf("%w block execution: %s", ErrDirty, joinVersions(dirty))
 	}
 
 	applied, err := s.getAppliedMigrations(ctx)
@@ -175,6 +173,9 @@ func (s *Service) RunPending() error {
 }
 
 // Down reverses the last n applied migrations in reverse version order.
+// While any migration is dirty it runs nothing and returns an error
+// wrapping ErrDirty, since a dirty migration's up SQL was rolled back and
+// its down SQL would act on a schema it never changed.
 func (s *Service) Down(n int) error {
 	if s.closed.Load() {
 		return fmt.Errorf("gas/migrate: service is closed")
@@ -184,6 +185,14 @@ func (s *Service) Down(n int) error {
 	defer s.mu.Unlock()
 
 	ctx := context.Background()
+
+	dirty, err := s.getDirtyMigrations(ctx)
+	if err != nil {
+		return err
+	}
+	if len(dirty) > 0 {
+		return fmt.Errorf("%w block rollback: %s", ErrDirty, joinVersions(dirty))
+	}
 
 	applied, err := s.getAppliedMigrations(ctx)
 	if err != nil {

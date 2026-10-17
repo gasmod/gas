@@ -104,10 +104,14 @@ func (s *Service) RunPending() error
 
 // Reverse the last n applied migrations in reverse version order.
 // If n > applied count, rolls back all applied migrations.
+// Blocks if any migration is marked dirty.
 func (s *Service) Down(n int) error
 ```
 
-Both methods return an error if the service is closed.
+Both methods return an error if the service is closed. While any migration
+is dirty, `RunPending`, `Down`, and `CheckReady` return an error wrapping
+`migrate.ErrDirty` that names the dirty versions; check it with
+`errors.Is(err, migrate.ErrDirty)`.
 
 ## Migration Struct (defined in gas core)
 
@@ -197,7 +201,8 @@ Common columns: `service`, `description`, `migrate_version`, `module_version` (a
 ## Dirty State Resolution
 
 When a migration fails, it is marked dirty in the tracking table. All subsequent
-`RunPending()` calls are blocked until resolved:
+`RunPending()` and `Down()` calls are blocked, returning an error wrapping
+`migrate.ErrDirty`, until resolved:
 
 1. Fix the underlying issue (bad SQL, missing dependency).
 2. Manually remove or update the dirty row in `__gas_migrations`.

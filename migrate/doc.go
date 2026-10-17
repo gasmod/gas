@@ -35,14 +35,17 @@
 // so they need a fixed width (a timestamp, for example) to sort as
 // numbers. Each migration's up SQL and its tracking row commit in one
 // transaction. When either fails, the transaction rolls back and the
-// version is recorded as dirty; while any version is dirty, RunPending
-// refuses to run, and the package offers no call that clears the mark
+// version is recorded as dirty; while any version is dirty, RunPending,
+// Down, and CheckReady return an error wrapping ErrDirty that names the
+// dirty versions, and the package offers no call that clears the mark
 // (KI-020). Two services registering the same version is an error; one
 // service registering it twice is not caught until it marks the version
 // dirty (KI-021).
 //
 // Down reverts the n highest versions in the tracking table, highest first,
-// dirty ones included (KI-018). For each it commits the down SQL in its own
+// and runs nothing while any version is dirty, since a dirty version's up
+// SQL was rolled back and its down SQL would act on a schema it never
+// changed. For each it commits the down SQL in its own
 // transaction and then deletes the tracking row separately (KI-019). Every
 // reverted version must still be registered.
 //

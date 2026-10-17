@@ -15,6 +15,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `__gas_migrations` tracking table under the Init context, so a canceled or
   expired Init context aborts it. The mock's `InitFn` and `CloseFn` fields keep
   their `func() error` type.
+- `Down` refuses to run while any migration is dirty, returning an error
+  wrapping `ErrDirty` that names the dirty versions. It used to count a
+  dirty version as applied and run its down SQL, although that
+  migration's up SQL had been rolled back, which could drop tables an
+  earlier migration created.
+- The dirty-migration errors from `RunPending` and `CheckReady` now wrap
+  `ErrDirty`; their messages are unchanged.
+
+### Added
+
+- `ErrDirty`, wrapped by `RunPending`, `Down`, and `CheckReady` while any
+  migration is dirty.
 
 ## [0.3.0] - 2026-07-03
 
