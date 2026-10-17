@@ -265,25 +265,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
 - **Next step**: decide whether the module should offer a way to clear
   or force a dirty version (a §3 API decision in `CLAUDE.md`).
 
-## KI-025: a ShippingLogger sub-logger's Flush does nothing
-
-- **Status**: open
-- **Area**: `log` (`slog.go`, `shipping.go`).
-- **Found**: 2026-10-16, while writing the log package's `doc.go`.
-- **Detail**: `ShippingLogger` embeds `*SlogLogger` and overrides `Flush`
-  to post the current batch (`log/shipping.go:214`). `With()` is inherited,
-  and `SlogLoggerContext.Logger` returns a plain `*SlogLogger`
-  (`log/slog.go:243`) whose `Flush` is a no-op (`log/slog.go:100`). The
-  sub-logger's records still ship, through the same handlers, but its
-  `Flush` does not wait for them. Repro: a `ShippingLogger` with
-  `WithFlushInterval(time.Hour)`, `sub := l.With().Str("k", "v").Logger()`,
-  `sub.Info("x").Send()`, `sub.Flush()`: the endpoint has received 0
-  batches; `l.Flush()` then delivers 1. Services usually hold such a
-  sub-logger (`logger.With().Str("service", ...).Logger()`), so their
-  `Flush` calls do nothing.
-- **Next step**: have the shipping logger's `With` return a logger whose
-  `Flush` reaches the sender.
-
 ## KI-026: `SetBaseFields` on a shared logger races and accumulates fields
 
 - **Status**: decision needed

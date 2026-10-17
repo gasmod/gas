@@ -197,9 +197,13 @@ func NewShippingLogger(
 	return func() *ShippingLogger {
 		composed, ship, cfg := buildShipping(endpoint, marshaler, opts)
 		return &ShippingLogger{
-			SlogLogger: &SlogLogger{logger: slog.New(composed), eventInitialCapacity: cfg.eventCap},
-			handler:    ship,
-			name:       cfg.name,
+			SlogLogger: &SlogLogger{
+				logger:               slog.New(composed),
+				flush:                ship.sender.flush,
+				eventInitialCapacity: cfg.eventCap,
+			},
+			handler: ship,
+			name:    cfg.name,
 		}
 	}
 }
@@ -210,8 +214,8 @@ type closerFunc func() error
 // Close invokes the wrapped function.
 func (f closerFunc) Close() error { return f() }
 
-// Flush posts any buffered records and blocks until they have been sent,
-// overriding the no-op inherited from [SlogLogger].
+// Flush posts any buffered records and blocks until they have been sent.
+// Sub-loggers made with With flush the same sender.
 func (l *ShippingLogger) Flush() { l.handler.sender.flush() }
 
 // Name returns the service name (implements [gas.Service]).

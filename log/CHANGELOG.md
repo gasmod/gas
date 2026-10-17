@@ -28,3 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   construction and never derives from the Init ctx). `Close` ignores ctx; the
   drain is bounded by the HTTP client timeout. Not marked breaking because
   `ShippingLogger` has not been released yet.
+- A sub-logger made with `With()` on a `ShippingLogger` now flushes the
+  shipping sender: its `Flush` posts buffered records and waits, as the
+  `ShippingLogger`'s own does. It used to inherit `SlogLogger`'s no-op
+  `Flush`, so a service holding such a sub-logger could not wait for its
+  records to be delivered.
