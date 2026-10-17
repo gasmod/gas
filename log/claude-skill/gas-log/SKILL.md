@@ -139,7 +139,7 @@ Available on `gas.LogEvent`, `gas.LoggerContext`, and
 
 | Method  | On             | Description                                      |
 |---------|----------------|--------------------------------------------------|
-| `Flush` | Logger         | No-op for both backends (included for interface)  |
+| `Flush` | Logger         | No-op for the local backends; on a `ShippingLogger` and its `With()` sub-loggers, posts buffered records and waits |
 | `Send`  | LogEvent       | Emit the log event                                |
 
 ## Sub-loggers (With)
@@ -271,7 +271,8 @@ func NewShippingHandler(endpoint string, marshaler Marshaler, opts ...ShippingOp
 `ShippingLogger` implements `gas.Service`: registered in the DI container,
 `Close(ctx)` is called at shutdown and drains buffered records (the ctx is
 not consulted; the drain is bounded by the HTTP client timeout). Outside the
-container, call `Flush()` before exit (posts and blocks until sent) or
+container, call `Flush()` before exit (posts and blocks until sent; a sub-logger
+from `With()` flushes the same sender) or
 `Close(ctx)` (drains and stops the delivery goroutine; idempotent). `Init(ctx)` is a
 no-op — the delivery goroutine starts at construction, so the logger works with
 or without the container.
