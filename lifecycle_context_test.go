@@ -729,9 +729,8 @@ func TestKillSwitchAfterShutdownFails(t *testing.T) {
 }
 
 // Shutdown racing the kill switch never leaves a service open: every Init
-// is matched by a Close once all three calls return. The Worker's logger is
-// resolved lazily and without a lock (KI-014), so one sequential close and
-// restart settles it before the race.
+// is matched by a Close once all three calls return. One sequential close
+// and restart runs first, so the race starts from a restarted service.
 func TestShutdownRacingKillSwitchLeavesNothingOpen(t *testing.T) {
 	for range 2000 {
 		p := &lcProbe[lcTag0]{name: "probe"}

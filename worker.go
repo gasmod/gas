@@ -46,6 +46,7 @@ type Worker struct {
 	mu           sync.Mutex
 	initOnce     sync.Once
 	shutdownOnce sync.Once
+	loggerOnce   sync.Once // guards the one-time resolution of logger
 }
 
 var (
@@ -264,18 +265,23 @@ func (w *Worker) ReadyFunc(fn func(*ServiceContainer) error) {
 	w.readyFuncs = append(w.readyFuncs, fn)
 }
 
+// getLogger returns the Worker's logger, resolving it from the container
+// the first time it is called. If no Logger is registered, it uses a logger
+// over slog.Default and warns once; that fallback is not registered in the
+// container. It is safe for concurrent use.
 func (w *Worker) getLogger() Logger {
-	if w.logger == nil {
+	w.loggerOnce.Do(func() {
 		// See if we have a logger registered
 		logger, err := w.serviceContainer.Resolve[Logger]()
 		if err != nil {
-			// fallback to slog
+			// Fall back to slog. The fallback stays private to the Worker:
+			// registering it would write the container's instance map while
+			// other goroutines read it.
 			logger = newSlogLogger(slog.Default())
-			w.serviceContainer.RegisterServiceInstance[Logger](logger)
 			logger.Warn("no logger registered").Err("reason", err).Send()
 		}
 		w.logger = logger
-	}
+	})
 	return w.logger
 }
 

@@ -83,6 +83,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The Worker's logger no longer races with the kill switch.** `Worker`
+  resolved its logger lazily and unsynchronized on first use and, with no
+  `Logger` registered, registered a slog fallback in the container, so
+  `CloseService` and `RestartService` running concurrently raced on the
+  logger field and the container's instance map (intermittently `fatal
+  error: concurrent map read and map write`). The logger is now resolved
+  once under a `sync.Once`, and the fallback stays private to the Worker:
+  resolving `gas.Logger` with none registered keeps returning
+  `ErrNotRegistered` instead of the fallback.
 - **`gas.RequestLogger` no longer changes the logger it resolves.** It added
   `request_id` with `SetBaseFields`, so with the singleton `gas.Logger`
   concurrent requests raced and every request added one more `request_id` to

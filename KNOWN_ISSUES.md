@@ -144,26 +144,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   documentation. Either changes which URLs serve which files, so it is a
   decision for Ahmed.
 
-## KI-014: the Worker's lazy logger races with the kill switch
-
-- **Status**: decision needed
-- **Area**: core (`worker.go`, `service_management.go`).
-- **Found**: 2026-10-16, in review of the context-aware lifecycle change.
-- **Detail**: `Worker.getLogger` resolves the logger on first use and
-  stores it in `w.logger` without a lock (`worker.go:230`). With no
-  `Logger` registered it also registers a slog fallback
-  (`worker.go:237`), which writes the container's `instances` map
-  (`service_registry.go:158`). `CloseService` logs after releasing `w.mu`
-  (`service_management.go:140` and `:145`), while `RestartService` reads
-  the same map under `w.mu` (`resolveBuilt`, `service_registry.go:259`).
-  Run concurrently, this is a data race under `go test -race`, and
-  without it an intermittent `fatal error: concurrent map read and map
-  write` (about one in fifteen runs of a 300-iteration probe). Lines are
-  as on `main`.
-- **Next step**: making a `NopLogger` the Worker's default, set at
-  construction, should remove the lazy registration and the lazy field
-  write; verify that when that change lands.
-
 ## KI-015: a failed Start leaves initialized services open
 
 - **Status**: decision needed
