@@ -13,7 +13,11 @@ import (
 // It requires no external dependencies beyond the Go standard library.
 // Since slog has no Trace level, both Trace and Debug map to [slog.LevelDebug].
 type SlogLogger struct {
-	logger               *slog.Logger
+	logger *slog.Logger
+	// flush, when set, makes Flush deliver buffered records. A
+	// ShippingLogger sets it to its sender's flush, and sub-loggers made
+	// with With inherit it, so their Flush reaches the same sender.
+	flush                func()
 	eventInitialCapacity int
 }
 
@@ -97,12 +101,19 @@ func (l *SlogLogger) Error(msg string) gas.LogEvent {
 }
 
 // Flush ensures that all buffered log entries are written to their destination immediately.
-func (l *SlogLogger) Flush() {}
+// A plain SlogLogger buffers nothing, so Flush does nothing; a logger derived
+// from a ShippingLogger posts the shipping buffer.
+func (l *SlogLogger) Flush() {
+	if l.flush != nil {
+		l.flush()
+	}
+}
 
 // With creates and returns a new SlogLoggerContext for structured logging with accumulated attributes.
 func (l *SlogLogger) With() gas.LoggerContext {
 	return &SlogLoggerContext{
 		logger:               l.logger,
+		flush:                l.flush,
 		attrs:                make([]any, 0, l.eventInitialCapacity),
 		eventInitialCapacity: l.eventInitialCapacity,
 	}
@@ -185,6 +196,7 @@ func (c *SlogMutableLoggerContext) Apply() {
 // with those fields baked in when Logger is called. Implements gas.LoggerContext.
 type SlogLoggerContext struct {
 	logger               *slog.Logger
+	flush                func()
 	attrs                []any
 	eventInitialCapacity int
 }
@@ -243,6 +255,7 @@ func (c *SlogLoggerContext) Any(key string, val any) gas.LoggerContext {
 func (c *SlogLoggerContext) Logger() gas.Logger {
 	return &SlogLogger{
 		logger:               c.logger.With(c.attrs...),
+		flush:                c.flush,
 		eventInitialCapacity: c.eventInitialCapacity,
 	}
 }

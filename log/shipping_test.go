@@ -214,3 +214,53 @@ func TestNewShippingHandler_SetDefault(t *testing.T) {
 		t.Errorf("handler did not ship the record: %d bodies", len(bodies))
 	}
 }
+
+// A sub-logger derived with With, as services hold, must flush through the
+// shipping sender, and so must a sub-logger of a sub-logger.
+func TestShippingLogger_SubLoggerFlushDelivers(t *testing.T) {
+	rs := &recordingServer{}
+	srv := httptest.NewServer(rs.handler())
+	defer srv.Close()
+
+	logger := NewShippingLogger(
+		srv.URL,
+		NewOTLPMarshaler(WithServiceName("svc")),
+		WithoutLocalHandler(),
+		WithFlushInterval(time.Hour),
+	)()
+	t.Cleanup(func() { _ = logger.Close(context.Background()) })
+
+	sub := logger.With().Str("service", "a").Logger()
+	sub.Info("from sub").Send()
+	sub.Flush()
+
+	bodies, _ := rs.snapshot()
+	if len(bodies) != 1 {
+		t.Fatalf("after sub.Flush the server got %d batches, want 1", len(bodies))
+	}
+
+	subsub := sub.With().Str("part", "b").Logger()
+	subsub.Info("from sub-sub").Send()
+	subsub.Flush()
+
+	bodies, _ = rs.snapshot()
+	if len(bodies) != 2 {
+		t.Fatalf("after subsub.Flush the server got %d batches, want 2", len(bodies))
+	}
+}
+
+// A plain SlogLogger and its sub-loggers keep a Flush that does nothing.
+func TestSlogLogger_SubLoggerFlushIsNoop(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	l := NewSlogLogger(WithSlogInstance(slog.New(slog.NewTextHandler(&buf, nil))))()
+	sub := l.With().Str("k", "v").Logger()
+	sub.Info("x").Send()
+	sub.Flush()
+	l.Flush()
+
+	if !strings.Contains(buf.String(), "k=v") {
+		t.Errorf("log output %q missing the sub-logger field", buf.String())
+	}
+}

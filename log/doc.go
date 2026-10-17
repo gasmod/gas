@@ -90,8 +90,9 @@
 // calling it on a logger that other goroutines are using is a data race, and
 // the fields it adds stay on that logger for good (KI-026 in
 // KNOWN_ISSUES.md). A sub-logger from With on a ShippingLogger is a
-// SlogLogger over the same handlers: its records are shipped, but its Flush
-// does nothing (KI-025).
+// SlogLogger over the same handlers that keeps the shipping sender's flush,
+// so its records are shipped and its Flush posts and waits for them, like
+// the ShippingLogger's own.
 //
 //nolint:revive // intentional package name
 package log
