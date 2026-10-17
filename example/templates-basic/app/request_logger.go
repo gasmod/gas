@@ -5,11 +5,11 @@ import (
 )
 
 // RequestLogger is a distinct type so the DI container can register a scoped
-// logger separately from the singleton gas.Logger. The request logger
-// middleware (gas.RequestLogger) mutates the logger in-place via
-// SetBaseFields().Apply() to stamp per-request fields (request ID, method,
-// path). If the singleton gas.Logger were used directly, those mutations
-// would corrupt the shared instance. A separate scoped type avoids this.
+// per-request logger separately from the singleton gas.Logger. The request
+// logger middleware (gas.RequestLogger[RequestLogger]) derives a logger
+// carrying the request ID from this request's instance and puts it back in
+// the request scope, so code that resolves RequestLogger later in the request
+// gets the request's fields. The singleton gas.Logger is never changed.
 type RequestLogger interface {
 	gas.Logger
 }

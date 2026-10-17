@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -79,16 +80,27 @@ func WithRequestLoggerBuilder(fn func(Logger, *http.Request) Logger) RequestLogg
 	return func(opt *RequestLoggerOptions) { opt.builder = fn }
 }
 
-// RequestLogger is middleware that logs HTTP requests and responses using a scoped Logger
-// resolved from the request's DI scope. It logs method, path, status, bytes written,
-// duration, and remote address. Responses with status >= 400 are logged at error level;
-// all others at info level.
+// RequestLogger is middleware that logs HTTP requests and responses. It resolves T
+// from the request's DI scope, derives a per-request logger from it with With,
+// and stores that logger on the request context with WithLogger, so handlers and
+// later middleware log through it with LoggerFromContext. The resolved logger
+// itself is never changed, so a singleton shared by every request is safe.
 //
-// The type parameter T must be the concrete Logger implementation registered in the
-// DI container. If the logger cannot be resolved, the middleware passes through silently.
+// When T is registered scoped (the usual pattern: a request-logger type built
+// from the singleton gas.Logger with With), the per-request logger also replaces
+// T's instance in the request scope, so handlers and services that take T as a
+// dependency later in the request get it, request fields included. A singleton T
+// is not shadowed, and a scoped T whose instance is a Service is not replaced,
+// so the scope still closes it. When the request finishes it logs
+// method, path, status, bytes written, duration, and remote address: at error
+// level for a status >= 400, at info level otherwise.
 //
-// When appendRequestID is enabled (the default), the middleware expects chi's RequestID
-// middleware to be mounted upstream so that a request ID is available via middleware.GetReqID.
+// The type parameter T must be a Logger type registered in the DI container. If
+// it cannot be resolved, the middleware passes through silently.
+//
+// When appendRequestID is enabled (the default), the per-request logger carries
+// a request_id field, and the middleware expects chi's RequestID middleware to be
+// mounted upstream so that a request ID is available via middleware.GetReqID.
 func RequestLogger[T Logger](opt ...RequestLoggerOption) func(next http.Handler) http.Handler {
 	options := &RequestLoggerOptions{appendRequestID: true}
 	for _, o := range opt {
@@ -106,14 +118,23 @@ func RequestLogger[T Logger](opt ...RequestLoggerOption) func(next http.Handler)
 			var logger Logger = resolved
 
 			if hasLogger && options.appendRequestID {
-				// Append the request ID to the logger's base fields.
-				logger.SetBaseFields().
+				// Derive a per-request logger rather than changing the
+				// resolved one, which may be shared by every request.
+				logger = logger.With().
 					Str("request_id", middleware.GetReqID(r.Context())).
-					Apply()
+					Logger()
 			}
 
 			if hasLogger && options.builder != nil {
 				logger = options.builder(logger, r)
+			}
+
+			if hasLogger {
+				r = r.WithContext(WithLogger(r.Context(), logger))
+				// For a scoped T, also put the per-request logger into the
+				// scope's slot for T, so handlers and services resolving T
+				// later in the request get it. A singleton T is left alone.
+				RequestScope(r).replaceScoped(reflect.TypeFor[T](), reflect.ValueOf(logger))
 			}
 
 			defer func() {

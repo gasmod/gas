@@ -65,10 +65,6 @@ func (l *slogLogger) With() LoggerContext {
 	return &slogLoggerContext{logger: l.logger, attrs: make([]any, 0)}
 }
 
-func (l *slogLogger) SetBaseFields() MutableLoggerContext {
-	return &slogMutableLoggerContext{target: l, attrs: make([]any, 0)}
-}
-
 type slogLoggerContext struct {
 	logger *slog.Logger
 	attrs  []any
@@ -116,55 +112,6 @@ func (c *slogLoggerContext) Any(key string, val any) LoggerContext {
 
 func (c *slogLoggerContext) Logger() Logger {
 	return &slogLogger{logger: c.logger.With(c.attrs...)}
-}
-
-type slogMutableLoggerContext struct {
-	target *slogLogger
-	attrs  []any
-}
-
-func (c *slogMutableLoggerContext) Str(key, val string) MutableLoggerContext {
-	c.attrs = append(c.attrs, slog.String(key, val))
-	return c
-}
-
-func (c *slogMutableLoggerContext) Int(key string, val int) MutableLoggerContext {
-	c.attrs = append(c.attrs, slog.Int(key, val))
-	return c
-}
-
-func (c *slogMutableLoggerContext) Int64(key string, val int64) MutableLoggerContext {
-	c.attrs = append(c.attrs, slog.Int64(key, val))
-	return c
-}
-
-func (c *slogMutableLoggerContext) Float64(key string, val float64) MutableLoggerContext {
-	c.attrs = append(c.attrs, slog.Float64(key, val))
-	return c
-}
-
-func (c *slogMutableLoggerContext) Bool(key string, val bool) MutableLoggerContext {
-	c.attrs = append(c.attrs, slog.Bool(key, val))
-	return c
-}
-
-func (c *slogMutableLoggerContext) Err(key string, val error) MutableLoggerContext {
-	c.attrs = append(c.attrs, slog.Any(key, val))
-	return c
-}
-
-func (c *slogMutableLoggerContext) Duration(key string, val time.Duration) MutableLoggerContext {
-	c.attrs = append(c.attrs, slog.Duration(key, val))
-	return c
-}
-
-func (c *slogMutableLoggerContext) Any(key string, val any) MutableLoggerContext {
-	c.attrs = append(c.attrs, slog.Any(key, val))
-	return c
-}
-
-func (c *slogMutableLoggerContext) Apply() {
-	c.target.logger = c.target.logger.With(c.attrs...)
 }
 
 type slogLogEvent struct {

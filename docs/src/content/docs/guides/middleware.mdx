@@ -29,9 +29,11 @@ router.UseMiddlewareFunc(gas.RequestLogger[RequestLogger]())
 
 Logs method, path, status, bytes, duration, and remote address, at error level
 for statuses at 400 and above. It resolves its type parameter from the request
-scope, so register a scoped per-request logger type derived from the singleton
-`gas.Logger` and pass that type; given the singleton itself, it adds fields to
-the shared logger on every request (KI-026 in `KNOWN_ISSUES.md`).
+scope, derives a per-request logger carrying the request ID, and puts it on the
+request context for `gas.LoggerFromContext`. When the type is scoped (a
+`RequestLogger` derived from the singleton `gas.Logger`), the request logger
+also replaces that type's instance in the request scope, so handlers that take
+it get the request ID. The resolved logger is never changed.
 Covered in [Structured logging](/gas/guides/logging/).
 
 ## Security headers

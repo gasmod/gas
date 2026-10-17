@@ -39,8 +39,8 @@ func (m *GreetModule) Init(_ context.Context) error {
 	// Register a named middleware so other modules can reference it by name.
 	m.router.Register(m, "request-logger", func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			logger := gas.MustResolveFromRequestScope[RequestLogger](r)
-			logger.SetBaseFields().Str("source", "request-logger-mw").Apply()
+			logger := gas.MustResolveFromRequestScope[RequestLogger](r).
+				With().Str("source", "request-logger-mw").Logger()
 			logger.Info("incoming request").
 				Str("method", r.Method).
 				Str("path", r.URL.Path).

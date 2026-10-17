@@ -37,9 +37,6 @@ func (l *NopLogger) Flush() {}
 // With creates a new LoggerContext for deriving a sub-logger with persistent fields across log events.
 func (l *NopLogger) With() LoggerContext { return nopLoggerContext }
 
-// SetBaseFields returns a no-op MutableLoggerContext associated with the NopLogger instance.
-func (l *NopLogger) SetBaseFields() MutableLoggerContext { return nopMutableLoggerContext }
-
 var nopLoggerContext = &NopLoggerContext{}
 
 // NopLoggerContext is a LoggerContext that discards all fields.
@@ -74,41 +71,6 @@ func (c *NopLoggerContext) Any(string, any) LoggerContext { return c }
 
 // Logger returns a no-op Logger instance that discards all log events.
 func (c *NopLoggerContext) Logger() Logger { return nopLogger }
-
-var nopMutableLoggerContext = &NopMutableLoggerContext{}
-
-// NopMutableLoggerContext is a MutableLoggerContext that discards all fields.
-// All methods return the receiver for chaining and Apply is a no-op.
-type NopMutableLoggerContext struct{}
-
-var _ MutableLoggerContext = (*NopMutableLoggerContext)(nil)
-
-// Str adds a string field with the given key and value to the logger context and returns the context for chaining.
-func (c *NopMutableLoggerContext) Str(string, string) MutableLoggerContext { return c }
-
-// Int adds an integer field to the context and returns the updated MutableLoggerContext.
-func (c *NopMutableLoggerContext) Int(string, int) MutableLoggerContext { return c }
-
-// Int64 adds a key-value pair where the value is an int64 and returns the current MutableLoggerContext for chaining.
-func (c *NopMutableLoggerContext) Int64(string, int64) MutableLoggerContext { return c }
-
-// Float64 adds a float64 key-value pair to the context without storing it and returns the receiver for chaining.
-func (c *NopMutableLoggerContext) Float64(string, float64) MutableLoggerContext { return c }
-
-// Bool adds a boolean field with the given key and value to the logger context and returns the context for chaining.
-func (c *NopMutableLoggerContext) Bool(string, bool) MutableLoggerContext { return c }
-
-// Err adds an error field to the logger context and returns the same context for chaining.
-func (c *NopMutableLoggerContext) Err(string, error) MutableLoggerContext { return c }
-
-// Duration adds a duration field to the logging context with the specified key and value.
-func (c *NopMutableLoggerContext) Duration(string, time.Duration) MutableLoggerContext { return c }
-
-// Any adds a custom key-value pair with a generic value to the context and returns the current MutableLoggerContext.
-func (c *NopMutableLoggerContext) Any(string, any) MutableLoggerContext { return c }
-
-// Apply performs a no-op operation and returns without modifying any state or producing side effects.
-func (c *NopMutableLoggerContext) Apply() {}
 
 var nopLogEvent = &NopLogEvent{}
 
