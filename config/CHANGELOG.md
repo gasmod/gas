@@ -35,6 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   observes a state where an earlier provider has landed but a later one that
   overrides it has not. Provider I/O also no longer runs while the config lock
   is held.
+- **`DotEnvProvider.Load` fails on an unclosed quote.** A quoted value whose
+  quote is never closed now returns an error wrapping `ErrDotEnvParseFailed`
+  that names the key and the line it starts on. It used to absorb every
+  following line and drop the value without an error, so a typo silently
+  removed the configuration below it. A `.env` file with this mistake that
+  loaded before now fails to load.
 
 ## [0.3.0] - 2026-07-02
 
