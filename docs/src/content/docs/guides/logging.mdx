@@ -28,40 +28,39 @@ container.
 
 <Code code={region(lg, 'register')} lang="go" title="main.go" />
 
-<Aside type="note" title="Singleton or scoped?">
+<Aside type="note" title="Singleton">
 Register `gas.Logger` as a **singleton**. Most services take a `gas.Logger` in
 their constructor, and the container rejects a singleton that depends on a
-scoped service. For request-specific fields, register a separate **scoped**
-type derived from it, as above, and hand that type to the request middleware,
-so each request gets its own logger and nothing leaks into other requests.
-Calling `SetBaseFields` on the shared singleton instead races and piles up
-fields across requests (KI-026 in `KNOWN_ISSUES.md`).
+scoped service. Loggers are never changed in place: request fields go on a
+logger derived with `With()`, which the request middleware puts on the request
+context, so nothing leaks between requests.
 </Aside>
 
 ## Logging
 
 <Code code={region(lg, 'fluent')} lang="go" />
 
-Every event ends with `Send()`. Fields available on events, on `With()`, and on
-`SetBaseFields()`: `Str`, `Int`, `Int64`, `Float64`, `Bool`, `Err`, `Duration`,
-and `Any`.
+Every event ends with `Send()`. Fields available on events and on `With()`:
+`Str`, `Int`, `Int64`, `Float64`, `Bool`, `Err`, `Duration`, and `Any`.
 
 ## Request-scoped fields
 
-`With()` branches into a new logger, which is wrong for middleware, since the
-handler downstream holds the original. `SetBaseFields()` mutates in place
-instead, so everything logged later in that request carries the fields, even
-from code that never saw the middleware.
+`With()` branches into a new logger and leaves the original alone. To give
+everything downstream in a request the same fields, middleware derives that
+logger and stores it on the request context with `gas.WithLogger`; handlers
+and services log through `gas.LoggerFromContext(r.Context())`.
 
-<Code code={region(lg, 'base-fields')} lang="go" />
+<Code code={region(lg, 'request-fields')} lang="go" />
 
 ## Request logging
 
 <Code code={region(lg, 'request-logger')} lang="go" />
 
 Logs method, path, status, bytes written, duration, and remote address for every
-request, at error level for statuses at 400 and above. If chi's `RequestID`
-middleware is mounted upstream, the request id is attached automatically; pass
+request, at error level for statuses at 400 and above. It derives a per-request
+logger from the one it resolves and puts it on the request context, so handlers
+get it from `gas.LoggerFromContext`. If chi's `RequestID` middleware is mounted
+upstream, that logger carries the request id; pass
 `gas.WithRequestLoggerAppendRequestID(false)` to turn that off.
 
 ## Shipping logs

@@ -4,8 +4,8 @@
 //
 // # Role in the framework
 //
-// The logger interfaces live in core: gas.Logger, gas.LogEvent,
-// gas.LoggerContext and gas.MutableLoggerContext. Services depend on
+// The logger interfaces live in core: gas.Logger, gas.LogEvent and
+// gas.LoggerContext. Services depend on
 // gas.Logger, not on this package. The package implements them three ways:
 //
 //   - [ZeroLogLogger] adapts a [zerolog.Logger]; by default it uses
@@ -85,11 +85,9 @@
 //
 // # Invariants
 //
-// Logging through a logger is safe for concurrent use. SetBaseFields is not:
-// Apply replaces the logger's fields in place without synchronization, so
-// calling it on a logger that other goroutines are using is a data race, and
-// the fields it adds stay on that logger for good (KI-026 in
-// KNOWN_ISSUES.md). A sub-logger from With on a ShippingLogger is a
+// Logging through a logger is safe for concurrent use, and a logger is never
+// changed after it is built: With derives a new one, so a singleton shared by
+// every request stays as it was. A sub-logger from With on a ShippingLogger is a
 // SlogLogger over the same handlers that keeps the shipping sender's flush,
 // so its records are shipped and its Flush posts and waits for them, like
 // the ShippingLogger's own.

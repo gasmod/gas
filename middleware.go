@@ -79,16 +79,21 @@ func WithRequestLoggerBuilder(fn func(Logger, *http.Request) Logger) RequestLogg
 	return func(opt *RequestLoggerOptions) { opt.builder = fn }
 }
 
-// RequestLogger is middleware that logs HTTP requests and responses using a scoped Logger
-// resolved from the request's DI scope. It logs method, path, status, bytes written,
-// duration, and remote address. Responses with status >= 400 are logged at error level;
-// all others at info level.
+// RequestLogger is middleware that logs HTTP requests and responses. It resolves T
+// from the request's DI scope (a singleton or a scoped registration both work),
+// derives a per-request logger from it with With, and stores that logger on the
+// request context with WithLogger, so handlers and later middleware log through
+// it with LoggerFromContext. The resolved logger itself is never changed, so a
+// singleton shared by every request is safe. When the request finishes it logs
+// method, path, status, bytes written, duration, and remote address: at error
+// level for a status >= 400, at info level otherwise.
 //
-// The type parameter T must be the concrete Logger implementation registered in the
-// DI container. If the logger cannot be resolved, the middleware passes through silently.
+// The type parameter T must be a Logger type registered in the DI container. If
+// it cannot be resolved, the middleware passes through silently.
 //
-// When appendRequestID is enabled (the default), the middleware expects chi's RequestID
-// middleware to be mounted upstream so that a request ID is available via middleware.GetReqID.
+// When appendRequestID is enabled (the default), the per-request logger carries
+// a request_id field, and the middleware expects chi's RequestID middleware to be
+// mounted upstream so that a request ID is available via middleware.GetReqID.
 func RequestLogger[T Logger](opt ...RequestLoggerOption) func(next http.Handler) http.Handler {
 	options := &RequestLoggerOptions{appendRequestID: true}
 	for _, o := range opt {
@@ -106,14 +111,19 @@ func RequestLogger[T Logger](opt ...RequestLoggerOption) func(next http.Handler)
 			var logger Logger = resolved
 
 			if hasLogger && options.appendRequestID {
-				// Append the request ID to the logger's base fields.
-				logger.SetBaseFields().
+				// Derive a per-request logger rather than changing the
+				// resolved one, which may be shared by every request.
+				logger = logger.With().
 					Str("request_id", middleware.GetReqID(r.Context())).
-					Apply()
+					Logger()
 			}
 
 			if hasLogger && options.builder != nil {
 				logger = options.builder(logger, r)
+			}
+
+			if hasLogger {
+				r = r.WithContext(WithLogger(r.Context(), logger))
 			}
 
 			defer func() {

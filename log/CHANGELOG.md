@@ -33,3 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ShippingLogger`'s own does. It used to inherit `SlogLogger`'s no-op
   `Flush`, so a service holding such a sub-logger could not wait for its
   records to be delivered.
+
+### Removed
+
+- **BREAKING: `SetBaseFields`, `SlogMutableLoggerContext`, and
+  `ZeroLogMutableLoggerContext`**, following the removal of
+  `gas.MutableLoggerContext` from core. Derive a logger with `With()` and
+  carry it on the request context with `gas.WithLogger` instead.

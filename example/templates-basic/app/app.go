@@ -52,18 +52,15 @@ func New() *gas.App {
 	// Scoped request logger — see request_logger.go. Registered as a
 	// separate type so the request logger middleware can resolve it
 	// independently from the singleton gas.Logger.
-	app.RegisterScopedService[RequestLogger](func(l gas.Logger) RequestLogger {
-		return l.With().Logger()
-	})
 
 	// Application module — implements gas.Service for route registration.
 	app.RegisterSingletonService[*Module](NewModule)
 
 	// RequestLogger middleware logs method, path, status, and duration for
-	// every request. It resolves the scoped RequestLogger (not the singleton
-	// gas.Logger) so that per-request fields like request ID are stamped on
-	// a clone, not the shared singleton.
-	app.Router().Use(gas.MiddlewareFunc(gas.RequestLogger[RequestLogger]()))
+	// every request. It derives a per-request logger carrying the request ID
+	// from the singleton gas.Logger and stores it on the request context
+	// (gas.LoggerFromContext), so the singleton itself is never changed.
+	app.Router().Use(gas.MiddlewareFunc(gas.RequestLogger[gas.Logger]()))
 
 	return app
 }

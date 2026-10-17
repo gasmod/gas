@@ -4,8 +4,8 @@
 // logging.
 //
 // New loads config.json, stopping the process if it cannot, and registers
-// the read-only filesystem template store, gas/ui, a singleton logger, a
-// scoped RequestLogger, and the Module, which renders the home page at GET /
+// the read-only filesystem template store, gas/ui, a singleton logger, the
+// request-logging middleware, and the Module, which renders the home page at GET /
 // and a 404 page for unmatched routes. The static file settings, including
 // the strip prefix, come from config.json.
 package app

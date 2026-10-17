@@ -6,10 +6,12 @@ middleware constructors.
 ## RequestLogger
 
 Logs HTTP requests/responses using the logger of type T resolved from the
-request's DI scope. Make T a scoped per-request logger type derived from the
-singleton `gas.Logger`; with the singleton itself, the request_id it adds
-lands on the shared logger on every request (KI-026 in `KNOWN_ISSUES.md`). Logs method, path, status, bytes, duration, and remote
-address. Status >= 400 logs at error level; otherwise info. If the logger
+request's DI scope, usually the singleton `gas.Logger`. It derives a
+per-request logger from it with `With()` (carrying `request_id` when enabled),
+runs the builder on that, and stores the result on the request context with
+`gas.WithLogger`, so handlers log through `gas.LoggerFromContext(r.Context())`.
+The resolved logger is never changed. Logs method, path, status, bytes,
+duration, and remote address. Status >= 400 logs at error level; otherwise info. If the logger
 cannot be resolved, the middleware passes through silently.
 
 When `appendRequestID` is enabled (default), expects chi's `RequestID`

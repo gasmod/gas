@@ -6,9 +6,9 @@
 // then installs the global middleware.
 //
 // New returns the *gas.App ready to run. It registers gas.Logger as a
-// singleton and a separate scoped RequestLogger for the request-logging
-// middleware, installs SecurityHeaders and RequestLogger as global
-// middleware, and sets a custom error handler that writes {"error": ...}
+// singleton, installs SecurityHeaders and RequestLogger as global
+// middleware (RequestLogger derives a per-request logger from the
+// singleton, so the singleton is never changed), and sets a custom error handler that writes {"error": ...}
 // with the error's status when it carries one, and 500 otherwise.
 // Configuration that fails to load stops the process.
 package app

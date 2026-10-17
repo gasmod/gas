@@ -73,6 +73,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that reached a handler without a principal. Use `ctx.Principal()` in a
   handler, which returns a 401 `*gas.Error` the handler can return, or
   `gas.PrincipalFromContext` and check for nil.
+- **BREAKING: `Logger.SetBaseFields` and `gas.MutableLoggerContext`**, with
+  `gas.NopMutableLoggerContext`. `SetBaseFields` changed a logger in place
+  without synchronization, so calling it on the shared singleton (as
+  `gas.RequestLogger` did) raced between requests and piled up fields for the
+  life of the process. Derive a logger with `With()` and put it on the request
+  context with `gas.WithLogger` instead; read it with `gas.LoggerFromContext`.
+  `Logger` implementations no longer need the method.
+
+### Fixed
+
+- **`gas.RequestLogger` no longer changes the logger it resolves.** It added
+  `request_id` with `SetBaseFields`, so with the singleton `gas.Logger`
+  concurrent requests raced and every request added one more `request_id` to
+  the shared logger. It now derives a per-request logger with `With()`, runs
+  the builder on it, and stores it on the request context with
+  `gas.WithLogger`. Handlers get the request logger, with its `request_id`,
+  from `gas.LoggerFromContext(r.Context())`; resolving `T` from the request
+  scope returns the logger without the request fields. The scoped
+  `RequestLogger` type the docs used to recommend is no longer needed:
+  `gas.RequestLogger[gas.Logger]()` is safe.
 
 ## [0.5.0] - 2026-09-19
 

@@ -6,12 +6,10 @@ description: >
   HTTP log shipping for the Gas ecosystem. Use this skill when writing,
   reviewing, or debugging Go code that involves structured logging in Gas
   services. Covers the two local backends (ZeroLogLogger, SlogLogger), the
-  fluent gas.Logger / gas.LogEvent / gas.LoggerContext /
-  gas.MutableLoggerContext interfaces, constructor options, sub-loggers via
-  With(), in-place logger mutation via SetBaseFields()/Apply(), context-scoped
-  logging via gas.WithLogger / gas.LoggerFromContext, DI registration via
-  a singleton gas.Logger plus a scoped per-request logger type, level mapping
-  across backends,
+  fluent gas.Logger / gas.LogEvent / gas.LoggerContext interfaces,
+  constructor options, sub-loggers via With(), per-request loggers on the
+  request context via gas.WithLogger / gas.LoggerFromContext, DI registration
+  of a singleton gas.Logger, level mapping across backends,
   and the log-shipping subsystem: NewShippingLogger / NewShippingHandler, the
   batching HTTP sender, per-sink level thresholds, the Marshaler interface and
   Record type, the OTLP/HTTP JSON marshaler (NewOTLPMarshaler), the fanout and
@@ -25,8 +23,8 @@ description: >
 # Gas Log Package Reference
 
 Pluggable structured logging backends for the Gas ecosystem. Implements
-`gas.Logger`, `gas.LogEvent`, `gas.LoggerContext`, and
-`gas.MutableLoggerContext` with two interchangeable local backends (Zerolog,
+`gas.Logger`, `gas.LogEvent`, and `gas.LoggerContext` with two
+interchangeable local backends (Zerolog,
 Slog), plus a **shipping logger** built on the Slog backend that also delivers
 every record to an HTTP endpoint. See [Shipping logs over HTTP](#shipping-logs-over-http).
 
@@ -121,8 +119,7 @@ logger.Info("request handled").
 
 ### Field Methods
 
-Available on `gas.LogEvent`, `gas.LoggerContext`, and
-`gas.MutableLoggerContext`:
+Available on `gas.LogEvent` and `gas.LoggerContext`:
 
 | Method     | Signature                         | Description                |
 |------------|-----------------------------------|----------------------------|
@@ -159,45 +156,28 @@ reqLogger.Debug("validating token").Send()
 `With()` returns a `gas.LoggerContext`. Chain field methods, then call
 `Logger()` to produce a new `gas.Logger`. The original logger is unchanged.
 
-## Mutating Base Fields (SetBaseFields)
+## Request Fields
 
-Unlike `With()` which branches into a new sub-logger, `SetBaseFields()`
-accumulates fields and on `Apply()` mutates the originating logger in-place.
-
-**When to use `SetBaseFields` vs `With`:**
-- Use `With()` when you want a new, independent sub-logger (e.g. a per-request
-  logger passed down to child calls).
-- Use `SetBaseFields()` when middleware owns one per-request logger instance
-  and needs to stamp persistent fields onto it before the rest of the request
-  runs. Never call it on the shared singleton `gas.Logger`: `Apply` mutates
-  without synchronization, so concurrent requests race and the fields pile up
-  across requests (KI-026 in `KNOWN_ISSUES.md`).
+Loggers are never changed in place. For fields every log line of a request
+should carry, middleware derives a logger with `With()` and stores it on the
+request context; handlers and services read it back with
+`gas.LoggerFromContext`:
 
 ```go
-// In middleware: mutate this request's logger in place, then continue
-logger.SetBaseFields().
-    Str("request_id", reqID).
-    Str("user_id", userID).
-    Apply()
-// all subsequent events from logger include request_id and user_id
-```
-
-Typical middleware pattern, with `RequestLogger` registered as a scoped type
-derived from the singleton (see DI Registration):
-
-```go
-func loggingMiddleware(next http.Handler) http.Handler {
+func userFields(next http.Handler) http.Handler {
     return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        logger := gas.MustResolveFromRequestScope[RequestLogger](r)
-        logger.SetBaseFields().
-            Str("request_id", r.Header.Get("X-Request-ID")).
-            Str("method", r.Method).
-            Str("path", r.URL.Path).
-            Apply()
-        next.ServeHTTP(w, r)
+        base := gas.LoggerFromContext(r.Context()) // set by gas.RequestLogger
+        if base == nil {
+            base = gas.MustResolveFromRequestScope[gas.Logger](r)
+        }
+        logger := base.With().Str("user_id", userID(r)).Logger()
+        next.ServeHTTP(w, r.WithContext(gas.WithLogger(r.Context(), logger)))
     })
 }
 ```
+
+`gas.RequestLogger` does this for `request_id`, so mounting it upstream gives
+every handler a request logger without extra code.
 
 ## Context-Scoped Logging
 
@@ -254,7 +234,7 @@ logger.Info("request handled").Str("method", "GET").Int("status", 200).Send()
 ```
 
 The returned `*ShippingLogger` embeds `*SlogLogger`, so the entire fluent API
-(level methods, field methods, `With()`, `SetBaseFields()`) works unchanged.
+(level methods, field methods, `With()`) works unchanged.
 
 ### Constructors
 
@@ -459,21 +439,16 @@ app := gas.NewApp(
 )
 ```
 
-For per-request fields, register a separate scoped type derived from the
-singleton and give it to the request middleware, so each request gets its own
-logger. Calling `SetBaseFields` on the shared singleton races and piles up
-fields across requests (KI-026 in `KNOWN_ISSUES.md`):
+For per-request fields, give the singleton to the request middleware. It
+derives a per-request logger carrying `request_id` and puts it on the request
+context, leaving the singleton unchanged:
 
 ```go
-type RequestLogger interface{ gas.Logger }
-
 app := gas.NewApp(
     gas.WithSingletonService[gas.Logger](gaslog.NewSlogLogger()),
-    gas.WithScopedService[RequestLogger](func(l gas.Logger) RequestLogger {
-        return l.With().Logger()
-    }),
 )
-app.Router().UseMiddlewareFunc(gas.RequestLogger[RequestLogger]())
+app.Router().UseMiddlewareFunc(gas.RequestLogger[gas.Logger]())
+// In a handler: gas.LoggerFromContext(r.Context()).Info("...").Send()
 ```
 
 ## Complete Example

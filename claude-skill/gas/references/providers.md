@@ -15,7 +15,7 @@ logging types, or supporting structs like Email and Migration.
 - [HealthProvider & HealthReporter](#healthprovider--healthreporter)
 - [ReadyProvider & ReadyReporter](#readyprovider--readyreporter)
 - [Logger](#logger)
-- [LoggerContext & MutableLoggerContext](#loggercontext--mutableloggercontext)
+- [LoggerContext](#loggercontext)
 - [LogEvent](#logevent)
 - [MigrationManager](#migrationmanager)
 - [Principal & Metadata](#principal--metadata)
@@ -195,7 +195,6 @@ type Logger interface {
 	Warn(msg string) LogEvent
 	Error(msg string) LogEvent
 	With() LoggerContext
-	SetBaseFields() MutableLoggerContext
 	Flush()
 }
 ```
@@ -207,36 +206,27 @@ gas.WithLogger(ctx context.Context, l Logger) context.Context
 gas.LoggerFromContext(ctx context.Context) Logger // returns nil if absent
 ```
 
-### With() vs SetBaseFields()
+### Request fields
 
-`With()` always branches — it returns a `LoggerContext` whose `Logger()`
-produces a NEW Logger instance. Use it when you want a sub-logger scoped to
-a specific code path.
-
-`SetBaseFields()` mutates the receiver in place via `Apply()`. Use it in
-request-scoped middleware where one Logger instance is shared across the
-whole request and you want every subsequent log call to carry fields like
-request_id, user_id, trace_id automatically — without threading a new Logger
-reference around.
-Call it only on a per-request logger (a scoped type derived from the
-singleton `gas.Logger`), never on the shared singleton: `Apply` mutates
-without synchronization, so concurrent requests race and the fields pile up
-across requests (KI-026 in `KNOWN_ISSUES.md`).
+Loggers are never changed in place. `With()` returns a `LoggerContext` whose
+`Logger()` produces a NEW Logger carrying the fields. For request fields,
+middleware derives that logger and stores it on the request context; code
+downstream reads it back:
 
 ```go
 // Typical middleware pattern:
-logger := gas.MustResolveFromRequestScope[gas.Logger](r)
-logger.SetBaseFields().Str("request_id", reqID).Str("user_id", userID).Apply()
-// All log calls for the rest of this request now carry request_id and user_id.
+logger := base.With().Str("user_id", userID).Logger()
+next.ServeHTTP(w, r.WithContext(gas.WithLogger(r.Context(), logger)))
+
+// In a handler or service:
+gas.LoggerFromContext(r.Context()).Info("note created").Send()
 ```
 
-## LoggerContext & MutableLoggerContext
+`gas.RequestLogger` already does this for `request_id`.
 
-Both share the same field methods. `LoggerContext` (from `With()`) produces a
-new Logger via `.Logger()`. `MutableLoggerContext` (from `SetBaseFields()`)
-mutates the originating Logger via `.Apply()`.
+## LoggerContext
 
-Field methods (available on both):
+Returned by `With()`. Field methods:
 
 ```go
 Str(key, val string)
@@ -249,9 +239,7 @@ Duration(key string, val time.Duration)
 Any(key string, val any)
 ```
 
-Terminals:
-- `LoggerContext.Logger() Logger` — returns a new branched Logger
-- `MutableLoggerContext.Apply()` — mutates the originating Logger in place
+Terminal: `Logger() Logger` returns the new sub-logger.
 
 ## LogEvent
 

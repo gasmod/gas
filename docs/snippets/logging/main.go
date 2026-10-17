@@ -12,18 +12,12 @@ import (
 // #endregion imports
 
 // #region register
-// gas.Logger is a singleton: services take it in their constructors, and the
-// container rejects a singleton that depends on a scoped service. Per-request
-// fields go on a separate scoped type derived from it, so each request gets
-// its own logger and nothing leaks between requests.
-type RequestLogger interface{ gas.Logger }
-
+// gas.Logger is a singleton: services take it in their constructors. Request
+// fields never change it; request middleware derives a per-request logger from
+// it instead.
 func register() []gas.Option {
 	return []gas.Option{
 		gas.WithSingletonService[gas.Logger](gaslog.NewSlogLogger()),
-		gas.WithScopedService[RequestLogger](func(l gas.Logger) RequestLogger {
-			return l.With().Logger()
-		}),
 	}
 }
 
@@ -44,29 +38,40 @@ func fluent(logger gas.Logger) {
 
 // #endregion fluent
 
-// #region base-fields
-// SetBaseFields mutates the receiver instead of branching, so everything
-// logged later in the same request carries these fields, including from
-// handlers that never saw this middleware. Call it only on the per-request
-// logger: on the shared singleton it races and the fields pile up.
+// #region request-fields
+// Middleware derives a logger with the request's fields and puts it on the
+// request context, so everything downstream that logs through
+// gas.LoggerFromContext carries them. The shared logger is never changed.
+// Mount it after gas.RequestLogger to build on the logger that carries the
+// request ID.
 func attachRequestFields(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		logger := gas.MustResolveFromRequestScope[RequestLogger](r)
-		logger.SetBaseFields().
+		base := gas.LoggerFromContext(r.Context())
+		if base == nil {
+			base = gas.MustResolveFromRequestScope[gas.Logger](r)
+		}
+		logger := base.With().
 			Str("user_id", "u-123").
 			Str("trace_id", r.Header.Get("X-Trace-Id")).
-			Apply()
-		next.ServeHTTP(w, r)
+			Logger()
+		next.ServeHTTP(w, r.WithContext(gas.WithLogger(r.Context(), logger)))
 	})
 }
 
-// #endregion base-fields
+// handler logs through the request's logger.
+func handler(w http.ResponseWriter, r *http.Request) {
+	gas.LoggerFromContext(r.Context()).Info("note created").Send()
+	w.WriteHeader(http.StatusCreated)
+}
+
+// #endregion request-fields
 
 // #region request-logger
 // The built-in request logger records method, path, status, bytes, duration
-// and remote address. Responses at 400 and above log at error level.
+// and remote address. Responses at 400 and above log at error level. It also
+// puts a per-request logger carrying the request ID on the request context.
 func requestLogging(router *gas.Router) {
-	router.UseMiddlewareFunc(gas.RequestLogger[RequestLogger]())
+	router.UseMiddlewareFunc(gas.RequestLogger[gas.Logger]())
 }
 
 // #endregion request-logger
