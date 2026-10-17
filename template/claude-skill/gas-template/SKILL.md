@@ -191,6 +191,21 @@ the service name `gas/template/db`, and `gas/migrate` applies an identical
 re-registration once, so several stores (for example with different namespaces)
 can share one database.
 
+Migrations run after every service's `Init`, so on a fresh database the table
+does not exist while services are starting: write templates into the store from
+a ready function (`gas.WithReadyFunc`), which runs after migrations are applied,
+not from another service's `Init`.
+
+```go
+gas.WithReadyFunc(func(c *gas.ServiceContainer) error {
+    store, err := c.Resolve[*tmpldb.Store]()
+    if err != nil {
+        return err
+    }
+    return store.RegisterFS(context.Background(), emailTemplates)
+})
+```
+
 ### Behavior
 
 - `Get` returns `ErrTemplateNotFound` when no row matches (maps

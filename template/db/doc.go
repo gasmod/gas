@@ -19,7 +19,10 @@
 // driver fails) and registers the migration that creates the table with the
 // MigrationManager, which applies it after every service has started, so
 // on a fresh database the table does not exist while services are still
-// starting (KI-024). Every store on one driver registers an identical
+// starting. Write templates into the store once startup has finished, for
+// example from a ready function registered with gas.WithReadyFunc, which
+// runs after migrations are applied, not from another service's Init.
+// Every store on one driver registers an identical
 // migration under the same service name, which gas/migrate applies once,
 // so several stores can share a database. Stopping it does nothing.
 //
