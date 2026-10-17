@@ -19,8 +19,9 @@
 // driver fails) and registers the migration that creates the table with the
 // MigrationManager, which applies it after every service has started, so
 // on a fresh database the table does not exist while services are still
-// starting (KI-024). Two stores register the same migration version under
-// the same service name (KI-023). Stopping it does nothing.
+// starting (KI-024). Every store on one driver registers an identical
+// migration under the same service name, which gas/migrate applies once,
+// so several stores can share a database. Stopping it does nothing.
 //
 // # Behavior
 //
