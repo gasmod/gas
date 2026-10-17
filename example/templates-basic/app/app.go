@@ -60,9 +60,9 @@ func New() *gas.App {
 	app.RegisterSingletonService[*Module](NewModule)
 
 	// RequestLogger middleware logs method, path, status, and duration for
-	// every request. It resolves the scoped RequestLogger (not the singleton
-	// gas.Logger) so that per-request fields like request ID are stamped on
-	// a clone, not the shared singleton.
+	// every request. It resolves the scoped RequestLogger, derives a logger
+	// carrying the request ID, and puts it back in the request scope and on
+	// the request context; the singleton gas.Logger is never changed.
 	app.Router().Use(gas.MiddlewareFunc(gas.RequestLogger[RequestLogger]()))
 
 	return app

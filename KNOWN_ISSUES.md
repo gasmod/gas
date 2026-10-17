@@ -193,30 +193,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
 - **Next step**: decide whether the module should offer a way to clear
   or force a dirty version (a §3 API decision in `CLAUDE.md`).
 
-## KI-026: `SetBaseFields` on a shared logger races and accumulates fields
-
-- **Status**: decision needed
-- **Area**: core (`middleware.go`, `logger.go`) and `log` (`slog.go`,
-  `zerolog.go`).
-- **Found**: 2026-10-16, while writing the log package's `doc.go`.
-- **Detail**: `gas.Logger.SetBaseFields` is documented as "intended for use
-  by request-scoped middleware" and mutates the receiver. The log backends
-  apply it by replacing the logger's fields without synchronization
-  (`log/slog.go:180`, `log/zerolog.go:143`). `gas.RequestLogger` calls it
-  on the logger it resolves from the request scope to add `request_id`
-  (`middleware.go:106`). When the app registers its logger as a singleton,
-  as the log README does, that is the shared logger. Repro: an App with a
-  `SlogLogger` instance registered as `gas.Logger`, chi's `RequestID` and
-  `gas.RequestLogger[gas.Logger]()` as middleware, then 20 parallel
-  requests and one more: `go test -race` reports data races in
-  `SlogMutableLoggerContext.Apply` from `RequestLogger`, and the last
-  request's log line carries 9 `request_id` fields. The fields grow with
-  every request for the life of the process.
-- **Next step**: decide the contract (a §3 decision in `CLAUDE.md`): a
-  per-request logger for the middleware (for example deriving with `With`
-  and storing the result on the request), synchronized and non-accumulating
-  `SetBaseFields`, or a documented requirement that the logger be scoped.
-
 ## KI-028: secretsmanager `WithTimeout(0)` makes every Load fail
 
 - **Status**: decision needed

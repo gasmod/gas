@@ -565,6 +565,31 @@ func (s *Scope) Close(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
+// replaceScoped replaces the instance this scope has cached for t with v,
+// so later resolutions of t in the scope return v. It does nothing, and
+// reports false, unless t is registered with a scoped lifetime, the scope
+// already holds an instance of t, v's type is assignable to t, and the
+// cached instance is not a Service. That keeps it from shadowing a singleton
+// and from replacing an instance the scope has to close when it ends. It is
+// used by RequestLogger to put the per-request logger into its scoped slot.
+func (s *Scope) replaceScoped(t reflect.Type, v reflect.Value) bool {
+	reg, ok := s.container.registrations[t]
+	if !ok || reg.lifetime != ServiceLifetimeScoped {
+		return false
+	}
+	cur, ok := s.resolved[t]
+	if !ok || !v.IsValid() || !v.Type().AssignableTo(t) {
+		return false
+	}
+	if cur.IsValid() && cur.CanInterface() {
+		if _, isService := cur.Interface().(Service); isService {
+			return false
+		}
+	}
+	s.resolved[t] = v
+	return true
+}
+
 func (s *Scope) lookupScoped(t reflect.Type) (reflect.Value, bool) {
 	if v, ok := s.resolved[t]; ok {
 		return v, true

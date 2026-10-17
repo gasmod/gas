@@ -7,7 +7,7 @@ Part of the [Gas](../README.md) monorepo · [Documentation](https://gasmod.githu
 Structured logging for the [Gas](../README.md) framework. Two local backends, plus batched
 log shipping over HTTP with an OTLP marshaler included.
 
-Implements `gas.Logger`, `gas.LogEvent`, `gas.LoggerContext`, `gas.MutableLoggerContext`.
+Implements `gas.Logger`, `gas.LogEvent`, `gas.LoggerContext`.
 
 ```bash
 go get github.com/gasmod/gas/log

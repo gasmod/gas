@@ -439,9 +439,13 @@ Gas provides three middleware constructors (see `references/middleware.md` for
 full option signatures):
 
 - **`RequestLogger[T Logger]`** — logs method, path, status, bytes, duration
-  per request. Resolves T from the request scope: pass a scoped per-request
-  logger type derived from the singleton `gas.Logger`, not the singleton
-  itself (KI-026). Status >= 400 → error level.
+  per request. Resolves T from the request scope, derives a per-request logger
+  carrying `request_id`, and puts it on the request context for
+  `gas.LoggerFromContext`. Make T a scoped type derived from the singleton
+  `gas.Logger` (`RequestLogger interface{ gas.Logger }`, built with
+  `l.With().Logger()`): the request logger then replaces T's instance in the
+  scope, so handlers taking T get `request_id`. A singleton T is never
+  shadowed or changed. Status >= 400 → error level.
 - **`SecurityHeaders`** — sets X-Content-Type-Options, X-Frame-Options, etc.
   with secure defaults.
 - **`CacheControl`** — sets Cache-Control header based on path matching rules.
