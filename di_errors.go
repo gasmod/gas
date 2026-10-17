@@ -14,7 +14,10 @@ var (
 	ErrNotRegistered = errors.New("gas: service not registered")
 
 	// ErrCircularDependency reports that the registered constructors depend
-	// on each other in a cycle, so no build order exists.
+	// on each other in a cycle, so no build order exists. It is also returned
+	// when a constructor or Init resolves the type being built through a
+	// captured container or scope, when two goroutines' singleton builds
+	// would wait on each other, and when constructors nest more than 256 deep.
 	ErrCircularDependency = errors.New("gas: circular dependency")
 
 	// ErrCaptiveDependency reports a singleton whose constructor depends on a
