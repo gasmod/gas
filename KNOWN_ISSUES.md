@@ -50,45 +50,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   of scope too.
 - **Next step**: migrate each module to the convention in its own PR.
 
-## KI-005: a cycle through a captured `*gas.ServiceContainer` crashes the process
-
-- **Status**: decision needed
-- **Area**: core DI (`service_registry.go`).
-- **Found**: 2026-10-16, while testing constructors that resolve through
-  the container.
-- **Detail**: `BuildAll` checks for cycles using constructor parameter
-  types only. A constructor that calls `Resolve` on a captured container,
-  and so comes back to the type being built, recurses until the process
-  dies with `fatal error: stack overflow`. This is a runtime fatal error:
-  not a panic, not an error, and `recover` cannot catch it. Verified on
-  `main` with:
-
-  ```go
-  var w *gas.Worker
-  w = gas.NewWorker(gas.WithSingletonService[*T](func() (*T, error) {
-  	_, err := w.ServiceContainer().Resolve[*T]()
-  	return &T{}, err
-  }))
-  w.InitServices(context.Background()) // fatal error: stack overflow
-  ```
-
-  `CONVENTIONS.md` keeps built-in modules off this path by declaring
-  dependencies as parameters; app code can still reach it. An `Init` that
-  resolves its own type through a captured container recurses the same
-  way, because `invoke` runs `Init` before `setInstance` caches the value.
-
-  `Resolve` takes no chain or context, so a resolve from a captured
-  container cannot be told apart from a concurrent one without goroutine
-  identity or an API change. Options considered: tracking a build stack
-  while `BuildAll` runs (exact, and covers the repro above, since
-  `BuildAll` is single-goroutine), plus a depth bound as a backstop for
-  resolves outside `BuildAll` (turns the overflow into an error but cannot
-  name the cycle). Either one interacts with KI-011, since a concurrent
-  resolve during a build would see a false cycle.
-- **Next step**: decide whether resolution should detect re-entrant
-  construction of a type and return a cycle error, and how (a §3
-  decision in `CLAUDE.md`); see KI-011 for the concurrency half.
-
 ## KI-010: suspected flake in the s3 multipart content-length test
 
 - **Status**: open
@@ -104,41 +65,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   assertion is fragile under transport errors.
 - **Next step**: if it recurs, make the fake read the whole part before it
   replies, or accept a transport error in that case.
-
-## KI-011: concurrent lazy singleton resolution is a data race
-
-- **Status**: decision needed
-- **Area**: core DI (`service_registry.go`).
-- **Found**: 2026-10-16, while designing the KI-005 cycle guard.
-- **Detail**: `ServiceContainer` has no mutex; `registrations`,
-  `instances`, and `instanceOrder` are plain maps and slices. `BuildAll`
-  builds every singleton on one goroutine, and after that resolution only
-  reads them, but a singleton resolved lazily (before `InitServices`,
-  registered after it, or from a constructor through a captured
-  container) is built on whichever goroutine asks. With four goroutines
-  calling `Resolve` on the same unbuilt singleton, whose constructor
-  sleeps 20ms, the constructor ran four times and `go test -race`
-  reported three data races.
-- **Next step**: decide whether lazy resolution becomes concurrency-safe,
-  for example one in-flight build per type under a container lock with
-  later callers waiting, weighing the deadlock risk of holding it while a
-  constructor and `Init` run (a §3 decision in `CLAUDE.md`).
-
-## KI-015: a failed Start leaves initialized services open
-
-- **Status**: decision needed
-- **Area**: core (`worker.go`).
-- **Found**: 2026-10-16, in review of the context-aware lifecycle change.
-- **Detail**: `InitServices` records services for shutdown only after
-  `BuildAll` succeeds (`worker.go:105` to `:122` on `main`), so when one
-  service's Init fails, the services already initialized are never
-  closed, by the failed start or by a later `Shutdown`. `InitServices`
-  also runs once (`initOnce`), so a second `Start` after a failure gets
-  nil from it and goes on to run migrations and ready hooks against a
-  half-built container.
-- **Next step**: decide whether a failed start closes what it
-  initialized, and whether a later `Start` returns the original error (a
-  §3 lifecycle decision in `CLAUDE.md`).
 
 ## KI-020: a dirty migration can only be cleared by hand
 
