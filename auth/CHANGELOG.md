@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead. Values typed `gas.Authenticator` keep working in `Chain` literals
   and as the `Middleware` argument against core v0.5.x, since the method sets
   are identical.
+- `Middleware(nil)` panics with `gas: auth.Middleware: nil Authenticator;
+  pass a configured Authenticator ...` instead of `auth: nil
+  authenticator`, following the `gas:` prefix rule for wiring panics. Code
+  that matched the old message must match the new one.
 
 ## [0.1.0] - 2026-07-03
 

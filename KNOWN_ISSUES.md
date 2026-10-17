@@ -131,20 +131,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   with `ErrUnauthenticated`, and whether the `Authenticator` doc and the
   `authtest` mock's default change to match.
 
-## KI-009: `auth.Middleware` panics with an `auth:` prefix
-
-- **Status**: open
-- **Area**: `auth` (`middleware.go`).
-- **Found**: 2026-10-16, while moving the auth interfaces into the auth
-  module.
-- **Detail**: `Middleware` with a nil authenticator panics with
-  `"auth: nil authenticator"` (`auth/middleware.go:35`). §7 of
-  `CLAUDE.md` asks every panic message to start with `gas:` and say how
-  to fix the mistake.
-- **Next step**: reword the message, for example
-  `"gas: auth.Middleware: nil Authenticator; pass a configured
-  authenticator"`.
-
 ## KI-010: suspected flake in the s3 multipart content-length test
 
 - **Status**: open
