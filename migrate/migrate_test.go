@@ -2,6 +2,7 @@ package migrate
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -226,8 +227,57 @@ func TestRunPending_DirtyBlocks(t *testing.T) {
 		Down:        "DROP TABLE should_not_exist",
 	})
 
+	if err := s.RunPending(); !errors.Is(err, ErrDirty) {
+		t.Fatalf("RunPending() = %v, want %v", err, ErrDirty)
+	}
+}
+
+// Down must not run the down SQL of a dirty migration, whose up SQL was
+// rolled back, nor any other migration while one is dirty.
+//
+//goland:noinspection SqlResolve,SqlNoDataSourceInspection
+func TestDown_DirtyBlocks(t *testing.T) {
+	mod := &testService{name: "mod-a"}
+
+	s, db := newTestService(t)
+
+	s.Register(mod, gas.Migration{
+		Version:     "20250216001",
+		Description: "create keep",
+		Up:          "CREATE TABLE keep (id INTEGER PRIMARY KEY)",
+		Down:        "DROP TABLE keep",
+	})
+	s.Register(mod, gas.Migration{
+		Version:     "20250216002",
+		Description: "broken",
+		Up:          "THIS IS NOT VALID SQL",
+		Down:        "DROP TABLE keep",
+	})
+
 	if err := s.RunPending(); err == nil {
-		t.Fatal("expected error due to dirty migration")
+		t.Fatal("RunPending() = nil, want the broken migration to fail")
+	}
+
+	for _, n := range []int{1, 2} {
+		err := s.Down(n)
+		if !errors.Is(err, ErrDirty) {
+			t.Errorf("Down(%d) = %v, want %v", n, err, ErrDirty)
+		}
+		if err != nil && !strings.Contains(err.Error(), "20250216002") {
+			t.Errorf("Down(%d) error %q does not name the dirty version", n, err)
+		}
+	}
+
+	ctx := context.Background()
+	if _, err := db.Exec(ctx, "INSERT INTO keep (id) VALUES (1)"); err != nil {
+		t.Errorf("table keep was dropped: %v", err)
+	}
+	applied, err := s.getAppliedMigrations(ctx)
+	if err != nil {
+		t.Fatalf("getAppliedMigrations: %v", err)
+	}
+	if len(applied) != 2 {
+		t.Errorf("tracking rows after refused Down = %d, want 2", len(applied))
 	}
 }
 
@@ -712,8 +762,8 @@ func TestCheckReady_DirtyMigration(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected not-ready due to dirty migration")
 	}
-	if !strings.Contains(err.Error(), "dirty") {
-		t.Errorf("expected dirty error, got: %v", err)
+	if !errors.Is(err, ErrDirty) {
+		t.Errorf("CheckReady() = %v, want %v", err, ErrDirty)
 	}
 }
 

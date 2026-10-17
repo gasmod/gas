@@ -91,7 +91,8 @@ func (s *Service) Close(context.Context) error {
 
 // CheckReady reports whether the service is ready to accept traffic. It
 // returns an error if the service is closed, not initialized, has any dirty
-// migrations, or has registered migrations that have not yet been applied.
+// migrations (wrapping ErrDirty), or has registered migrations that have
+// not yet been applied.
 func (s *Service) CheckReady(ctx context.Context) error {
 	if s.closed.Load() {
 		return fmt.Errorf("gas/migrate: service is closed")
@@ -105,7 +106,7 @@ func (s *Service) CheckReady(ctx context.Context) error {
 		return err
 	}
 	if len(dirty) > 0 {
-		return fmt.Errorf("gas/migrate: dirty migrations: %s", joinVersions(dirty))
+		return fmt.Errorf("%w: %s", ErrDirty, joinVersions(dirty))
 	}
 
 	applied, err := s.getAppliedMigrations(ctx)

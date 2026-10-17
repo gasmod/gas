@@ -252,21 +252,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   initialized, and whether a later `Start` returns the original error (a
   §3 lifecycle decision in `CLAUDE.md`).
 
-## KI-018: migrate Down runs the down SQL of a dirty version
-
-- **Status**: open
-- **Area**: `migrate` (`manager.go`).
-- **Found**: 2026-10-16, while writing the migrate `doc.go`.
-- **Detail**: `Down` takes its versions from `getAppliedMigrations`
-  (`migrate/manager.go:188`), whose query has no `dirty` filter, so a
-  dirty version counts as applied. A dirty version's up SQL was rolled
-  back, so `Down` runs its down SQL against a schema that migration never
-  changed. Verified on SQLite: with 001 creating table `keep` and a failed
-  002 whose down SQL drops `keep`, `Down(1)` returned nil and dropped
-  `keep`.
-- **Next step**: skip dirty versions in `Down`, or refuse to run while
-  any version is dirty, as `RunPending` does.
-
 ## KI-019: migrate Down is not atomic
 
 - **Status**: open
