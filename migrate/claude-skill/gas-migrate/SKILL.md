@@ -215,8 +215,16 @@ When a migration fails, it is marked dirty in the tracking table. All subsequent
 `migrate.ErrDirty`, until resolved:
 
 1. Fix the underlying issue (bad SQL, missing dependency).
-2. Manually remove or update the dirty row in `__gas_migrations`.
-3. Call `RunPending()` again.
+2. Call `ClearDirty(version)` on the `*migrate.Service`, for example from a
+   maintenance command, to delete the dirty tracking row. It returns an error
+   wrapping `migrate.ErrNotDirty` (and changes nothing) for a version that is
+   not dirty, so a typo cannot delete a cleanly applied migration's row.
+3. Call `RunPending()` again; the migration is applied from scratch, since a
+   dirty migration's up SQL was rolled back.
+
+```go
+func (s *Service) ClearDirty(version string) error
+```
 
 ## Multi-Dialect Support (sqlc)
 

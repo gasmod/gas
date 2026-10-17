@@ -160,19 +160,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   initialized, and whether a later `Start` returns the original error (a
   §3 lifecycle decision in `CLAUDE.md`).
 
-## KI-020: a dirty migration can only be cleared by hand
-
-- **Status**: decision needed
-- **Area**: `migrate`.
-- **Found**: 2026-10-16, while writing the migrate `doc.go`.
-- **Detail**: a failed migration is recorded as dirty, and while any
-  version is dirty `RunPending` refuses to run. The `Service` exposes
-  `Register`, `RegisterSlice`, `RegisterFS`, `RunPending`, `Down`, and
-  `CheckReady`; none of them clears the mark, so recovery needs manual SQL
-  against `__gas_migrations`.
-- **Next step**: decide whether the module should offer a way to clear
-  or force a dirty version (a §3 API decision in `CLAUDE.md`).
-
 ## KI-028: secretsmanager `WithTimeout(0)` makes every Load fail
 
 - **Status**: decision needed

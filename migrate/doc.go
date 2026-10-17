@@ -37,8 +37,9 @@
 // transaction. When either fails, the transaction rolls back and the
 // version is recorded as dirty; while any version is dirty, RunPending,
 // Down, and CheckReady return an error wrapping ErrDirty that names the
-// dirty versions, and the package offers no call that clears the mark
-// (KI-020). Two services registering the same version, or one service
+// dirty versions. Once the cause is fixed, ClearDirty(version) removes the
+// mark, so the next RunPending applies that migration again; it returns an
+// error wrapping ErrNotDirty for a version that is not dirty. Two services registering the same version, or one service
 // registering two different migrations under one version, is an error
 // wrapping ErrDuplicateVersion from RunPending, Down, and CheckReady, and
 // nothing runs. A service that registers an identical migration (same
