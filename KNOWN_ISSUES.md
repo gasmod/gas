@@ -345,24 +345,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   default-value decision in `CLAUDE.md`): no timeout, the default, or an
   error.
 
-## KI-029: an unclosed quote in a .env file drops the rest of the file silently
-
-- **Status**: open
-- **Area**: `config` (`internal/dotenv`).
-- **Found**: 2026-10-16, while writing the config packages' `doc.go`.
-- **Detail**: a value that opens a quote without closing it on its line
-  starts a multi-line value (`config/internal/dotenv/parser.go:27`,
-  `handleMultiline` at `:134`). If no later line ends with that quote,
-  every following line is absorbed and, at the end of the file, the value
-  is discarded with no error (`:55`). Repro: `Parse` of
-  `A=1\nB="unterminated\nC=3\n` returns only `A`; `B` and `C` are gone and
-  the error is nil. A typo in one `.env` line can silently remove the
-  configuration below it, contrary to the §7 rule that bad configuration
-  produces an error.
-- **Next step**: return an error wrapping `ErrDotEnvParseFailed` for a
-  value whose quote is never closed. Files that load today with this
-  mistake would then fail to load.
-
 ## KI-030: core and the modules import the config module
 
 - **Status**: decision needed
@@ -397,8 +379,8 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   test files of their own (`go test` reports "no test files"); they are
   reached only through the provider tests. No fuzz target covers .env or
   JSON parsing, although §2 of `CLAUDE.md` asks for native fuzzing wherever
-  configuration sources are parsed. KI-029, an unclosed quote silently
-  dropping the rest of a .env file, is the kind of defect a fuzz target
+  configuration sources are parsed. An unclosed quote that silently
+  dropped the rest of a .env file was the kind of defect a fuzz target
   finds.
 - **Next step**: add unit tests for both packages and fuzz targets for
   `dotenv.Parse` and the JSON provider's decoding.
