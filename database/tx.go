@@ -11,15 +11,14 @@ import (
 
 // rollbackErr normalizes a rollback failure. A transaction that fn already
 // committed or rolled back itself reports sql.ErrTxDone / pgx.ErrTxClosed;
-// that is not a failure, so it is dropped. Anything else is logged and
-// returned wrapped, since a failed rollback can leave the connection
-// holding an open transaction. The returned error wraps rbErr, so callers
+// that is not a failure, so it is dropped. Anything else is returned
+// wrapped, since a failed rollback can leave the connection holding an open
+// transaction; the caller decides whether to return or log it. The returned error wraps rbErr, so callers
 // can match the driver's error with errors.Is or errors.As.
 func (s *Service) rollbackErr(rbErr error) error {
 	if rbErr == nil || errors.Is(rbErr, sql.ErrTxDone) || errors.Is(rbErr, pgx.ErrTxClosed) {
 		return nil
 	}
-	s.logger.Error("failed to roll back transaction").Err("error", rbErr).Send()
 	return fmt.Errorf("%s: failed to roll back transaction: %w", s.Name(), rbErr)
 }
 
@@ -73,8 +72,13 @@ func (s *Service) WithTx(
 
 	defer func() {
 		if p := recover(); p != nil {
-			// Logged by rollbackErr; the panic takes precedence over it.
-			_ = s.rollbackErr(tx.Rollback())
+			// The panic takes precedence, so a failed rollback is logged
+			// here, where it is handled, rather than returned.
+			if rbErr := s.rollbackErr(tx.Rollback()); rbErr != nil {
+				s.logger.Error("failed to roll back transaction after panic").
+					Err("error", rbErr).
+					Send()
+			}
 			panic(p)
 		}
 		if err != nil {
@@ -140,8 +144,13 @@ func (s *Service) WithPgxTx(
 	defer func() {
 		rollbackCtx := context.WithoutCancel(ctx)
 		if p := recover(); p != nil {
-			// Logged by rollbackErr; the panic takes precedence over it.
-			_ = s.rollbackErr(tx.Rollback(rollbackCtx))
+			// The panic takes precedence, so a failed rollback is logged
+			// here, where it is handled, rather than returned.
+			if rbErr := s.rollbackErr(tx.Rollback(rollbackCtx)); rbErr != nil {
+				s.logger.Error("failed to roll back transaction after panic").
+					Err("error", rbErr).
+					Send()
+			}
 			panic(p)
 		}
 		if err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"strings"
 	"testing"
 
 	awsses "github.com/aws/aws-sdk-go-v2/service/ses"
@@ -510,5 +511,19 @@ func TestIsErrClosed(t *testing.T) {
 	}
 	if email.IsErrClosed(errors.New("other")) {
 		t.Error("IsErrClosed(other) should be false")
+	}
+}
+
+// A configuration that fails validation is returned with the service name,
+// so the error is identifiable without a log line.
+func TestInit_InvalidConfigNamesService(t *testing.T) {
+	t.Parallel()
+
+	cfg := validConfig()
+	cfg.Email.FromEmail = ""
+	err := New(WithConfig(cfg), WithClient(&mockSESClient{}))(nil, nil, gas.NewNopLogger()()).
+		Init(t.Context())
+	if err == nil || !strings.HasPrefix(err.Error(), serviceName+": invalid configuration: ") {
+		t.Errorf("Init() error = %v, want it prefixed with the service name", err)
 	}
 }

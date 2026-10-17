@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `sqs.Service` no longer logs an invalid configuration it also returns;
+  the caller logs it once. It is returned as
+  `gas/queue/sqs: invalid configuration: <cause>`.
 - **BREAKING:** `sqs.Service` implements the context-aware `gas.Service`:
   `Init(ctx)` and `Close(ctx)`. `Init` loads the AWS configuration under the
   caller ctx; credentials are fetched on the first call, not in `Init`.

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `memory.Service` and `valkey.Service` no longer log an error they also
+  return: an invalid configuration and valkey's client, ping, and
+  out-of-retries failures. The caller that handles the error logs it once.
+  An invalid configuration is now returned as
+  `<service>: invalid configuration: <cause>`, so it still names the service.
+  The per-attempt retry warning stays.
 - **BREAKING:** `memory.Service` and `valkey.Service` implement the
   context-aware `gas.Service` (`Init(ctx context.Context) error`,
   `Close(ctx context.Context) error`). In `valkey.Service`, the connection

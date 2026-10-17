@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -139,5 +140,18 @@ func TestUnstartedServiceReturnsErrClosed(t *testing.T) {
 		if err := call(op); !errors.Is(err, cache.ErrClosed) {
 			t.Errorf("%s() before Init = %v, want %v", name, err, cache.ErrClosed)
 		}
+	}
+}
+
+// A configuration that fails validation is returned with the service name,
+// so the error is identifiable without a log line.
+func TestInit_InvalidConfigNamesService(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultConfig()
+	cfg.Cache.Addr = ""
+	err := New(WithConfig(cfg))(nil, gas.NewNopLogger()()).Init(t.Context())
+	if err == nil || !strings.HasPrefix(err.Error(), "gas/cache/valkey: invalid configuration: ") {
+		t.Errorf("Init() error = %v, want it prefixed with the service name", err)
 	}
 }

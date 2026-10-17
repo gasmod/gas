@@ -3,6 +3,7 @@ package sqs
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -389,5 +390,18 @@ func TestCheckReadyAfterClose(t *testing.T) {
 	err := svc.CheckReady(context.Background())
 	if !errors.Is(err, queue.ErrClosed) {
 		t.Errorf("got %v, want ErrClosed", err)
+	}
+}
+
+// A configuration that fails validation is returned with the service name,
+// so the error is identifiable without a log line.
+func TestInit_InvalidConfigNamesService(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultConfig()
+	cfg.Queue.Region = ""
+	err := New(WithConfig(cfg))(nil, gas.NewNopLogger()()).Init(t.Context())
+	if err == nil || !strings.HasPrefix(err.Error(), serviceName+": invalid configuration: ") {
+		t.Errorf("Init() error = %v, want it prefixed with the service name", err)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -727,5 +728,19 @@ func TestQuery_AfterFailedInit(t *testing.T) {
 
 	if _, err := s.Query(context.Background(), "SELECT 1"); err == nil {
 		t.Fatal("expected error querying a service whose Init failed")
+	}
+}
+
+// A configuration that fails validation is returned with the service name,
+// so the error is identifiable without a log line.
+func TestInit_InvalidConfigNamesService(t *testing.T) {
+	t.Parallel()
+
+	cfg := database.DefaultConfig()
+	cfg.Database.Mode = "bogus"
+	s := database.New(database.WithConfig(cfg))(nil, gas.NewNopLogger()())
+	err := s.Init(t.Context())
+	if err == nil || !strings.HasPrefix(err.Error(), s.Name()+": invalid configuration: ") {
+		t.Errorf("Init() error = %v, want it prefixed with the service name", err)
 	}
 }

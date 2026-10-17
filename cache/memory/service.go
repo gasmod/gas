@@ -92,8 +92,7 @@ func (s *Service) Init(context.Context) error {
 	}
 
 	if err := s.cfg.Validate(); err != nil {
-		s.logger.Error("invalid cache configuration").Err("error", err).Send()
-		return err
+		return fmt.Errorf("%s: invalid configuration: %w", s.Name(), err)
 	}
 
 	s.mu.Lock()
