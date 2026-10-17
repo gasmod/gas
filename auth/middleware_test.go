@@ -113,17 +113,17 @@ func TestMiddleware(t *testing.T) {
 	)
 
 	t.Run(
-		"auth returns nil principal and nil error calls next with nil principal in context",
+		"auth returns nil principal and nil error writes 401 and does not call next",
 		func(t *testing.T) {
 			mock := &authtest.MockAuthenticator{
-				// AuthenticateFn is nil, so returns (nil, nil)
+				AuthenticateFn: func(_ context.Context, _ *http.Request) (gas.Principal, error) {
+					return nil, nil
+				},
 			}
 
 			var called int32
-			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				atomic.AddInt32(&called, 1)
-				p := gas.PrincipalFromContext(r.Context())
-				assert.Nil(t, p)
 				w.WriteHeader(http.StatusOK)
 			})
 
@@ -133,8 +133,8 @@ func TestMiddleware(t *testing.T) {
 
 			handler.ServeHTTP(rec, req)
 
-			assert.Equal(t, http.StatusOK, rec.Code)
-			assert.Equal(t, int32(1), atomic.LoadInt32(&called))
+			assert.Equal(t, http.StatusUnauthorized, rec.Code)
+			assert.Equal(t, int32(0), atomic.LoadInt32(&called))
 		},
 	)
 
@@ -322,4 +322,45 @@ func TestMiddleware_NilAuthenticatorPanics(t *testing.T) {
 
 	auth.Middleware(nil)
 	t.Fatal("Middleware(nil) did not panic")
+}
+
+// An Authenticator that returns no principal and no error has not
+// authenticated anyone: Middleware must reject the request as
+// unauthenticated and never call the next handler. A typed nil principal
+// counts as no principal too.
+func TestMiddleware_NilPrincipalIsUnauthenticated(t *testing.T) {
+	t.Parallel()
+
+	for name, principal := range map[string]gas.Principal{
+		"untyped nil": nil,
+		"typed nil":   (*auth.BasePrincipal)(nil),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			authn := &authtest.MockAuthenticator{
+				AuthenticateFn: func(context.Context, *http.Request) (gas.Principal, error) {
+					return principal, nil
+				},
+			}
+			var gotErr error
+			var called atomic.Bool
+			h := auth.Middleware(authn, auth.WithOnError(
+				func(w http.ResponseWriter, _ *http.Request, err error) {
+					gotErr = err
+					w.WriteHeader(http.StatusUnauthorized)
+				},
+			))(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				called.Store(true)
+				w.WriteHeader(http.StatusOK)
+			}))
+
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+
+			assert.Equal(t, http.StatusUnauthorized, rr.Code)
+			assert.False(t, called.Load(), "next handler ran without a principal")
+			assert.ErrorIs(t, gotErr, auth.ErrUnauthenticated)
+		})
+	}
 }

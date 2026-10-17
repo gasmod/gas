@@ -33,6 +33,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   authenticator`, following the `gas:` prefix rule for wiring panics. Code
   that matched the old message must match the new one.
 
+### Security
+
+- **`Middleware` and `Chain` no longer treat a nil principal as
+  authenticated.** An `Authenticator` that returned `(nil, nil)`, as any
+  app-written one could, let `Middleware` call the next handler for a
+  caller with no credentials, and ended a `Chain` as a success. Both now
+  treat a nil principal, including a typed nil such as
+  `(*BasePrincipal)(nil)`, as `ErrUnauthenticated`: `Middleware` answers
+  through its error handler (401 by default), and `Chain` moves on to the
+  next member. The `Authenticator` doc now states the contract.
+- **`authtest.MockAuthenticator` returns `ErrUnauthenticated` when
+  `AuthenticateFn` is unset.** It used to return `(nil, nil)`. Tests that
+  relied on that default to pass authentication must set `AuthenticateFn`.
+
 ## [0.1.0] - 2026-07-03
 
 First open source release. Versions prior to 0.1.0 were developed in a private

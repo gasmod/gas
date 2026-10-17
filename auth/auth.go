@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"reflect"
 
 	"github.com/gasmod/gas"
 )
@@ -75,7 +76,8 @@ var _ Authenticator = Chain(nil)
 
 // Authenticate tries each authenticator in order. It returns the first
 // successful principal. If all fail, it returns the last error. If the
-// chain is empty, it returns ErrUnauthenticated.
+// chain is empty, it returns ErrUnauthenticated. A member that returns a nil
+// principal with a nil error has failed with ErrUnauthenticated.
 func (c Chain) Authenticate(ctx context.Context, r *http.Request) (gas.Principal, error) {
 	if len(c) == 0 {
 		return nil, ErrUnauthenticated
@@ -83,7 +85,7 @@ func (c Chain) Authenticate(ctx context.Context, r *http.Request) (gas.Principal
 
 	var lastErr error
 	for _, a := range c {
-		principal, err := a.Authenticate(ctx, r)
+		principal, err := authenticate(ctx, a, r)
 		if err == nil {
 			return principal, nil
 		}
@@ -91,4 +93,30 @@ func (c Chain) Authenticate(ctx context.Context, r *http.Request) (gas.Principal
 	}
 
 	return nil, lastErr
+}
+
+// authenticate runs a and turns a nil principal with a nil error, including
+// a typed nil such as (*BasePrincipal)(nil), into ErrUnauthenticated, so no
+// caller treats an authenticator that identified nobody as a success.
+func authenticate(ctx context.Context, a Authenticator, r *http.Request) (gas.Principal, error) {
+	principal, err := a.Authenticate(ctx, r)
+	if err != nil {
+		// Passed through unchanged, as before, so callers can match the
+		// authenticator's own sentinel errors and messages.
+		return nil, err //nolint:wrapcheck // see above
+	}
+	if isNilPrincipal(principal) {
+		return nil, ErrUnauthenticated
+	}
+	return principal, nil
+}
+
+// isNilPrincipal reports whether p is nil or an interface holding a nil
+// pointer.
+func isNilPrincipal(p gas.Principal) bool {
+	if p == nil {
+		return true
+	}
+	v := reflect.ValueOf(p)
+	return v.Kind() == reflect.Pointer && v.IsNil()
 }
