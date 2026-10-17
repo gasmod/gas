@@ -83,6 +83,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Request-scope `Close` errors are logged.** The App's request-scope
+  middleware discarded the error from closing a request's scope, so a scoped
+  service failing to clean up left no trace. It now logs `request scope close
+  failed` at error level, with the request's method and path and the joined
+  `Close` errors, through the Worker's logger (part of #12).
 - **A failed `Start` no longer leaves services running.** When a service's
   `Init` failed, the services initialized before it were never tracked, so
   neither the failed `Start` nor a later `Shutdown` closed them; a failing

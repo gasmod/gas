@@ -108,7 +108,7 @@ func NewApp(opts ...Option) *App {
 	}
 
 	// Install per-request scope middleware on the router at app initialization time.
-	a.router.Use(MiddlewareFunc(requestScopeMiddleware(w.serviceContainer)))
+	a.router.Use(MiddlewareFunc(requestScopeMiddleware(w.serviceContainer, w.getLogger)))
 
 	return a
 }
