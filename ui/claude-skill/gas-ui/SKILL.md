@@ -30,7 +30,7 @@ import ui "github.com/gasmod/gas/ui"
 ## Constructor
 
 ```go
-func New[T gas.TemplateProvider](opts ...Option) func(T, *gas.Router, gas.ConfigProvider, gas.Logger) *Service
+func New[T gas.TemplateProvider](opts ...Option) func(T, *gas.Router, gas.ConfigProvider, gas.Logger) (*Service, error)
 ```
 
 Generic over the template provider type. Captures options, returns a

@@ -28,7 +28,10 @@ func newTestDB(t *testing.T) gas.DatabaseProvider {
 	cfg.Database.Driver = database.DriverSQLite
 	cfg.Database.DSN = dsn
 	factory := database.New(database.WithConfig(cfg))
-	db := factory(nil, &gas.NopLogger{})
+	db, err := factory(nil, &gas.NopLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := db.Init(t.Context()); err != nil {
 		t.Fatalf("database Init: %v", err)
 	}
@@ -39,7 +42,10 @@ func newTestDB(t *testing.T) gas.DatabaseProvider {
 func newTestService(t *testing.T) (*Service, gas.DatabaseProvider) {
 	t.Helper()
 	db := newTestDB(t)
-	s := New()(db)
+	s, err := New()(db)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := s.Init(t.Context()); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
@@ -55,7 +61,10 @@ func TestName(t *testing.T) {
 }
 
 func TestInit_NoDB(t *testing.T) {
-	s := New()(nil)
+	s, err := New()(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := s.Init(t.Context()); err == nil {
 		t.Fatal("expected error for missing DatabaseProvider")
 	}
@@ -690,7 +699,10 @@ func TestParseStem(t *testing.T) {
 }
 
 func TestCheckReady_NotInitialized(t *testing.T) {
-	s := New()(nil)
+	s, err := New()(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := s.CheckReady(context.Background()); err == nil {
 		t.Fatal("expected error when not initialized")
 	}

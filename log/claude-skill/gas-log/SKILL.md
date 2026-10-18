@@ -63,7 +63,7 @@ of 5.
 
 ```go
 // Constructor type — passed to gas.WithService[gas.Logger](...)
-type ZeroLogLoggerCtor func() *ZeroLogLogger
+type ZeroLogLoggerCtor func() (*ZeroLogLogger, error)
 
 // Constructor — returns a ZeroLogLoggerCtor
 func NewZeroLogLogger(opts ...ZeroLogLoggerOption) ZeroLogLoggerCtor
@@ -78,7 +78,7 @@ func WithZeroLogInstance(logger *zerolog.Logger) ZeroLogLoggerOption
 
 ```go
 // Constructor type — passed to gas.WithService[gas.Logger](...)
-type SlogLoggerCtor func() *SlogLogger
+type SlogLoggerCtor func() (*SlogLogger, error)
 
 // Constructor — returns a SlogLoggerCtor
 func NewSlogLogger(opts ...SlogLoggerOption) SlogLoggerCtor
@@ -243,6 +243,7 @@ The returned `*ShippingLogger` embeds `*SlogLogger`, so the entire fluent API
 
 ```go
 // gas.Logger wrapper; the ctor satisfies the DI container's constructor shape.
+type ShippingLoggerCtor func() (*ShippingLogger, error)
 func NewShippingLogger(endpoint string, marshaler Marshaler, opts ...ShippingOption) ShippingLoggerCtor
 
 // Standalone slog.Handler + io.Closer, for adding shipping to an existing slog
@@ -324,7 +325,10 @@ defer shipCloser.Close() // drain on shutdown
 
 console := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
 root := routingHandler{console: console, ship: shipHandler, alerts: myPager}
-logger := gaslog.NewSlogLogger(gaslog.WithSlogInstance(slog.New(root)))()
+logger, err := gaslog.NewSlogLogger(gaslog.WithSlogInstance(slog.New(root)))()
+if err != nil {
+    return err
+}
 
 // routingHandler.Handle inspects r.Attrs: e.g. kind=="http_404" -> skip ship,
 // alert==true -> also notify the pager, otherwise ship for later review.

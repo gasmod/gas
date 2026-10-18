@@ -21,6 +21,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING: `database.New` returns an error.** It now returns
+  `func(gas.ConfigProvider, gas.Logger) (*Service, error)`, the
+  `CONVENTIONS.md` shape. It cannot fail yet, so it returns nil; the change is
+  the shape. Registering it with `gas.WithSingletonService` is unchanged,
+  since the container accepts a trailing error. Code that calls the returned
+  function directly must take the second result (gas#106).
+- **BREAKING: `Config.Validate` is removed; the rules a tag can express are
+  validate tags.** `Mode` carries `oneof=sql pgx`, `MaxOpenConns`
+  `min=1,max=1000`, `ConnMaxLifetime` `min=1s,max=2h`, and `ConnMaxIdleTime`
+  `min=1s,max=1h,ltefield=ConnMaxLifetime`. `ConfigProvider.Bind` already
+  validates the struct it binds, so `Init` no longer runs a tag check of its
+  own; a config passed with `WithConfig` is not checked against the tags, as
+  `gas.Config` is not when an App has no `ConfigProvider`. The rules that
+  depend on the mode or on `WithConnector` stay in code and run in `Init` for
+  every config, with their messages unchanged: the driver, DSN and connector checks,
+  and the ModeSQL `MaxIdleConns` limits. The errors for the tag rules are now
+  the validator's (gas#116).
 - `Service` no longer logs an error it also returns: an invalid
   configuration, an unknown mode, open, ping, pgx config and pool failures,
   running out of connection retries, a failed `Close`, and a failed rollback

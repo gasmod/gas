@@ -5,6 +5,7 @@ go 1.27
 require (
 	github.com/gasmod/gas v0.5.2
 	github.com/gasmod/gas/config v0.5.2
+	github.com/go-playground/validator/v10 v10.30.5
 	github.com/jackc/pgx/v5 v5.11.0
 	modernc.org/sqlite v1.60.1
 )
@@ -15,7 +16,6 @@ require (
 	github.com/go-chi/chi/v5 v5.5.0 // indirect
 	github.com/go-playground/locales v0.14.2 // indirect
 	github.com/go-playground/universal-translator v0.18.2 // indirect
-	github.com/go-playground/validator/v10 v10.30.5 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/schema v1.4.1 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect

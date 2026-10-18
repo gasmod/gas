@@ -54,7 +54,10 @@ func TestShippingLogger_EndToEnd(t *testing.T) {
 		WithBatchSize(10),
 		WithFlushInterval(time.Hour),
 	)
-	logger := ctor()
+	logger, err := ctor()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	logger.Info("hello").Str("k", "v").Send()
 	logger.Error("boom").Int("code", 42).Send()
@@ -96,13 +99,16 @@ func TestShippingLogger_ClosingDrainsWithoutFlush(t *testing.T) {
 	srv := httptest.NewServer(rs.handler())
 	defer srv.Close()
 
-	logger := NewShippingLogger(
+	logger, err := NewShippingLogger(
 		srv.URL,
 		NewOTLPMarshaler(WithServiceName("svc")),
 		WithoutLocalHandler(),
 		WithBatchSize(100),
 		WithFlushInterval(time.Hour),
 	)()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	logger.Info("only-on-close").Send()
 	if err := logger.Close(context.Background()); err != nil {
@@ -123,12 +129,15 @@ func TestShippingLogger_LocalTee(t *testing.T) {
 	var buf bytes.Buffer
 	local := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})
 
-	logger := NewShippingLogger(
+	logger, err := NewShippingLogger(
 		srv.URL,
 		NewOTLPMarshaler(WithServiceName("svc")),
 		WithLocalHandler(local),
 		WithFlushInterval(time.Hour),
 	)()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	logger.Info("teed").Str("side", "local").Send()
 	logger.Flush()
@@ -144,12 +153,15 @@ func TestShippingLogger_LocalTee(t *testing.T) {
 }
 
 func TestShippingLogger_ImplementsService(t *testing.T) {
-	logger := NewShippingLogger(
+	logger, err := NewShippingLogger(
 		"http://example.invalid",
 		NewOTLPMarshaler(),
 		WithoutLocalHandler(),
 		WithName("central-logs"),
 	)()
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer func() { _ = logger.Close(context.Background()) }()
 
 	var svc gas.Service = logger
@@ -169,7 +181,7 @@ func TestShippingLogger_DeliveryErrorReported(t *testing.T) {
 
 	var mu sync.Mutex
 	var errs []error
-	logger := NewShippingLogger(
+	logger, err := NewShippingLogger(
 		srv.URL,
 		NewOTLPMarshaler(WithServiceName("svc")),
 		WithoutLocalHandler(),
@@ -180,6 +192,9 @@ func TestShippingLogger_DeliveryErrorReported(t *testing.T) {
 			mu.Unlock()
 		}),
 	)()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	logger.Info("will-fail").Send()
 	logger.Flush()
@@ -222,12 +237,15 @@ func TestShippingLogger_SubLoggerFlushDelivers(t *testing.T) {
 	srv := httptest.NewServer(rs.handler())
 	defer srv.Close()
 
-	logger := NewShippingLogger(
+	logger, err := NewShippingLogger(
 		srv.URL,
 		NewOTLPMarshaler(WithServiceName("svc")),
 		WithoutLocalHandler(),
 		WithFlushInterval(time.Hour),
 	)()
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = logger.Close(context.Background()) })
 
 	sub := logger.With().Str("service", "a").Logger()
@@ -254,7 +272,10 @@ func TestSlogLogger_SubLoggerFlushIsNoop(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	l := NewSlogLogger(WithSlogInstance(slog.New(slog.NewTextHandler(&buf, nil))))()
+	l, err := NewSlogLogger(WithSlogInstance(slog.New(slog.NewTextHandler(&buf, nil))))()
+	if err != nil {
+		t.Fatal(err)
+	}
 	sub := l.With().Str("k", "v").Logger()
 	sub.Info("x").Send()
 	sub.Flush()
