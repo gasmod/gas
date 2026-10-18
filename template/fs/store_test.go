@@ -20,7 +20,10 @@ func newTestFS() fstest.MapFS {
 
 func TestGet(t *testing.T) {
 	t.Parallel()
-	s := NewStore(newTestFS())()
+	s, err := NewStore(newTestFS())()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	got, err := s.Get(context.Background(), "home.html")
 	if err != nil {
@@ -33,7 +36,10 @@ func TestGet(t *testing.T) {
 
 func TestGetNested(t *testing.T) {
 	t.Parallel()
-	s := NewStore(newTestFS())()
+	s, err := NewStore(newTestFS())()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	got, err := s.Get(context.Background(), "layouts/base.html")
 	if err != nil {
@@ -46,9 +52,12 @@ func TestGetNested(t *testing.T) {
 
 func TestGetNotFound(t *testing.T) {
 	t.Parallel()
-	s := NewStore(newTestFS())()
+	s, err := NewStore(newTestFS())()
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	_, err := s.Get(context.Background(), "missing.html")
+	_, err = s.Get(context.Background(), "missing.html")
 	if !errors.Is(err, template.ErrTemplateNotFound) {
 		t.Errorf("Get() error = %v, want %v", err, template.ErrTemplateNotFound)
 	}
@@ -56,7 +65,10 @@ func TestGetNotFound(t *testing.T) {
 
 func TestList(t *testing.T) {
 	t.Parallel()
-	s := NewStore(newTestFS())()
+	s, err := NewStore(newTestFS())()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	names, err := s.List(context.Background())
 	if err != nil {
@@ -76,7 +88,10 @@ func TestList(t *testing.T) {
 
 func TestListEmpty(t *testing.T) {
 	t.Parallel()
-	s := NewStore(fstest.MapFS{})()
+	s, err := NewStore(fstest.MapFS{})()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	names, err := s.List(context.Background())
 	if err != nil {
@@ -89,9 +104,12 @@ func TestListEmpty(t *testing.T) {
 
 func TestRegisterIsReadOnly(t *testing.T) {
 	t.Parallel()
-	s := NewStore(newTestFS())()
+	s, err := NewStore(newTestFS())()
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	err := s.Register(context.Background(), "new.html", []byte("content"))
+	err = s.Register(context.Background(), "new.html", []byte("content"))
 	if !errors.Is(err, template.ErrReadOnly) {
 		t.Errorf("Register() error = %v, want %v", err, template.ErrReadOnly)
 	}
@@ -99,9 +117,12 @@ func TestRegisterIsReadOnly(t *testing.T) {
 
 func TestRegisterFSIsReadOnly(t *testing.T) {
 	t.Parallel()
-	s := NewStore(newTestFS())()
+	s, err := NewStore(newTestFS())()
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	err := s.RegisterFS(context.Background(), fstest.MapFS{})
+	err = s.RegisterFS(context.Background(), fstest.MapFS{})
 	if !errors.Is(err, template.ErrReadOnly) {
 		t.Errorf("RegisterFS() error = %v, want %v", err, template.ErrReadOnly)
 	}

@@ -46,7 +46,10 @@ func newTestDir(t *testing.T) string {
 func TestGetFromDisk(t *testing.T) {
 	t.Parallel()
 	dir := newTestDir(t)
-	s := NewStore(dir)()
+	s, err := NewStore(dir)()
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = s.Close() })
 
 	got, err := s.Get(context.Background(), "home.html")
@@ -61,10 +64,13 @@ func TestGetFromDisk(t *testing.T) {
 func TestGetFromOverlay(t *testing.T) {
 	t.Parallel()
 	dir := newTestDir(t)
-	s := NewStore(dir)()
+	s, err := NewStore(dir)()
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = s.Close() })
 
-	if err := s.Register(context.Background(), "custom.html", []byte("<p>Custom</p>")); err != nil {
+	if err = s.Register(context.Background(), "custom.html", []byte("<p>Custom</p>")); err != nil {
 		t.Fatalf("s.Register() error: %v", err)
 	}
 
@@ -80,10 +86,13 @@ func TestGetFromOverlay(t *testing.T) {
 func TestOverlayOverridesDisk(t *testing.T) {
 	t.Parallel()
 	dir := newTestDir(t)
-	s := NewStore(dir)()
+	s, err := NewStore(dir)()
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = s.Close() })
 
-	if err := s.Register(
+	if err = s.Register(
 		context.Background(),
 		"home.html",
 		[]byte("<h1>Overridden</h1>"),
@@ -103,10 +112,13 @@ func TestOverlayOverridesDisk(t *testing.T) {
 func TestGetNotFound(t *testing.T) {
 	t.Parallel()
 	dir := newTestDir(t)
-	s := NewStore(dir)()
+	s, err := NewStore(dir)()
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = s.Close() })
 
-	_, err := s.Get(context.Background(), "nonexistent.html")
+	_, err = s.Get(context.Background(), "nonexistent.html")
 	if !errors.Is(err, template.ErrTemplateNotFound) {
 		t.Errorf("Get() error = %v, want %v", err, template.ErrTemplateNotFound)
 	}
@@ -115,10 +127,13 @@ func TestGetNotFound(t *testing.T) {
 func TestListMergesDiskAndOverlay(t *testing.T) {
 	t.Parallel()
 	dir := newTestDir(t)
-	s := NewStore(dir)()
+	s, err := NewStore(dir)()
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = s.Close() })
 
-	if err := s.Register(context.Background(), "extra.html", []byte("extra")); err != nil {
+	if err = s.Register(context.Background(), "extra.html", []byte("extra")); err != nil {
 		t.Fatalf("s.Register() error: %v", err)
 	}
 
@@ -142,14 +157,17 @@ func TestListMergesDiskAndOverlay(t *testing.T) {
 func TestRegisterFS(t *testing.T) {
 	t.Parallel()
 	dir := newTestDir(t)
-	s := NewStore(dir)()
+	s, err := NewStore(dir)()
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = s.Close() })
 
 	fsys := fstest.MapFS{
 		"partials/nav.html": {Data: []byte("<nav>Nav</nav>")},
 	}
 
-	if err := s.RegisterFS(context.Background(), fsys); err != nil {
+	if err = s.RegisterFS(context.Background(), fsys); err != nil {
 		t.Fatalf("RegisterFS() error: %v", err)
 	}
 
@@ -165,10 +183,13 @@ func TestRegisterFS(t *testing.T) {
 func TestPathTraversal(t *testing.T) {
 	t.Parallel()
 	dir := newTestDir(t)
-	s := NewStore(dir)()
+	s, err := NewStore(dir)()
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = s.Close() })
 
-	_, err := s.Get(context.Background(), "../../../etc/passwd")
+	_, err = s.Get(context.Background(), "../../../etc/passwd")
 	if err == nil {
 		t.Error("Get() with path traversal should return error")
 	}
@@ -176,10 +197,13 @@ func TestPathTraversal(t *testing.T) {
 
 func TestGetInvalidDir(t *testing.T) {
 	t.Parallel()
-	s := NewStore("/nonexistent/dir/that/does/not/exist")()
+	s, err := NewStore("/nonexistent/dir/that/does/not/exist")()
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = s.Close() })
 
-	_, err := s.Get(context.Background(), "page.html")
+	_, err = s.Get(context.Background(), "page.html")
 	if err == nil {
 		t.Error("Get() on nonexistent dir should return error")
 	}
@@ -187,10 +211,13 @@ func TestGetInvalidDir(t *testing.T) {
 
 func TestListInvalidDir(t *testing.T) {
 	t.Parallel()
-	s := NewStore("/nonexistent/dir/that/does/not/exist")()
+	s, err := NewStore("/nonexistent/dir/that/does/not/exist")()
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = s.Close() })
 
-	_, err := s.List(context.Background())
+	_, err = s.List(context.Background())
 	if err == nil {
 		t.Error("List() on nonexistent dir should return error")
 	}
@@ -199,10 +226,13 @@ func TestListInvalidDir(t *testing.T) {
 func TestListOnlyOverlay(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir() // empty directory, no files
-	s := NewStore(dir)()
+	s, err := NewStore(dir)()
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = s.Close() })
 
-	if err := s.Register(context.Background(), "overlay.html", []byte("overlay")); err != nil {
+	if err = s.Register(context.Background(), "overlay.html", []byte("overlay")); err != nil {
 		t.Fatalf("s.Register() error: %v", err)
 	}
 
@@ -218,7 +248,10 @@ func TestListOnlyOverlay(t *testing.T) {
 func TestListEmpty(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	s := NewStore(dir)()
+	s, err := NewStore(dir)()
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = s.Close() })
 
 	names, err := s.List(context.Background())
@@ -232,7 +265,10 @@ func TestListEmpty(t *testing.T) {
 
 func TestCloseUnopenedStore(t *testing.T) {
 	t.Parallel()
-	s := NewStore(t.TempDir())()
+	s, err := NewStore(t.TempDir())()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Close without ever calling Get/List (root never opened).
 	if err := s.Close(); err != nil {
@@ -243,11 +279,14 @@ func TestCloseUnopenedStore(t *testing.T) {
 func TestListDeduplicatesDiskAndOverlay(t *testing.T) {
 	t.Parallel()
 	dir := newTestDir(t)
-	s := NewStore(dir)()
+	s, err := NewStore(dir)()
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = s.Close() })
 
 	// Register an overlay with the same name as a disk file.
-	if err := s.Register(context.Background(), "home.html", []byte("overlay home")); err != nil {
+	if err = s.Register(context.Background(), "home.html", []byte("overlay home")); err != nil {
 		t.Fatalf("s.Register() error: %v", err)
 	}
 
@@ -313,7 +352,10 @@ func TestClosedStoreReturnsErrClosed(t *testing.T) {
 	for _, opened := range []bool{true, false} {
 		t.Run(fmt.Sprintf("opened=%v", opened), func(t *testing.T) {
 			t.Parallel()
-			s := NewStore(newTestDir(t))()
+			s, err := NewStore(newTestDir(t))()
+			if err != nil {
+				t.Fatal(err)
+			}
 			ctx := context.Background()
 			if err := s.Register(ctx, "mem.html", []byte("mem")); err != nil {
 				t.Fatalf("Register() error: %v", err)
@@ -338,7 +380,10 @@ func TestClosedStoreReturnsErrClosed(t *testing.T) {
 
 func TestCloseTwice(t *testing.T) {
 	t.Parallel()
-	s := NewStore(newTestDir(t))()
+	s, err := NewStore(newTestDir(t))()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.Get(context.Background(), "home.html"); err != nil {
 		t.Fatalf("Get() error: %v", err)
 	}
@@ -355,7 +400,10 @@ func TestCloseTwice(t *testing.T) {
 // either completes or reports template.ErrClosed.
 func TestCloseDuringReads(t *testing.T) {
 	t.Parallel()
-	s := NewStore(newTestDir(t))()
+	s, err := NewStore(newTestDir(t))()
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 
 	start := make(chan struct{})
