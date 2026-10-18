@@ -166,7 +166,7 @@ via `WithClient` that is not an `*ses.Client`.
 
 ```go
 type Config struct {
-    env.WithGasEnv
+    gas.WithGasEnv
     Email Settings
 }
 
