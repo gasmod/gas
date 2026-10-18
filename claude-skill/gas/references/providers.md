@@ -108,12 +108,20 @@ type ConfigProvider interface {
 	SetDefault(key string, value any)
 	SetDefaults(values any) error
 	Set(key string, value any)
-	Bind(dest any, options ...config.BindOption) error
+	Bind(dest any, options ...BindOption) error
 	Get(key string) any
 	Find(key string) (value any, exist bool)
 	Values() map[string]any
 }
+
+type BindOptions struct{ Validate bool } // Validate defaults to true
+type BindOption func(*BindOptions)
 ```
+
+`*config.Config` implements it; `config.BindOption` and `config.WithValidate`
+are aliases of and helpers for these core types. Loading sources
+(`LoadProvider`) is done on the concrete config before registering it and is
+not part of the interface.
 
 ## TemplateProvider
 

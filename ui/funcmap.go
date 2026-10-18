@@ -8,7 +8,7 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/gasmod/gas/config/extensions/gasenv"
+	"github.com/gasmod/gas"
 )
 
 var uiBuildID = uuid.New().String()
@@ -91,9 +91,9 @@ func jsonFns() template.FuncMap {
 	}
 }
 
-func buildFns(env gasenv.Environment) template.FuncMap {
+func buildFns(env gas.Environment) template.FuncMap {
 	return template.FuncMap{
-		"env": func() gasenv.Environment {
+		"env": func() gas.Environment {
 			return env
 		},
 		"buildId": func() string {
@@ -106,7 +106,7 @@ func buildFns(env gasenv.Environment) template.FuncMap {
 }
 
 // DefaultFuncMap returns the template functions available in every template.
-func DefaultFuncMap(env gasenv.Environment) template.FuncMap {
+func DefaultFuncMap(env gas.Environment) template.FuncMap {
 	return merge(
 		strFns(),
 		timeFns(),

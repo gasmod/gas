@@ -67,7 +67,8 @@ func TestAPIKeyExpiredKeysAccumulate(t *testing.T) {
 	migMgr := pg.MigrationManager()
 
 	cfg := apikey.DefaultConfig()
-	svc := apikey.New(apikey.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
+	svc, err := apikey.New(apikey.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
+	require.NoError(t, err)
 	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
 	t.Cleanup(func() { _ = svc.Close(context.Background()) })
@@ -127,13 +128,14 @@ func TestAPIKeyScopeQueryingLimitation(t *testing.T) {
 	migMgr := pg.MigrationManager()
 
 	cfg := apikey.DefaultConfig()
-	svc := apikey.New(apikey.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
+	svc, err := apikey.New(apikey.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
+	require.NoError(t, err)
 	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
 	t.Cleanup(func() { _ = svc.Close(context.Background()) })
 
 	// Generate keys with different scopes.
-	_, _, err := svc.Generate(context.Background(), "user-scope", "read-key", []string{"read"})
+	_, _, err = svc.Generate(context.Background(), "user-scope", "read-key", []string{"read"})
 	require.NoError(t, err)
 	_, _, err = svc.Generate(
 		context.Background(),

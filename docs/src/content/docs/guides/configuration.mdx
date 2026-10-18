@@ -97,7 +97,7 @@ registered.
 ## Environments
 
 The `gasenv` extension resolves the current environment from config providers,
-then `GAS_ENV`, then a default of `Development`. Embed `gasenv.WithGasEnv` in
+then `GAS_ENV`, then a default of `Development`. Embed `gas.WithGasEnv` in
 your config struct and `Bind` populates it, giving you `IsProduction()`,
 `IsDevelopmentLike()`, and friends. Gas uses this itself, which is how `gas/ui`
 knows to rebuild templates on every request in development.

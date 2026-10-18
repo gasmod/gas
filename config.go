@@ -2,8 +2,6 @@ package gas
 
 import (
 	"time"
-
-	env "github.com/gasmod/gas/config/extensions/gasenv"
 )
 
 const (
@@ -23,7 +21,7 @@ const (
 // to the App. Sensible defaults are applied via DefaultConfig().
 type Config struct {
 	// Embedded GasEnv
-	env.WithGasEnv
+	WithGasEnv
 
 	Server ServerSettings
 }
