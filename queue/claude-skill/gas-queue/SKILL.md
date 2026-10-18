@@ -128,7 +128,7 @@ func receives `gas.ConfigProvider` and `gas.Logger` from the DI container.
 
 ```go
 type Config struct {
-    env.WithGasEnv
+    gas.WithGasEnv
     Queue Settings
 }
 

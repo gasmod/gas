@@ -3,7 +3,7 @@ package sqs
 import (
 	"time"
 
-	env "github.com/gasmod/gas/config/extensions/gasenv"
+	"github.com/gasmod/gas"
 )
 
 const (
@@ -14,7 +14,7 @@ const (
 
 // Config holds SQS queue settings.
 type Config struct {
-	env.WithGasEnv
+	gas.WithGasEnv
 
 	Queue Settings
 }

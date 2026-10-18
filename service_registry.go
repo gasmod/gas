@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"reflect"
 	"slices"
@@ -80,8 +81,8 @@ type ServiceContainer struct {
 	// len/cap, which govet fieldalignment wants after the pure-pointer fields.
 	instanceOrder []reflect.Type
 
-	// mu guards instances, initedInstances, instanceOrder, builds, stacks,
-	// and waiting. Constructors and Init run without it held.
+	// mu guards registrations, instances, initedInstances, instanceOrder,
+	// builds, stacks, and waiting. Constructors and Init run without it held.
 	mu sync.Mutex
 }
 
@@ -180,7 +181,9 @@ func (c *ServiceContainer) RegisterService[T any](ctor any, lifetime ServiceLife
 			)
 		}
 	}
+	c.mu.Lock()
 	c.registrations[t] = registration{ctor: ctor, lifetime: lifetime}
+	c.mu.Unlock()
 }
 
 // RegisterTransientService registers a constructor for type T with the
@@ -264,7 +267,7 @@ func (c *ServiceContainer) BuildAll(ctx context.Context) error {
 		if _, ok := c.lookupInstance(t); ok {
 			continue
 		}
-		reg := c.registrations[t]
+		reg, _ := c.findRegistration(t)
 		if reg.lifetime != ServiceLifetimeSingleton {
 			continue
 		}
@@ -508,7 +511,7 @@ func (c *ServiceContainer) resolveType(ctx context.Context, t reflect.Type) (ref
 	}
 
 	// 2. check registration
-	reg, ok := c.registrations[t]
+	reg, ok := c.findRegistration(t)
 	if !ok {
 		return reflect.Value{}, newDIError(ErrNotRegistered, "no registration for %v", t)
 	}
@@ -683,7 +686,7 @@ func (s *Scope) resolveType(ctx context.Context, t reflect.Type) (reflect.Value,
 	}
 
 	// 3. check registration and build
-	reg, ok := s.container.registrations[t]
+	reg, ok := s.container.findRegistration(t)
 	if !ok {
 		return reflect.Value{}, newDIError(ErrNotRegistered, "no registration for %v", t)
 	}
@@ -736,7 +739,7 @@ func (s *Scope) Close(ctx context.Context) error {
 // and from replacing an instance the scope has to close when it ends. It is
 // used by RequestLogger to put the per-request logger into its scoped slot.
 func (s *Scope) replaceScoped(t reflect.Type, v reflect.Value) bool {
-	reg, ok := s.container.registrations[t]
+	reg, ok := s.container.findRegistration(t)
 	if !ok || reg.lifetime != ServiceLifetimeScoped {
 		return false
 	}
@@ -769,7 +772,7 @@ func (c *ServiceContainer) invoke(
 	t reflect.Type,
 	r Resolver,
 ) (reflect.Value, error) {
-	reg, ok := c.registrations[t]
+	reg, ok := c.findRegistration(t)
 	if !ok {
 		return reflect.Value{}, newDIError(ErrNoConstructor, "no constructor for %v", t)
 	}
@@ -861,7 +864,8 @@ func (c *ServiceContainer) resolveCtorArgs(
 // validateLifetimes checks for captive dependency violations:
 // a singleton must not depend on a scoped or transient service.
 func (c *ServiceContainer) validateLifetimes() error {
-	for t, reg := range c.registrations {
+	regs := c.registrationsSnapshot()
+	for t, reg := range regs {
 		ctorType := reflect.TypeOf(reg.ctor)
 		for i := 0; i < ctorType.NumIn(); i++ {
 			dep := ctorType.In(i)
@@ -871,7 +875,7 @@ func (c *ServiceContainer) validateLifetimes() error {
 				continue
 			}
 
-			depReg, ok := c.registrations[dep]
+			depReg, ok := regs[dep]
 			if !ok {
 				continue // will fail at build time with a clearer message
 			}
@@ -895,11 +899,27 @@ func (c *ServiceContainer) validateLifetimes() error {
 	return nil
 }
 
+// findRegistration returns the registration for exactly t.
+func (c *ServiceContainer) findRegistration(t reflect.Type) (registration, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	reg, ok := c.registrations[t]
+	return reg, ok
+}
+
+// registrationsSnapshot returns a copy of the registrations, for callers that
+// range over them without holding c.mu.
+func (c *ServiceContainer) registrationsSnapshot() map[reflect.Type]registration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return maps.Clone(c.registrations)
+}
+
 func (c *ServiceContainer) canResolveType(t reflect.Type) bool {
 	if _, ok := c.lookupInstance(t); ok {
 		return true
 	}
-	_, ok := c.registrations[t]
+	_, ok := c.findRegistration(t)
 	return ok
 }
 
@@ -916,8 +936,9 @@ func (c *ServiceContainer) CanResolve[T any]() bool {
 // --- internal: topological sort ---
 
 func (c *ServiceContainer) topoSort() ([]reflect.Type, error) {
+	regs := c.registrationsSnapshot()
 	deps := make(map[reflect.Type][]reflect.Type)
-	for t, reg := range c.registrations {
+	for t, reg := range regs {
 		ctorType := reflect.TypeOf(reg.ctor)
 		for in := range ctorType.Ins() {
 			deps[t] = append(deps[t], in)
@@ -926,12 +947,12 @@ func (c *ServiceContainer) topoSort() ([]reflect.Type, error) {
 
 	// Kahn's algorithm
 	inDegree := make(map[reflect.Type]int)
-	for t := range c.registrations {
+	for t := range regs {
 		if _, ok := inDegree[t]; !ok {
 			inDegree[t] = 0
 		}
 		for _, d := range deps[t] {
-			if _, hasCtor := c.registrations[d]; hasCtor {
+			if _, hasCtor := regs[d]; hasCtor {
 				inDegree[t]++
 			}
 		}
@@ -946,7 +967,7 @@ func (c *ServiceContainer) topoSort() ([]reflect.Type, error) {
 
 	order := c.topoSortOrder(queue, deps, inDegree)
 
-	if len(order) != len(c.registrations) {
+	if len(order) != len(regs) {
 		return nil, newDIError(ErrCircularDependency, "circular dependency detected")
 	}
 	return order, nil
@@ -1218,7 +1239,7 @@ func validateServiceShape(t reflect.Type) error {
 
 // validateServiceShapes checks every registered type and pre-built instance.
 func (c *ServiceContainer) validateServiceShapes() error {
-	for t := range c.registrations {
+	for t := range c.registrationsSnapshot() {
 		if err := validateServiceShape(t); err != nil {
 			return err
 		}
