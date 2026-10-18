@@ -7,7 +7,7 @@ import (
 	database "github.com/gasmod/gas/database"
 )
 
-// validConfig returns a Config that passes Validate, as a base for mutation.
+// validConfig returns a Config that passes validation, as a base for mutation.
 func validConfig() *database.Config {
 	cfg := database.DefaultConfig()
 	cfg.Database.DSN = "postgres://user:pass@localhost:5432/db"
@@ -137,7 +137,7 @@ func TestValidate(t *testing.T) {
 			cfg := validConfig()
 			tt.mutate(cfg)
 
-			err := cfg.Validate()
+			err := database.ValidateConfig(cfg)
 			if tt.wantErr && err == nil {
 				t.Fatal("expected validation error, got nil")
 			}
@@ -177,7 +177,7 @@ func TestDefaultConfig_Values(t *testing.T) {
 	}
 
 	// DefaultConfig has no DSN, so it does not validate on its own.
-	if err := cfg.Validate(); err == nil {
+	if err := database.ValidateConfig(cfg); err == nil {
 		t.Error("expected DefaultConfig to fail validation without a DSN")
 	}
 }

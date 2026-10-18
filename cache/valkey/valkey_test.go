@@ -10,6 +10,7 @@ import (
 
 	"github.com/gasmod/gas"
 	cache "github.com/gasmod/gas/cache"
+	"github.com/gasmod/gas/config/configtest"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -25,45 +26,6 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if cfg.Cache.DialTimeout != defaultDialTimeout {
 		t.Errorf("DialTimeout = %v, want %v", cfg.Cache.DialTimeout, defaultDialTimeout)
-	}
-}
-
-func TestConfigValidate(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		modify  func(*Config)
-		name    string
-		wantErr bool
-	}{
-		{
-			name:    "valid defaults",
-			modify:  func(_ *Config) {},
-			wantErr: false,
-		},
-		{
-			name:    "empty addr",
-			modify:  func(c *Config) { c.Cache.Addr = "" },
-			wantErr: true,
-		},
-		{
-			name:    "DB negative",
-			modify:  func(c *Config) { c.Cache.DB = -1 },
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			cfg := DefaultConfig()
-			tt.modify(cfg)
-
-			err := cfg.Validate()
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Validate() error = %v, wantErr = %v", err, tt.wantErr)
-			}
-		})
 	}
 }
 
@@ -83,7 +45,10 @@ func TestInit_RetryStopsWhenContextEnds(t *testing.T) {
 			cfg.Cache.DialTimeout = 50 * time.Millisecond
 			cfg.Cache.ConnRetries = 5
 			cfg.Cache.ConnRetryInterval = time.Minute
-			s := New(WithConfig(cfg))(nil, gas.NewNopLogger()())
+			s, err := New(WithConfig(cfg))(nil, gas.NewNopLogger()())
+			if err != nil {
+				t.Fatal(err)
+			}
 
 			ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 			defer cancel()
@@ -94,7 +59,7 @@ func TestInit_RetryStopsWhenContextEnds(t *testing.T) {
 			}
 
 			start := time.Now()
-			err := s.Init(ctx)
+			err = s.Init(ctx)
 			if !errors.Is(err, want) {
 				t.Fatalf("Init error = %v, want %v", err, want)
 			}
@@ -108,7 +73,10 @@ func TestInit_RetryStopsWhenContextEnds(t *testing.T) {
 func TestUnstartedServiceReturnsErrClosed(t *testing.T) {
 	t.Parallel()
 
-	s := New(WithConfig(DefaultConfig()))(nil, gas.NewNopLogger()())
+	s, err := New(WithConfig(DefaultConfig()))(nil, gas.NewNopLogger()())
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 
 	// call turns a panic into an error, so every operation is checked
@@ -143,15 +111,23 @@ func TestUnstartedServiceReturnsErrClosed(t *testing.T) {
 	}
 }
 
-// A configuration that fails validation is returned with the service name,
-// so the error is identifiable without a log line.
+// A configuration that fails validation when bound is returned with the
+// service name, so the error is identifiable without a log line.
 func TestInit_InvalidConfigNamesService(t *testing.T) {
 	t.Parallel()
 
-	cfg := DefaultConfig()
-	cfg.Cache.Addr = ""
-	err := New(WithConfig(cfg))(nil, gas.NewNopLogger()()).Init(t.Context())
-	if err == nil || !strings.HasPrefix(err.Error(), "gas/cache/valkey: invalid configuration: ") {
+	provider, err := configtest.NewMockConfigWithValues(map[string]any{
+		"cache": map[string]any{"addr": ""},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc, err := New()(provider, gas.NewNopLogger()())
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = svc.Init(t.Context())
+	if err == nil || !strings.HasPrefix(err.Error(), "gas/cache/valkey: config binding: ") {
 		t.Errorf("Init() error = %v, want it prefixed with the service name", err)
 	}
 }

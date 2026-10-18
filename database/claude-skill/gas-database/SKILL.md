@@ -38,7 +38,7 @@ mode.
 ## Constructor
 
 ```go
-func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) *Service
+func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) (*Service, error)
 ```
 
 `New` captures options and returns a DI-injectable constructor. The returned
@@ -152,8 +152,16 @@ type Settings struct {
 }
 
 func DefaultConfig() *Config
-func (c *Config) Validate() error
 ```
+
+Validate tags: `Mode` `oneof=sql pgx`, `MaxOpenConns` `min=1,max=1000`,
+`ConnMaxLifetime` `min=1s,max=2h`, `ConnMaxIdleTime`
+`min=1s,max=1h,ltefield=ConnMaxLifetime`. `ConfigProvider.Bind` checks them; a
+config passed with `WithConfig` is not checked against them. `Init` checks, for
+every config, the rules that depend on the mode or on `WithConnector`: a known
+`Driver` and a non-empty `DSN` in ModeSQL without a connector, no connector in
+ModePgx, and in ModeSQL `MaxIdleConns` in 1..1000 and not above
+`MaxOpenConns`. There is no `Validate` method.
 
 ### Connection Retry
 

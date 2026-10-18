@@ -64,8 +64,8 @@ func WithConnector(c driver.Connector) Option {
 // New captures options and returns a DI-injectable constructor.
 // The returned func receives gas.ConfigProvider and gas.Logger from the
 // DI container.
-func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) *Service {
-	return func(cfgProvider gas.ConfigProvider, logger gas.Logger) *Service {
+func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) (*Service, error) {
+	return func(cfgProvider gas.ConfigProvider, logger gas.Logger) (*Service, error) {
 		s := &Service{
 			cfg:         DefaultConfig(),
 			cfgProvider: cfgProvider,
@@ -74,7 +74,7 @@ func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) *Service {
 		for _, opt := range opts {
 			opt(s)
 		}
-		return s
+		return s, nil
 	}
 }
 
@@ -87,18 +87,16 @@ func (s *Service) Name() string {
 // the database to verify connectivity. The ping and the retry backoff use
 // ctx, so a canceled or expired ctx stops the retries.
 func (s *Service) Init(ctx context.Context) error {
-	if !s.customConfigProvided {
-		// no custom config provided, try to bind from config service
-		if s.cfgProvider != nil {
-			if err := s.cfgProvider.Bind(s.cfg); err != nil {
-				return fmt.Errorf("%s: config binding: %w", s.Name(), err)
-			}
-		}
-	}
-
 	s.cfg.hasConnector = s.connector != nil
 
-	if err := s.cfg.Validate(); err != nil {
+	if !s.customConfigProvided && s.cfgProvider != nil {
+		// Bind checks the validate tags.
+		if err := s.cfgProvider.Bind(s.cfg); err != nil {
+			return fmt.Errorf("%s: config binding: %w", s.Name(), err)
+		}
+	}
+	// The rules a tag cannot express hold for any config, bound or given.
+	if err := checkRules(s.cfg); err != nil {
 		return fmt.Errorf("%s: invalid configuration: %w", s.Name(), err)
 	}
 
