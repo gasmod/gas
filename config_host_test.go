@@ -7,9 +7,10 @@ import (
 	"github.com/gasmod/gas"
 )
 
-// Server.Host is checked for shape, not resolved: a well-formed name passes
-// even when it does not resolve (.invalid never does, RFC 6761), and a
-// malformed one fails without a lookup.
+// Server.Host is checked for shape by its validate tag, not resolved: a
+// well-formed name passes even when it does not resolve (.invalid never does,
+// RFC 6761), and a malformed one fails without a lookup. hostname_rfc1123
+// takes no trailing dot.
 func TestConfig_ValidateHost(t *testing.T) {
 	t.Parallel()
 
@@ -25,7 +26,7 @@ func TestConfig_ValidateHost(t *testing.T) {
 		{"api.example.com", true},
 		{"unresolvable.invalid", true},
 		{"my-host", true},
-		{"example.com.", true},
+		{"example.com.", false},
 		{"", false},
 		{"bad host", false},
 		{"-bad.example.com", false},
