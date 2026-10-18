@@ -61,7 +61,10 @@ func newTestService(t *testing.T) *vk.Service {
 	cfg := vk.DefaultConfig()
 	cfg.Cache.Addr = fmt.Sprintf("%s:%s", host, port.Port())
 
-	svc := vk.New(vk.WithConfig(cfg))(nil, &gas.NopLogger{})
+	svc, err := vk.New(vk.WithConfig(cfg))(nil, &gas.NopLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := svc.Init(t.Context()); err != nil {
 		t.Fatalf("init service: %v", err)
 	}
@@ -952,7 +955,10 @@ func TestIntegration_InitBadAddress(t *testing.T) {
 	cfg.Cache.Addr = "127.0.0.1:1" // port 1 — almost certainly not running valkey
 	cfg.Cache.DialTimeout = 1 * time.Second
 
-	svc := vk.New(vk.WithConfig(cfg))(nil, &gas.NopLogger{})
+	svc, err := vk.New(vk.WithConfig(cfg))(nil, &gas.NopLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	done := make(chan error, 1)
 	go func() {

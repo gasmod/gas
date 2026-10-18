@@ -226,7 +226,7 @@ Stateless JWT authentication supporting HS256 (HMAC) and RS256 (RSA).
 ### Constructor
 
 ```go
-func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) *Service
+func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) (*Service, error)
 ```
 
 ### Options
@@ -281,7 +281,7 @@ type TokenClaims struct {
 
 ```go
 type Config struct {
-    env.WithGasEnv
+    gas.WithGasEnv
     JWT Settings
 }
 
@@ -312,7 +312,7 @@ Server-side session authentication backed by a database.
 ### Constructor
 
 ```go
-func New(opts ...Option) func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager, gas.ConfigProvider) *Service
+func New(opts ...Option) func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager, gas.ConfigProvider) (*Service, error)
 ```
 
 ### Options
@@ -377,7 +377,7 @@ type Session struct {
 
 ```go
 type Config struct {
-    env.WithGasEnv
+    gas.WithGasEnv
     Session Settings
 }
 
@@ -407,7 +407,7 @@ API key authentication with SHA-256 hashing and scope support.
 ### Constructor
 
 ```go
-func New(opts ...Option) func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager, gas.ConfigProvider) *Service
+func New(opts ...Option) func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager, gas.ConfigProvider) (*Service, error)
 ```
 
 ### Options
@@ -529,7 +529,7 @@ type KeyInfo struct {
 
 ```go
 type Config struct {
-    env.WithGasEnv
+    gas.WithGasEnv
     APIKey Settings
 }
 
@@ -553,7 +553,7 @@ once and consumed.
 ### Constructor
 
 ```go
-func New(opts ...Option) func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager, gas.ConfigProvider) *Service
+func New(opts ...Option) func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager, gas.ConfigProvider) (*Service, error)
 ```
 
 ### Options
@@ -597,7 +597,7 @@ func (s *Service) RevokeAllByPurpose(ctx context.Context, subject, purpose strin
 
 ```go
 type Config struct {
-    env.WithGasEnv
+    gas.WithGasEnv
     Token Settings
 }
 

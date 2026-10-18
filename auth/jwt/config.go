@@ -4,7 +4,7 @@ import (
 	"errors"
 	"time"
 
-	env "github.com/gasmod/gas/config/extensions/gasenv"
+	"github.com/gasmod/gas"
 )
 
 const (
@@ -14,7 +14,7 @@ const (
 
 // Config holds JWT service settings.
 type Config struct {
-	env.WithGasEnv
+	gas.WithGasEnv
 
 	JWT Settings
 }

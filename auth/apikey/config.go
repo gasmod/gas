@@ -1,7 +1,7 @@
 package apikey
 
 import (
-	env "github.com/gasmod/gas/config/extensions/gasenv"
+	"github.com/gasmod/gas"
 )
 
 const (
@@ -11,7 +11,7 @@ const (
 
 // Config holds API key service settings.
 type Config struct {
-	env.WithGasEnv
+	gas.WithGasEnv
 
 	APIKey Settings
 }

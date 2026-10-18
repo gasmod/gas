@@ -4,7 +4,7 @@ import (
 	"errors"
 	"time"
 
-	env "github.com/gasmod/gas/config/extensions/gasenv"
+	"github.com/gasmod/gas"
 )
 
 const (
@@ -16,7 +16,7 @@ const (
 
 // Config holds token service settings.
 type Config struct {
-	env.WithGasEnv
+	gas.WithGasEnv
 
 	Token Settings
 }
