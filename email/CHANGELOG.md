@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING: the SES constructors return an error.** `ses.New` and
+  `ses.NewWithCustomProvider` now return `func(<dependencies>) (*Service,
+  error)`, the `CONVENTIONS.md` shape. They cannot fail yet, so they return
+  nil; the change is the shape. Registering them with
+  `gas.WithSingletonService` is unchanged, since the container accepts a
+  trailing error. Code that calls the returned function directly must take
+  the second result (gas#106).
 - **BREAKING: `ses.Config.Validate` is removed; the rules are validate
   tags.** `Settings.Region` and `Settings.FromEmail` carry
   `validate:"required"`. `ConfigProvider.Bind` already validates the struct it
