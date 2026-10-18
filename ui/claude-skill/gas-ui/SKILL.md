@@ -209,7 +209,7 @@ settings:
 | `dict`          | `(pairs ...any) map`          | Create map from k/v pairs                   |
 | `list`          | `(items ...any) []any`        | Create slice                                |
 | `json`          | `(any) json.RawMessage`       | Marshal to JSON                             |
-| `env`           | `() gasenv.Environment`       | Environment passed to `DefaultFuncMap`      |
+| `env`           | `() gas.Environment`       | Environment passed to `DefaultFuncMap`      |
 | `buildId`       | `() string`                   | Stable build ID; fresh UUID per call in dev |
 
 `DefaultFuncMap` accepts an `env.Environment` to enable environment-aware
@@ -225,7 +225,7 @@ cache-busting, vs a stable ID in production).
 
 ```go
 type Config struct {
-    env.WithGasEnv              // dev mode = rebuild on every request
+    gas.WithGasEnv              // dev mode = rebuild on every request
     FuncMap template.FuncMap   // additional template functions (merged on top of defaults)
     UI      Settings
 }

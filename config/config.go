@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-playground/validator/v10"
 
+	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/config/internal/maputils"
 	"github.com/gasmod/gas/config/internal/reflection"
 	"github.com/gasmod/gas/config/providers"
@@ -261,7 +262,7 @@ func (c *Config) LoadWithContext(ctx context.Context) error {
 // Bind binds the configuration to the provided struct.
 func (c *Config) Bind(dest any, options ...BindOption) error {
 	opts := BindOptions{
-		validate: true,
+		Validate: true,
 	}
 
 	for _, opt := range options {
@@ -276,7 +277,7 @@ func (c *Config) Bind(dest any, options ...BindOption) error {
 		return fmt.Errorf("bind config: %w", err)
 	}
 
-	if opts.validate {
+	if opts.Validate {
 		if vErr := c.validate.Struct(dest); vErr != nil {
 			return fmt.Errorf("validate config: %w", vErr)
 		}
@@ -346,17 +347,17 @@ func keyToPathParts(key string) (pathParts []string, finalKey string) {
 	return parts[:len(parts)-1], parts[len(parts)-1]
 }
 
-// BindOptions defines options for binding configuration data to a struct.
-type BindOptions struct {
-	validate bool
-}
+// BindOptions holds the settings for one Bind call. It is gas.BindOptions, so
+// *Config satisfies gas.ConfigProvider.
+type BindOptions = gas.BindOptions
 
-// BindOption is a functional option for configuring Bind behavior by modifying BindOptions.
-type BindOption func(*BindOptions)
+// BindOption changes the BindOptions of one Bind call. It is gas.BindOption.
+type BindOption = gas.BindOption
 
-// WithValidate sets the validation flag in the BindOptions.
+// WithValidate turns struct-tag validation after binding on or off. It is on
+// by default.
 func WithValidate(validate bool) BindOption {
-	return func(c *BindOptions) {
-		c.validate = validate
+	return func(o *BindOptions) {
+		o.Validate = validate
 	}
 }

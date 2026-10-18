@@ -42,7 +42,8 @@ func newHS256Service(t *testing.T, key string, opts ...func(*jwtpkg.Config)) *jw
 	for _, fn := range opts {
 		fn(cfg)
 	}
-	svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, gas.NewNopLogger()())
+	svc, err := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, gas.NewNopLogger()())
+	require.NoError(t, err)
 	require.NoError(t, svc.Init(context.Background()))
 	return svc
 }
@@ -89,7 +90,8 @@ func newRS256Service(t *testing.T, opts ...func(*jwtpkg.Config)) *jwtpkg.Service
 	for _, fn := range opts {
 		fn(cfg)
 	}
-	svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, gas.NewNopLogger()())
+	svc, err := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, gas.NewNopLogger()())
+	require.NoError(t, err)
 	require.NoError(t, svc.Init(context.Background()))
 	return svc
 }
@@ -102,7 +104,7 @@ func TestConfigValidation(t *testing.T) {
 	t.Run("default config with signing key set validates", func(t *testing.T) {
 		cfg := jwtpkg.DefaultConfig()
 		cfg.JWT.SigningKey = "test-secret-key-that-is-32-bytes"
-		assert.NoError(t, cfg.Validate())
+		assert.NoError(t, jwtpkg.ValidateConfig(cfg))
 	})
 
 	t.Run("HS256 with empty signing key errors", func(t *testing.T) {
@@ -112,7 +114,7 @@ func TestConfigValidation(t *testing.T) {
 				Expiry:        15 * time.Minute,
 			},
 		}
-		err := cfg.Validate()
+		err := jwtpkg.ValidateConfig(cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "signing key is required")
 	})
@@ -124,7 +126,7 @@ func TestConfigValidation(t *testing.T) {
 				Expiry:        15 * time.Minute,
 			},
 		}
-		err := cfg.Validate()
+		err := jwtpkg.ValidateConfig(cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "public key path is required")
 	})
@@ -137,7 +139,7 @@ func TestConfigValidation(t *testing.T) {
 				Expiry:        15 * time.Minute,
 			},
 		}
-		err := cfg.Validate()
+		err := jwtpkg.ValidateConfig(cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "at least 32 bytes")
 	})
@@ -150,9 +152,9 @@ func TestConfigValidation(t *testing.T) {
 				Expiry:        0,
 			},
 		}
-		err := cfg.Validate()
+		err := jwtpkg.ValidateConfig(cfg)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "expiry must be positive")
+		assert.Contains(t, err.Error(), "Field validation for 'Expiry' failed on the 'gt' tag")
 	})
 
 	t.Run("negative expiry errors", func(t *testing.T) {
@@ -163,9 +165,9 @@ func TestConfigValidation(t *testing.T) {
 				Expiry:        -5 * time.Minute,
 			},
 		}
-		err := cfg.Validate()
+		err := jwtpkg.ValidateConfig(cfg)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "expiry must be positive")
+		assert.Contains(t, err.Error(), "Field validation for 'Expiry' failed on the 'gt' tag")
 	})
 
 	t.Run("unknown signing method PS256 errors", func(t *testing.T) {
@@ -175,9 +177,13 @@ func TestConfigValidation(t *testing.T) {
 				Expiry:        15 * time.Minute,
 			},
 		}
-		err := cfg.Validate()
+		err := jwtpkg.ValidateConfig(cfg)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "unsupported signing method")
+		assert.Contains(
+			t,
+			err.Error(),
+			"Field validation for 'SigningMethod' failed on the 'oneof' tag",
+		)
 	})
 }
 
@@ -328,9 +334,15 @@ func TestSignVerifyHS256(t *testing.T) {
 				Expiry: 15 * time.Minute,
 			},
 		}
-		svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, gas.NewNopLogger()())
+		svc, err := jwtpkg.New(
+			jwtpkg.WithConfig(cfg),
+		)(
+			&configtest.MockConfig{},
+			gas.NewNopLogger()(),
+		)
+		require.NoError(t, err)
 
-		err := svc.Init(context.Background())
+		err = svc.Init(context.Background())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "signing key not configured")
 	})
@@ -544,8 +556,14 @@ func TestRSAKeyLoading(t *testing.T) {
 				Expiry:         15 * time.Minute,
 			},
 		}
-		svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, gas.NewNopLogger()())
-		err := svc.Init(context.Background())
+		svc, err := jwtpkg.New(
+			jwtpkg.WithConfig(cfg),
+		)(
+			&configtest.MockConfig{},
+			gas.NewNopLogger()(),
+		)
+		require.NoError(t, err)
+		err = svc.Init(context.Background())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "load public key")
 	})
@@ -562,8 +580,14 @@ func TestRSAKeyLoading(t *testing.T) {
 				Expiry:        15 * time.Minute,
 			},
 		}
-		svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, gas.NewNopLogger()())
-		err := svc.Init(context.Background())
+		svc, err := jwtpkg.New(
+			jwtpkg.WithConfig(cfg),
+		)(
+			&configtest.MockConfig{},
+			gas.NewNopLogger()(),
+		)
+		require.NoError(t, err)
+		err = svc.Init(context.Background())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "decode PEM")
 	})
@@ -582,8 +606,14 @@ func TestRSAKeyLoading(t *testing.T) {
 				Expiry:         15 * time.Minute,
 			},
 		}
-		svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, gas.NewNopLogger()())
-		err := svc.Init(context.Background())
+		svc, err := jwtpkg.New(
+			jwtpkg.WithConfig(cfg),
+		)(
+			&configtest.MockConfig{},
+			gas.NewNopLogger()(),
+		)
+		require.NoError(t, err)
+		err = svc.Init(context.Background())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "decode PEM")
 	})

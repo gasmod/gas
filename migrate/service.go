@@ -39,12 +39,12 @@ var (
 )
 
 // New returns a DI-injectable constructor for the migration manager service.
-func New() func(gas.DatabaseProvider) *Service {
-	return func(db gas.DatabaseProvider) *Service {
+func New() func(gas.DatabaseProvider) (*Service, error) {
+	return func(db gas.DatabaseProvider) (*Service, error) {
 		return &Service{
 			db:         db,
 			migrations: make(map[string][]gas.Migration),
-		}
+		}, nil
 	}
 }
 

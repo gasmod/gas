@@ -30,6 +30,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING: core no longer imports the config module.** Core's
+  `ConfigProvider` named `config.BindOption` and `providers.Provider`, and
+  core's `Config` embedded `gasenv.WithGasEnv`, so core required
+  `github.com/gasmod/gas/config` although modules are meant to meet only
+  through core. The types now live in core and config implements them:
+  `gas.BindOption` and `gas.BindOptions` (`Bind`'s options; `Validate`
+  defaults to true), `gas.Environment` with `gas.EnvDevelopment`,
+  `gas.EnvTesting`, `gas.EnvStaging` and `gas.EnvProduction`, and
+  `gas.WithGasEnv`. `gas.ConfigProvider` drops `LoadProvider` and
+  `LoadProviderContext`: loading sources is setup on the concrete
+  `*config.Config` before it is registered, and nothing resolved through the
+  interface called them. A custom `ConfigProvider` keeps working, since
+  `config.BindOption` is now an alias of `gas.BindOption`; code that called
+  `LoadProvider` through `gas.ConfigProvider` must call it on the
+  `*config.Config` instead. The built-in modules embed `gas.WithGasEnv` and no
+  longer import `config/extensions/gasenv` (KI-030, #105).
 - **A panicking event subscriber no longer takes the process down.** `Emit`
   ran each subscriber on a bare goroutine, so one panicking handler crashed
   the process, and that was documented as intended. `Emit` now recovers it:
@@ -102,6 +118,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Registering a service while the container resolves is no longer a data
+  race.** The container's mutex guarded its instance maps but not its
+  registrations, so a `Register*Service` call after startup raced with any
+  concurrent `Resolve`, `CanResolve`, or request-scope resolution (`go test
+  -race` reported it). The registrations are now guarded by the same mutex;
+  validation and the topological sort work on a copy taken under it (#11).
 - **`PrincipalFromContext` treats a typed-nil principal as absent.** A nil
   pointer stored with `WithPrincipal` came back as a non-nil `Principal`, so
   a `!= nil` check passed and `Context.Principal` returned it with no error;

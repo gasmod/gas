@@ -37,7 +37,8 @@ func setupSessionService(t *testing.T) *session.Service {
 	cfg.Session.CleanupInterval = 0  // disable background cleanup by default
 	cfg.Session.CookieSecure = false // tests run without TLS
 
-	svc := session.New(session.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
+	svc, err := session.New(session.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
+	require.NoError(t, err)
 
 	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
@@ -55,7 +56,8 @@ func setupSessionServiceWithCfg(t *testing.T, cfg *session.Config) *session.Serv
 	logger := testutil.NewNopLogger()
 	migMgr := pg.MigrationManager()
 
-	svc := session.New(session.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
+	svc, err := session.New(session.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
+	require.NoError(t, err)
 	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
 	t.Cleanup(func() { _ = svc.Close(context.Background()) })

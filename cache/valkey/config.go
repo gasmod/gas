@@ -1,10 +1,9 @@
 package valkey
 
 import (
-	"errors"
 	"time"
 
-	env "github.com/gasmod/gas/config/extensions/gasenv"
+	"github.com/gasmod/gas"
 )
 
 const (
@@ -18,22 +17,22 @@ const (
 
 // Config holds Valkey cache settings.
 type Config struct {
-	env.WithGasEnv
+	gas.WithGasEnv
 
 	Cache Settings
 }
 
 // Settings represents the configuration for the Valkey cache.
 type Settings struct {
-	// Addr is the Valkey server address in host:port format.
-	Addr string
+	// Addr is the Valkey server address in host:port format. Required.
+	Addr string `validate:"required"`
 
 	// Password is the authentication password. Empty means no auth.
 	//nolint:gosec // intentional
 	Password string
 
-	// DB is the database number to use (0-15).
-	DB int
+	// DB is the database number to use (0-15). Must not be negative.
+	DB int `validate:"min=0"`
 
 	// DialTimeout is the timeout for establishing new connections.
 	DialTimeout time.Duration
@@ -63,15 +62,4 @@ func DefaultConfig() *Config {
 			ConnRetryInterval: defaultConnRetryInterval,
 		},
 	}
-}
-
-// Validate checks the Config for correctness.
-func (c *Config) Validate() error {
-	if c.Cache.Addr == "" {
-		return errors.New("Cache.Addr must not be empty")
-	}
-	if c.Cache.DB < 0 {
-		return errors.New("Cache.DB must be >= 0")
-	}
-	return nil
 }
