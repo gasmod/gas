@@ -142,3 +142,40 @@ func TestMetadataValue(t *testing.T) {
 		t.Fatalf("Value(missing) = %v, want nil", v)
 	}
 }
+
+// ptrPrincipal is a gas.Principal implemented on a pointer, so a nil
+// *ptrPrincipal is a typed-nil Principal.
+type ptrPrincipal struct{ subject string }
+
+func (p *ptrPrincipal) Subject() string                 { return p.subject }
+func (p *ptrPrincipal) Scheme() string                  { return "test" }
+func (p *ptrPrincipal) CredentialID() string            { return "cred-1" }
+func (p *ptrPrincipal) Metadata() gas.PrincipalMetadata { return nil }
+
+// A typed-nil Principal stored in the context counts as absent, so a
+// downstream nil check cannot pass on it and calling its methods cannot
+// panic.
+func TestPrincipalFromContext_TypedNil(t *testing.T) {
+	t.Parallel()
+
+	var typedNil *ptrPrincipal
+	ctx := gas.WithPrincipal(context.Background(), typedNil)
+	if p := gas.PrincipalFromContext(ctx); p != nil {
+		t.Fatalf("PrincipalFromContext(typed nil stored) = %#v, want nil", p)
+	}
+}
+
+// Context.Principal treats a typed-nil Principal as unauthenticated.
+func TestContext_Principal_TypedNilStored(t *testing.T) {
+	t.Parallel()
+
+	var typedNil *ptrPrincipal
+	router, seen := principalRouter(t, true, typedNil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, httptest.NewRequest("GET", "/me", nil))
+
+	var gerr *gas.Error
+	if !errors.As(*seen, &gerr) || gerr.Code != gas.CodeUnauthorized {
+		t.Fatalf("Principal() error = %v, want a 401 *gas.Error", *seen)
+	}
+}

@@ -1,6 +1,9 @@
 package gas
 
-import "context"
+import (
+	"context"
+	"reflect"
+)
 
 // Principal represents an authenticated identity. Subject is the stable user
 // identifier, Scheme identifies the authentication method (e.g. "jwt",
@@ -47,11 +50,19 @@ func WithPrincipal(ctx context.Context, principal Principal) context.Context {
 }
 
 // PrincipalFromContext retrieves the Principal from the context, or nil if
-// no principal is present.
+// no principal is present. A typed-nil Principal (a nil pointer of a type
+// implementing Principal) counts as absent and also yields nil, so a caller's
+// nil check cannot pass on it.
 func PrincipalFromContext(ctx context.Context) Principal {
 	principal, ok := ctx.Value(principalKey{}).(Principal)
-	if !ok {
+	if !ok || isNilPointer(principal) {
 		return nil
 	}
 	return principal
+}
+
+// isNilPointer reports whether p holds a nil pointer.
+func isNilPointer(p Principal) bool {
+	v := reflect.ValueOf(p)
+	return v.Kind() == reflect.Pointer && v.IsNil()
 }

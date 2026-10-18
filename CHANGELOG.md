@@ -83,6 +83,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`PrincipalFromContext` treats a typed-nil principal as absent.** A nil
+  pointer stored with `WithPrincipal` came back as a non-nil `Principal`, so
+  a `!= nil` check passed and `Context.Principal` returned it with no error;
+  calling its methods could then panic. It now returns nil, and
+  `Context.Principal` answers 401, matching what the auth middleware does
+  since the typed-nil fix there (part of #12).
 - **`App.Run` stops the App when the server fails.** When `Serve` returned an
   error, such as a port already in use, `Run` returned it without calling
   `Stop`, leaving every service `Start` had initialized open. It now runs
