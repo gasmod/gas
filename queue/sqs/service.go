@@ -110,20 +110,16 @@ func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) (*Service, error) 
 // Name returns the service identifier.
 func (s *Service) Name() string { return serviceName }
 
-// Init validates the configuration and creates the SQS client. ctx bounds
-// loading the AWS configuration and fetching the credentials, so Init fails
-// when no credentials can be found.
+// Init binds the configuration and creates the SQS client. A config bound
+// from the ConfigProvider is validated by Bind against its validate tags; one
+// passed with WithConfig is used as given. ctx bounds loading the AWS
+// configuration and fetching the credentials, so Init fails when no
+// credentials can be found.
 func (s *Service) Init(ctx context.Context) error {
-	if !s.customConfigProvided {
-		if s.cfgProvider != nil {
-			if err := s.cfgProvider.Bind(s.cfg); err != nil {
-				return fmt.Errorf("%s: config binding: %w", s.Name(), err)
-			}
+	if !s.customConfigProvided && s.cfgProvider != nil {
+		if err := s.cfgProvider.Bind(s.cfg); err != nil {
+			return fmt.Errorf("%s: config binding: %w", s.Name(), err)
 		}
-	}
-
-	if err := s.cfg.Validate(); err != nil {
-		return fmt.Errorf("%s: invalid configuration: %w", s.Name(), err)
 	}
 
 	if !s.customClientProvided {

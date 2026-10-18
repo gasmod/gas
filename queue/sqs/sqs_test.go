@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 
 	"github.com/gasmod/gas"
+	"github.com/gasmod/gas/config/configtest"
 	queue "github.com/gasmod/gas/queue"
 )
 
@@ -90,46 +91,6 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if cfg.Queue.WaitTimeSeconds != defaultWaitTimeSeconds {
 		t.Errorf("WaitTimeSeconds = %d, want %d", cfg.Queue.WaitTimeSeconds, defaultWaitTimeSeconds)
-	}
-}
-
-func TestConfigValidate(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		modify  func(*Config)
-		name    string
-		wantErr bool
-	}{
-		{name: "valid defaults", modify: func(_ *Config) {}, wantErr: false},
-		{name: "empty region", modify: func(c *Config) { c.Queue.Region = "" }, wantErr: true},
-		{
-			name:    "wait too low",
-			modify:  func(c *Config) { c.Queue.WaitTimeSeconds = -1 },
-			wantErr: true,
-		},
-		{
-			name:    "wait too high",
-			modify:  func(c *Config) { c.Queue.WaitTimeSeconds = 21 },
-			wantErr: true,
-		},
-		{
-			name:    "negative visibility",
-			modify:  func(c *Config) { c.Queue.VisibilityTimeout = -1 },
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			cfg := DefaultConfig()
-			tt.modify(cfg)
-			err := cfg.Validate()
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
 	}
 }
 
@@ -401,19 +362,19 @@ func TestCheckReadyAfterClose(t *testing.T) {
 	}
 }
 
-// A configuration that fails validation is returned with the service name,
-// so the error is identifiable without a log line.
+// A configuration that fails validation when bound is returned with the
+// service name, so the error is identifiable without a log line.
 func TestInit_InvalidConfigNamesService(t *testing.T) {
 	t.Parallel()
 
-	cfg := DefaultConfig()
-	cfg.Queue.Region = ""
-	svc, err := New(WithConfig(cfg))(nil, gas.NewNopLogger()())
+	provider, err := configtest.NewMockConfigWithValues(map[string]any{
+		"queue": map[string]any{"region": ""},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = svc.Init(t.Context())
-	if err == nil || !strings.HasPrefix(err.Error(), serviceName+": invalid configuration: ") {
+	err = New()(provider, gas.NewNopLogger()()).Init(t.Context())
+	if err == nil || !strings.HasPrefix(err.Error(), serviceName+": config binding: ") {
 		t.Errorf("Init() error = %v, want it prefixed with the service name", err)
 	}
 }

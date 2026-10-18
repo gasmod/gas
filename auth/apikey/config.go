@@ -1,10 +1,7 @@
 package apikey
 
 import (
-	"encoding/base64"
-	"errors"
-
-	env "github.com/gasmod/gas/config/extensions/gasenv"
+	"github.com/gasmod/gas"
 )
 
 const (
@@ -14,7 +11,7 @@ const (
 
 // Config holds API key service settings.
 type Config struct {
-	env.WithGasEnv
+	gas.WithGasEnv
 
 	APIKey Settings
 }
@@ -26,7 +23,7 @@ type Settings struct {
 	// Prefix is prepended to generated keys for identification.
 	Prefix string
 	// KeyLength is the number of random bytes used for key generation.
-	KeyLength int
+	KeyLength int `validate:"min=16"`
 }
 
 // DefaultConfig returns a Config with sensible defaults.
@@ -37,20 +34,4 @@ func DefaultConfig() *Config {
 			KeyLength:  defaultKeyLength,
 		},
 	}
-}
-
-// Validate checks the Config for correctness.
-func (c *Config) Validate() error {
-	if c.APIKey.KeyLength < 16 {
-		return errors.New("apikey: key length must be at least 16 bytes")
-	}
-	// The generated key is base64-encoded (no padding), so its character
-	// length is ceil(KeyLength * 4/3). The key prefix excerpt takes 8
-	// characters from the random portion. Ensure the random part is long
-	// enough so that fullKey[:len(Prefix)+8] never panics.
-	randomLen := base64.URLEncoding.WithPadding(base64.NoPadding).EncodedLen(c.APIKey.KeyLength)
-	if randomLen < 8 {
-		return errors.New("apikey: key length too short to produce an 8-character prefix excerpt")
-	}
-	return nil
 }

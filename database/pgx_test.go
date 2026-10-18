@@ -34,7 +34,10 @@ func newPgxService(t *testing.T) *database.Service {
 	cfg.Database.Mode = database.ModePgx
 	cfg.Database.DSN = dsn
 
-	s := database.New(database.WithConfig(cfg))(nil, gas.NewNopLogger()())
+	s, err := database.New(database.WithConfig(cfg))(nil, gas.NewNopLogger()())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := s.Init(t.Context()); err != nil {
 		t.Fatalf("Init in pgx mode: %v", err)
 	}
