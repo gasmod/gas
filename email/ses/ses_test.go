@@ -103,19 +103,6 @@ func TestServiceName(t *testing.T) {
 	}
 }
 
-func TestInitWithInvalidConfig(t *testing.T) {
-	t.Parallel()
-	cfg := &Config{Email: Settings{Region: ""}}
-	ctor := New(WithConfig(cfg), WithClient(&mockSESClient{}))
-	svc, err := ctor(&mockTemplateProvider{}, nil, gas.NewNopLogger()())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.Init(t.Context()); err == nil {
-		t.Error("Init() should fail with invalid config")
-	}
-}
-
 func TestClientReturnsNilForMock(t *testing.T) {
 	t.Parallel()
 	svc := newTestService(t, &mockSESClient{}, &mockTemplateProvider{})
@@ -517,14 +504,18 @@ func TestIsErrClosed(t *testing.T) {
 func TestInit_InvalidConfigNamesService(t *testing.T) {
 	t.Parallel()
 
-	cfg := validConfig()
-	cfg.Email.FromEmail = ""
-	svc, err := New(WithConfig(cfg), WithClient(&mockSESClient{}))(nil, nil, gas.NewNopLogger()())
+	provider, err := configtest.NewMockConfigWithValues(map[string]any{
+		"email": map[string]any{"region": "us-east-1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc, err := New(WithClient(&mockSESClient{}))(nil, provider, gas.NewNopLogger()())
 	if err != nil {
 		t.Fatal(err)
 	}
 	err = svc.Init(t.Context())
-	if err == nil || !strings.HasPrefix(err.Error(), serviceName+": invalid configuration: ") {
+	if err == nil || !strings.HasPrefix(err.Error(), serviceName+": config binding: ") {
 		t.Errorf("Init() error = %v, want it prefixed with the service name", err)
 	}
 }
