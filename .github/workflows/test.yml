@@ -20,9 +20,14 @@ jobs:
   # every module that depends on one of them (see scripts/changed-modules.sh).
   # A branch is compared with its merge base on main, a push to main with the
   # commit it moved from. Release tags run every module (release.yml).
+  #
+  # The check jobs still run a matrix entry for every module, because the
+  # ruleset on main requires each module's check by name. An entry for a
+  # module that is not selected skips its steps and passes.
   detect-modules:
     runs-on: ubuntu-latest
     outputs:
+      all: ${{ steps.set-modules.outputs.all }}
       modules: ${{ steps.set-modules.outputs.modules }}
     steps:
       - uses: actions/checkout@v7
@@ -43,20 +48,25 @@ jobs:
           modules="$(./scripts/changed-modules.sh "$base")"
           echo "Checking: $modules"
           echo "modules=$modules" >> "$GITHUB_OUTPUT"
+          echo "all=$(go list -m -json | jq -sc '[.[].Dir]')" >> "$GITHUB_OUTPUT"
 
   golangci-lint:
     needs: detect-modules
-    if: needs.detect-modules.outputs.modules != '[]'
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        modules: ${{ fromJSON(needs.detect-modules.outputs.modules) }}
+        modules: ${{ fromJSON(needs.detect-modules.outputs.all) }}
+    env:
+      SELECTED: ${{ contains(fromJSON(needs.detect-modules.outputs.modules), matrix.modules) }}
     steps:
       - uses: actions/checkout@v7
+        if: env.SELECTED == 'true'
       - uses: actions/setup-go@v7
+        if: env.SELECTED == 'true'
         with:
           go-version: ${{ env.GO_VERSION }}
       - name: golangci-lint ${{ matrix.modules }}
+        if: env.SELECTED == 'true'
         uses: golangci/golangci-lint-action@v9
         with:
           version: ${{ env.GOLANGCI_LINT_VERSION }}
@@ -64,48 +74,60 @@ jobs:
 
   go-test:
     needs: detect-modules
-    if: needs.detect-modules.outputs.modules != '[]'
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        modules: ${{ fromJSON(needs.detect-modules.outputs.modules) }}
+        modules: ${{ fromJSON(needs.detect-modules.outputs.all) }}
+    env:
+      SELECTED: ${{ contains(fromJSON(needs.detect-modules.outputs.modules), matrix.modules) }}
     steps:
       - uses: actions/checkout@v7
+        if: env.SELECTED == 'true'
       - uses: actions/setup-go@v7
+        if: env.SELECTED == 'true'
         with:
           go-version: ${{ env.GO_VERSION }}
       - name: go test ${{ matrix.modules }}
+        if: env.SELECTED == 'true'
         run: go test -v -race -short ./...
         working-directory: ${{ matrix.modules }}
 
   go-vet:
     needs: detect-modules
-    if: needs.detect-modules.outputs.modules != '[]'
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        modules: ${{ fromJSON(needs.detect-modules.outputs.modules) }}
+        modules: ${{ fromJSON(needs.detect-modules.outputs.all) }}
+    env:
+      SELECTED: ${{ contains(fromJSON(needs.detect-modules.outputs.modules), matrix.modules) }}
     steps:
       - uses: actions/checkout@v7
+        if: env.SELECTED == 'true'
       - uses: actions/setup-go@v7
+        if: env.SELECTED == 'true'
         with:
           go-version: ${{ env.GO_VERSION }}
       - name: go vet ${{ matrix.modules }}
+        if: env.SELECTED == 'true'
         run: go vet ./...
         working-directory: ${{ matrix.modules }}
 
   govulncheck:
     needs: detect-modules
-    if: needs.detect-modules.outputs.modules != '[]'
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        modules: ${{ fromJSON(needs.detect-modules.outputs.modules) }}
+        modules: ${{ fromJSON(needs.detect-modules.outputs.all) }}
+    env:
+      SELECTED: ${{ contains(fromJSON(needs.detect-modules.outputs.modules), matrix.modules) }}
     steps:
       - uses: actions/checkout@v7
+        if: env.SELECTED == 'true'
       - uses: actions/setup-go@v7
+        if: env.SELECTED == 'true'
         with:
           go-version: ${{ env.GO_VERSION }}
       - name: govulncheck ${{ matrix.modules }}
+        if: env.SELECTED == 'true'
         run: go run golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }} ./...
         working-directory: ${{ matrix.modules }}
