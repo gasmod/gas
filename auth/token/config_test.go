@@ -14,7 +14,7 @@ func TestDefaultConfig_Validates(t *testing.T) {
 	t.Run("default config passes validation", func(t *testing.T) {
 		cfg := token.DefaultConfig()
 
-		err := cfg.Validate()
+		err := token.ValidateConfig(cfg)
 
 		require.NoError(t, err)
 	})
@@ -25,10 +25,10 @@ func TestConfig_Validate_DefaultTTL_Zero(t *testing.T) {
 		cfg := token.DefaultConfig()
 		cfg.Token.DefaultTTL = 0
 
-		err := cfg.Validate()
+		err := token.ValidateConfig(cfg)
 
 		require.Error(t, err)
-		assert.Equal(t, "token: default TTL must be positive", err.Error())
+		assert.Contains(t, err.Error(), "Field validation for 'DefaultTTL' failed on the 'gt' tag")
 	})
 }
 
@@ -37,10 +37,10 @@ func TestConfig_Validate_DefaultTTL_Negative(t *testing.T) {
 		cfg := token.DefaultConfig()
 		cfg.Token.DefaultTTL = -1
 
-		err := cfg.Validate()
+		err := token.ValidateConfig(cfg)
 
 		require.Error(t, err)
-		assert.Equal(t, "token: default TTL must be positive", err.Error())
+		assert.Contains(t, err.Error(), "Field validation for 'DefaultTTL' failed on the 'gt' tag")
 	})
 }
 
@@ -49,10 +49,14 @@ func TestConfig_Validate_TokenLength_TooShort(t *testing.T) {
 		cfg := token.DefaultConfig()
 		cfg.Token.TokenLength = 15
 
-		err := cfg.Validate()
+		err := token.ValidateConfig(cfg)
 
 		require.Error(t, err)
-		assert.Equal(t, "token: token length must be at least 16 bytes", err.Error())
+		assert.Contains(
+			t,
+			err.Error(),
+			"Field validation for 'TokenLength' failed on the 'min' tag",
+		)
 	})
 }
 
@@ -61,7 +65,7 @@ func TestConfig_Validate_TokenLength_Minimum(t *testing.T) {
 		cfg := token.DefaultConfig()
 		cfg.Token.TokenLength = 16
 
-		err := cfg.Validate()
+		err := token.ValidateConfig(cfg)
 
 		require.NoError(t, err)
 	})
@@ -72,7 +76,7 @@ func TestConfig_Validate_CleanupTimeout_Zero(t *testing.T) {
 		cfg := token.DefaultConfig()
 		cfg.Token.CleanupTimeout = 0
 
-		err := cfg.Validate()
+		err := token.ValidateConfig(cfg)
 
 		require.Error(t, err)
 		assert.Equal(
@@ -89,7 +93,7 @@ func TestConfig_Validate_CleanupTimeout_ZeroWithCleanupDisabled(t *testing.T) {
 		cfg.Token.CleanupInterval = 0
 		cfg.Token.CleanupTimeout = 0
 
-		err := cfg.Validate()
+		err := token.ValidateConfig(cfg)
 
 		require.NoError(t, err)
 	})
