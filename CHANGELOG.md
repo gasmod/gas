@@ -143,6 +143,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `gas.RequestLogger[gas.Logger]()` with the singleton is now safe too, with
   the request logger on the context only.
 
+### Security
+
+- **`BindJSON` caps the request body.** It decoded straight off the body with
+  no limit, so large JSON bodies could exhaust memory within the read
+  timeout. It now reads at most `Server.MaxJSONBodyBytes` (new, 1 MiB by
+  default; zero or negative turns the cap off) and returns a 413 `*Error`
+  with the new code `gas.CodePayloadTooLarge`, wrapping the
+  `*http.MaxBytesError`. A Context built with `NewContext` gets the same 1 MiB
+  default, and the new `gas.WithMaxJSONBodyBytes` option changes it. Handlers
+  that read the body themselves are not capped (#8).
+
 ## [0.5.0] - 2026-09-19
 
 ### Added

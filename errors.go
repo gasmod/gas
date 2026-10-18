@@ -22,6 +22,7 @@ const (
 	CodeRateLimited      = "rate_limited"
 	CodeInternal         = "internal_error"
 	CodeUnavailable      = "service_unavailable"
+	CodePayloadTooLarge  = "payload_too_large"
 )
 
 // FieldError describes a single field-level validation failure. Field carries
