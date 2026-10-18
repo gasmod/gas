@@ -63,7 +63,7 @@ cache.ErrClosed      // returned when an operation is attempted on a service tha
 ### Constructor
 
 ```go
-func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) *Service
+func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) (*Service, error)
 ```
 
 `New` captures options and returns a DI-injectable constructor. The returned
@@ -102,7 +102,7 @@ func receives `gas.ConfigProvider` and `gas.Logger` from the DI container.
 
 ```go
 type Config struct {
-    env.WithGasEnv
+    gas.WithGasEnv
     Cache Settings
 }
 
@@ -113,7 +113,6 @@ type Settings struct {
 }
 
 func DefaultConfig() *Config
-func (c *Config) Validate() error
 ```
 
 ## Valkey Backend
@@ -121,7 +120,7 @@ func (c *Config) Validate() error
 ### Constructor
 
 ```go
-func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) *Service
+func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) (*Service, error)
 ```
 
 ### Options
@@ -187,14 +186,14 @@ type ValkeyProvider interface {
 
 ```go
 type Config struct {
-    env.WithGasEnv
+    gas.WithGasEnv
     Cache Settings
 }
 
 type Settings struct {
-    Addr              string        // default "localhost:6379"
+    Addr              string        `validate:"required"` // default "localhost:6379"
     Password          string        // empty = no auth
-    DB                int           // 0-15, default 0
+    DB                int           `validate:"min=0"`    // 0-15, default 0
     DialTimeout       time.Duration // default 5s
     WriteTimeout      time.Duration // default 3s
     ConnRetries       int           // default 0 (no retries)
@@ -202,8 +201,11 @@ type Settings struct {
 }
 
 func DefaultConfig() *Config
-func (c *Config) Validate() error  // rejects empty Addr
 ```
+
+The rules are `validate` tags, which `ConfigProvider.Bind` checks when `Init`
+binds the config. A config passed with `WithConfig` is used as given. Neither
+cache config has a `Validate` method.
 
 ## Test Mock
 

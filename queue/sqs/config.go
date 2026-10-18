@@ -1,10 +1,9 @@
 package sqs
 
 import (
-	"errors"
 	"time"
 
-	env "github.com/gasmod/gas/config/extensions/gasenv"
+	"github.com/gasmod/gas"
 )
 
 const (
@@ -15,15 +14,15 @@ const (
 
 // Config holds SQS queue settings.
 type Config struct {
-	env.WithGasEnv
+	gas.WithGasEnv
 
 	Queue Settings
 }
 
 // Settings represents the configuration for the SQS queue service.
 type Settings struct {
-	// Region is the AWS region for the SQS service.
-	Region string
+	// Region is the AWS region for the SQS service. Required.
+	Region string `validate:"required"`
 
 	// Endpoint is an optional custom endpoint URL (e.g. for LocalStack).
 	// Empty means use the default AWS endpoint.
@@ -38,12 +37,12 @@ type Settings struct {
 	SecretAccessKey string
 
 	// VisibilityTimeout is how long a dequeued message stays invisible
-	// to other consumers. SQS max is 12 hours.
-	VisibilityTimeout time.Duration
+	// to other consumers. SQS max is 12 hours. Must not be negative.
+	VisibilityTimeout time.Duration `validate:"gte=0s"`
 
 	// WaitTimeSeconds is the long-poll duration for ReceiveMessage calls.
 	// Must be 0-20 (SQS hard limit).
-	WaitTimeSeconds int
+	WaitTimeSeconds int `validate:"min=0,max=20"`
 }
 
 // DefaultConfig returns a Config with sensible defaults.
@@ -55,18 +54,4 @@ func DefaultConfig() *Config {
 			WaitTimeSeconds:   defaultWaitTimeSeconds,
 		},
 	}
-}
-
-// Validate checks the Config for correctness.
-func (c *Config) Validate() error {
-	if c.Queue.Region == "" {
-		return errors.New("Queue.Region must not be empty")
-	}
-	if c.Queue.WaitTimeSeconds < 0 || c.Queue.WaitTimeSeconds > 20 {
-		return errors.New("Queue.WaitTimeSeconds must be between 0 and 20")
-	}
-	if c.Queue.VisibilityTimeout < 0 {
-		return errors.New("Queue.VisibilityTimeout must not be negative")
-	}
-	return nil
 }

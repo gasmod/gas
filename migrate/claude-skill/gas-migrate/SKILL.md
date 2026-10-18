@@ -44,7 +44,7 @@ import migrate "github.com/gasmod/gas/migrate"
 ## Constructor
 
 ```go
-func New() func(gas.DatabaseProvider) *Service
+func New() func(gas.DatabaseProvider) (*Service, error)
 ```
 
 Returns a curried DI-injectable constructor. The inner function receives

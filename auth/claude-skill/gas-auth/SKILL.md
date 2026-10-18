@@ -226,7 +226,7 @@ Stateless JWT authentication supporting HS256 (HMAC) and RS256 (RSA).
 ### Constructor
 
 ```go
-func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) *Service
+func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) (*Service, error)
 ```
 
 ### Options
@@ -281,7 +281,7 @@ type TokenClaims struct {
 
 ```go
 type Config struct {
-    env.WithGasEnv
+    gas.WithGasEnv
     JWT Settings
 }
 
@@ -296,8 +296,11 @@ type Settings struct {
 }
 
 func DefaultConfig() *Config
-func (c *Config) Validate() error
 ```
+
+Tags: `SigningMethod` `oneof=HS256 RS256`, `Expiry` `gt=0s`. The key material
+the method needs (HS256: `SigningKey` of 32+ bytes; RS256: `PublicKeyPath`) is
+checked in `Init`, since a tag cannot express it.
 
 Validation: HS256 requires `SigningKey`, RS256 requires `PublicKeyPath`,
 expiry must be positive. Unknown signing methods are rejected.
@@ -309,7 +312,7 @@ Server-side session authentication backed by a database.
 ### Constructor
 
 ```go
-func New(opts ...Option) func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager, gas.ConfigProvider) *Service
+func New(opts ...Option) func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager, gas.ConfigProvider) (*Service, error)
 ```
 
 ### Options
@@ -374,7 +377,7 @@ type Session struct {
 
 ```go
 type Config struct {
-    env.WithGasEnv
+    gas.WithGasEnv
     Session Settings
 }
 
@@ -392,8 +395,10 @@ type Settings struct {
 }
 
 func DefaultConfig() *Config
-func (c *Config) Validate() error  // rejects empty CookieName, non-positive SessionTTL
 ```
+
+Tags: `CookieName` `required`, `SessionTTL` `gt=0s`. `Init` also requires a
+positive `CleanupTimeout` when `CleanupInterval` is set.
 
 ## API Key Service
 
@@ -402,7 +407,7 @@ API key authentication with SHA-256 hashing and scope support.
 ### Constructor
 
 ```go
-func New(opts ...Option) func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager, gas.ConfigProvider) *Service
+func New(opts ...Option) func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager, gas.ConfigProvider) (*Service, error)
 ```
 
 ### Options
@@ -524,7 +529,7 @@ type KeyInfo struct {
 
 ```go
 type Config struct {
-    env.WithGasEnv
+    gas.WithGasEnv
     APIKey Settings
 }
 
@@ -535,8 +540,9 @@ type Settings struct {
 }
 
 func DefaultConfig() *Config
-func (c *Config) Validate() error  // rejects KeyLength < 16
 ```
+
+Tag: `KeyLength` `min=16`.
 
 ## Token Service
 
@@ -547,7 +553,7 @@ once and consumed.
 ### Constructor
 
 ```go
-func New(opts ...Option) func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager, gas.ConfigProvider) *Service
+func New(opts ...Option) func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager, gas.ConfigProvider) (*Service, error)
 ```
 
 ### Options
@@ -591,7 +597,7 @@ func (s *Service) RevokeAllByPurpose(ctx context.Context, subject, purpose strin
 
 ```go
 type Config struct {
-    env.WithGasEnv
+    gas.WithGasEnv
     Token Settings
 }
 
@@ -603,8 +609,10 @@ type Settings struct {
 }
 
 func DefaultConfig() *Config
-func (c *Config) Validate() error  // rejects non-positive DefaultTTL, TokenLength < 16
 ```
+
+Tags: `DefaultTTL` `gt=0s`, `TokenLength` `min=16`. `Init` also requires a
+positive `CleanupTimeout` when `CleanupInterval` is set.
 
 ## Test Mocks
 

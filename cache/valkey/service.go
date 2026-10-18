@@ -67,8 +67,8 @@ func WithConfig(cfg *Config) Option {
 }
 
 // New captures options and returns a DI-injectable constructor.
-func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) *Service {
-	return func(cfgProvider gas.ConfigProvider, logger gas.Logger) *Service {
+func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) (*Service, error) {
+	return func(cfgProvider gas.ConfigProvider, logger gas.Logger) (*Service, error) {
 		s := &Service{
 			cfg:         DefaultConfig(),
 			cfgProvider: cfgProvider,
@@ -77,27 +77,23 @@ func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) *Service {
 		for _, opt := range opts {
 			opt(s)
 		}
-		return s
+		return s, nil
 	}
 }
 
 // Name returns the service identifier.
 func (s *Service) Name() string { return serviceName }
 
-// Init validates the configuration, creates the Valkey client, and
-// verifies connectivity. The ping and the retry backoff use ctx, so a
-// canceled or expired ctx stops the retries.
+// Init binds the configuration, creates the Valkey client, and verifies
+// connectivity. A config bound from the ConfigProvider is validated by Bind
+// against its validate tags; one passed with WithConfig is used as given. The
+// ping and the retry backoff use ctx, so a canceled or expired ctx stops the
+// retries.
 func (s *Service) Init(ctx context.Context) error {
-	if !s.customConfigProvided {
-		if s.cfgProvider != nil {
-			if err := s.cfgProvider.Bind(s.cfg); err != nil {
-				return fmt.Errorf("%s: config binding: %w", s.Name(), err)
-			}
+	if !s.customConfigProvided && s.cfgProvider != nil {
+		if err := s.cfgProvider.Bind(s.cfg); err != nil {
+			return fmt.Errorf("%s: config binding: %w", s.Name(), err)
 		}
-	}
-
-	if err := s.cfg.Validate(); err != nil {
-		return fmt.Errorf("%s: invalid configuration: %w", s.Name(), err)
 	}
 
 	if err := s.connectWithRetry(ctx); err != nil {

@@ -60,13 +60,13 @@ type Store struct {
 }
 
 // New returns a DI-injectable constructor for Store.
-func New() func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager) *Store {
-	return func(db gas.DatabaseProvider, logger gas.Logger, migMgr gas.MigrationManager) *Store {
+func New() func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager) (*Store, error) {
+	return func(db gas.DatabaseProvider, logger gas.Logger, migMgr gas.MigrationManager) (*Store, error) {
 		return &Store{
 			db:     db,
 			logger: logger,
 			migMgr: migMgr,
-		}
+		}, nil
 	}
 }
 
