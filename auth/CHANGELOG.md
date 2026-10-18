@@ -16,6 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING: the constructors return an error.** `jwt.New`, `session.New`,
+  `apikey.New` and `token.New` now return `func(<dependencies>) (*Service,
+  error)`, and the stores' `apikey/db.New`, `session/db.New` and
+  `token/db.New` return `func(...) (*Store, error)`, the `CONVENTIONS.md`
+  shape. They cannot fail yet, so they return nil; the change is the shape.
+  Registering them with `gas.WithSingletonService` is unchanged, since the
+  container accepts a trailing error. Code that calls the returned function
+  directly must take the second result (gas#106).
 - **BREAKING:** the `jwt`, `session`, `apikey`, and `token` services implement
   the context-aware `gas.Service` (`Init(ctx context.Context) error`,
   `Close(ctx context.Context) error`). None of them does context-bound work in

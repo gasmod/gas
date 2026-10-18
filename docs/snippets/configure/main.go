@@ -46,7 +46,7 @@ func register(cfg *config.Config) gas.Option {
 // Bind maps configuration into a struct, matching on json tags first and then
 // case-insensitive field names, and validates it on the way through.
 type AppConfig struct {
-	gasenv.WithGasEnv
+	gas.WithGasEnv
 
 	Database struct {
 		Host string `json:"host"`
