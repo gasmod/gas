@@ -83,8 +83,9 @@ observes the half-seeded state. Any error aborts startup.
 
 ## Taking Run apart
 
-`Run` is `Start` plus `Serve` plus signal handling plus `Stop`. Tests want the
-pieces:
+`Run` is `Start` plus `Serve` plus signal handling plus `Stop`. `Stop` runs
+whether a signal arrives or `Serve` fails, so a taken port still closes the
+services `Start` initialized. Tests want the pieces:
 
 ```go
 if err := app.Start(t.Context()); err != nil { // services, migrations, hooks; does not block

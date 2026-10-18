@@ -240,7 +240,9 @@ protection (`net/http.CrossOriginProtection`) is enabled by default.
 
 On shutdown (SIGINT/SIGTERM): emit `SystemServerShuttingDown` → graceful
 HTTP shutdown → `Worker.Shutdown` (emit `SystemShuttingDown`, close services
-in reverse init order).
+in reverse init order). If the server fails instead (for example the port is
+taken), `Run` runs the same `Stop` and returns the server error joined with any
+`Stop` error.
 
 `Run` is the convenience path. For embedding scenarios (tests, custom
 listeners, Lambda with HTTP, etc.), compose `Start` → `Serve` → `Stop`
@@ -323,7 +325,7 @@ svc := c.MustResolve[*myservice.Service]()
 | `BuildAll(ctx) error`                  | Validate lifetimes, topo-sort, eagerly resolve all singletons |
 | `NewScope(ctx) *Scope`                 | Create a scoped resolution context; ctx goes to scoped Inits  |
 | `EachInstance(fn func(reflect.Value))` | Iterate all built singleton instances                         |
-| `CanResolve[T any]() bool`             | Check if `T` can be resolved; builds nothing                  |
+| `CanResolve[T any]() bool`             | Check if exactly `T` is registered; builds nothing            |
 
 **Captive dependency validation:** `BuildAll(ctx)` rejects singletons that depend
 on scoped or transient services — this would "capture" a short-lived instance
@@ -416,8 +418,8 @@ Signature rules (panics at `Handle()` call time if violated):
 Boot-time validation ensures every handler dependency is registered in the
 container — the app fails fast at startup, not at request time.
 
-The adapter installs panic recovery around every DI-aware handler.
-`http.ErrAbortHandler` is re-panicked; all other panics are logged and passed
+The router installs panic recovery around every handler, DI-aware or a plain
+`http.HandlerFunc`, including `NotFound` handlers. `http.ErrAbortHandler` is re-panicked; all other panics are logged and passed
 to the `ErrorHandler` as `fmt.Errorf("gas: handler panic: %v", rec)`.
 
 ### Middleware
@@ -577,7 +579,9 @@ return gas.NotFound("user not found").WithDetail("id", id) // use this instead
 
 `BindJSON` and `BindForm` both decode and then run struct validation via
 `go-playground/validator`, returning a `*gas.Error`: 400 (`invalid_json` /
-`invalid_form`) for a malformed body, 422 (`validation_failed`) with one
+`invalid_form`) for a malformed body, 413 (`payload_too_large`) when a JSON
+body is over `Server.MaxJSONBodyBytes` (1 MiB by default; `WithMaxJSONBodyBytes`
+sets it on a hand-built `NewContext`), 422 (`validation_failed`) with one
 `FieldError` per violation, named by json tag. The underlying error stays
 reachable through `errors.As`. The form decoder uses alias tag `"form"` and has
 `IgnoreUnknownKeys(true)` enabled.
@@ -757,12 +761,13 @@ type Config struct {
 }
 
 type ServerSettings struct {
-	Host            string        // default: "0.0.0.0"; IP or RFC 1123 hostname, checked by Bind
-	Port            int           // default: 8080
-	ReadTimeout     time.Duration // default: 5s
-	WriteTimeout    time.Duration // default: 10s
-	IdleTimeout     time.Duration // default: 2m
-	ShutdownTimeout time.Duration // default: 30s
+	Host             string        // default: "0.0.0.0"; IP or RFC 1123 hostname, checked by Bind
+	Port             int           // default: 8080
+	ReadTimeout      time.Duration // default: 5s
+	WriteTimeout     time.Duration // default: 10s
+	IdleTimeout      time.Duration // default: 2m
+	ShutdownTimeout  time.Duration // default: 30s
+	MaxJSONBodyBytes int64         // default: 1 MiB; BindJSON's body cap, <= 0 is no limit
 }
 
 gas.DefaultConfig() *Config

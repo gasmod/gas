@@ -98,6 +98,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the server listens. The error is the validator's (`Field validation for
   'Host' failed on the 'ip|hostname_rfc1123' tag`) under
   `gas: config binding:` (part of #12).
+- **`App.Run` stops the App when the server fails.** When `Serve` returned an
+  error, such as a port already in use, `Run` returned it without calling
+  `Stop`, leaving every service `Start` had initialized open. It now runs
+  `Stop` and returns the server error joined with any `Stop` error. The
+  server error is no longer wrapped a second time in `gas: server error:`
+  (part of #12).
+- **Plain handlers get panic recovery.** Only DI-aware handlers were wrapped
+  in recovery, so a panic in a plain `http.HandlerFunc` route or `NotFound`
+  handler bypassed the error handler: net/http recovered it, logged it to the
+  server's error log, and dropped the connection with no response. Plain
+  handlers now get the same recovery: the stack goes to stderr and to the
+  request's `Logger`, and the error handler renders the error (500 by
+  default). `http.ErrAbortHandler` still aborts. The default error handler
+  also no longer panics on a request with no request scope, such as one
+  served by a `Router` used without an App (part of #12).
+- **Boot validation no longer accepts dependencies that fail on every
+  request.** A DI-aware handler, or `CanResolve`, accepted an interface that
+  was only implemented by a registered concrete type, but resolution looks up
+  the exact type, so startup passed and each request answered 500. Validation
+  now uses the same exact-type lookup as resolution: register the
+  constructor under the interface (`WithService[MyInterface](...)`) to inject
+  it as one. The captive-dependency check uses the same lookup. A DI-aware
+  `NotFound` handler's dependencies, never validated before, are now checked
+  at startup like a route handler's (#10).
 - **A failed `Start` no longer leaves services running.** When a service's
   `Init` failed, the services initialized before it were never tracked, so
   neither the failed `Start` nor a later `Shutdown` closed them; a failing
@@ -148,6 +172,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Service` is not replaced, so the scope still closes it.
   `gas.RequestLogger[gas.Logger]()` with the singleton is now safe too, with
   the request logger on the context only.
+
+### Security
+
+- **`BindJSON` caps the request body.** It decoded straight off the body with
+  no limit, so large JSON bodies could exhaust memory within the read
+  timeout. It now reads at most `Server.MaxJSONBodyBytes` (new, 1 MiB by
+  default; zero or negative turns the cap off) and returns a 413 `*Error`
+  with the new code `gas.CodePayloadTooLarge`, wrapping the
+  `*http.MaxBytesError`. A Context built with `NewContext` gets the same 1 MiB
+  default, and the new `gas.WithMaxJSONBodyBytes` option changes it. Handlers
+  that read the body themselves are not capped (#8).
 
 ## [0.5.0] - 2026-09-19
 
