@@ -39,7 +39,8 @@ missing dependency fails before the server accepts traffic rather than on the
 first request that hits the route.
 
 Returning an error renders it through the [error handler](/gas/guides/errors/),
-and panics are recovered and routed the same way.
+and panics are recovered and routed the same way. Plain `http.HandlerFunc`
+handlers get the same panic recovery.
 
 ## Grouping
 

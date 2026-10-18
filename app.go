@@ -207,7 +207,8 @@ func (a *App) Stop(ctx context.Context) error {
 
 // Run initializes all services, runs pending migrations, starts the HTTP
 // server, and blocks until a shutdown signal is received. Startup and
-// shutdown use context.Background().
+// shutdown use context.Background(). If the server fails, Run stops the App
+// and returns the server error joined with any error from Stop.
 func (a *App) Run() error {
 	ctx := context.Background()
 	if err := a.Start(ctx); err != nil {
@@ -233,7 +234,8 @@ func (a *App) Run() error {
 		a.getLogger().Info("shutdown signal received").Str("signal", sig.String()).Send()
 	case chnErr := <-srvErr:
 		if chnErr != nil {
-			return fmt.Errorf("gas: server error: %w", chnErr)
+			// Stop anyway, so the services Start initialized are closed.
+			return errors.Join(chnErr, a.Stop(ctx))
 		}
 	}
 
@@ -250,6 +252,7 @@ func (a *App) bindConfig() error {
 	if err := a.cfg.Validate(); err != nil {
 		return fmt.Errorf("gas: config validation: %w", err)
 	}
+	a.router.maxJSONBody.Store(a.cfg.Server.MaxJSONBodyBytes)
 
 	a.Worker.eventBus.Emit[AppConfigUpdated](AppConfigUpdatedPayload{Config: *a.cfg}).Wait()
 
