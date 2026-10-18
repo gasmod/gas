@@ -70,8 +70,8 @@ func Middleware(
 func RequireScheme(scheme string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			principal := gas.PrincipalFromContext(r.Context())
-			if principal == nil || principal.Scheme() != scheme {
+			principal, ok := gas.PrincipalFromContext(r.Context())
+			if !ok || principal.Scheme() != scheme {
 				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 				return
 			}

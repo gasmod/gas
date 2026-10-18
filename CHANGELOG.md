@@ -30,6 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING: `gas.PrincipalFromContext` returns `(Principal, bool)`.** It
+  returned a bare `Principal` that callers had to nil-check, the shape a
+  context lookup in Go does not usually have. It now reports whether a
+  principal is present, and a nil or typed-nil principal reports false.
+  Replace `p := gas.PrincipalFromContext(ctx); if p == nil { ... }` with
+  `p, ok := gas.PrincipalFromContext(ctx); if !ok { ... }`. In a DI-aware
+  handler, `ctx.Principal()` remains the shorter path.
 - **BREAKING: `gas.Service` takes a context.** `Init(ctx context.Context)`
   and `Close(ctx context.Context)` replace `Init()` and `Close()`; the
   container rejects a type with the old signatures and names the expected
@@ -59,7 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that implements them. Replace `gas.Authenticator` with `auth.Authenticator`
   (and likewise for the other two). `gas.Principal`, `gas.PrincipalMetadata`,
   `gas.BasePrincipalMetadata`, `gas.MetadataValue`, `gas.WithPrincipal`,
-  `gas.PrincipalFromContext`, and `Context.Principal` stay in core, unchanged.
+  `gas.PrincipalFromContext`, and `Context.Principal` stay in core.
 
 ### Removed
 
@@ -76,7 +83,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING: `gas.MustPrincipalFromContext`.** It panicked on any request
   that reached a handler without a principal. Use `ctx.Principal()` in a
   handler, which returns a 401 `*gas.Error` the handler can return, or
-  `gas.PrincipalFromContext` and check for nil.
+  `gas.PrincipalFromContext` and check its `ok` result.
 - **BREAKING: `Logger.SetBaseFields` and `gas.MutableLoggerContext`**, with
   `gas.NopMutableLoggerContext`. `SetBaseFields` changed a logger in place
   without synchronization, so calling it on the shared singleton (as
@@ -87,6 +94,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`PrincipalFromContext` treats a typed-nil principal as absent.** A nil
+  pointer stored with `WithPrincipal` came back as a non-nil `Principal`, so
+  a `!= nil` check passed and `Context.Principal` returned it with no error;
+  calling its methods could then panic. It now reports it as absent, and
+  `Context.Principal` answers 401, matching what the auth middleware does
+  since the typed-nil fix there (part of #12).
 - **Request-scope `Close` errors are logged.** The App's request-scope
   middleware discarded the error from closing a request's scope, so a scoped
   service failing to clean up left no trace. It now logs `request scope close

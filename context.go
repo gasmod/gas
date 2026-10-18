@@ -423,8 +423,8 @@ func (c *reqContext) BindForm(dest any) error {
 // authentication middleware. When no principal is present it returns a 401
 // *Error, so handlers can return the error directly to reject the request.
 func (c *reqContext) Principal() (Principal, error) {
-	p := PrincipalFromContext(c)
-	if p == nil {
+	p, ok := PrincipalFromContext(c)
+	if !ok {
 		return nil, c.Unauthorized(http.StatusText(http.StatusUnauthorized))
 	}
 	return p, nil
