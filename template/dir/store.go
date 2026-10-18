@@ -39,13 +39,13 @@ var (
 // NewStore returns a DI-injectable constructor for a filesystem-backed
 // template store rooted at dir. Only files with the ".html" extension are
 // recognized from disk.
-func NewStore(dir string) func() *Store {
-	return func() *Store {
+func NewStore(dir string) func() (*Store, error) {
+	return func() (*Store, error) {
 		return &Store{
 			dir:     dir,
 			ext:     ".html",
 			overlay: make(map[string][]byte),
-		}
+		}, nil
 	}
 }
 

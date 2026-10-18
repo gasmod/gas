@@ -5,10 +5,11 @@
 // # Role in the framework
 //
 // Core defines gas.ConfigProvider, the interface services read configuration
-// through (Bind, Get, Find, Values, Set, SetDefault, SetDefaults,
-// LoadProvider and LoadProviderContext); *Config implements it. Core names
-// two of this module's types in that interface, config.BindOption and
-// providers.Provider, so core imports this module. Each module that takes
+// through (Bind, Get, Find, Values, Set, SetDefault and SetDefaults);
+// *Config implements it. This module imports core, not the other way round:
+// BindOption is an alias of gas.BindOption, and the gasenv types are aliases
+// of gas.Environment and gas.WithGasEnv. LoadProvider and LoadProviderContext
+// stay on *Config, for setup before it is registered. Each module that takes
 // configuration binds its own struct from the gas.ConfigProvider at startup,
 // under its own top-level key (database, email, queue, ...).
 //
