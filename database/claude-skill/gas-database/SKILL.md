@@ -38,7 +38,7 @@ mode.
 ## Constructor
 
 ```go
-func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) *Service
+func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) (*Service, error)
 ```
 
 `New` captures options and returns a DI-injectable constructor. The returned
