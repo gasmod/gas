@@ -16,20 +16,37 @@ env:
   GOVULNCHECK_VERSION: v1.8.0
 
 jobs:
+  # Selects the modules this push can affect: those with changed files, plus
+  # every module that depends on one of them (see scripts/changed-modules.sh).
+  # A branch is compared with its merge base on main, a push to main with the
+  # commit it moved from. Release tags run every module (release.yml).
   detect-modules:
     runs-on: ubuntu-latest
     outputs:
       modules: ${{ steps.set-modules.outputs.modules }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
       - id: set-modules
-        run: echo "modules=$(go list -m -json | jq -sc '[.[].Dir]')" >> $GITHUB_OUTPUT
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            base="$BEFORE"
+          else
+            base="$(git merge-base origin/main HEAD 2>/dev/null || true)"
+          fi
+          modules="$(./scripts/changed-modules.sh "$base")"
+          echo "Checking: $modules"
+          echo "modules=$modules" >> "$GITHUB_OUTPUT"
 
   golangci-lint:
     needs: detect-modules
+    if: needs.detect-modules.outputs.modules != '[]'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -47,6 +64,7 @@ jobs:
 
   go-test:
     needs: detect-modules
+    if: needs.detect-modules.outputs.modules != '[]'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -62,6 +80,7 @@ jobs:
 
   go-vet:
     needs: detect-modules
+    if: needs.detect-modules.outputs.modules != '[]'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -77,6 +96,7 @@ jobs:
 
   govulncheck:
     needs: detect-modules
+    if: needs.detect-modules.outputs.modules != '[]'
     runs-on: ubuntu-latest
     strategy:
       matrix:
