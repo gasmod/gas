@@ -133,17 +133,21 @@ type Config struct {
 }
 
 type Settings struct {
-    Region            string        // default "us-east-1"
+    Region            string        `validate:"required"`     // default "us-east-1"
     Endpoint          string        // optional custom endpoint (e.g. ElasticMQ)
     AccessKeyID       string        // static AWS key; empty = default credential chain
     SecretAccessKey   string        // static AWS secret; empty = default credential chain
-    VisibilityTimeout time.Duration // default 30s
-    WaitTimeSeconds   int           // 0-20, default 20
+    VisibilityTimeout time.Duration `validate:"gte=0s"`        // default 30s
+    WaitTimeSeconds   int           `validate:"min=0,max=20"` // default 20
 }
 
 func DefaultConfig() *Config
-func (c *Config) Validate() error  // rejects empty Region, WaitTimeSeconds outside 0-20
 ```
+
+The rules are `validate` tags. `ConfigProvider.Bind` checks them when `Init`
+binds the config; a config passed with `WithConfig` (or the defaults, with no
+provider) is checked against the same tags in `Init`. There is no `Validate`
+method.
 
 ## Test Mock
 
