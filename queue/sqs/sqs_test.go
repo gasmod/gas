@@ -373,7 +373,11 @@ func TestInit_InvalidConfigNamesService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = New()(provider, gas.NewNopLogger()()).Init(t.Context())
+	svc, err := New()(provider, gas.NewNopLogger()())
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = svc.Init(t.Context())
 	if err == nil || !strings.HasPrefix(err.Error(), serviceName+": config binding: ") {
 		t.Errorf("Init() error = %v, want it prefixed with the service name", err)
 	}
