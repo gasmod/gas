@@ -761,7 +761,7 @@ type Config struct {
 }
 
 type ServerSettings struct {
-	Host             string        // default: "0.0.0.0"
+	Host             string        // default: "0.0.0.0"; IP or RFC 1123 hostname, checked by Bind
 	Port             int           // default: 8080
 	ReadTimeout      time.Duration // default: 5s
 	WriteTimeout     time.Duration // default: 10s
@@ -771,8 +771,12 @@ type ServerSettings struct {
 }
 
 gas.DefaultConfig() *Config
-config.Validate() error
 ```
+
+There is no `Config.Validate`: `App.Start` binds the Config through the
+registered `ConfigProvider`, and `Bind` checks the `validate` tags. With no
+`ConfigProvider` registered, the defaults (or whatever was set on
+`App.Config()`) are used unchecked.
 
 Worker does not have a `Config` struct. Individual services bind their own
 configuration from `gas.ConfigProvider` during `Init`.

@@ -1,9 +1,6 @@
 package gas
 
 import (
-	"errors"
-	"fmt"
-	"net"
 	"time"
 
 	env "github.com/gasmod/gas/config/extensions/gasenv"
@@ -33,8 +30,10 @@ type Config struct {
 
 // ServerSettings defines the configuration for a server, including host, port, timeouts, and graceful shutdown settings.
 type ServerSettings struct {
-	// Host specifies the hostname or IP address where the server will be hosted.
-	Host string
+	// Host specifies the hostname or IP address where the server will be
+	// hosted: an IP address or an RFC 1123 hostname. ConfigProvider.Bind
+	// checks it against the validate tag, for shape only, with no DNS lookup.
+	Host string `validate:"required,max=253,ip|hostname_rfc1123"`
 
 	// Port is the port number on which the server listens for incoming requests.
 	Port int
@@ -73,23 +72,4 @@ func DefaultConfig() *Config {
 			MaxJSONBodyBytes: defaultMaxJSONBodyBytes,
 		},
 	}
-}
-
-// Validate checks that the Config fields are valid.
-func (c *Config) Validate() error {
-	if err := validateHost(c.Server.Host); err != nil {
-		return fmt.Errorf("Server.Host: %w", err)
-	}
-	return nil
-}
-
-func validateHost(host string) error {
-	if host == "" {
-		return errors.New("must not be empty")
-	}
-	// Valid if it's a resolvable hostname, this also checks IPv4 and IPv6
-	if _, err := net.LookupHost(host); err == nil {
-		return nil
-	}
-	return fmt.Errorf("%q is not a valid IP or resolvable hostname", host)
 }
