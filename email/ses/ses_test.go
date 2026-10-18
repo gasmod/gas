@@ -12,6 +12,7 @@ import (
 	awsses "github.com/aws/aws-sdk-go-v2/service/ses"
 
 	"github.com/gasmod/gas"
+	"github.com/gasmod/gas/config/configtest"
 	"github.com/gasmod/gas/email"
 )
 
@@ -85,44 +86,6 @@ func TestDefaultConfig(t *testing.T) {
 	}
 }
 
-func TestConfigValidate(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		modify  func(*Config)
-		name    string
-		wantErr bool
-	}{
-		{
-			name:    "valid",
-			modify:  func(_ *Config) {},
-			wantErr: false,
-		},
-		{
-			name:    "empty region",
-			modify:  func(c *Config) { c.Email.Region = "" },
-			wantErr: true,
-		},
-		{
-			name:    "empty from email",
-			modify:  func(c *Config) { c.Email.FromEmail = "" },
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			cfg := validConfig()
-			tt.modify(cfg)
-			err := validateConfig(cfg)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("validateConfig() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
-}
-
 // --- service lifecycle tests ---
 
 func TestServiceName(t *testing.T) {
@@ -131,16 +94,6 @@ func TestServiceName(t *testing.T) {
 	svc := ctor(&mockTemplateProvider{}, nil, gas.NewNopLogger()())
 	if svc.Name() != serviceName {
 		t.Errorf("Name() = %q, want %q", svc.Name(), serviceName)
-	}
-}
-
-func TestInitWithInvalidConfig(t *testing.T) {
-	t.Parallel()
-	cfg := &Config{Email: Settings{Region: ""}}
-	ctor := New(WithConfig(cfg), WithClient(&mockSESClient{}))
-	svc := ctor(&mockTemplateProvider{}, nil, gas.NewNopLogger()())
-	if err := svc.Init(t.Context()); err == nil {
-		t.Error("Init() should fail with invalid config")
 	}
 }
 
@@ -516,16 +469,20 @@ func TestIsErrClosed(t *testing.T) {
 	}
 }
 
-// A configuration that fails validation is returned with the service name,
-// so the error is identifiable without a log line.
+// A configuration that fails validation when bound is returned with the
+// service name, so the error is identifiable without a log line.
 func TestInit_InvalidConfigNamesService(t *testing.T) {
 	t.Parallel()
 
-	cfg := validConfig()
-	cfg.Email.FromEmail = ""
-	err := New(WithConfig(cfg), WithClient(&mockSESClient{}))(nil, nil, gas.NewNopLogger()()).
+	provider, err := configtest.NewMockConfigWithValues(map[string]any{
+		"email": map[string]any{"region": "us-east-1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = New(WithClient(&mockSESClient{}))(nil, provider, gas.NewNopLogger()()).
 		Init(t.Context())
-	if err == nil || !strings.HasPrefix(err.Error(), serviceName+": invalid configuration: ") {
+	if err == nil || !strings.HasPrefix(err.Error(), serviceName+": config binding: ") {
 		t.Errorf("Init() error = %v, want it prefixed with the service name", err)
 	}
 }

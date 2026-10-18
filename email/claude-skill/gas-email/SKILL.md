@@ -181,10 +181,9 @@ type Settings struct {
 func DefaultConfig() *Config // zero-value defaults (no default region)
 ```
 
-The rules are `validate` tags. `ConfigProvider.Bind` checks them when `Init`
-binds the config; a config passed with `WithConfig` (or the defaults, with no
-provider) is checked against the same tags in `Init`. Either way a bad config
-fails `Init`. There is no `Validate` method.
+The rules are `validate` tags, which `ConfigProvider.Bind` checks when `Init`
+binds the config. A config passed with `WithConfig` is used as given. There is
+no `Validate` method.
 
 ## Test Mock
 
