@@ -47,7 +47,10 @@ audit := scope.MustResolve[*AuditBuffer]()
 `Scope.Close(ctx)` closes scoped services in **reverse resolution order**, so a
 service can still use the scoped dependencies it was built from while shutting
 down. It mirrors how the container closes singletons in reverse initialization
-order at process shutdown.
+order at process shutdown. A failing `Close` does not stop the rest; the errors
+come back joined. In an `App`, the response is already written by then, so the
+request-scope middleware logs them as `request scope close failed`, with the
+request's method and path.
 
 <Aside type="caution" title="A singleton cannot hold a scoped service">
 Registering a singleton that depends on a scoped service is rejected at startup

@@ -43,14 +43,28 @@ func MiddlewareFuncWithName(name string, fn func(http.Handler) http.Handler) Mid
 	return Middleware{fn: fn, name: name}
 }
 
-func requestScopeMiddleware(container *ServiceContainer) func(next http.Handler) http.Handler {
+// requestScopeMiddleware gives each request its own Scope and closes it when
+// the request ends. The response is written by then, so a Close error is
+// logged through getLogger rather than returned.
+func requestScopeMiddleware(
+	container *ServiceContainer,
+	getLogger func() Logger,
+) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
 			scope := container.NewScope(ctx)
 			// Close runs after the response is written, when a disconnected client
 			// may already have canceled ctx; scoped services still get to clean up.
-			defer func() { _ = scope.Close(context.WithoutCancel(ctx)) }()
+			defer func() {
+				if err := scope.Close(context.WithoutCancel(ctx)); err != nil {
+					getLogger().Error("request scope close failed").
+						Str("method", r.Method).
+						Str("path", r.URL.Path).
+						Err("error", err).
+						Send()
+				}
+			}()
 			next.ServeHTTP(w, r.WithContext(WithRequestScope(ctx, scope)))
 		})
 	}

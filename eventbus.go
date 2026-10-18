@@ -2,6 +2,9 @@ package gas
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"runtime/debug"
 	"sync"
 )
 
@@ -56,7 +59,12 @@ func (s *subscriberEntry[D]) handle(d any)    { s.handler(d.(D)) }
 // All methods are safe for concurrent use.
 type EventBus struct {
 	subscribers map[any][]subscriber
-	mu          sync.RWMutex
+
+	// logger, when set, receives recovered subscriber panics. A Worker sets
+	// it to its own logger; a standalone bus only writes the stack to stderr.
+	logger func() Logger
+
+	mu sync.RWMutex
 }
 
 var _ Service = (*EventBus)(nil)
@@ -89,8 +97,10 @@ func (bus *EventBus) Close(context.Context) error { return nil }
 // subscriber list; handlers run without it, so a handler may subscribe or
 // emit in turn.
 //
-// A handler that panics takes the process down, as it would in any goroutine.
-// Recover inside the handler if that is not what you want.
+// A handler that panics is recovered, so it neither takes the process down
+// nor keeps the WaitGroup from completing, and the other handlers still run.
+// The stack goes to stderr and, on a Worker's bus, the panic is logged with
+// the event type and the owning service.
 func (bus *EventBus) Emit[E event[D], D any](data D) *sync.WaitGroup {
 	bus.mu.RLock()
 	var key E
@@ -100,9 +110,32 @@ func (bus *EventBus) Emit[E event[D], D any](data D) *sync.WaitGroup {
 
 	var wg sync.WaitGroup
 	for _, s := range subs {
-		wg.Go(func() { s.handle(data) })
+		wg.Go(func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					bus.handlePanic(fmt.Sprintf("%T", key), s.service(), rec)
+				}
+			}()
+			s.handle(data)
+		})
 	}
 	return &wg
+}
+
+// handlePanic reports a panic recovered from a subscriber of event: the stack
+// goes to stderr, and to the bus's logger when it has one.
+func (bus *EventBus) handlePanic(event, owner string, rec any) {
+	stack := debug.Stack()
+	_, _ = os.Stderr.Write(stack)
+	if bus.logger == nil {
+		return
+	}
+	bus.logger().Error("event subscriber panic").
+		Str("event", event).
+		Str("service", owner).
+		Err("panic", fmt.Errorf("gas: event subscriber panic: %v", rec)).
+		Str("stack", string(stack)).
+		Send()
 }
 
 // Subscribe registers a handler for event type E with no owning service:

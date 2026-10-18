@@ -199,11 +199,11 @@ func TestApp_FailedConfigBindClosesAll(t *testing.T) {
 	log := &startLog{}
 	app := gas.NewApp(
 		gas.WithServiceInstance[gas.Logger](gas.NewNopLogger()()),
+		gas.WithServiceInstance[gas.ConfigProvider](hostConfig(t, "")),
 		gas.WithSingletonService[*probeA](func() *probeA {
 			return &probeA{&startProbe{name: "a", log: log}}
 		}),
 	)
-	app.Config().Server.Host = ""
 
 	first := app.Start(context.Background())
 	if first == nil {

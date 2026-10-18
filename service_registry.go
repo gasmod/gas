@@ -871,7 +871,7 @@ func (c *ServiceContainer) validateLifetimes() error {
 				continue
 			}
 
-			depReg, ok := c.findRegistration(dep)
+			depReg, ok := c.registrations[dep]
 			if !ok {
 				continue // will fail at build time with a clearer message
 			}
@@ -895,32 +895,19 @@ func (c *ServiceContainer) validateLifetimes() error {
 	return nil
 }
 
-// findRegistration looks up a registration by exact type or by interface implementation.
-func (c *ServiceContainer) findRegistration(t reflect.Type) (registration, bool) {
-	if reg, ok := c.registrations[t]; ok {
-		return reg, true
-	}
-	if t.Kind() == reflect.Interface {
-		for regType, reg := range c.registrations {
-			if regType.Implements(t) {
-				return reg, true
-			}
-		}
-	}
-	return registration{}, false
-}
-
 func (c *ServiceContainer) canResolveType(t reflect.Type) bool {
 	if _, ok := c.lookupInstance(t); ok {
 		return true
 	}
-	_, ok := c.findRegistration(t)
+	_, ok := c.registrations[t]
 	return ok
 }
 
 // CanResolve reports whether the container has an instance or registration
-// that can satisfy T, including an interface T satisfied by a registered
-// concrete type. It answers from the registry alone and builds nothing.
+// for exactly T, which is when Resolve can find it. An interface T is not
+// resolvable just because a registered type implements it: register the
+// constructor under the interface instead. It answers from the registry alone
+// and builds nothing.
 func (c *ServiceContainer) CanResolve[T any]() bool {
 	t := reflect.TypeFor[T]()
 	return c.canResolveType(t)

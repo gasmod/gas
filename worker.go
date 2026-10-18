@@ -69,6 +69,8 @@ func NewWorker(opts ...Option) *Worker {
 		activeServices:   make(map[string]Service),
 	}
 
+	// Recovered subscriber panics are logged through the Worker's logger.
+	w.eventBus.logger = w.getLogger
 	w.serviceContainer.RegisterServiceInstance[*EventBus](w.eventBus)
 	w.serviceContainer.RegisterServiceInstance[HealthProvider](w)
 	w.serviceContainer.RegisterServiceInstance[ReadyProvider](w)

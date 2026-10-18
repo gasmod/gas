@@ -18,8 +18,7 @@ type ErrorHandler func(ctx Context, err error)
 func defaultErrorHandler(ctx Context, err error) {
 	e := coerceError(err)
 
-	logger, resErr := ResolveFromRequestScope[Logger](ctx.Request())
-	hasLogger := resErr == nil
+	logger, hasLogger := requestLogger(ctx.Request())
 	if hasLogger {
 		// A 4xx is the client's mistake, not a server fault; logging every
 		// deliberate 404 at error level would drown the real failures.
@@ -34,6 +33,18 @@ func defaultErrorHandler(ctx Context, err error) {
 	if wErr != nil && hasLogger {
 		logger.Error("failed to write error response").Err("error", wErr).Send()
 	}
+}
+
+// requestLogger resolves the Logger from r's request scope. It reports false
+// when none is registered, or when r has no request scope at all, as on a
+// router used without an App.
+func requestLogger(r *http.Request) (Logger, bool) {
+	scope, ok := r.Context().Value(requestScopeKey{}).(*Scope)
+	if !ok {
+		return nil, false
+	}
+	logger, err := resolveFrom[Logger](r.Context(), scope)
+	return logger, err == nil
 }
 
 // handlerMeta holds pre-computed reflection data for a DI-aware handler.
@@ -57,6 +68,7 @@ func adaptHandler(
 	getErrorHandler func() ErrorHandler,
 	validate *validator.Validate,
 	formDecoder *schema.Decoder,
+	maxJSONBody func() int64,
 ) (http.HandlerFunc, []reflect.Type) {
 	handlerVal := reflect.ValueOf(handler)
 	handlerType := handlerVal.Type()
@@ -98,43 +110,71 @@ func adaptHandler(
 
 	meta := &handlerMeta{fn: handlerVal, depTypes: depTypes}
 
-	adapted := adaptedHandler(getErrorHandler, validate, formDecoder, meta)
+	adapted := adaptedHandler(getErrorHandler, validate, formDecoder, maxJSONBody, meta)
 
 	return adapted, depTypes
+}
+
+// handlePanic turns a value recovered from a handler into a response through
+// the error handler, after writing the stack to stderr and logging it through
+// the request scope's Logger when there is one. http.ErrAbortHandler is
+// re-panicked, so net/http still aborts the request.
+func handlePanic(rec any, ctx Context, r *http.Request, getErrorHandler func() ErrorHandler) {
+	if err, ok := rec.(error); ok && errors.Is(err, http.ErrAbortHandler) {
+		// don't recover http.ErrAbortHandler
+		panic(rec)
+	}
+
+	err := fmt.Errorf("gas: handler panic: %v", rec)
+
+	debugStack := debug.Stack()
+
+	// write to stderr regardless if we have a logger or not
+	_, _ = os.Stderr.Write(debugStack)
+
+	if logger, ok := requestLogger(r); ok {
+		logger.Error("handler panic").
+			Err("panic", err).Str("stack", string(debugStack)).Send()
+	}
+
+	eh := getErrorHandler()
+	eh(ctx, err)
+}
+
+// recoverPlain wraps a plain http.HandlerFunc with the same panic recovery a
+// DI-aware handler gets. The Context for the error handler is built only when
+// the handler panics.
+func recoverPlain(h http.HandlerFunc, getErrorHandler func() ErrorHandler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		//nolint:contextcheck // the Context is built from the request's own context
+		defer func() {
+			if rec := recover(); rec != nil {
+				ctx := NewContext(r.Context(), w, r)
+				handlePanic(rec, ctx, ctx.Request(), getErrorHandler)
+			}
+		}()
+		h(w, r)
+	}
 }
 
 func adaptedHandler(
 	getErrorHandler func() ErrorHandler,
 	validate *validator.Validate,
 	formDecoder *schema.Decoder,
+	maxJSONBody func() int64,
 	meta *handlerMeta,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// don't recover context initialization panics
-		ctx := NewContext(r.Context(), w, r, WithValidate(validate), WithFormDecoder(formDecoder))
+		ctx := NewContext(r.Context(), w, r,
+			WithValidate(validate),
+			WithFormDecoder(formDecoder),
+			WithMaxJSONBodyBytes(maxJSONBody()),
+		)
 
 		defer func() {
 			if rec := recover(); rec != nil {
-				if err, ok := rec.(error); ok && errors.Is(err, http.ErrAbortHandler) {
-					// don't recover http.ErrAbortHandler
-					panic(rec)
-				}
-
-				err := fmt.Errorf("gas: handler panic: %v", rec)
-
-				debugStack := debug.Stack()
-
-				// write to stderr regardless if we have a logger or not
-				_, _ = os.Stderr.Write(debugStack)
-
-				logger, resErr := ResolveFromRequestScope[Logger](r)
-				if resErr == nil {
-					logger.Error("handler panic").
-						Err("panic", err).Str("stack", string(debugStack)).Send()
-				}
-
-				eh := getErrorHandler()
-				eh(ctx, err)
+				handlePanic(rec, ctx, r, getErrorHandler)
 			}
 		}()
 

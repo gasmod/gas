@@ -303,7 +303,7 @@ Context helpers:
 
 ```go
 gas.WithPrincipal(ctx context.Context, p Principal) context.Context
-gas.PrincipalFromContext(ctx context.Context) Principal  // nil if absent
+gas.PrincipalFromContext(ctx context.Context) (Principal, bool)  // false if absent, nil, or a typed-nil pointer
 ```
 
 In a handler, `ctx.Principal()` returns the principal, or a 401 `*gas.Error`

@@ -30,6 +30,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A panicking event subscriber no longer takes the process down.** `Emit`
+  ran each subscriber on a bare goroutine, so one panicking handler crashed
+  the process, and that was documented as intended. `Emit` now recovers it:
+  the other subscribers still run and the returned WaitGroup still
+  completes. The stack is written to stderr, and on a Worker's bus the panic
+  is logged at error level as `event subscriber panic`, with the event type,
+  the owning service, the panic value, and the stack. A handler that relied
+  on a panic to stop the process must now exit explicitly (#9).
+- **BREAKING: `gas.PrincipalFromContext` returns `(Principal, bool)`.** It
+  returned a bare `Principal` that callers had to nil-check, the shape a
+  context lookup in Go does not usually have. It now reports whether a
+  principal is present, and a nil or typed-nil principal reports false.
+  Replace `p := gas.PrincipalFromContext(ctx); if p == nil { ... }` with
+  `p, ok := gas.PrincipalFromContext(ctx); if !ok { ... }`. In a DI-aware
+  handler, `ctx.Principal()` remains the shorter path.
 - **BREAKING: `gas.Service` takes a context.** `Init(ctx context.Context)`
   and `Close(ctx context.Context)` replace `Init()` and `Close()`; the
   container rejects a type with the old signatures and names the expected
@@ -59,10 +74,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that implements them. Replace `gas.Authenticator` with `auth.Authenticator`
   (and likewise for the other two). `gas.Principal`, `gas.PrincipalMetadata`,
   `gas.BasePrincipalMetadata`, `gas.MetadataValue`, `gas.WithPrincipal`,
-  `gas.PrincipalFromContext`, and `Context.Principal` stay in core, unchanged.
+  `gas.PrincipalFromContext`, and `Context.Principal` stay in core.
 
 ### Removed
 
+- **`gas.Config.Validate`.** `ConfigProvider.Bind` already validates the
+  struct it binds, so `App.Start` no longer calls a separate `Validate`, and
+  the method is gone; the rule lives in `Server.Host`'s validate tag. An App
+  started without a `ConfigProvider` runs on its Config unchecked.
 - **BREAKING: `gas.StorageProvider` is removed from core**, together with
   `gas.StorageObject`, `gas.ObjectInfo`, `gas.StorageOption`, `gas.InBucket`,
   `gas.WithContentType`, `gas.WithMetadata`, and `gas.ApplyStorageOptions`.
@@ -72,7 +91,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING: `gas.MustPrincipalFromContext`.** It panicked on any request
   that reached a handler without a principal. Use `ctx.Principal()` in a
   handler, which returns a 401 `*gas.Error` the handler can return, or
-  `gas.PrincipalFromContext` and check for nil.
+  `gas.PrincipalFromContext` and check its `ok` result.
 - **BREAKING: `Logger.SetBaseFields` and `gas.MutableLoggerContext`**, with
   `gas.NopMutableLoggerContext`. `SetBaseFields` changed a logger in place
   without synchronization, so calling it on the shared singleton (as
@@ -83,6 +102,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`PrincipalFromContext` treats a typed-nil principal as absent.** A nil
+  pointer stored with `WithPrincipal` came back as a non-nil `Principal`, so
+  a `!= nil` check passed and `Context.Principal` returned it with no error;
+  calling its methods could then panic. It now reports it as absent, and
+  `Context.Principal` answers 401, matching what the auth middleware does
+  since the typed-nil fix there (part of #12).
+- **Request-scope `Close` errors are logged.** The App's request-scope
+  middleware discarded the error from closing a request's scope, so a scoped
+  service failing to clean up left no trace. It now logs `request scope close
+  failed` at error level, with the request's method and path and the joined
+  `Close` errors, through the Worker's logger (part of #12).
+- **Server config validation no longer does a DNS lookup.** `Config.Validate`
+  checked `Server.Host` with `net.LookupHost`, so startup depended on the
+  resolver: slow or offline DNS delayed or failed `Start`, and a well-formed
+  name that only resolves later (such as a container hostname) was rejected.
+  `Server.Host` now carries the validate tag
+  `required,max=253,ip|hostname_rfc1123`, which `ConfigProvider.Bind` checks
+  when `App.Start` binds the Config: an IP address or an RFC 1123 hostname
+  (no trailing dot), not resolved, so a host that does not resolve fails when
+  the server listens. The error is the validator's (`Field validation for
+  'Host' failed on the 'ip|hostname_rfc1123' tag`) under
+  `gas: config binding:` (part of #12).
+- **`App.Run` stops the App when the server fails.** When `Serve` returned an
+  error, such as a port already in use, `Run` returned it without calling
+  `Stop`, leaving every service `Start` had initialized open. It now runs
+  `Stop` and returns the server error joined with any `Stop` error. The
+  server error is no longer wrapped a second time in `gas: server error:`
+  (part of #12).
+- **Plain handlers get panic recovery.** Only DI-aware handlers were wrapped
+  in recovery, so a panic in a plain `http.HandlerFunc` route or `NotFound`
+  handler bypassed the error handler: net/http recovered it, logged it to the
+  server's error log, and dropped the connection with no response. Plain
+  handlers now get the same recovery: the stack goes to stderr and to the
+  request's `Logger`, and the error handler renders the error (500 by
+  default). `http.ErrAbortHandler` still aborts. The default error handler
+  also no longer panics on a request with no request scope, such as one
+  served by a `Router` used without an App (part of #12).
+- **Boot validation no longer accepts dependencies that fail on every
+  request.** A DI-aware handler, or `CanResolve`, accepted an interface that
+  was only implemented by a registered concrete type, but resolution looks up
+  the exact type, so startup passed and each request answered 500. Validation
+  now uses the same exact-type lookup as resolution: register the
+  constructor under the interface (`WithService[MyInterface](...)`) to inject
+  it as one. The captive-dependency check uses the same lookup. A DI-aware
+  `NotFound` handler's dependencies, never validated before, are now checked
+  at startup like a route handler's (#10).
 - **A failed `Start` no longer leaves services running.** When a service's
   `Init` failed, the services initialized before it were never tracked, so
   neither the failed `Start` nor a later `Shutdown` closed them; a failing
@@ -133,6 +198,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Service` is not replaced, so the scope still closes it.
   `gas.RequestLogger[gas.Logger]()` with the singleton is now safe too, with
   the request logger on the context only.
+
+### Security
+
+- **`BindJSON` caps the request body.** It decoded straight off the body with
+  no limit, so large JSON bodies could exhaust memory within the read
+  timeout. It now reads at most `Server.MaxJSONBodyBytes` (new, 1 MiB by
+  default; zero or negative turns the cap off) and returns a 413 `*Error`
+  with the new code `gas.CodePayloadTooLarge`, wrapping the
+  `*http.MaxBytesError`. A Context built with `NewContext` gets the same 1 MiB
+  default, and the new `gas.WithMaxJSONBodyBytes` option changes it. Handlers
+  that read the body themselves are not capped (#8).
 
 ## [0.5.0] - 2026-09-19
 
