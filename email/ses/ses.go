@@ -79,8 +79,10 @@ func WithClient(client sesClient) Option {
 }
 
 // New captures options and returns a DI-injectable constructor.
-func New(opts ...Option) func(gas.TemplateProvider, gas.ConfigProvider, gas.Logger) *Service {
-	return func(templates gas.TemplateProvider, cfgProvider gas.ConfigProvider, logger gas.Logger) *Service {
+func New(
+	opts ...Option,
+) func(gas.TemplateProvider, gas.ConfigProvider, gas.Logger) (*Service, error) {
+	return func(templates gas.TemplateProvider, cfgProvider gas.ConfigProvider, logger gas.Logger) (*Service, error) {
 		s := &Service{
 			cfg:         DefaultConfig(),
 			templates:   templates,
@@ -90,15 +92,15 @@ func New(opts ...Option) func(gas.TemplateProvider, gas.ConfigProvider, gas.Logg
 		for _, opt := range opts {
 			opt(s)
 		}
-		return s
+		return s, nil
 	}
 }
 
 // NewWithCustomProvider creates a new Service instance with a custom TemplateProvider and optional configurations.
 func NewWithCustomProvider[T gas.TemplateProvider](
 	opts ...Option,
-) func(T, gas.ConfigProvider, gas.Logger) *Service {
-	return func(templates T, cfgProvider gas.ConfigProvider, logger gas.Logger) *Service {
+) func(T, gas.ConfigProvider, gas.Logger) (*Service, error) {
+	return func(templates T, cfgProvider gas.ConfigProvider, logger gas.Logger) (*Service, error) {
 		s := &Service{
 			cfg:         DefaultConfig(),
 			templates:   templates,
@@ -108,7 +110,7 @@ func NewWithCustomProvider[T gas.TemplateProvider](
 		for _, opt := range opts {
 			opt(s)
 		}
-		return s
+		return s, nil
 	}
 }
 

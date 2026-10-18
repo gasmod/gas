@@ -90,7 +90,7 @@ email.IsErrClosed(err) // helper: errors.Is(err, ErrClosed)
 ### Constructor
 
 ```go
-func New(opts ...Option) func(gas.TemplateProvider, gas.ConfigProvider, gas.Logger) *Service
+func New(opts ...Option) func(gas.TemplateProvider, gas.ConfigProvider, gas.Logger) (*Service, error)
 ```
 
 `New` captures options and returns a DI-injectable constructor. The returned
@@ -98,7 +98,7 @@ func receives `gas.TemplateProvider`, `gas.ConfigProvider`, and `gas.Logger`
 from the DI container.
 
 ```go
-func NewWithCustomProvider[T gas.TemplateProvider](opts ...Option) func(T, gas.ConfigProvider, gas.Logger) *Service
+func NewWithCustomProvider[T gas.TemplateProvider](opts ...Option) func(T, gas.ConfigProvider, gas.Logger) (*Service, error)
 ```
 
 `NewWithCustomProvider` is a generic variant for cases where the DI container

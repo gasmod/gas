@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING: the SES constructors return an error.** `ses.New` and
+  `ses.NewWithCustomProvider` now return `func(<dependencies>) (*Service,
+  error)`, the `CONVENTIONS.md` shape. They cannot fail yet, so they return
+  nil; the change is the shape. Registering them with
+  `gas.WithSingletonService` is unchanged, since the container accepts a
+  trailing error. Code that calls the returned function directly must take
+  the second result (gas#106).
 - `ses.Service` no longer logs an error it also returns: an invalid
   configuration and a failed send. The caller that handles the error logs it
   once. An invalid configuration is returned as

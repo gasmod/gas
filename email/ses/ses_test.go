@@ -64,7 +64,10 @@ func validConfig() *Config {
 func newTestService(t *testing.T, mock *mockSESClient, tmpl gas.TemplateProvider) *Service {
 	t.Helper()
 	ctor := New(WithConfig(validConfig()), WithClient(mock))
-	svc := ctor(tmpl, nil, gas.NewNopLogger()())
+	svc, err := ctor(tmpl, nil, gas.NewNopLogger()())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := svc.Init(t.Context()); err != nil {
 		t.Fatalf("init: %v", err)
 	}
@@ -128,7 +131,10 @@ func TestConfigValidate(t *testing.T) {
 func TestServiceName(t *testing.T) {
 	t.Parallel()
 	ctor := New(WithConfig(validConfig()), WithClient(&mockSESClient{}))
-	svc := ctor(&mockTemplateProvider{}, nil, gas.NewNopLogger()())
+	svc, err := ctor(&mockTemplateProvider{}, nil, gas.NewNopLogger()())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if svc.Name() != serviceName {
 		t.Errorf("Name() = %q, want %q", svc.Name(), serviceName)
 	}
@@ -138,7 +144,10 @@ func TestInitWithInvalidConfig(t *testing.T) {
 	t.Parallel()
 	cfg := &Config{Email: Settings{Region: ""}}
 	ctor := New(WithConfig(cfg), WithClient(&mockSESClient{}))
-	svc := ctor(&mockTemplateProvider{}, nil, gas.NewNopLogger()())
+	svc, err := ctor(&mockTemplateProvider{}, nil, gas.NewNopLogger()())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := svc.Init(t.Context()); err == nil {
 		t.Error("Init() should fail with invalid config")
 	}
@@ -169,12 +178,15 @@ func TestSend(t *testing.T) {
 	cfg := validConfig()
 	cfg.GasEnv = "production"
 	ctor := New(WithConfig(cfg), WithClient(mock))
-	svc := ctor(&mockTemplateProvider{}, nil, gas.NewNopLogger()())
-	if err := svc.Init(t.Context()); err != nil {
+	svc, err := ctor(&mockTemplateProvider{}, nil, gas.NewNopLogger()())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = svc.Init(t.Context()); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 
-	err := svc.Send(context.Background(), &gas.Email{
+	err = svc.Send(context.Background(), &gas.Email{
 		To:       []string{"recipient@example.com"},
 		Subject:  "Test Subject",
 		HTMLBody: "<h1>Hello</h1>",
@@ -220,12 +232,15 @@ func TestSendUsesMessageFrom(t *testing.T) {
 	cfg := validConfig()
 	cfg.GasEnv = "production"
 	ctor := New(WithConfig(cfg), WithClient(mock))
-	svc := ctor(&mockTemplateProvider{}, nil, gas.NewNopLogger()())
-	if err := svc.Init(t.Context()); err != nil {
+	svc, err := ctor(&mockTemplateProvider{}, nil, gas.NewNopLogger()())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = svc.Init(t.Context()); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 
-	err := svc.Send(context.Background(), &gas.Email{
+	err = svc.Send(context.Background(), &gas.Email{
 		From:    "custom@example.com",
 		To:      []string{"recipient@example.com"},
 		Subject: "Test",
@@ -253,12 +268,15 @@ func TestSendWithCcBcc(t *testing.T) {
 	cfg := validConfig()
 	cfg.GasEnv = "production"
 	ctor := New(WithConfig(cfg), WithClient(mock))
-	svc := ctor(&mockTemplateProvider{}, nil, gas.NewNopLogger()())
-	if err := svc.Init(t.Context()); err != nil {
+	svc, err := ctor(&mockTemplateProvider{}, nil, gas.NewNopLogger()())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = svc.Init(t.Context()); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 
-	err := svc.Send(context.Background(), &gas.Email{
+	err = svc.Send(context.Background(), &gas.Email{
 		To:  []string{"to@example.com"},
 		Cc:  []string{"cc@example.com"},
 		Bcc: []string{"bcc@example.com"},
@@ -301,12 +319,15 @@ func TestSendSESError(t *testing.T) {
 	cfg := validConfig()
 	cfg.GasEnv = "production"
 	ctor := New(WithConfig(cfg), WithClient(mock))
-	svc := ctor(&mockTemplateProvider{}, nil, gas.NewNopLogger()())
-	if err := svc.Init(t.Context()); err != nil {
+	svc, err := ctor(&mockTemplateProvider{}, nil, gas.NewNopLogger()())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = svc.Init(t.Context()); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 
-	err := svc.Send(context.Background(), &gas.Email{To: []string{"x@x.com"}})
+	err = svc.Send(context.Background(), &gas.Email{To: []string{"x@x.com"}})
 	if !errors.Is(err, sesErr) {
 		t.Errorf("got %v, want wrapped sesErr", err)
 	}
@@ -343,12 +364,15 @@ func TestSendFromTemplate(t *testing.T) {
 	cfg := validConfig()
 	cfg.GasEnv = "production"
 	ctor := New(WithConfig(cfg), WithClient(mock))
-	svc := ctor(tmpl, nil, gas.NewNopLogger()())
-	if err := svc.Init(t.Context()); err != nil {
+	svc, err := ctor(tmpl, nil, gas.NewNopLogger()())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = svc.Init(t.Context()); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 
-	err := svc.SendFromTemplate(context.Background(), &gas.TemplatedEmail{
+	err = svc.SendFromTemplate(context.Background(), &gas.TemplatedEmail{
 		SubjectTemplate: "welcome-subject",
 		HTMLTemplate:    "welcome-html",
 		TextTemplate:    "welcome-text",
@@ -393,13 +417,16 @@ func TestSendFromTemplatePartial(t *testing.T) {
 	cfg := validConfig()
 	cfg.GasEnv = "production"
 	ctor := New(WithConfig(cfg), WithClient(mock))
-	svc := ctor(tmpl, nil, gas.NewNopLogger()())
-	if err := svc.Init(t.Context()); err != nil {
+	svc, err := ctor(tmpl, nil, gas.NewNopLogger()())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = svc.Init(t.Context()); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 
 	// Only HTMLTemplate set; subject and text provided directly
-	err := svc.SendFromTemplate(context.Background(), &gas.TemplatedEmail{
+	err = svc.SendFromTemplate(context.Background(), &gas.TemplatedEmail{
 		HTMLTemplate: "body-html",
 		To:           []string{"user@example.com"},
 		Subject:      "Static Subject",
@@ -446,12 +473,15 @@ func TestSendFromTemplateGetError(t *testing.T) {
 	cfg := validConfig()
 	cfg.GasEnv = "production"
 	ctor := New(WithConfig(cfg), WithClient(&mockSESClient{}))
-	svc := ctor(tmpl, nil, gas.NewNopLogger()())
-	if err := svc.Init(t.Context()); err != nil {
+	svc, err := ctor(tmpl, nil, gas.NewNopLogger()())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = svc.Init(t.Context()); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 
-	err := svc.SendFromTemplate(context.Background(), &gas.TemplatedEmail{
+	err = svc.SendFromTemplate(context.Background(), &gas.TemplatedEmail{
 		HTMLTemplate: "missing",
 		To:           []string{"x@x.com"},
 	})
@@ -472,12 +502,15 @@ func TestSendFromTemplateParseError(t *testing.T) {
 	cfg := validConfig()
 	cfg.GasEnv = "production"
 	ctor := New(WithConfig(cfg), WithClient(&mockSESClient{}))
-	svc := ctor(tmpl, nil, gas.NewNopLogger()())
-	if err := svc.Init(t.Context()); err != nil {
+	svc, err := ctor(tmpl, nil, gas.NewNopLogger()())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = svc.Init(t.Context()); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 
-	err := svc.SendFromTemplate(context.Background(), &gas.TemplatedEmail{
+	err = svc.SendFromTemplate(context.Background(), &gas.TemplatedEmail{
 		HTMLTemplate: "bad",
 		To:           []string{"x@x.com"},
 	})
@@ -523,8 +556,11 @@ func TestInit_InvalidConfigNamesService(t *testing.T) {
 
 	cfg := validConfig()
 	cfg.Email.FromEmail = ""
-	err := New(WithConfig(cfg), WithClient(&mockSESClient{}))(nil, nil, gas.NewNopLogger()()).
-		Init(t.Context())
+	svc, err := New(WithConfig(cfg), WithClient(&mockSESClient{}))(nil, nil, gas.NewNopLogger()())
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = svc.Init(t.Context())
 	if err == nil || !strings.HasPrefix(err.Error(), serviceName+": invalid configuration: ") {
 		t.Errorf("Init() error = %v, want it prefixed with the service name", err)
 	}
@@ -561,8 +597,11 @@ func isolateAWSCredentials(t *testing.T) {
 func TestInit_NoCredentialsFails(t *testing.T) {
 	isolateAWSCredentials(t)
 
-	svc := New(WithConfig(validConfig()))(nil, nil, gas.NewNopLogger()())
-	err := svc.Init(t.Context())
+	svc, err := New(WithConfig(validConfig()))(nil, nil, gas.NewNopLogger()())
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = svc.Init(t.Context())
 	if err == nil {
 		t.Fatal("Init() = nil, want an error for missing AWS credentials")
 	}
@@ -579,7 +618,10 @@ func TestInit_StaticCredentials(t *testing.T) {
 	cfg := validConfig()
 	cfg.Email.AccessKeyID = "AKIDEXAMPLE"
 	cfg.Email.SecretAccessKey = "secret"
-	svc := New(WithConfig(cfg))(nil, nil, gas.NewNopLogger()())
+	svc, err := New(WithConfig(cfg))(nil, nil, gas.NewNopLogger()())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := svc.Init(t.Context()); err != nil {
 		t.Fatalf("Init() = %v, want nil", err)
 	}
