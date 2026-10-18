@@ -3,10 +3,7 @@ package database
 import (
 	"errors"
 	"fmt"
-	"sync"
 	"time"
-
-	"github.com/go-playground/validator/v10"
 
 	env "github.com/gasmod/gas/config/extensions/gasenv"
 )
@@ -115,20 +112,6 @@ const (
 	minMaxIdleConns = 1
 	maxMaxIdleConns = 1000
 )
-
-// validateConfig checks cfg against its validate tags and the rules a tag
-// cannot express. Init calls it for a config that did not come through
-// ConfigProvider.Bind.
-func validateConfig(cfg *Config) error {
-	if err := configValidator().Struct(cfg); err != nil {
-		return err //nolint:wrapcheck // Init adds the context
-	}
-	return checkRules(cfg)
-}
-
-// configValidator is built on first use and shared, since a
-// *validator.Validate caches each struct's parsed tags.
-var configValidator = sync.OnceValue(func() *validator.Validate { return validator.New() })
 
 // checkRules checks what the validate tags cannot: the rules that depend on
 // the mode or on a connector passed with WithConnector, which is not a config
