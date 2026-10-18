@@ -3,12 +3,12 @@ package ses
 import (
 	"errors"
 
-	env "github.com/gasmod/gas/config/extensions/gasenv"
+	"github.com/gasmod/gas"
 )
 
 // Config holds SES email settings.
 type Config struct {
-	env.WithGasEnv
+	gas.WithGasEnv
 
 	Email Settings
 }
