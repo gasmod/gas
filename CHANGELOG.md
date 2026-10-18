@@ -63,6 +63,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **`gas.Config.Validate`.** `ConfigProvider.Bind` already validates the
+  struct it binds, so `App.Start` no longer calls a separate `Validate`, and
+  the method is gone; the rule lives in `Server.Host`'s validate tag. An App
+  started without a `ConfigProvider` runs on its Config unchecked.
 - **BREAKING: `gas.StorageProvider` is removed from core**, together with
   `gas.StorageObject`, `gas.ObjectInfo`, `gas.StorageOption`, `gas.InBucket`,
   `gas.WithContentType`, `gas.WithMetadata`, and `gas.ApplyStorageOptions`.
@@ -88,6 +92,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   service failing to clean up left no trace. It now logs `request scope close
   failed` at error level, with the request's method and path and the joined
   `Close` errors, through the Worker's logger (part of #12).
+- **Server config validation no longer does a DNS lookup.** `Config.Validate`
+  checked `Server.Host` with `net.LookupHost`, so startup depended on the
+  resolver: slow or offline DNS delayed or failed `Start`, and a well-formed
+  name that only resolves later (such as a container hostname) was rejected.
+  `Server.Host` now carries the validate tag
+  `required,max=253,ip|hostname_rfc1123`, which `ConfigProvider.Bind` checks
+  when `App.Start` binds the Config: an IP address or an RFC 1123 hostname
+  (no trailing dot), not resolved, so a host that does not resolve fails when
+  the server listens. The error is the validator's (`Field validation for
+  'Host' failed on the 'ip|hostname_rfc1123' tag`) under
+  `gas: config binding:` (part of #12).
 - **`App.Run` stops the App when the server fails.** When `Serve` returned an
   error, such as a port already in use, `Run` returned it without calling
   `Stop`, leaving every service `Start` had initialized open. It now runs
