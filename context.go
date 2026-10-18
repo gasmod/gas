@@ -140,6 +140,9 @@ type reqContext struct {
 	r           *http.Request
 	validate    *validator.Validate
 	formDecoder *schema.Decoder
+
+	// maxJSONBody caps the body BindJSON reads; zero or negative is no limit.
+	maxJSONBody int64
 }
 
 var _ Context = (*reqContext)(nil)
@@ -155,6 +158,13 @@ func WithValidate(v *validator.Validate) ContextOption {
 // WithFormDecoder sets a custom form decoder for the reqContext using the provided *schema.Decoder instance.
 func WithFormDecoder(d *schema.Decoder) ContextOption {
 	return func(c *reqContext) { c.formDecoder = d }
+}
+
+// WithMaxJSONBodyBytes sets how many bytes of the request body BindJSON reads
+// before it fails with a 413 *Error. Zero or a negative n means no limit.
+// Without this option the limit is 1 MiB.
+func WithMaxJSONBodyBytes(n int64) ContextOption {
+	return func(c *reqContext) { c.maxJSONBody = n }
 }
 
 // NewContext creates a Context from the standard HTTP pair. It panics if
@@ -178,7 +188,7 @@ func NewContext(
 		panic("cannot create context from nil http.Request")
 	}
 
-	ctx := &reqContext{Context: parent, w: w, r: r}
+	ctx := &reqContext{Context: parent, w: w, r: r, maxJSONBody: defaultMaxJSONBodyBytes}
 
 	for _, opt := range opts {
 		opt(ctx)
@@ -370,11 +380,20 @@ func (c *reqContext) SetHeader(key, value string) {
 }
 
 // BindJSON decodes the request body as JSON into dest and validates it.
-// A malformed body yields a 400 *Error; a validation failure yields a 422
+// A body over the configured limit (1 MiB by default) yields a 413 *Error; a
+// malformed body yields a 400 *Error; a validation failure yields a 422
 // *Error carrying one Field per violation the validator reported. The
-// underlying decode or validation error remains reachable through errors.As.
+// underlying error remains reachable through errors.As.
 func (c *reqContext) BindJSON(dest any) error {
-	if err := json.NewDecoder(c.r.Body).Decode(dest); err != nil {
+	body := c.r.Body
+	if c.maxJSONBody > 0 {
+		body = http.MaxBytesReader(c.w, body, c.maxJSONBody)
+	}
+	if err := json.NewDecoder(body).Decode(dest); err != nil {
+		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
+			return NewError(http.StatusRequestEntityTooLarge, CodePayloadTooLarge,
+				"request body is too large").WithCause(maxErr)
+		}
 		return NewError(http.StatusBadRequest, CodeInvalidJSON,
 			"request body is not valid JSON").WithCause(err)
 	}

@@ -16,6 +16,10 @@ const (
 	defaultWriteTimeout    = 10 * time.Second
 	defaultIdleTimeout     = 2 * time.Minute
 	defaultShutdownTimeout = 30 * time.Second
+
+	// defaultMaxJSONBodyBytes is the default cap on the request body BindJSON
+	// reads: 1 MiB.
+	defaultMaxJSONBodyBytes = 1 << 20
 )
 
 // Config holds server-level configuration passed from the host server
@@ -47,6 +51,12 @@ type ServerSettings struct {
 	// ShutdownTimeout is how long to wait for in-flight requests to complete
 	// during graceful shutdown.
 	ShutdownTimeout time.Duration
+
+	// MaxJSONBodyBytes caps how many bytes of the request body
+	// Context.BindJSON reads; a larger body fails with a 413 *Error. It
+	// defaults to 1 MiB. Zero or a negative value means no limit. It does not
+	// apply to handlers that read the body themselves.
+	MaxJSONBodyBytes int64
 }
 
 // DefaultConfig returns a Config with sensible defaults.
@@ -59,6 +69,8 @@ func DefaultConfig() *Config {
 			WriteTimeout:    defaultWriteTimeout,
 			IdleTimeout:     defaultIdleTimeout,
 			ShutdownTimeout: defaultShutdownTimeout,
+
+			MaxJSONBodyBytes: defaultMaxJSONBodyBytes,
 		},
 	}
 }

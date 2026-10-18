@@ -100,6 +100,11 @@ type Router struct {
 	validator   *validator.Validate
 	formDecoder *schema.Decoder
 
+	// maxJSONBody is the BindJSON body limit DI-aware handlers read on each
+	// request, shared with sub-routers. The App sets it from
+	// Server.MaxJSONBodyBytes once its config is bound.
+	maxJSONBody *atomic.Int64
+
 	// notFoundHandler is re-applied on every rebuild (top-level only).
 	notFoundHandler http.HandlerFunc
 	// removed records, per service, the routes torn down by RemoveByService so
@@ -184,7 +189,9 @@ func NewRouter() *Router {
 		rebuilding:      &rebuilding,
 		validator:       newValidator(),
 		formDecoder:     dec,
+		maxJSONBody:     new(atomic.Int64),
 	}
+	r.maxJSONBody.Store(defaultMaxJSONBodyBytes)
 	r.root = r
 	// Publish an empty tree so ServeHTTP never sees a nil snapshot before Seal.
 	r.served.Store(&muxSnapshot{mux: mux})
@@ -209,6 +216,7 @@ func newSubRouter(mux chi.Router, parent *Router, prefix string) *Router {
 		errorHandler:    parent.errorHandler,
 		pendingHandlers: parent.pendingHandlers,
 		rebuilding:      parent.rebuilding,
+		maxJSONBody:     parent.maxJSONBody,
 		// Shared so a sub-route registration clears the parent's 503 overlay,
 		// letting RestartService bring grouped routes back to life.
 		removed: parent.removed,
@@ -387,9 +395,9 @@ func (r *Router) Handle(
 	var httpHandler http.HandlerFunc
 	switch h := handler.(type) {
 	case http.HandlerFunc:
-		httpHandler = h
+		httpHandler = recoverPlain(h, func() ErrorHandler { return r.errorHandler })
 	case func(http.ResponseWriter, *http.Request):
-		httpHandler = h
+		httpHandler = recoverPlain(h, func() ErrorHandler { return r.errorHandler })
 	default:
 		var depTypes []reflect.Type
 		httpHandler, depTypes = adaptHandler(
@@ -397,6 +405,7 @@ func (r *Router) Handle(
 			func() ErrorHandler { return r.errorHandler },
 			r.validator,
 			r.formDecoder,
+			r.maxJSONBody.Load,
 		)
 		// Boot-time DI validation is recorded once, not on rebuild replays.
 		if len(depTypes) > 0 && !*r.rebuilding {
@@ -536,16 +545,27 @@ func (r *Router) NotFound(service Service, handler any) {
 	var httpHandler http.HandlerFunc
 	switch h := handler.(type) {
 	case http.HandlerFunc:
-		httpHandler = h
+		httpHandler = recoverPlain(h, func() ErrorHandler { return r.errorHandler })
 	case func(http.ResponseWriter, *http.Request):
-		httpHandler = h
+		httpHandler = recoverPlain(h, func() ErrorHandler { return r.errorHandler })
 	default:
-		httpHandler, _ = adaptHandler(
+		var depTypes []reflect.Type
+		httpHandler, depTypes = adaptHandler(
 			handler,
 			func() ErrorHandler { return r.errorHandler },
 			r.validator,
 			r.formDecoder,
+			r.maxJSONBody.Load,
 		)
+		// Validated at boot like a route handler's dependencies.
+		if len(depTypes) > 0 && !*r.rebuilding {
+			*r.pendingHandlers = append(*r.pendingHandlers, pendingHandler{
+				service:  service,
+				method:   "NOTFOUND",
+				path:     r.prefix + "/*",
+				depTypes: depTypes,
+			})
+		}
 	}
 
 	if r.isSub {
