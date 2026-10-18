@@ -102,6 +102,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Registering a service while the container resolves is no longer a data
+  race.** The container's mutex guarded its instance maps but not its
+  registrations, so a `Register*Service` call after startup raced with any
+  concurrent `Resolve`, `CanResolve`, or request-scope resolution (`go test
+  -race` reported it). The registrations are now guarded by the same mutex;
+  validation and the topological sort work on a copy taken under it (#11).
 - **`PrincipalFromContext` treats a typed-nil principal as absent.** A nil
   pointer stored with `WithPrincipal` came back as a non-nil `Principal`, so
   a `!= nil` check passed and `Context.Principal` returned it with no error;
