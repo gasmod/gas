@@ -11,9 +11,11 @@ type NopLogger struct{}
 
 var _ Logger = (*NopLogger)(nil)
 
-// NewNopLogger returns a constructor that constructs a nop-logger implementing the Logger interface.
-func NewNopLogger() func() *NopLogger {
-	return func() *NopLogger { return nopLogger }
+// NewNopLogger returns a constructor that constructs a nop-logger implementing
+// the Logger interface, in the CONVENTIONS.md shape. It never fails. Code that
+// needs a Logger value directly, such as a test, can use &NopLogger{}.
+func NewNopLogger() func() (*NopLogger, error) {
+	return func() (*NopLogger, error) { return nopLogger, nil }
 }
 
 // Trace creates a no-op log event for a trace-level message and silently discards it.

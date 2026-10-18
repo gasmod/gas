@@ -62,7 +62,7 @@ func (m *mockSQSClient) ChangeMessageVisibility(
 func newTestService(t *testing.T, mock *mockSQSClient) *Service {
 	t.Helper()
 	ctor := New(WithConfig(DefaultConfig()), WithClient(mock))
-	svc := ctor(nil, gas.NewNopLogger()())
+	svc := ctor(nil, &gas.NopLogger{})
 	if err := svc.Init(t.Context()); err != nil {
 		t.Fatalf("init: %v", err)
 	}
@@ -368,7 +368,7 @@ func TestNackClosed(t *testing.T) {
 func TestCheckReadyNotInitialized(t *testing.T) {
 	t.Parallel()
 	ctor := New(WithConfig(DefaultConfig()))
-	svc := ctor(nil, gas.NewNopLogger()())
+	svc := ctor(nil, &gas.NopLogger{})
 
 	if err := svc.CheckReady(context.Background()); err == nil {
 		t.Fatal("CheckReady() = nil, want error before Init")
@@ -402,7 +402,7 @@ func TestInit_InvalidConfigNamesService(t *testing.T) {
 
 	cfg := DefaultConfig()
 	cfg.Queue.Region = ""
-	err := New(WithConfig(cfg))(nil, gas.NewNopLogger()()).Init(t.Context())
+	err := New(WithConfig(cfg))(nil, &gas.NopLogger{}).Init(t.Context())
 	if err == nil || !strings.HasPrefix(err.Error(), serviceName+": invalid configuration: ") {
 		t.Errorf("Init() error = %v, want it prefixed with the service name", err)
 	}
@@ -439,7 +439,7 @@ func isolateAWSCredentials(t *testing.T) {
 func TestInit_NoCredentialsFails(t *testing.T) {
 	isolateAWSCredentials(t)
 
-	svc := New(WithConfig(DefaultConfig()))(nil, gas.NewNopLogger()())
+	svc := New(WithConfig(DefaultConfig()))(nil, &gas.NopLogger{})
 	err := svc.Init(t.Context())
 	if err == nil {
 		t.Fatal("Init() = nil, want an error for missing AWS credentials")
@@ -457,7 +457,7 @@ func TestInit_StaticCredentials(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Queue.AccessKeyID = "AKIDEXAMPLE"
 	cfg.Queue.SecretAccessKey = "secret"
-	svc := New(WithConfig(cfg))(nil, gas.NewNopLogger()())
+	svc := New(WithConfig(cfg))(nil, &gas.NopLogger{})
 	if err := svc.Init(t.Context()); err != nil {
 		t.Fatalf("Init() = %v, want nil", err)
 	}

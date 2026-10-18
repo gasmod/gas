@@ -28,7 +28,7 @@ func TestNewHandlerRequiresNotificationQueueURL(t *testing.T) {
 
 	conn := &fakeConnector{}
 	_, err = app.NewHandler(
-		gas.NewNopLogger()(),
+		&gas.NopLogger{},
 		&fakeDBProvider{db: conn.openDB()},
 		&queuetest.MockQueue{},
 		cfg,
@@ -192,7 +192,7 @@ func newHandler(t *testing.T, conn *fakeConnector, queue *queuetest.MockQueue) *
 		t.Fatalf("building config: %v", err)
 	}
 
-	h, err := app.NewHandler(gas.NewNopLogger()(), &fakeDBProvider{db: conn.openDB()}, queue, cfg)
+	h, err := app.NewHandler(&gas.NopLogger{}, &fakeDBProvider{db: conn.openDB()}, queue, cfg)
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}

@@ -751,7 +751,8 @@ or `/readyz` endpoint without coupling handlers to `*Worker`.
 Built-in no-op logger for tests or when logging isn't needed:
 
 ```go
-gas.WithSingletonService[gas.Logger](gas.NewNopLogger())
+gas.WithSingletonService[gas.Logger](gas.NewNopLogger()) // func() (*NopLogger, error)
+logger := &gas.NopLogger{}                                // a value, e.g. in a test
 ```
 
 ## Config (App only)

@@ -16,7 +16,7 @@ func newTestService(t *testing.T, _ ...Option) *Service {
 	cfg := DefaultConfig()
 	cfg.Cache.CleanupInterval = 0 // disable background cleanup in tests
 
-	svc := New(WithConfig(cfg))(nil, gas.NewNopLogger()())
+	svc := New(WithConfig(cfg))(nil, &gas.NopLogger{})
 	if err := svc.Init(t.Context()); err != nil {
 		t.Fatalf("Init() failed: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestMaxEntries(t *testing.T) {
 	cfg.Cache.MaxEntries = 2
 	cfg.Cache.CleanupInterval = 0
 
-	svc := New(WithConfig(cfg))(nil, gas.NewNopLogger()())
+	svc := New(WithConfig(cfg))(nil, &gas.NopLogger{})
 	if err := svc.Init(t.Context()); err != nil {
 		t.Fatalf("Init() error: %v", err)
 	}
@@ -211,7 +211,7 @@ func TestCleanup(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Cache.CleanupInterval = 10 * time.Millisecond
 
-	svc := New(WithConfig(cfg))(nil, gas.NewNopLogger()())
+	svc := New(WithConfig(cfg))(nil, &gas.NopLogger{})
 	if err := svc.Init(t.Context()); err != nil {
 		t.Fatalf("Init() error: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestDefaultTTL(t *testing.T) {
 	cfg.Cache.DefaultTTL = 1 * time.Millisecond
 	cfg.Cache.CleanupInterval = 0
 
-	svc := New(WithConfig(cfg))(nil, gas.NewNopLogger()())
+	svc := New(WithConfig(cfg))(nil, &gas.NopLogger{})
 	if err := svc.Init(t.Context()); err != nil {
 		t.Fatalf("Init() error: %v", err)
 	}
@@ -262,7 +262,7 @@ func TestDefaultTTL(t *testing.T) {
 func TestUnstartedServiceReturnsErrClosed(t *testing.T) {
 	t.Parallel()
 
-	svc := New(WithConfig(DefaultConfig()))(nil, gas.NewNopLogger()())
+	svc := New(WithConfig(DefaultConfig()))(nil, &gas.NopLogger{})
 	ctx := context.Background()
 
 	if _, err := svc.Get(ctx, "k"); !errors.Is(err, cache.ErrClosed) {

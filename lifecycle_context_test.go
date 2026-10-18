@@ -735,7 +735,7 @@ func TestShutdownRacingKillSwitchLeavesNothingOpen(t *testing.T) {
 	for range 2000 {
 		p := &lcProbe[lcTag0]{name: "probe"}
 		w := gas.NewWorker(
-			gas.WithServiceInstance[gas.Logger](gas.NewNopLogger()()),
+			gas.WithServiceInstance[gas.Logger](&gas.NopLogger{}),
 			gas.WithServiceInstance(p),
 		)
 		if err := w.Start(t.Context()); err != nil {

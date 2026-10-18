@@ -104,7 +104,7 @@ func newFakeService(
 	s := database.New(
 		database.WithConfig(cfg),
 		database.WithConnector(&fakeConnector{behavior: b}),
-	)(nil, gas.NewNopLogger()())
+	)(nil, &gas.NopLogger{})
 
 	if err := s.Init(t.Context()); err != nil {
 		t.Fatalf("Init on fake driver: %v", err)
@@ -221,7 +221,7 @@ func TestInit_RetryStopsWhenContextEnds(t *testing.T) {
 			s := database.New(
 				database.WithConfig(cfg),
 				database.WithConnector(&fakeConnector{behavior: b}),
-			)(nil, gas.NewNopLogger()())
+			)(nil, &gas.NopLogger{})
 
 			ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 			defer cancel()
@@ -273,7 +273,7 @@ func TestInit_BindsConfigFromProvider(t *testing.T) {
 
 	provider := &fakeConfigProvider{bound: bound}
 
-	s := database.New()(provider, gas.NewNopLogger()())
+	s := database.New()(provider, &gas.NopLogger{})
 	if err := s.Init(t.Context()); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
@@ -294,7 +294,7 @@ func TestInit_BindsConfigFromProvider(t *testing.T) {
 func TestInit_BindFailure(t *testing.T) {
 	provider := &fakeConfigProvider{err: errors.New("bind exploded")}
 
-	s := database.New()(provider, gas.NewNopLogger()())
+	s := database.New()(provider, &gas.NopLogger{})
 	if err := s.Init(t.Context()); err == nil {
 		t.Fatal("expected Init to fail when config binding fails")
 	}
@@ -307,7 +307,7 @@ func TestInit_WithConfigSkipsProvider(t *testing.T) {
 	cfg.Database.Driver = "sqlite"
 	cfg.Database.DSN = filepath.Join(t.TempDir(), "explicit.db")
 
-	s := database.New(database.WithConfig(cfg))(provider, gas.NewNopLogger()())
+	s := database.New(database.WithConfig(cfg))(provider, &gas.NopLogger{})
 	if err := s.Init(t.Context()); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
@@ -335,7 +335,7 @@ func TestInit_ConnectorInPgxMode(t *testing.T) {
 	s := database.New(
 		database.WithConfig(cfg),
 		database.WithConnector(&fakeConnector{behavior: &fakeBehavior{}}),
-	)(nil, gas.NewNopLogger()())
+	)(nil, &gas.NopLogger{})
 
 	err := s.Init(t.Context())
 	if err == nil {

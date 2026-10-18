@@ -25,7 +25,7 @@ import (
 
 // NewNopLogger creates a gas.Logger that discards all output.
 func NewNopLogger() gas.Logger {
-	return gas.NewNopLogger()()
+	return &gas.NopLogger{}
 }
 
 // ---------------------------------------------------------------------------

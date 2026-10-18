@@ -83,7 +83,7 @@ func TestInit_RetryStopsWhenContextEnds(t *testing.T) {
 			cfg.Cache.DialTimeout = 50 * time.Millisecond
 			cfg.Cache.ConnRetries = 5
 			cfg.Cache.ConnRetryInterval = time.Minute
-			s := New(WithConfig(cfg))(nil, gas.NewNopLogger()())
+			s := New(WithConfig(cfg))(nil, &gas.NopLogger{})
 
 			ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 			defer cancel()
@@ -108,7 +108,7 @@ func TestInit_RetryStopsWhenContextEnds(t *testing.T) {
 func TestUnstartedServiceReturnsErrClosed(t *testing.T) {
 	t.Parallel()
 
-	s := New(WithConfig(DefaultConfig()))(nil, gas.NewNopLogger()())
+	s := New(WithConfig(DefaultConfig()))(nil, &gas.NopLogger{})
 	ctx := context.Background()
 
 	// call turns a panic into an error, so every operation is checked
@@ -150,7 +150,7 @@ func TestInit_InvalidConfigNamesService(t *testing.T) {
 
 	cfg := DefaultConfig()
 	cfg.Cache.Addr = ""
-	err := New(WithConfig(cfg))(nil, gas.NewNopLogger()()).Init(t.Context())
+	err := New(WithConfig(cfg))(nil, &gas.NopLogger{}).Init(t.Context())
 	if err == nil || !strings.HasPrefix(err.Error(), "gas/cache/valkey: invalid configuration: ") {
 		t.Errorf("Init() error = %v, want it prefixed with the service name", err)
 	}
