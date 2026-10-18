@@ -698,8 +698,10 @@ bus.SubscribeWithOwner[UserCreated](s, func(p UserCreatedPayload) { ... }) // s 
 bus.RemoveByService(s)
 ```
 
-Handlers run concurrently, each on its own goroutine; a panicking handler
-takes the process down unless it recovers itself.
+Handlers run concurrently, each on its own goroutine. A panicking handler is
+recovered: the others still run, `Wait` still returns, the stack goes to
+stderr, and on a Worker's bus the panic is logged as `event subscriber panic`
+with the event type and owning service.
 
 ### System Events
 

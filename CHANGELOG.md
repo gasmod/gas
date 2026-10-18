@@ -30,6 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A panicking event subscriber no longer takes the process down.** `Emit`
+  ran each subscriber on a bare goroutine, so one panicking handler crashed
+  the process, and that was documented as intended. `Emit` now recovers it:
+  the other subscribers still run and the returned WaitGroup still
+  completes. The stack is written to stderr, and on a Worker's bus the panic
+  is logged at error level as `event subscriber panic`, with the event type,
+  the owning service, the panic value, and the stack. A handler that relied
+  on a panic to stop the process must now exit explicitly (#9).
 - **BREAKING: `gas.Service` takes a context.** `Init(ctx context.Context)`
   and `Close(ctx context.Context)` replace `Init()` and `Close()`; the
   container rejects a type with the old signatures and names the expected
