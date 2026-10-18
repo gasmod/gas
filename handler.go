@@ -68,6 +68,7 @@ func adaptHandler(
 	getErrorHandler func() ErrorHandler,
 	validate *validator.Validate,
 	formDecoder *schema.Decoder,
+	maxJSONBody func() int64,
 ) (http.HandlerFunc, []reflect.Type) {
 	handlerVal := reflect.ValueOf(handler)
 	handlerType := handlerVal.Type()
@@ -109,7 +110,7 @@ func adaptHandler(
 
 	meta := &handlerMeta{fn: handlerVal, depTypes: depTypes}
 
-	adapted := adaptedHandler(getErrorHandler, validate, formDecoder, meta)
+	adapted := adaptedHandler(getErrorHandler, validate, formDecoder, maxJSONBody, meta)
 
 	return adapted, depTypes
 }
@@ -160,11 +161,16 @@ func adaptedHandler(
 	getErrorHandler func() ErrorHandler,
 	validate *validator.Validate,
 	formDecoder *schema.Decoder,
+	maxJSONBody func() int64,
 	meta *handlerMeta,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// don't recover context initialization panics
-		ctx := NewContext(r.Context(), w, r, WithValidate(validate), WithFormDecoder(formDecoder))
+		ctx := NewContext(r.Context(), w, r,
+			WithValidate(validate),
+			WithFormDecoder(formDecoder),
+			WithMaxJSONBodyBytes(maxJSONBody()),
+		)
 
 		defer func() {
 			if rec := recover(); rec != nil {

@@ -323,7 +323,7 @@ svc := c.MustResolve[*myservice.Service]()
 | `BuildAll(ctx) error`                  | Validate lifetimes, topo-sort, eagerly resolve all singletons |
 | `NewScope(ctx) *Scope`                 | Create a scoped resolution context; ctx goes to scoped Inits  |
 | `EachInstance(fn func(reflect.Value))` | Iterate all built singleton instances                         |
-| `CanResolve[T any]() bool`             | Check if `T` can be resolved; builds nothing                  |
+| `CanResolve[T any]() bool`             | Check if exactly `T` is registered; builds nothing            |
 
 **Captive dependency validation:** `BuildAll(ctx)` rejects singletons that depend
 on scoped or transient services — this would "capture" a short-lived instance
@@ -577,7 +577,9 @@ return gas.NotFound("user not found").WithDetail("id", id) // use this instead
 
 `BindJSON` and `BindForm` both decode and then run struct validation via
 `go-playground/validator`, returning a `*gas.Error`: 400 (`invalid_json` /
-`invalid_form`) for a malformed body, 422 (`validation_failed`) with one
+`invalid_form`) for a malformed body, 413 (`payload_too_large`) when a JSON
+body is over `Server.MaxJSONBodyBytes` (1 MiB by default; `WithMaxJSONBodyBytes`
+sets it on a hand-built `NewContext`), 422 (`validation_failed`) with one
 `FieldError` per violation, named by json tag. The underlying error stays
 reachable through `errors.As`. The form decoder uses alias tag `"form"` and has
 `IgnoreUnknownKeys(true)` enabled.
@@ -757,12 +759,13 @@ type Config struct {
 }
 
 type ServerSettings struct {
-	Host            string        // default: "0.0.0.0"
-	Port            int           // default: 8080
-	ReadTimeout     time.Duration // default: 5s
-	WriteTimeout    time.Duration // default: 10s
-	IdleTimeout     time.Duration // default: 2m
-	ShutdownTimeout time.Duration // default: 30s
+	Host             string        // default: "0.0.0.0"
+	Port             int           // default: 8080
+	ReadTimeout      time.Duration // default: 5s
+	WriteTimeout     time.Duration // default: 10s
+	IdleTimeout      time.Duration // default: 2m
+	ShutdownTimeout  time.Duration // default: 30s
+	MaxJSONBodyBytes int64         // default: 1 MiB; BindJSON's body cap, <= 0 is no limit
 }
 
 gas.DefaultConfig() *Config
