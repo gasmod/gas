@@ -210,7 +210,10 @@ func (s *Service) handleCreateAPIKey(ctx gas.Context) error {
 		return &apiError{Status: http.StatusBadRequest, Message: "invalid request: " + err.Error()}
 	}
 
-	principal := gas.PrincipalFromContext(ctx)
+	principal, err := ctx.Principal()
+	if err != nil {
+		return err
+	}
 	key, info, err := s.apikeys.Generate(ctx, principal.Subject(), req.Name, nil)
 	if err != nil {
 		return fmt.Errorf("generating api key: %w", err)
@@ -226,7 +229,10 @@ func (s *Service) handleCreateAPIKey(ctx gas.Context) error {
 }
 
 func (s *Service) handleListAPIKeys(ctx gas.Context) error {
-	principal := gas.PrincipalFromContext(ctx)
+	principal, err := ctx.Principal()
+	if err != nil {
+		return err
+	}
 	keys, err := s.apikeys.List(ctx, principal.Subject())
 	if err != nil {
 		return fmt.Errorf("listing api keys: %w", err)
@@ -247,7 +253,10 @@ func (s *Service) handleListAPIKeys(ctx gas.Context) error {
 }
 
 func (s *Service) handleDeleteAPIKey(ctx gas.Context) error {
-	principal := gas.PrincipalFromContext(ctx)
+	principal, err := ctx.Principal()
+	if err != nil {
+		return err
+	}
 	keyID := ctx.Param("id")
 
 	// Verify ownership by checking the key belongs to the user.

@@ -159,7 +159,10 @@ func (s *Service) handleCreateShare(ctx gas.Context) error {
 		return &apiError{Status: http.StatusNotFound, Message: "file not found"}
 	}
 
-	principal := gas.PrincipalFromContext(ctx)
+	principal, err := ctx.Principal()
+	if err != nil {
+		return err
+	}
 	userID, _ := uuid.Parse(principal.Subject())
 	if f.UserID != userID {
 		return &apiError{Status: http.StatusNotFound, Message: "file not found"}

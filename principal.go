@@ -49,16 +49,16 @@ func WithPrincipal(ctx context.Context, principal Principal) context.Context {
 	return context.WithValue(ctx, principalKey{}, principal)
 }
 
-// PrincipalFromContext retrieves the Principal from the context, or nil if
-// no principal is present. A typed-nil Principal (a nil pointer of a type
-// implementing Principal) counts as absent and also yields nil, so a caller's
-// nil check cannot pass on it.
-func PrincipalFromContext(ctx context.Context) Principal {
+// PrincipalFromContext retrieves the Principal from the context and reports
+// whether one is present. A nil Principal, or a typed-nil one (a nil pointer
+// of a type implementing Principal), counts as absent: the result is nil and
+// false, so a caller checking ok never gets a principal it cannot use.
+func PrincipalFromContext(ctx context.Context) (Principal, bool) {
 	principal, ok := ctx.Value(principalKey{}).(Principal)
 	if !ok || isNilPointer(principal) {
-		return nil
+		return nil, false
 	}
-	return principal
+	return principal, true
 }
 
 // isNilPointer reports whether p holds a nil pointer.

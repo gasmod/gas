@@ -105,20 +105,23 @@ func TestContext_Principal_NilStored(t *testing.T) {
 }
 
 // TestPrincipalFromContext checks the round trip through WithPrincipal and
-// the nil result when no principal is stored.
+// the nil, false result when no principal is stored.
 func TestPrincipalFromContext(t *testing.T) {
 	t.Parallel()
 
-	if p := gas.PrincipalFromContext(context.Background()); p != nil {
-		t.Fatalf("PrincipalFromContext(empty) = %v, want nil", p)
+	if p, ok := gas.PrincipalFromContext(context.Background()); ok || p != nil {
+		t.Fatalf("PrincipalFromContext(empty) = %v, %v, want nil, false", p, ok)
 	}
 	want := testPrincipal{subject: "user-1"}
-	got := gas.PrincipalFromContext(gas.WithPrincipal(context.Background(), want))
-	if got == nil || got.Subject() != "user-1" {
-		t.Fatalf("PrincipalFromContext = %v, want subject user-1", got)
+	got, ok := gas.PrincipalFromContext(gas.WithPrincipal(context.Background(), want))
+	if !ok || got.Subject() != "user-1" {
+		t.Fatalf("PrincipalFromContext = %v, %v, want subject user-1, true", got, ok)
 	}
-	if p := gas.PrincipalFromContext(gas.WithPrincipal(context.Background(), nil)); p != nil {
-		t.Fatalf("PrincipalFromContext(nil stored) = %v, want nil", p)
+	if p, ok := gas.PrincipalFromContext(
+		gas.WithPrincipal(context.Background(), nil),
+	); ok ||
+		p != nil {
+		t.Fatalf("PrincipalFromContext(nil stored) = %v, %v, want nil, false", p, ok)
 	}
 }
 
@@ -160,8 +163,8 @@ func TestPrincipalFromContext_TypedNil(t *testing.T) {
 
 	var typedNil *ptrPrincipal
 	ctx := gas.WithPrincipal(context.Background(), typedNil)
-	if p := gas.PrincipalFromContext(ctx); p != nil {
-		t.Fatalf("PrincipalFromContext(typed nil stored) = %#v, want nil", p)
+	if p, ok := gas.PrincipalFromContext(ctx); ok || p != nil {
+		t.Fatalf("PrincipalFromContext(typed nil stored) = %#v, %v, want nil, false", p, ok)
 	}
 }
 
