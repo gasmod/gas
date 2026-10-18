@@ -11,6 +11,7 @@ permissions:
 env:
   GO_VERSION: '1.27.1'
   GOLANGCI_LINT_VERSION: v2.13.2
+  GOVULNCHECK_VERSION: v1.8.0
 
 jobs:
   verify-versions:
@@ -80,8 +81,23 @@ jobs:
         run: go vet ./...
         working-directory: ${{ matrix.modules }}
 
+  govulncheck:
+    needs: detect-modules
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        modules: ${{ fromJSON(needs.detect-modules.outputs.modules) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: govulncheck ${{ matrix.modules }}
+        run: go run golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }} ./...
+        working-directory: ${{ matrix.modules }}
+
   tag:
-    needs: [ detect-modules, golangci-lint, go-test, go-vet ]
+    needs: [ detect-modules, golangci-lint, go-test, go-vet, govulncheck ]
     runs-on: ubuntu-latest
     strategy:
       matrix:
