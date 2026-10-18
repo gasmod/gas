@@ -28,16 +28,16 @@ use (
 )
 
 replace (
-	github.com/gasmod/gas v0.5.2 => .
-	github.com/gasmod/gas/auth v0.5.2 => ./auth
-	github.com/gasmod/gas/cache v0.5.2 => ./cache
-	github.com/gasmod/gas/config v0.5.2 => ./config
-	github.com/gasmod/gas/database v0.5.2 => ./database
-	github.com/gasmod/gas/email v0.5.2 => ./email
-	github.com/gasmod/gas/log v0.5.2 => ./log
-	github.com/gasmod/gas/migrate v0.5.2 => ./migrate
-	github.com/gasmod/gas/queue v0.5.2 => ./queue
-	github.com/gasmod/gas/storage v0.5.2 => ./storage
-	github.com/gasmod/gas/template v0.5.2 => ./template
-	github.com/gasmod/gas/ui v0.5.2 => ./ui
+	github.com/gasmod/gas v0.5.5 => .
+	github.com/gasmod/gas/auth v0.5.5 => ./auth
+	github.com/gasmod/gas/cache v0.5.5 => ./cache
+	github.com/gasmod/gas/config v0.5.5 => ./config
+	github.com/gasmod/gas/database v0.5.5 => ./database
+	github.com/gasmod/gas/email v0.5.5 => ./email
+	github.com/gasmod/gas/log v0.5.5 => ./log
+	github.com/gasmod/gas/migrate v0.5.5 => ./migrate
+	github.com/gasmod/gas/queue v0.5.5 => ./queue
+	github.com/gasmod/gas/storage v0.5.5 => ./storage
+	github.com/gasmod/gas/template v0.5.5 => ./template
+	github.com/gasmod/gas/ui v0.5.5 => ./ui
 )

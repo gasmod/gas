@@ -3,8 +3,8 @@ module github.com/gasmod/gas/cache
 go 1.27
 
 require (
-	github.com/gasmod/gas v0.5.2
-	github.com/gasmod/gas/config v0.5.2
+	github.com/gasmod/gas v0.5.5
+	github.com/gasmod/gas/config v0.5.5
 	github.com/testcontainers/testcontainers-go v0.44.0
 	github.com/valkey-io/valkey-go v1.0.79
 )
@@ -23,9 +23,9 @@ require (
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/docker/go-connections v0.8.2 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
-	github.com/ebitengine/purego v0.11.1 // indirect
+	github.com/ebitengine/purego v0.11.2 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
-	github.com/gabriel-vasile/mimetype v1.4.15 // indirect
+	github.com/gabriel-vasile/mimetype v1.4.16 // indirect
 	github.com/go-chi/chi/v5 v5.5.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
