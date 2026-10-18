@@ -45,7 +45,7 @@ func TestInit_RetryStopsWhenContextEnds(t *testing.T) {
 			cfg.Cache.DialTimeout = 50 * time.Millisecond
 			cfg.Cache.ConnRetries = 5
 			cfg.Cache.ConnRetryInterval = time.Minute
-			s, err := New(WithConfig(cfg))(nil, gas.NewNopLogger()())
+			s, err := New(WithConfig(cfg))(nil, &gas.NopLogger{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -73,7 +73,7 @@ func TestInit_RetryStopsWhenContextEnds(t *testing.T) {
 func TestUnstartedServiceReturnsErrClosed(t *testing.T) {
 	t.Parallel()
 
-	s, err := New(WithConfig(DefaultConfig()))(nil, gas.NewNopLogger()())
+	s, err := New(WithConfig(DefaultConfig()))(nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestInit_InvalidConfigNamesService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc, err := New()(provider, gas.NewNopLogger()())
+	svc, err := New()(provider, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}

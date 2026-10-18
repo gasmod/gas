@@ -34,7 +34,7 @@ func newPgxService(t *testing.T) *database.Service {
 	cfg.Database.Mode = database.ModePgx
 	cfg.Database.DSN = dsn
 
-	s, err := database.New(database.WithConfig(cfg))(nil, gas.NewNopLogger()())
+	s, err := database.New(database.WithConfig(cfg))(nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}

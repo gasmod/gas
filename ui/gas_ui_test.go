@@ -98,7 +98,7 @@ func TestEngine_RenderNoLayout(t *testing.T) {
 		ui.DefaultFuncMap(gasenv.Development),
 		"base",
 		false,
-		gas.NewNopLogger()(),
+		&gas.NopLogger{},
 	)
 	if err := e.Build(); err != nil {
 		t.Fatal(err)
@@ -132,7 +132,7 @@ func TestEngine_RenderWithLayout(t *testing.T) {
 		ui.DefaultFuncMap(gasenv.Development),
 		"base",
 		false,
-		gas.NewNopLogger()(),
+		&gas.NopLogger{},
 	)
 	if err := e.Build(); err != nil {
 		t.Fatal(err)
@@ -167,7 +167,7 @@ func TestEngine_RenderWithPartials(t *testing.T) {
 		ui.DefaultFuncMap(gasenv.Development),
 		"base",
 		false,
-		gas.NewNopLogger()(),
+		&gas.NopLogger{},
 	)
 	if err := e.Build(); err != nil {
 		t.Fatal(err)
@@ -201,7 +201,7 @@ func TestEngine_RenderWithStatus(t *testing.T) {
 		ui.DefaultFuncMap(gasenv.Development),
 		"base",
 		false,
-		gas.NewNopLogger()(),
+		&gas.NopLogger{},
 	)
 	if err := e.Build(); err != nil {
 		t.Fatal(err)
@@ -231,7 +231,7 @@ func TestEngine_RenderFragment(t *testing.T) {
 		ui.DefaultFuncMap(gasenv.Development),
 		"base",
 		false,
-		gas.NewNopLogger()(),
+		&gas.NopLogger{},
 	)
 	if err := e.Build(); err != nil {
 		t.Fatal(err)
@@ -264,7 +264,7 @@ func TestEngine_RenderNotFound(t *testing.T) {
 		ui.DefaultFuncMap(gasenv.Development),
 		"base",
 		false,
-		gas.NewNopLogger()(),
+		&gas.NopLogger{},
 	)
 	if err := e.Build(); err != nil {
 		t.Fatal(err)
@@ -286,7 +286,7 @@ func TestEngine_DevModeRebuilds(t *testing.T) {
 		"page.html": "<p>v1</p>",
 	})
 
-	e := ui.NewEngine(tp, ui.DefaultFuncMap(gasenv.Development), "base", true, gas.NewNopLogger()())
+	e := ui.NewEngine(tp, ui.DefaultFuncMap(gasenv.Development), "base", true, &gas.NopLogger{})
 	if err := e.Build(); err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +329,7 @@ func TestEngine_SubdirectoryPages(t *testing.T) {
 		ui.DefaultFuncMap(gasenv.Development),
 		"base",
 		false,
-		gas.NewNopLogger()(),
+		&gas.NopLogger{},
 	)
 	if err := e.Build(); err != nil {
 		t.Fatal(err)
@@ -366,7 +366,7 @@ func TestFuncMap_Dict(t *testing.T) {
 		ui.DefaultFuncMap(gasenv.Development),
 		"base",
 		false,
-		gas.NewNopLogger()(),
+		&gas.NopLogger{},
 	)
 	if err := e.Build(); err != nil {
 		t.Fatal(err)
@@ -439,7 +439,7 @@ func TestService_InitAndRender(t *testing.T) {
 		tp,
 		nil,
 		nil,
-		gas.NewNopLogger()(),
+		&gas.NopLogger{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -469,7 +469,7 @@ func TestService_ClosedReturns503(t *testing.T) {
 		tp,
 		nil,
 		nil,
-		gas.NewNopLogger()(),
+		&gas.NopLogger{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -502,7 +502,7 @@ func TestService_RegisterFuncs(t *testing.T) {
 		tp,
 		nil,
 		nil,
-		gas.NewNopLogger()(),
+		&gas.NopLogger{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -534,7 +534,7 @@ func TestService_CheckReady(t *testing.T) {
 		tp,
 		nil,
 		nil,
-		gas.NewNopLogger()(),
+		&gas.NopLogger{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -565,7 +565,7 @@ func TestService_CheckReady(t *testing.T) {
 
 func TestService_Name(t *testing.T) {
 	tp := newTestProvider(nil)
-	svc, err := ui.New[*testProvider]()(tp, nil, nil, gas.NewNopLogger()())
+	svc, err := ui.New[*testProvider]()(tp, nil, nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -590,7 +590,7 @@ func TestEngine_ConcurrentDevModeRenders(t *testing.T) {
 		"home.html":          `{{define "content"}}{{template "nav"}}<p>home</p>{{end}}`,
 		"dashboard/top.html": `{{define "content"}}{{template "nav"}}<p>top</p>{{end}}`,
 	})
-	e := ui.NewEngine(tp, ui.DefaultFuncMap(gasenv.Development), "base", true, gas.NewNopLogger()())
+	e := ui.NewEngine(tp, ui.DefaultFuncMap(gasenv.Development), "base", true, &gas.NopLogger{})
 
 	pages := map[string]string{"home": "<p>home</p>", "dashboard/top": "<p>top</p>"}
 	var wg sync.WaitGroup
@@ -629,7 +629,7 @@ func TestEngine_AddFuncsDuringRenders(t *testing.T) {
 	tp := newTestProvider(map[string]string{"page.html": `<p>{{greet}}</p>`})
 	funcs := ui.DefaultFuncMap(gasenv.Production)
 	funcs["greet"] = func() string { return "hi" }
-	e := ui.NewEngine(tp, funcs, "base", false, gas.NewNopLogger()())
+	e := ui.NewEngine(tp, funcs, "base", false, &gas.NopLogger{})
 
 	var wg sync.WaitGroup
 	for range 4 {
@@ -657,7 +657,7 @@ func TestService_InvalidConfigNamesService(t *testing.T) {
 	cfg := ui.DefaultConfig()
 	cfg.UI.LayoutName = ""
 	svc, err := ui.New[*testProvider](ui.WithConfig(cfg))(
-		newTestProvider(map[string]string{"home.html": "ok"}), nil, nil, gas.NewNopLogger()(),
+		newTestProvider(map[string]string{"home.html": "ok"}), nil, nil, &gas.NopLogger{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -677,7 +677,7 @@ func newStaticService(t *testing.T, cfg *ui.Config, fsys fs.FS) *gas.Router {
 		newTestProvider(map[string]string{"home.html": "ok"}),
 		router,
 		nil,
-		gas.NewNopLogger()(),
+		&gas.NopLogger{},
 	)
 	if err != nil {
 		t.Fatal(err)

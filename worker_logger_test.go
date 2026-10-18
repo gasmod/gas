@@ -55,7 +55,7 @@ func TestWorker_FallbackLoggerNotRegistered(t *testing.T) {
 func TestWorker_UsesRegisteredLogger(t *testing.T) {
 	t.Parallel()
 
-	nop := NewNopLogger()()
+	nop := &NopLogger{}
 	w := NewWorker(WithServiceInstance[Logger](nop))
 	if err := w.InitServices(context.Background()); err != nil {
 		t.Fatal(err)

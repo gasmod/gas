@@ -63,7 +63,7 @@ func (m *mockSQSClient) ChangeMessageVisibility(
 func newTestService(t *testing.T, mock *mockSQSClient) *Service {
 	t.Helper()
 	ctor := New(WithConfig(DefaultConfig()), WithClient(mock))
-	svc, err := ctor(nil, gas.NewNopLogger()())
+	svc, err := ctor(nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +332,7 @@ func TestNackClosed(t *testing.T) {
 func TestCheckReadyNotInitialized(t *testing.T) {
 	t.Parallel()
 	ctor := New(WithConfig(DefaultConfig()))
-	svc, err := ctor(nil, gas.NewNopLogger()())
+	svc, err := ctor(nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -373,7 +373,7 @@ func TestInit_InvalidConfigNamesService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc, err := New()(provider, gas.NewNopLogger()())
+	svc, err := New()(provider, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,7 +414,7 @@ func isolateAWSCredentials(t *testing.T) {
 func TestInit_NoCredentialsFails(t *testing.T) {
 	isolateAWSCredentials(t)
 
-	svc, err := New(WithConfig(DefaultConfig()))(nil, gas.NewNopLogger()())
+	svc, err := New(WithConfig(DefaultConfig()))(nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -435,7 +435,7 @@ func TestInit_StaticCredentials(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Queue.AccessKeyID = "AKIDEXAMPLE"
 	cfg.Queue.SecretAccessKey = "secret"
-	svc, err := New(WithConfig(cfg))(nil, gas.NewNopLogger()())
+	svc, err := New(WithConfig(cfg))(nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}

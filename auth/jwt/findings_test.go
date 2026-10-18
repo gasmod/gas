@@ -66,7 +66,7 @@ func TestSignUsesValidatedExpiry_SignWithExpiryBypasses(t *testing.T) {
 
 	// But a running service with valid config still allows negative expiry via SignWithExpiry.
 	cfg.JWT.Expiry = 15 * time.Minute
-	svc, err := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, gas.NewNopLogger()())
+	svc, err := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, &gas.NopLogger{})
 	require.NoError(t, err)
 	require.NoError(t, svc.Init(context.Background()))
 

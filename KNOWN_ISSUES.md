@@ -15,41 +15,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   input that triggers it).
 - **Next step**: what has to happen to close it.
 
-## KI-004: built-in module constructors are not on the `CONVENTIONS.md` shape
-
-- **Status**: open
-- **Area**: the DI constructors of the built-in modules.
-- **Found**: 2026-10-16, while writing `CONVENTIONS.md`.
-- **Detail**: `CONVENTIONS.md` makes
-  `func NewModule(opts ...Option) func(<dependencies>) (*Module, error)` the
-  shape of every constructor whose result is registered in the DI
-  container. On `main` none of them return an error:
-
-  - `func(deps...) *Service`: `auth/jwt.New`, `auth/apikey.New`,
-    `auth/session.New`, `auth/token.New`, `cache/memory.New`,
-    `cache/valkey.New`, `database.New`, `email/ses.New` and
-    `email/ses.NewWithCustomProvider`, `migrate.New`, `queue/sqs.New`, and
-    `ui.New`.
-  - `func(deps...) *Store`: `auth/apikey/db.New`, `auth/session/db.New`,
-    `auth/token/db.New`, and `template/db.NewStore`.
-  - `func() *Store`: `template/dir.NewStore(dir)` and
-    `template/fs.NewStore(fsys)`.
-  - `func() *<logger type>`: `gas.NewNopLogger`, `log.NewZeroLogLogger`,
-    `log.NewSlogLogger`, and `log.NewShippingLogger`.
-
-  Out of scope, because an app builds the value directly rather than
-  registering a constructor: in core, `NewApp`, `NewWorker`, `NewRouter`,
-  `NewServiceContainer`, `NewEventBus`, `NewContext`, and `NewError`;
-  `auth.NewPrincipal`; `config.New`,
-  `config/extensions/gasenv.NewExtension`, `config/providers`
-  `NewDotEnvProvider`, `NewEnvProvider`, and `NewJSONProvider`,
-  `config/providers/secretsmanager.NewProvider`, and
-  `config/configtest.NewMockConfigWithValues`; `log.NewShippingHandler`
-  and `log.NewOTLPMarshaler`; `template/composite.NewStore` and
-  `template/memory.NewStore`; and `ui.NewEngine`. Generated sqlc code is out
-  of scope too.
-- **Next step**: migrate each module to the convention in its own PR.
-
 ## KI-010: suspected flake in the s3 multipart content-length test
 
 - **Status**: open

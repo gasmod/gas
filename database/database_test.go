@@ -31,7 +31,7 @@ func newTestService(t *testing.T) *database.Service {
 	cfg.Database.Driver = "sqlite"
 	cfg.Database.DSN = filepath.Join(t.TempDir(), "test.db")
 
-	s, err := database.New(database.WithConfig(cfg))(nil, gas.NewNopLogger()())
+	s, err := database.New(database.WithConfig(cfg))(nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func newTestService(t *testing.T) *database.Service {
 }
 
 func TestName(t *testing.T) {
-	s, err := database.New()(nil, gas.NewNopLogger()())
+	s, err := database.New()(nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestName(t *testing.T) {
 }
 
 func TestInit_NoDSN(t *testing.T) {
-	s, err := database.New()(nil, gas.NewNopLogger()())
+	s, err := database.New()(nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestPing(t *testing.T) {
 }
 
 func TestPing_NotInitialized(t *testing.T) {
-	s, err := database.New()(nil, gas.NewNopLogger()())
+	s, err := database.New()(nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -373,7 +373,7 @@ func TestWithTx_Closed(t *testing.T) {
 
 func TestCheckHealth(t *testing.T) {
 	// Before Init: not initialized.
-	s, err := database.New()(nil, gas.NewNopLogger()())
+	s, err := database.New()(nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -417,7 +417,7 @@ func TestInit_RetrySuccess(t *testing.T) {
 	cfg.Database.ConnRetries = 3
 	cfg.Database.ConnRetryInterval = 1 * time.Millisecond
 
-	s, err := database.New(database.WithConfig(cfg))(nil, gas.NewNopLogger()())
+	s, err := database.New(database.WithConfig(cfg))(nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,7 +442,7 @@ func TestInit_RetryExhausted(t *testing.T) {
 	cfg.Database.ConnRetries = 2
 	cfg.Database.ConnRetryInterval = 1 * time.Millisecond
 
-	s, err := database.New(database.WithConfig(cfg))(nil, gas.NewNopLogger()())
+	s, err := database.New(database.WithConfig(cfg))(nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -466,7 +466,7 @@ func TestDriver_PgxMode(t *testing.T) {
 	cfg.Database.Driver = database.DriverPostgres
 	cfg.Database.DSN = "postgres://user:pass@localhost:5432/db"
 
-	s, err := database.New(database.WithConfig(cfg))(nil, gas.NewNopLogger()())
+	s, err := database.New(database.WithConfig(cfg))(nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -506,7 +506,7 @@ func TestWithConnector(t *testing.T) {
 	s, err := database.New(
 		database.WithConfig(cfg),
 		database.WithConnector(sqliteConnector{drv: drv, dsn: dsn}),
-	)(nil, gas.NewNopLogger()())
+	)(nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -535,7 +535,7 @@ func TestInit_UnregisteredDriver(t *testing.T) {
 	cfg.Database.Driver = database.DriverPostgres
 	cfg.Database.DSN = "postgres://user:pass@localhost:5432/db"
 
-	s, err := database.New(database.WithConfig(cfg))(nil, gas.NewNopLogger()())
+	s, err := database.New(database.WithConfig(cfg))(nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -551,7 +551,7 @@ func TestInit_PingFailure(t *testing.T) {
 	cfg.Database.Driver = "sqlite"
 	cfg.Database.DSN = t.TempDir()
 
-	s, err := database.New(database.WithConfig(cfg))(nil, gas.NewNopLogger()())
+	s, err := database.New(database.WithConfig(cfg))(nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -565,7 +565,7 @@ func TestInit_PgxInvalidDSN(t *testing.T) {
 	cfg.Database.Mode = database.ModePgx
 	cfg.Database.DSN = "::::not a dsn::::"
 
-	s, err := database.New(database.WithConfig(cfg))(nil, gas.NewNopLogger()())
+	s, err := database.New(database.WithConfig(cfg))(nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -575,7 +575,7 @@ func TestInit_PgxInvalidDSN(t *testing.T) {
 }
 
 func TestClose_Uninitialized(t *testing.T) {
-	s, err := database.New()(nil, gas.NewNopLogger()())
+	s, err := database.New()(nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -713,7 +713,7 @@ func TestWithTx_FnRollsBackThenReturnsError(t *testing.T) {
 // Ping and CheckHealth already report it.
 
 func TestQuery_NotInitialized(t *testing.T) {
-	s, err := database.New()(nil, gas.NewNopLogger()())
+	s, err := database.New()(nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -724,7 +724,7 @@ func TestQuery_NotInitialized(t *testing.T) {
 }
 
 func TestExec_NotInitialized(t *testing.T) {
-	s, err := database.New()(nil, gas.NewNopLogger()())
+	s, err := database.New()(nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -735,7 +735,7 @@ func TestExec_NotInitialized(t *testing.T) {
 }
 
 func TestBeginTx_NotInitialized(t *testing.T) {
-	s, err := database.New()(nil, gas.NewNopLogger()())
+	s, err := database.New()(nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -746,7 +746,7 @@ func TestBeginTx_NotInitialized(t *testing.T) {
 }
 
 func TestWithTx_NotInitialized(t *testing.T) {
-	s, err := database.New()(nil, gas.NewNopLogger()())
+	s, err := database.New()(nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -772,7 +772,7 @@ func TestQuery_AfterFailedInit(t *testing.T) {
 	cfg.Database.Driver = "sqlite"
 	cfg.Database.DSN = t.TempDir()
 
-	s, err := database.New(database.WithConfig(cfg))(nil, gas.NewNopLogger()())
+	s, err := database.New(database.WithConfig(cfg))(nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -792,7 +792,7 @@ func TestInit_InvalidConfigNamesService(t *testing.T) {
 
 	cfg := database.DefaultConfig()
 	cfg.Database.Mode = "bogus"
-	s, err := database.New(database.WithConfig(cfg))(nil, gas.NewNopLogger()())
+	s, err := database.New(database.WithConfig(cfg))(nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}

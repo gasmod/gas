@@ -65,7 +65,7 @@ func validConfig() *Config {
 func newTestService(t *testing.T, mock *mockSESClient, tmpl gas.TemplateProvider) *Service {
 	t.Helper()
 	ctor := New(WithConfig(validConfig()), WithClient(mock))
-	svc, err := ctor(tmpl, nil, gas.NewNopLogger()())
+	svc, err := ctor(tmpl, nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestDefaultConfig(t *testing.T) {
 func TestServiceName(t *testing.T) {
 	t.Parallel()
 	ctor := New(WithConfig(validConfig()), WithClient(&mockSESClient{}))
-	svc, err := ctor(&mockTemplateProvider{}, nil, gas.NewNopLogger()())
+	svc, err := ctor(&mockTemplateProvider{}, nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestSend(t *testing.T) {
 	cfg := validConfig()
 	cfg.GasEnv = "production"
 	ctor := New(WithConfig(cfg), WithClient(mock))
-	svc, err := ctor(&mockTemplateProvider{}, nil, gas.NewNopLogger()())
+	svc, err := ctor(&mockTemplateProvider{}, nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +182,7 @@ func TestSendUsesMessageFrom(t *testing.T) {
 	cfg := validConfig()
 	cfg.GasEnv = "production"
 	ctor := New(WithConfig(cfg), WithClient(mock))
-	svc, err := ctor(&mockTemplateProvider{}, nil, gas.NewNopLogger()())
+	svc, err := ctor(&mockTemplateProvider{}, nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestSendWithCcBcc(t *testing.T) {
 	cfg := validConfig()
 	cfg.GasEnv = "production"
 	ctor := New(WithConfig(cfg), WithClient(mock))
-	svc, err := ctor(&mockTemplateProvider{}, nil, gas.NewNopLogger()())
+	svc, err := ctor(&mockTemplateProvider{}, nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +269,7 @@ func TestSendSESError(t *testing.T) {
 	cfg := validConfig()
 	cfg.GasEnv = "production"
 	ctor := New(WithConfig(cfg), WithClient(mock))
-	svc, err := ctor(&mockTemplateProvider{}, nil, gas.NewNopLogger()())
+	svc, err := ctor(&mockTemplateProvider{}, nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +314,7 @@ func TestSendFromTemplate(t *testing.T) {
 	cfg := validConfig()
 	cfg.GasEnv = "production"
 	ctor := New(WithConfig(cfg), WithClient(mock))
-	svc, err := ctor(tmpl, nil, gas.NewNopLogger()())
+	svc, err := ctor(tmpl, nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,7 +367,7 @@ func TestSendFromTemplatePartial(t *testing.T) {
 	cfg := validConfig()
 	cfg.GasEnv = "production"
 	ctor := New(WithConfig(cfg), WithClient(mock))
-	svc, err := ctor(tmpl, nil, gas.NewNopLogger()())
+	svc, err := ctor(tmpl, nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -423,7 +423,7 @@ func TestSendFromTemplateGetError(t *testing.T) {
 	cfg := validConfig()
 	cfg.GasEnv = "production"
 	ctor := New(WithConfig(cfg), WithClient(&mockSESClient{}))
-	svc, err := ctor(tmpl, nil, gas.NewNopLogger()())
+	svc, err := ctor(tmpl, nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,7 +452,7 @@ func TestSendFromTemplateParseError(t *testing.T) {
 	cfg := validConfig()
 	cfg.GasEnv = "production"
 	ctor := New(WithConfig(cfg), WithClient(&mockSESClient{}))
-	svc, err := ctor(tmpl, nil, gas.NewNopLogger()())
+	svc, err := ctor(tmpl, nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -510,7 +510,7 @@ func TestInit_InvalidConfigNamesService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc, err := New(WithClient(&mockSESClient{}))(nil, provider, gas.NewNopLogger()())
+	svc, err := New(WithClient(&mockSESClient{}))(nil, provider, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -551,7 +551,7 @@ func isolateAWSCredentials(t *testing.T) {
 func TestInit_NoCredentialsFails(t *testing.T) {
 	isolateAWSCredentials(t)
 
-	svc, err := New(WithConfig(validConfig()))(nil, nil, gas.NewNopLogger()())
+	svc, err := New(WithConfig(validConfig()))(nil, nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -572,7 +572,7 @@ func TestInit_StaticCredentials(t *testing.T) {
 	cfg := validConfig()
 	cfg.Email.AccessKeyID = "AKIDEXAMPLE"
 	cfg.Email.SecretAccessKey = "secret"
-	svc, err := New(WithConfig(cfg))(nil, nil, gas.NewNopLogger()())
+	svc, err := New(WithConfig(cfg))(nil, nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}

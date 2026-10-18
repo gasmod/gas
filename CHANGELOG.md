@@ -30,6 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING: `gas.NewNopLogger` returns an error.** It now returns
+  `func() (*NopLogger, error)`, the `CONVENTIONS.md` shape. It never fails and
+  returns nil. Registering it with `gas.WithSingletonService` is unchanged,
+  since the container accepts a trailing error. Code that called
+  `gas.NewNopLogger()()` for a value can use `&gas.NopLogger{}`, which is
+  what the framework's own tests now do. With this, every built-in module
+  constructor is on the convention (KI-004, #106).
 - **BREAKING: core no longer imports the config module.** Core's
   `ConfigProvider` named `config.BindOption` and `providers.Provider`, and
   core's `Config` embedded `gasenv.WithGasEnv`, so core required

@@ -42,7 +42,7 @@ func newHS256Service(t *testing.T, key string, opts ...func(*jwtpkg.Config)) *jw
 	for _, fn := range opts {
 		fn(cfg)
 	}
-	svc, err := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, gas.NewNopLogger()())
+	svc, err := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, &gas.NopLogger{})
 	require.NoError(t, err)
 	require.NoError(t, svc.Init(context.Background()))
 	return svc
@@ -90,7 +90,7 @@ func newRS256Service(t *testing.T, opts ...func(*jwtpkg.Config)) *jwtpkg.Service
 	for _, fn := range opts {
 		fn(cfg)
 	}
-	svc, err := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, gas.NewNopLogger()())
+	svc, err := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, &gas.NopLogger{})
 	require.NoError(t, err)
 	require.NoError(t, svc.Init(context.Background()))
 	return svc
@@ -338,7 +338,7 @@ func TestSignVerifyHS256(t *testing.T) {
 			jwtpkg.WithConfig(cfg),
 		)(
 			&configtest.MockConfig{},
-			gas.NewNopLogger()(),
+			&gas.NopLogger{},
 		)
 		require.NoError(t, err)
 
@@ -560,7 +560,7 @@ func TestRSAKeyLoading(t *testing.T) {
 			jwtpkg.WithConfig(cfg),
 		)(
 			&configtest.MockConfig{},
-			gas.NewNopLogger()(),
+			&gas.NopLogger{},
 		)
 		require.NoError(t, err)
 		err = svc.Init(context.Background())
@@ -584,7 +584,7 @@ func TestRSAKeyLoading(t *testing.T) {
 			jwtpkg.WithConfig(cfg),
 		)(
 			&configtest.MockConfig{},
-			gas.NewNopLogger()(),
+			&gas.NopLogger{},
 		)
 		require.NoError(t, err)
 		err = svc.Init(context.Background())
@@ -610,7 +610,7 @@ func TestRSAKeyLoading(t *testing.T) {
 			jwtpkg.WithConfig(cfg),
 		)(
 			&configtest.MockConfig{},
-			gas.NewNopLogger()(),
+			&gas.NopLogger{},
 		)
 		require.NoError(t, err)
 		err = svc.Init(context.Background())

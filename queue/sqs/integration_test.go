@@ -157,7 +157,7 @@ func newIntegrationService(t *testing.T, endpoint string) *Service {
 
 	client := newSQSClient(t, endpoint)
 	ctor := New(WithConfig(cfg), WithClient(client))
-	svc, err := ctor(nil, gas.NewNopLogger()())
+	svc, err := ctor(nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +315,7 @@ func TestIntegration_Close(t *testing.T) {
 	cfg.Queue.WaitTimeSeconds = 1
 
 	ctor := New(WithConfig(cfg))
-	svc, err := ctor(nil, gas.NewNopLogger()())
+	svc, err := ctor(nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}

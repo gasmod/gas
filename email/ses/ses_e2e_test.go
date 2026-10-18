@@ -134,7 +134,7 @@ func newE2EService(t *testing.T, endpoint string, tmpl gas.TemplateProvider) *se
 	}
 	cfg.GasEnv = "production"
 	ctor := ses.New(ses.WithConfig(cfg))
-	svc, err := ctor(tmpl, nil, gas.NewNopLogger()())
+	svc, err := ctor(tmpl, nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -104,7 +104,7 @@ func newFakeService(
 	s, err := database.New(
 		database.WithConfig(cfg),
 		database.WithConnector(&fakeConnector{behavior: b}),
-	)(nil, gas.NewNopLogger()())
+	)(nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +224,7 @@ func TestInit_RetryStopsWhenContextEnds(t *testing.T) {
 			s, err := database.New(
 				database.WithConfig(cfg),
 				database.WithConnector(&fakeConnector{behavior: b}),
-			)(nil, gas.NewNopLogger()())
+			)(nil, &gas.NopLogger{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -279,7 +279,7 @@ func TestInit_BindsConfigFromProvider(t *testing.T) {
 
 	provider := &fakeConfigProvider{bound: bound}
 
-	s, err := database.New()(provider, gas.NewNopLogger()())
+	s, err := database.New()(provider, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +303,7 @@ func TestInit_BindsConfigFromProvider(t *testing.T) {
 func TestInit_BindFailure(t *testing.T) {
 	provider := &fakeConfigProvider{err: errors.New("bind exploded")}
 
-	s, err := database.New()(provider, gas.NewNopLogger()())
+	s, err := database.New()(provider, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,7 +319,7 @@ func TestInit_WithConfigSkipsProvider(t *testing.T) {
 	cfg.Database.Driver = "sqlite"
 	cfg.Database.DSN = filepath.Join(t.TempDir(), "explicit.db")
 
-	s, err := database.New(database.WithConfig(cfg))(provider, gas.NewNopLogger()())
+	s, err := database.New(database.WithConfig(cfg))(provider, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,7 +350,7 @@ func TestInit_ConnectorInPgxMode(t *testing.T) {
 	s, err := database.New(
 		database.WithConfig(cfg),
 		database.WithConnector(&fakeConnector{behavior: &fakeBehavior{}}),
-	)(nil, gas.NewNopLogger()())
+	)(nil, &gas.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -61,7 +61,7 @@ var errInitFailed = errors.New("init failed")
 // so they build in that order, and c's Init failing.
 func newFailingWorker(log *startLog, opts ...gas.Option) *gas.Worker {
 	all := append([]gas.Option{
-		gas.WithServiceInstance[gas.Logger](gas.NewNopLogger()()),
+		gas.WithServiceInstance[gas.Logger](&gas.NopLogger{}),
 		gas.WithSingletonService[*probeA](func() *probeA {
 			return &probeA{&startProbe{name: "a", log: log}}
 		}),
@@ -133,7 +133,7 @@ func TestWorker_FailedReadyHookClosesAll(t *testing.T) {
 	log := &startLog{}
 	hookErr := errors.New("hook failed")
 	w := gas.NewWorker(
-		gas.WithServiceInstance[gas.Logger](gas.NewNopLogger()()),
+		gas.WithServiceInstance[gas.Logger](&gas.NopLogger{}),
 		gas.WithSingletonService[*probeA](func() *probeA {
 			return &probeA{&startProbe{name: "a", log: log}}
 		}),
@@ -198,7 +198,7 @@ func TestApp_FailedConfigBindClosesAll(t *testing.T) {
 
 	log := &startLog{}
 	app := gas.NewApp(
-		gas.WithServiceInstance[gas.Logger](gas.NewNopLogger()()),
+		gas.WithServiceInstance[gas.Logger](&gas.NopLogger{}),
 		gas.WithServiceInstance[gas.ConfigProvider](hostConfig(t, "")),
 		gas.WithSingletonService[*probeA](func() *probeA {
 			return &probeA{&startProbe{name: "a", log: log}}
