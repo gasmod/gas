@@ -281,7 +281,7 @@ type TokenClaims struct {
 
 ```go
 type Config struct {
-    env.WithGasEnv
+    gas.WithGasEnv
     JWT Settings
 }
 
@@ -374,7 +374,7 @@ type Session struct {
 
 ```go
 type Config struct {
-    env.WithGasEnv
+    gas.WithGasEnv
     Session Settings
 }
 
@@ -524,7 +524,7 @@ type KeyInfo struct {
 
 ```go
 type Config struct {
-    env.WithGasEnv
+    gas.WithGasEnv
     APIKey Settings
 }
 
@@ -591,7 +591,7 @@ func (s *Service) RevokeAllByPurpose(ctx context.Context, subject, purpose strin
 
 ```go
 type Config struct {
-    env.WithGasEnv
+    gas.WithGasEnv
     Token Settings
 }
 

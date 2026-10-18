@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	env "github.com/gasmod/gas/config/extensions/gasenv"
+	"github.com/gasmod/gas"
 )
 
 const (
@@ -18,7 +18,7 @@ const (
 
 // Config holds session service settings.
 type Config struct {
-	env.WithGasEnv
+	gas.WithGasEnv
 
 	Session Settings
 }
