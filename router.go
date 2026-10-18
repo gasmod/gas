@@ -395,9 +395,9 @@ func (r *Router) Handle(
 	var httpHandler http.HandlerFunc
 	switch h := handler.(type) {
 	case http.HandlerFunc:
-		httpHandler = h
+		httpHandler = recoverPlain(h, func() ErrorHandler { return r.errorHandler })
 	case func(http.ResponseWriter, *http.Request):
-		httpHandler = h
+		httpHandler = recoverPlain(h, func() ErrorHandler { return r.errorHandler })
 	default:
 		var depTypes []reflect.Type
 		httpHandler, depTypes = adaptHandler(
@@ -545,9 +545,9 @@ func (r *Router) NotFound(service Service, handler any) {
 	var httpHandler http.HandlerFunc
 	switch h := handler.(type) {
 	case http.HandlerFunc:
-		httpHandler = h
+		httpHandler = recoverPlain(h, func() ErrorHandler { return r.errorHandler })
 	case func(http.ResponseWriter, *http.Request):
-		httpHandler = h
+		httpHandler = recoverPlain(h, func() ErrorHandler { return r.errorHandler })
 	default:
 		var depTypes []reflect.Type
 		httpHandler, depTypes = adaptHandler(
