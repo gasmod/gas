@@ -252,6 +252,7 @@ func (a *App) bindConfig() error {
 	if err := a.cfg.Validate(); err != nil {
 		return fmt.Errorf("gas: config validation: %w", err)
 	}
+	a.router.maxJSONBody.Store(a.cfg.Server.MaxJSONBodyBytes)
 
 	a.Worker.eventBus.Emit[AppConfigUpdated](AppConfigUpdatedPayload{Config: *a.cfg}).Wait()
 
