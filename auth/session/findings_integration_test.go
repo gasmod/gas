@@ -31,7 +31,8 @@ func TestSQLiteTimeParsing_MalformedTimestamp(t *testing.T) {
 	cfg.Session.CleanupInterval = 0
 	cfg.Session.CookieSecure = false
 
-	svc := session.New(session.WithConfig(cfg))(provider, logger, migMgr, nil)
+	svc, err := session.New(session.WithConfig(cfg))(provider, logger, migMgr, nil)
+	require.NoError(t, err)
 	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
 	t.Cleanup(func() { _ = svc.Close(context.Background()) })
@@ -39,7 +40,7 @@ func TestSQLiteTimeParsing_MalformedTimestamp(t *testing.T) {
 	// Insert a session with a valid timestamp format.
 	validExpiry := time.Now().Add(24 * time.Hour).UTC().Format("2006-01-02 15:04:05")
 	validCreated := time.Now().UTC().Format("2006-01-02 15:04:05")
-	_, err := rawDB.Exec(`
+	_, err = rawDB.Exec(`
 		INSERT INTO __gas_auth_sessions (id, subject, metadata, ip_address, user_agent, created_at, expires_at, last_active)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		"valid-sess", "user-1", "{}", "127.0.0.1", "test", validCreated, validExpiry, validCreated)
@@ -112,7 +113,8 @@ func TestSQLiteTimeParsing_TruncatedTimestamp(t *testing.T) {
 	cfg.Session.CleanupInterval = 0
 	cfg.Session.CookieSecure = false
 
-	svc := session.New(session.WithConfig(cfg))(provider, logger, migMgr, nil)
+	svc, err := session.New(session.WithConfig(cfg))(provider, logger, migMgr, nil)
+	require.NoError(t, err)
 	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
 	t.Cleanup(func() { _ = svc.Close(context.Background()) })
@@ -120,7 +122,7 @@ func TestSQLiteTimeParsing_TruncatedTimestamp(t *testing.T) {
 	validCreated := time.Now().UTC().Format("2006-01-02 15:04:05")
 
 	// Insert with a truncated timestamp (just a date, no time).
-	_, err := rawDB.Exec(`
+	_, err = rawDB.Exec(`
 		INSERT INTO __gas_auth_sessions (id, subject, metadata, ip_address, user_agent, created_at, expires_at, last_active)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		"trunc-sess", "user-3", "{}", "127.0.0.1", "test", validCreated, "2099-01-01", validCreated)
@@ -163,7 +165,8 @@ func TestSessionPostgresHasMetadataDefault(t *testing.T) {
 	cfg.Session.CleanupInterval = 0
 	cfg.Session.CookieSecure = false
 
-	svc := session.New(session.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
+	svc, err := session.New(session.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
+	require.NoError(t, err)
 	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
 	t.Cleanup(func() { _ = svc.Close(context.Background()) })
@@ -172,7 +175,7 @@ func TestSessionPostgresHasMetadataDefault(t *testing.T) {
 
 	// PostgreSQL migration has DEFAULT '{}' for metadata and DEFAULT '' for user_agent.
 	// This INSERT omits metadata, ip_address, and user_agent — should succeed.
-	_, err := db.Exec(`
+	_, err = db.Exec(`
 		INSERT INTO __gas_auth_sessions (id, subject, expires_at)
 		VALUES ($1, $2, $3)`,
 		"default-test", "user-1", time.Now().Add(24*time.Hour))
@@ -229,7 +232,8 @@ func TestSessionCleanupGracefulShutdown(t *testing.T) {
 	cfg.Session.CleanupInterval = 100 * time.Millisecond
 	cfg.Session.CleanupTimeout = 5 * time.Second
 
-	svc := session.New(session.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
+	svc, err := session.New(session.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
+	require.NoError(t, err)
 	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
 

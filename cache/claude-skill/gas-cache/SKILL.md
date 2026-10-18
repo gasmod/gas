@@ -102,7 +102,7 @@ func receives `gas.ConfigProvider` and `gas.Logger` from the DI container.
 
 ```go
 type Config struct {
-    env.WithGasEnv
+    gas.WithGasEnv
     Cache Settings
 }
 
@@ -187,7 +187,7 @@ type ValkeyProvider interface {
 
 ```go
 type Config struct {
-    env.WithGasEnv
+    gas.WithGasEnv
     Cache Settings
 }
 
