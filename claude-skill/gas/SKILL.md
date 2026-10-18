@@ -758,7 +758,7 @@ gas.WithSingletonService[gas.Logger](gas.NewNopLogger())
 
 ```go
 type Config struct {
-	env.WithGasEnv
+	gas.WithGasEnv
 	Server ServerSettings
 }
 

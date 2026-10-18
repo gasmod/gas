@@ -360,12 +360,13 @@ type WithGasEnv struct {
 }
 ```
 
-Embed `gasenv.WithGasEnv` in your config struct. The `GasEnv` field is
-auto-populated by `Bind()` from the config key.
+Embed `gas.WithGasEnv` in your config struct. The `GasEnv` field is
+auto-populated by `Bind()` from the config key. `gasenv.WithGasEnv` and
+`gasenv.Environment` are aliases of the core types, kept so older code compiles.
 
 ```go
 type AppConfig struct {
-    gasenv.WithGasEnv
+    gas.WithGasEnv
     Database struct {
         Host string
         Port int
@@ -479,7 +480,7 @@ import (
 )
 
 type AppConfig struct {
-    gasenv.WithGasEnv // auto-populated environment field
+    gas.WithGasEnv // auto-populated environment field
     Database struct {
         Host     string `json:"host" validate:"required"`
         Port     int    `json:"port"`
