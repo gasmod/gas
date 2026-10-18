@@ -1,9 +1,6 @@
 package gas
 
 import (
-	"errors"
-	"fmt"
-	"net"
 	"time"
 
 	env "github.com/gasmod/gas/config/extensions/gasenv"
@@ -16,6 +13,10 @@ const (
 	defaultWriteTimeout    = 10 * time.Second
 	defaultIdleTimeout     = 2 * time.Minute
 	defaultShutdownTimeout = 30 * time.Second
+
+	// defaultMaxJSONBodyBytes is the default cap on the request body BindJSON
+	// reads: 1 MiB.
+	defaultMaxJSONBodyBytes = 1 << 20
 )
 
 // Config holds server-level configuration passed from the host server
@@ -29,8 +30,10 @@ type Config struct {
 
 // ServerSettings defines the configuration for a server, including host, port, timeouts, and graceful shutdown settings.
 type ServerSettings struct {
-	// Host specifies the hostname or IP address where the server will be hosted.
-	Host string
+	// Host specifies the hostname or IP address where the server will be
+	// hosted: an IP address or an RFC 1123 hostname. ConfigProvider.Bind
+	// checks it against the validate tag, for shape only, with no DNS lookup.
+	Host string `validate:"required,max=253,ip|hostname_rfc1123"`
 
 	// Port is the port number on which the server listens for incoming requests.
 	Port int
@@ -47,6 +50,12 @@ type ServerSettings struct {
 	// ShutdownTimeout is how long to wait for in-flight requests to complete
 	// during graceful shutdown.
 	ShutdownTimeout time.Duration
+
+	// MaxJSONBodyBytes caps how many bytes of the request body
+	// Context.BindJSON reads; a larger body fails with a 413 *Error. It
+	// defaults to 1 MiB. Zero or a negative value means no limit. It does not
+	// apply to handlers that read the body themselves.
+	MaxJSONBodyBytes int64
 }
 
 // DefaultConfig returns a Config with sensible defaults.
@@ -59,25 +68,8 @@ func DefaultConfig() *Config {
 			WriteTimeout:    defaultWriteTimeout,
 			IdleTimeout:     defaultIdleTimeout,
 			ShutdownTimeout: defaultShutdownTimeout,
+
+			MaxJSONBodyBytes: defaultMaxJSONBodyBytes,
 		},
 	}
-}
-
-// Validate checks that the Config fields are valid.
-func (c *Config) Validate() error {
-	if err := validateHost(c.Server.Host); err != nil {
-		return fmt.Errorf("Server.Host: %w", err)
-	}
-	return nil
-}
-
-func validateHost(host string) error {
-	if host == "" {
-		return errors.New("must not be empty")
-	}
-	// Valid if it's a resolvable hostname, this also checks IPv4 and IPv6
-	if _, err := net.LookupHost(host); err == nil {
-		return nil
-	}
-	return fmt.Errorf("%q is not a valid IP or resolvable hostname", host)
 }

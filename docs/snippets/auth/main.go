@@ -74,8 +74,8 @@ func protect(
 // #region principal
 // Downstream, the principal is on the context. Metadata is read type-safely.
 func listNotes(ctx gas.Context) error {
-	p := gas.PrincipalFromContext(ctx)
-	if p == nil {
+	p, ok := gas.PrincipalFromContext(ctx)
+	if !ok {
 		return gas.Unauthorized("sign in to continue")
 	}
 

@@ -124,7 +124,10 @@ func (s *Service) handleUpload(ctx gas.Context) error {
 	}
 	defer func() { _ = file.Close() }()
 
-	principal := gas.PrincipalFromContext(ctx)
+	principal, err := ctx.Principal()
+	if err != nil {
+		return err
+	}
 	userID, _ := uuid.Parse(principal.Subject())
 
 	// Generate a unique storage key.
@@ -175,7 +178,10 @@ func (s *Service) handleUpload(ctx gas.Context) error {
 }
 
 func (s *Service) handleList(ctx gas.Context) error {
-	principal := gas.PrincipalFromContext(ctx)
+	principal, err := ctx.Principal()
+	if err != nil {
+		return err
+	}
 	userID, _ := uuid.Parse(principal.Subject())
 
 	files, err := s.queries.ListFilesByUser(ctx, userID)
@@ -203,7 +209,10 @@ func (s *Service) handleGet(ctx gas.Context) error {
 		return &apiError{Status: http.StatusBadRequest, Message: "invalid file id"}
 	}
 
-	principal := gas.PrincipalFromContext(ctx)
+	principal, err := ctx.Principal()
+	if err != nil {
+		return err
+	}
 	userID, _ := uuid.Parse(principal.Subject())
 
 	// Check cache first. The key is scoped to the requesting user: the
@@ -250,7 +259,10 @@ func (s *Service) handleDownload(ctx gas.Context) error {
 		return &apiError{Status: http.StatusBadRequest, Message: "invalid file id"}
 	}
 
-	principal := gas.PrincipalFromContext(ctx)
+	principal, err := ctx.Principal()
+	if err != nil {
+		return err
+	}
 	userID, _ := uuid.Parse(principal.Subject())
 
 	// Check cache for presigned URL. Scoped to the requesting user for the same
@@ -302,7 +314,10 @@ func (s *Service) handleDelete(ctx gas.Context) error {
 		return &apiError{Status: http.StatusNotFound, Message: "file not found"}
 	}
 
-	principal := gas.PrincipalFromContext(ctx)
+	principal, err := ctx.Principal()
+	if err != nil {
+		return err
+	}
 	userID, _ := uuid.Parse(principal.Subject())
 	if f.UserID != userID {
 		return &apiError{Status: http.StatusNotFound, Message: "file not found"}

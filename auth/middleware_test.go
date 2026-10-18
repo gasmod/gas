@@ -29,8 +29,8 @@ func TestMiddleware(t *testing.T) {
 		var called int32
 		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			atomic.AddInt32(&called, 1)
-			p := gas.PrincipalFromContext(r.Context())
-			require.NotNil(t, p)
+			p, ok := gas.PrincipalFromContext(r.Context())
+			require.True(t, ok)
 			assert.Equal(t, "user-123", p.Subject())
 			assert.Equal(t, "jwt", p.Scheme())
 			w.WriteHeader(http.StatusOK)

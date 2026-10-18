@@ -105,20 +105,23 @@ func TestContext_Principal_NilStored(t *testing.T) {
 }
 
 // TestPrincipalFromContext checks the round trip through WithPrincipal and
-// the nil result when no principal is stored.
+// the nil, false result when no principal is stored.
 func TestPrincipalFromContext(t *testing.T) {
 	t.Parallel()
 
-	if p := gas.PrincipalFromContext(context.Background()); p != nil {
-		t.Fatalf("PrincipalFromContext(empty) = %v, want nil", p)
+	if p, ok := gas.PrincipalFromContext(context.Background()); ok || p != nil {
+		t.Fatalf("PrincipalFromContext(empty) = %v, %v, want nil, false", p, ok)
 	}
 	want := testPrincipal{subject: "user-1"}
-	got := gas.PrincipalFromContext(gas.WithPrincipal(context.Background(), want))
-	if got == nil || got.Subject() != "user-1" {
-		t.Fatalf("PrincipalFromContext = %v, want subject user-1", got)
+	got, ok := gas.PrincipalFromContext(gas.WithPrincipal(context.Background(), want))
+	if !ok || got.Subject() != "user-1" {
+		t.Fatalf("PrincipalFromContext = %v, %v, want subject user-1, true", got, ok)
 	}
-	if p := gas.PrincipalFromContext(gas.WithPrincipal(context.Background(), nil)); p != nil {
-		t.Fatalf("PrincipalFromContext(nil stored) = %v, want nil", p)
+	if p, ok := gas.PrincipalFromContext(
+		gas.WithPrincipal(context.Background(), nil),
+	); ok ||
+		p != nil {
+		t.Fatalf("PrincipalFromContext(nil stored) = %v, %v, want nil, false", p, ok)
 	}
 }
 
@@ -140,5 +143,42 @@ func TestMetadataValue(t *testing.T) {
 	}
 	if v := m.Value("missing"); v != nil {
 		t.Fatalf("Value(missing) = %v, want nil", v)
+	}
+}
+
+// ptrPrincipal is a gas.Principal implemented on a pointer, so a nil
+// *ptrPrincipal is a typed-nil Principal.
+type ptrPrincipal struct{ subject string }
+
+func (p *ptrPrincipal) Subject() string                 { return p.subject }
+func (p *ptrPrincipal) Scheme() string                  { return "test" }
+func (p *ptrPrincipal) CredentialID() string            { return "cred-1" }
+func (p *ptrPrincipal) Metadata() gas.PrincipalMetadata { return nil }
+
+// A typed-nil Principal stored in the context counts as absent, so a
+// downstream nil check cannot pass on it and calling its methods cannot
+// panic.
+func TestPrincipalFromContext_TypedNil(t *testing.T) {
+	t.Parallel()
+
+	var typedNil *ptrPrincipal
+	ctx := gas.WithPrincipal(context.Background(), typedNil)
+	if p, ok := gas.PrincipalFromContext(ctx); ok || p != nil {
+		t.Fatalf("PrincipalFromContext(typed nil stored) = %#v, %v, want nil, false", p, ok)
+	}
+}
+
+// Context.Principal treats a typed-nil Principal as unauthenticated.
+func TestContext_Principal_TypedNilStored(t *testing.T) {
+	t.Parallel()
+
+	var typedNil *ptrPrincipal
+	router, seen := principalRouter(t, true, typedNil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, httptest.NewRequest("GET", "/me", nil))
+
+	var gerr *gas.Error
+	if !errors.As(*seen, &gerr) || gerr.Code != gas.CodeUnauthorized {
+		t.Fatalf("Principal() error = %v, want a 401 *gas.Error", *seen)
 	}
 }
