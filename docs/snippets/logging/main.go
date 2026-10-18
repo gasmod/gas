@@ -94,8 +94,8 @@ func injected(_ gas.Context, logger RequestLogger) error {
 // Ships every record to an HTTP endpoint as well as writing locally. Delivery
 // is best-effort: records are dropped rather than blocking the caller, and
 // failures go to WithErrorHandler instead of the logging call site.
-func shipping(endpoint, apiKey string) gas.Logger {
-	return gaslog.NewShippingLogger(
+func shipping(endpoint, apiKey string) (gas.Logger, error) {
+	logger, err := gaslog.NewShippingLogger(
 		endpoint,
 		gaslog.NewOTLPMarshaler(
 			gaslog.WithServiceName("notes"),
@@ -104,6 +104,10 @@ func shipping(endpoint, apiKey string) gas.Logger {
 		gaslog.WithHeader("X-API-Key", apiKey),
 		gaslog.WithBatchSize(100),
 	)()
+	if err != nil {
+		return nil, err
+	}
+	return logger, nil
 }
 
 // #endregion shipping
