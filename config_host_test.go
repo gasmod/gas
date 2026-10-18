@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/gasmod/gas"
-	"github.com/gasmod/gas/config"
+	"github.com/gasmod/gas/config/configtest"
 )
 
 // Server.Host is checked for shape by its validate tag when the config is
@@ -42,9 +42,7 @@ func TestConfig_BindValidatesHost(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.host, func(t *testing.T) {
 			t.Parallel()
-			provider := config.New()
-			provider.Set("server.host", tt.host)
-			err := provider.Bind(gas.DefaultConfig())
+			err := hostConfig(t, tt.host).Bind(gas.DefaultConfig())
 			if tt.valid && err != nil {
 				t.Errorf("Bind() with Host %q = %v, want nil", tt.host, err)
 			}
@@ -53,4 +51,17 @@ func TestConfig_BindValidatesHost(t *testing.T) {
 			}
 		})
 	}
+}
+
+// hostConfig returns a mock ConfigProvider holding only server.host. It binds
+// with the real config and validator, and reads nothing from the environment.
+func hostConfig(t *testing.T, host string) gas.ConfigProvider {
+	t.Helper()
+	c, err := configtest.NewMockConfigWithValues(map[string]any{
+		"server": map[string]any{"host": host},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
 }
