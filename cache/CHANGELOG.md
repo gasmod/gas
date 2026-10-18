@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING: `Config.Validate` is removed from both backends; the rules are
+  validate tags.** In `valkey`, `Settings.Addr` carries `validate:"required"`
+  and `Settings.DB` `validate:"min=0"`. `ConfigProvider.Bind` already
+  validates the struct it binds, so `Init` no longer runs a check of its own.
+  A config passed with `WithConfig` is used as given, as `gas.Config` is when
+  an App has no `ConfigProvider`. The error for an invalid bound config is now
+  the validator's, under `gas/cache/valkey: config binding:`, instead of the
+  hand-written message.
+  `memory.Config.Validate` checked nothing and is removed with its call
+  (gas#116).
 - **BREAKING: the constructors return an error.** `memory.New` and
   `valkey.New` now return `func(gas.ConfigProvider, gas.Logger) (*Service,
   error)`, the `CONVENTIONS.md` shape. They cannot fail yet, so they return
