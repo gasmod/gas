@@ -60,8 +60,8 @@ func WithStaticFS(fsys fs.FS) Option { return func(s *Service) { s.staticFS = fs
 // implementation so the DI container resolves the correct concrete type.
 func New[T gas.TemplateProvider](
 	opts ...Option,
-) func(T, *gas.Router, gas.ConfigProvider, gas.Logger) *Service {
-	return func(tp T, router *gas.Router, cfgProvider gas.ConfigProvider, logger gas.Logger) *Service {
+) func(T, *gas.Router, gas.ConfigProvider, gas.Logger) (*Service, error) {
+	return func(tp T, router *gas.Router, cfgProvider gas.ConfigProvider, logger gas.Logger) (*Service, error) {
 		s := &Service{
 			templates:   tp,
 			router:      router,
@@ -72,7 +72,7 @@ func New[T gas.TemplateProvider](
 		for _, opt := range opts {
 			opt(s)
 		}
-		return s
+		return s, nil
 	}
 }
 

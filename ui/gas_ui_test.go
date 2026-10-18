@@ -433,7 +433,7 @@ func TestService_InitAndRender(t *testing.T) {
 		"index.html":        `{{define "content"}}<h1>{{.Greeting}}</h1>{{end}}`,
 	})
 
-	svc := ui.New[*testProvider](
+	svc, err := ui.New[*testProvider](
 		ui.WithConfig(ui.DefaultConfig()),
 	)(
 		tp,
@@ -441,6 +441,9 @@ func TestService_InitAndRender(t *testing.T) {
 		nil,
 		gas.NewNopLogger()(),
 	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := svc.Init(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -460,7 +463,7 @@ func TestService_ClosedReturns503(t *testing.T) {
 		"home.html": "ok",
 	})
 
-	svc := ui.New[*testProvider](
+	svc, err := ui.New[*testProvider](
 		ui.WithConfig(ui.DefaultConfig()),
 	)(
 		tp,
@@ -468,15 +471,18 @@ func TestService_ClosedReturns503(t *testing.T) {
 		nil,
 		gas.NewNopLogger()(),
 	)
-	if err := svc.Init(t.Context()); err != nil {
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.Close(context.Background()); err != nil {
+	if err = svc.Init(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err = svc.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
 	w := httptest.NewRecorder()
-	err := svc.Render(w, "home", nil)
+	err = svc.Render(w, "home", nil)
 	if err == nil {
 		t.Fatal("expected error after close")
 	}
@@ -490,7 +496,7 @@ func TestService_RegisterFuncs(t *testing.T) {
 		"page.html": `{{greet "World"}}`,
 	})
 
-	svc := ui.New[*testProvider](
+	svc, err := ui.New[*testProvider](
 		ui.WithConfig(ui.DefaultConfig()),
 	)(
 		tp,
@@ -498,6 +504,9 @@ func TestService_RegisterFuncs(t *testing.T) {
 		nil,
 		gas.NewNopLogger()(),
 	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := svc.Init(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -519,7 +528,7 @@ func TestService_RegisterFuncs(t *testing.T) {
 func TestService_CheckReady(t *testing.T) {
 	tp := newTestProvider(map[string]string{"home.html": "ok"})
 
-	svc := ui.New[*testProvider](
+	svc, err := ui.New[*testProvider](
 		ui.WithConfig(ui.DefaultConfig()),
 	)(
 		tp,
@@ -527,6 +536,9 @@ func TestService_CheckReady(t *testing.T) {
 		nil,
 		gas.NewNopLogger()(),
 	)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Not ready before Init — engine not yet built.
 	if err := svc.CheckReady(context.Background()); err == nil {
@@ -553,7 +565,10 @@ func TestService_CheckReady(t *testing.T) {
 
 func TestService_Name(t *testing.T) {
 	tp := newTestProvider(nil)
-	svc := ui.New[*testProvider]()(tp, nil, nil, gas.NewNopLogger()())
+	svc, err := ui.New[*testProvider]()(tp, nil, nil, gas.NewNopLogger()())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if svc.Name() != "gas/ui" {
 		t.Fatalf("got %q", svc.Name())
 	}
@@ -641,10 +656,13 @@ func TestEngine_AddFuncsDuringRenders(t *testing.T) {
 func TestService_InvalidConfigNamesService(t *testing.T) {
 	cfg := ui.DefaultConfig()
 	cfg.UI.LayoutName = ""
-	svc := ui.New[*testProvider](ui.WithConfig(cfg))(
+	svc, err := ui.New[*testProvider](ui.WithConfig(cfg))(
 		newTestProvider(map[string]string{"home.html": "ok"}), nil, nil, gas.NewNopLogger()(),
 	)
-	err := svc.Init(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = svc.Init(t.Context())
 	if err == nil || !strings.HasPrefix(err.Error(), "gas/ui: invalid configuration: ") {
 		t.Errorf("Init() error = %v, want it prefixed with the service name", err)
 	}
@@ -655,12 +673,15 @@ func TestService_InvalidConfigNamesService(t *testing.T) {
 func newStaticService(t *testing.T, cfg *ui.Config, fsys fs.FS) *gas.Router {
 	t.Helper()
 	router := gas.NewRouter()
-	svc := ui.New[*testProvider](ui.WithConfig(cfg), ui.WithStaticFS(fsys))(
+	svc, err := ui.New[*testProvider](ui.WithConfig(cfg), ui.WithStaticFS(fsys))(
 		newTestProvider(map[string]string{"home.html": "ok"}),
 		router,
 		nil,
 		gas.NewNopLogger()(),
 	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := svc.Init(t.Context()); err != nil {
 		t.Fatal(err)
 	}

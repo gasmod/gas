@@ -24,7 +24,7 @@ type SlogLogger struct {
 var _ gas.Logger = (*SlogLogger)(nil)
 
 // SlogLoggerCtor defines a constructor function that returns an implementation of the gas.Logger interface.
-type SlogLoggerCtor func() *SlogLogger
+type SlogLoggerCtor func() (*SlogLogger, error)
 
 // SlogLoggerOption is a functional option type for configuring an instance of SlogLogger.
 type SlogLoggerOption func(*SlogLogger)
@@ -41,12 +41,12 @@ func WithEventInitialCapacity(capacity int) SlogLoggerOption {
 
 // NewSlogLogger returns a SlogLoggerCtor that constructs a SlogLogger with the provided SlogLoggerOption values.
 func NewSlogLogger(opts ...SlogLoggerOption) SlogLoggerCtor {
-	return func() *SlogLogger {
+	return func() (*SlogLogger, error) {
 		l := &SlogLogger{logger: slog.Default(), eventInitialCapacity: 5}
 		for _, opt := range opts {
 			opt(l)
 		}
-		return l
+		return l, nil
 	}
 }
 
