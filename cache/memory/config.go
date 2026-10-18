@@ -44,8 +44,3 @@ func DefaultConfig() *Config {
 		},
 	}
 }
-
-// Validate checks the Config for correctness.
-func (c *Config) Validate() error {
-	return nil
-}
