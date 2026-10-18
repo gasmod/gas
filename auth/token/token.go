@@ -85,15 +85,16 @@ func (s *Service) Name() string { return serviceName }
 // runs until Close and deliberately does not derive from the Init context,
 // which the framework cancels as soon as Init returns.
 func (s *Service) Init(_ context.Context) error {
-	if !s.customConfigProvided {
-		if s.cfgProvider != nil {
-			if err := s.cfgProvider.Bind(s.cfg); err != nil {
-				return fmt.Errorf("%s: config binding: %w", s.Name(), err)
-			}
+	if !s.customConfigProvided && s.cfgProvider != nil {
+		// Bind checks the validate tags; the rules a tag cannot express
+		// are checked here.
+		if err := s.cfgProvider.Bind(s.cfg); err != nil {
+			return fmt.Errorf("%s: config binding: %w", s.Name(), err)
 		}
-	}
-
-	if err := s.cfg.Validate(); err != nil {
+		if err := checkRules(s.cfg); err != nil {
+			return fmt.Errorf("%s: %w", s.Name(), err)
+		}
+	} else if err := validateConfig(s.cfg); err != nil {
 		return fmt.Errorf("%s: %w", s.Name(), err)
 	}
 

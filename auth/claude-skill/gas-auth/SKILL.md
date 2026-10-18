@@ -296,8 +296,11 @@ type Settings struct {
 }
 
 func DefaultConfig() *Config
-func (c *Config) Validate() error
 ```
+
+Tags: `SigningMethod` `oneof=HS256 RS256`, `Expiry` `gt=0s`. The key material
+the method needs (HS256: `SigningKey` of 32+ bytes; RS256: `PublicKeyPath`) is
+checked in `Init`, since a tag cannot express it.
 
 Validation: HS256 requires `SigningKey`, RS256 requires `PublicKeyPath`,
 expiry must be positive. Unknown signing methods are rejected.
@@ -392,8 +395,10 @@ type Settings struct {
 }
 
 func DefaultConfig() *Config
-func (c *Config) Validate() error  // rejects empty CookieName, non-positive SessionTTL
 ```
+
+Tags: `CookieName` `required`, `SessionTTL` `gt=0s`. `Init` also requires a
+positive `CleanupTimeout` when `CleanupInterval` is set.
 
 ## API Key Service
 
@@ -535,8 +540,9 @@ type Settings struct {
 }
 
 func DefaultConfig() *Config
-func (c *Config) Validate() error  // rejects KeyLength < 16
 ```
+
+Tag: `KeyLength` `min=16`.
 
 ## Token Service
 
@@ -603,8 +609,10 @@ type Settings struct {
 }
 
 func DefaultConfig() *Config
-func (c *Config) Validate() error  // rejects non-positive DefaultTTL, TokenLength < 16
 ```
+
+Tags: `DefaultTTL` `gt=0s`, `TokenLength` `min=16`. `Init` also requires a
+positive `CleanupTimeout` when `CleanupInterval` is set.
 
 ## Test Mocks
 

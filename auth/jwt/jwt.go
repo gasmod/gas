@@ -93,15 +93,16 @@ func (s *Service) Name() string { return serviceName }
 // Init validates configuration and prepares signing keys. It does no I/O
 // beyond reading key files, so the context is unused.
 func (s *Service) Init(_ context.Context) error {
-	if !s.customConfigProvided {
-		if s.cfgProvider != nil {
-			if err := s.cfgProvider.Bind(s.cfg); err != nil {
-				return fmt.Errorf("%s: config binding: %w", s.Name(), err)
-			}
+	if !s.customConfigProvided && s.cfgProvider != nil {
+		// Bind checks the validate tags; the rules a tag cannot express
+		// are checked here.
+		if err := s.cfgProvider.Bind(s.cfg); err != nil {
+			return fmt.Errorf("%s: config binding: %w", s.Name(), err)
 		}
-	}
-
-	if err := s.cfg.Validate(); err != nil {
+		if err := checkRules(s.cfg); err != nil {
+			return fmt.Errorf("%s: %w", s.Name(), err)
+		}
+	} else if err := validateConfig(s.cfg); err != nil {
 		return fmt.Errorf("%s: %w", s.Name(), err)
 	}
 

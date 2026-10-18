@@ -15,7 +15,7 @@ func TestDefaultConfig_Validates(t *testing.T) {
 	t.Run("default config passes validation", func(t *testing.T) {
 		cfg := session.DefaultConfig()
 
-		err := cfg.Validate()
+		err := session.ValidateConfig(cfg)
 
 		require.NoError(t, err)
 	})
@@ -26,10 +26,14 @@ func TestConfig_Validate_EmptyCookieName(t *testing.T) {
 		cfg := session.DefaultConfig()
 		cfg.Session.CookieName = ""
 
-		err := cfg.Validate()
+		err := session.ValidateConfig(cfg)
 
 		require.Error(t, err)
-		assert.Equal(t, "session: cookie name is required", err.Error())
+		assert.Contains(
+			t,
+			err.Error(),
+			"Field validation for 'CookieName' failed on the 'required' tag",
+		)
 	})
 }
 
@@ -38,10 +42,10 @@ func TestConfig_Validate_SessionTTL_Zero(t *testing.T) {
 		cfg := session.DefaultConfig()
 		cfg.Session.SessionTTL = 0
 
-		err := cfg.Validate()
+		err := session.ValidateConfig(cfg)
 
 		require.Error(t, err)
-		assert.Equal(t, "session: session TTL must be positive", err.Error())
+		assert.Contains(t, err.Error(), "Field validation for 'SessionTTL' failed on the 'gt' tag")
 	})
 }
 
@@ -50,10 +54,10 @@ func TestConfig_Validate_SessionTTL_Negative(t *testing.T) {
 		cfg := session.DefaultConfig()
 		cfg.Session.SessionTTL = -1
 
-		err := cfg.Validate()
+		err := session.ValidateConfig(cfg)
 
 		require.Error(t, err)
-		assert.Equal(t, "session: session TTL must be positive", err.Error())
+		assert.Contains(t, err.Error(), "Field validation for 'SessionTTL' failed on the 'gt' tag")
 	})
 }
 
@@ -62,7 +66,7 @@ func TestConfig_Validate_SessionTTL_Nanosecond(t *testing.T) {
 		cfg := session.DefaultConfig()
 		cfg.Session.SessionTTL = 1 * time.Nanosecond
 
-		err := cfg.Validate()
+		err := session.ValidateConfig(cfg)
 
 		require.NoError(t, err)
 	})
@@ -73,7 +77,7 @@ func TestConfig_Validate_CleanupTimeout_Zero(t *testing.T) {
 		cfg := session.DefaultConfig()
 		cfg.Session.CleanupTimeout = 0
 
-		err := cfg.Validate()
+		err := session.ValidateConfig(cfg)
 
 		require.Error(t, err)
 		assert.Equal(
@@ -90,7 +94,7 @@ func TestConfig_Validate_CleanupTimeout_ZeroWithCleanupDisabled(t *testing.T) {
 		cfg.Session.CleanupInterval = 0
 		cfg.Session.CleanupTimeout = 0
 
-		err := cfg.Validate()
+		err := session.ValidateConfig(cfg)
 
 		require.NoError(t, err)
 	})

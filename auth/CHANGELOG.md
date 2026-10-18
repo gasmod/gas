@@ -16,6 +16,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING: `Config.Validate` is removed from `jwt`, `session`, `apikey` and
+  `token`; the rules are validate tags.** `ConfigProvider.Bind` already
+  validates the struct it binds, so `Init` no longer runs a second check on a
+  bound config; a config passed with `WithConfig`, or the defaults with no
+  provider, is checked against the same tags in `Init`. Tags: jwt
+  `SigningMethod` `oneof=HS256 RS256` and `Expiry` `gt=0s`; session
+  `CookieName` `required` and `SessionTTL` `gt=0s`; apikey `KeyLength`
+  `min=16`; token `DefaultTTL` `gt=0s` and `TokenLength` `min=16`. The rules a
+  tag cannot express stay hand-written and run in `Init` on both paths: the
+  jwt key material per signing method, and a positive `CleanupTimeout` when
+  `CleanupInterval` is set (session, token). apikey's separate check that the
+  key yields an 8-character prefix is dropped, since `min=16` already
+  guarantees it. Errors for the tag rules are now the validator's (gas#116).
 - **BREAKING:** the `jwt`, `session`, `apikey`, and `token` services implement
   the context-aware `gas.Service` (`Init(ctx context.Context) error`,
   `Close(ctx context.Context) error`). None of them does context-bound work in

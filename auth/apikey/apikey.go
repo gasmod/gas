@@ -80,15 +80,11 @@ func (s *Service) Name() string { return serviceName }
 // Init validates configuration and initializes the store. The store only
 // selects its query adapter and registers migrations, so the context is unused.
 func (s *Service) Init(_ context.Context) error {
-	if !s.customConfigProvided {
-		if s.cfgProvider != nil {
-			if err := s.cfgProvider.Bind(s.cfg); err != nil {
-				return fmt.Errorf("%s: config binding: %w", s.Name(), err)
-			}
+	if !s.customConfigProvided && s.cfgProvider != nil {
+		if err := s.cfgProvider.Bind(s.cfg); err != nil {
+			return fmt.Errorf("%s: config binding: %w", s.Name(), err)
 		}
-	}
-
-	if err := s.cfg.Validate(); err != nil {
+	} else if err := validateConfig(s.cfg); err != nil {
 		return fmt.Errorf("%s: %w", s.Name(), err)
 	}
 

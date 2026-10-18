@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gasmod/gas/auth/internal/cfgvalidate"
 	env "github.com/gasmod/gas/config/extensions/gasenv"
 )
 
@@ -25,11 +26,11 @@ type Config struct {
 
 // Settings represents the session configuration values.
 type Settings struct {
-	CookieName      string
+	CookieName      string `validate:"required"`
 	CookiePath      string
 	CookieDomain    string
 	CookieSameSite  http.SameSite
-	SessionTTL      time.Duration
+	SessionTTL      time.Duration `validate:"gt=0s"`
 	CleanupInterval time.Duration
 	CleanupTimeout  time.Duration
 	CookieSecure    bool
@@ -54,15 +55,20 @@ func DefaultConfig() *Config {
 	}
 }
 
-// Validate checks the Config for correctness.
-func (c *Config) Validate() error {
-	if c.Session.CookieName == "" {
-		return errors.New("session: cookie name is required")
+// validateConfig checks cfg against its validate tags and the rule a tag
+// cannot express. Init calls it for a config that did not come through
+// ConfigProvider.Bind.
+func validateConfig(cfg *Config) error {
+	if err := cfgvalidate.Struct(cfg); err != nil {
+		return err //nolint:wrapcheck // Init adds the context
 	}
-	if c.Session.SessionTTL <= 0 {
-		return errors.New("session: session TTL must be positive")
-	}
-	if c.Session.CleanupInterval > 0 && c.Session.CleanupTimeout <= 0 {
+	return checkRules(cfg)
+}
+
+// checkRules checks that background cleanup, when enabled, has a positive
+// timeout, which a validate tag cannot express.
+func checkRules(cfg *Config) error {
+	if cfg.Session.CleanupInterval > 0 && cfg.Session.CleanupTimeout <= 0 {
 		return errors.New("session: cleanup timeout must be positive when cleanup is enabled")
 	}
 	return nil

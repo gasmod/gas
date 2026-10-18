@@ -57,12 +57,12 @@ func TestSignUsesValidatedExpiry_SignWithExpiryBypasses(t *testing.T) {
 		},
 	}
 
-	// Config.Validate rejects non-positive expiry.
+	// Config validation rejects non-positive expiry.
 	cfg.JWT.Expiry = -1 * time.Second
-	assert.Error(t, cfg.Validate(), "Config.Validate rejects negative expiry")
+	assert.Error(t, jwtpkg.ValidateConfig(cfg), "validation rejects negative expiry")
 
 	cfg.JWT.Expiry = 0
-	assert.Error(t, cfg.Validate(), "Config.Validate rejects zero expiry")
+	assert.Error(t, jwtpkg.ValidateConfig(cfg), "validation rejects zero expiry")
 
 	// But a running service with valid config still allows negative expiry via SignWithExpiry.
 	cfg.JWT.Expiry = 15 * time.Minute

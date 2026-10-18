@@ -1,9 +1,7 @@
 package apikey
 
 import (
-	"encoding/base64"
-	"errors"
-
+	"github.com/gasmod/gas/auth/internal/cfgvalidate"
 	env "github.com/gasmod/gas/config/extensions/gasenv"
 )
 
@@ -26,7 +24,7 @@ type Settings struct {
 	// Prefix is prepended to generated keys for identification.
 	Prefix string
 	// KeyLength is the number of random bytes used for key generation.
-	KeyLength int
+	KeyLength int `validate:"min=16"`
 }
 
 // DefaultConfig returns a Config with sensible defaults.
@@ -39,18 +37,9 @@ func DefaultConfig() *Config {
 	}
 }
 
-// Validate checks the Config for correctness.
-func (c *Config) Validate() error {
-	if c.APIKey.KeyLength < 16 {
-		return errors.New("apikey: key length must be at least 16 bytes")
-	}
-	// The generated key is base64-encoded (no padding), so its character
-	// length is ceil(KeyLength * 4/3). The key prefix excerpt takes 8
-	// characters from the random portion. Ensure the random part is long
-	// enough so that fullKey[:len(Prefix)+8] never panics.
-	randomLen := base64.URLEncoding.WithPadding(base64.NoPadding).EncodedLen(c.APIKey.KeyLength)
-	if randomLen < 8 {
-		return errors.New("apikey: key length too short to produce an 8-character prefix excerpt")
-	}
-	return nil
+// validateConfig checks cfg against its validate tags. Init calls it for a
+// config that did not come through ConfigProvider.Bind, which already runs
+// the same check.
+func validateConfig(cfg *Config) error {
+	return cfgvalidate.Struct(cfg) //nolint:wrapcheck // Init adds the context
 }

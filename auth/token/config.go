@@ -4,6 +4,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/gasmod/gas/auth/internal/cfgvalidate"
 	env "github.com/gasmod/gas/config/extensions/gasenv"
 )
 
@@ -24,9 +25,9 @@ type Config struct {
 // Settings represents the token configuration values.
 type Settings struct {
 	// DefaultTTL is the default token lifetime when Issue is called with ttl == 0.
-	DefaultTTL time.Duration
+	DefaultTTL time.Duration `validate:"gt=0s"`
 	// TokenLength is the number of random bytes used for token generation.
-	TokenLength int
+	TokenLength int `validate:"min=16"`
 	// CleanupInterval is the interval for the expired token cleanup goroutine.
 	CleanupInterval time.Duration
 	// CleanupTimeout is the timeout for the expired token cleanup goroutine.
@@ -45,15 +46,20 @@ func DefaultConfig() *Config {
 	}
 }
 
-// Validate checks the Config for correctness.
-func (c *Config) Validate() error {
-	if c.Token.DefaultTTL <= 0 {
-		return errors.New("token: default TTL must be positive")
+// validateConfig checks cfg against its validate tags and the rule a tag
+// cannot express. Init calls it for a config that did not come through
+// ConfigProvider.Bind.
+func validateConfig(cfg *Config) error {
+	if err := cfgvalidate.Struct(cfg); err != nil {
+		return err //nolint:wrapcheck // Init adds the context
 	}
-	if c.Token.TokenLength < 16 {
-		return errors.New("token: token length must be at least 16 bytes")
-	}
-	if c.Token.CleanupInterval > 0 && c.Token.CleanupTimeout <= 0 {
+	return checkRules(cfg)
+}
+
+// checkRules checks that background cleanup, when enabled, has a positive
+// timeout, which a validate tag cannot express.
+func checkRules(cfg *Config) error {
+	if cfg.Token.CleanupInterval > 0 && cfg.Token.CleanupTimeout <= 0 {
 		return errors.New("token: cleanup timeout must be positive when cleanup is enabled")
 	}
 	return nil
