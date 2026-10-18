@@ -60,8 +60,10 @@ func WithNamespace(ns string) Option {
 }
 
 // NewStore returns a DI-injectable constructor for Store.
-func NewStore(opts ...Option) func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager) *Store {
-	return func(db gas.DatabaseProvider, logger gas.Logger, mgr gas.MigrationManager) *Store {
+func NewStore(
+	opts ...Option,
+) func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager) (*Store, error) {
+	return func(db gas.DatabaseProvider, logger gas.Logger, mgr gas.MigrationManager) (*Store, error) {
 		s := &Store{
 			db:           db,
 			logger:       logger,
@@ -71,7 +73,7 @@ func NewStore(opts ...Option) func(gas.DatabaseProvider, gas.Logger, gas.Migrati
 		for _, opt := range opts {
 			opt(s)
 		}
-		return s
+		return s, nil
 	}
 }
 

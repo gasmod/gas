@@ -22,9 +22,9 @@ var _ gas.TemplateProvider = (*Store)(nil)
 
 // NewStore returns a DI-injectable constructor for a read-only template
 // store backed by fsys. Only files with the ".html" extension are recognized.
-func NewStore(fsys fs.FS) func() *Store {
-	return func() *Store {
-		return &Store{fsys: fsys, ext: ".html"}
+func NewStore(fsys fs.FS) func() (*Store, error) {
+	return func() (*Store, error) {
+		return &Store{fsys: fsys, ext: ".html"}, nil
 	}
 }
 

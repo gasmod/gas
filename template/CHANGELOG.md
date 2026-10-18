@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING: the store constructors return an error.** `db.NewStore`,
+  `dir.NewStore` and `fs.NewStore` now return `func(<dependencies>) (*Store,
+  error)`, the `CONVENTIONS.md` shape. They cannot fail yet, so they return
+  nil; the change is the shape. Registering them with
+  `gas.WithSingletonService` is unchanged, since the container accepts a
+  trailing error. Code that calls the returned function directly must take
+  the second result. `memory.NewStore` and `composite.NewStore`, which apps
+  build directly, are unchanged (gas#106).
 - **BREAKING:** `db.Store` implements the context-aware `gas.Service`
   (`Init(ctx context.Context) error`, `Close(ctx context.Context) error`).
   Both are synchronous and do not use the context. `dir.Store.Close` is an

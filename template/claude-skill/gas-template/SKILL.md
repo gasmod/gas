@@ -92,7 +92,7 @@ Creates an empty in-memory store. Thread-safe via `sync.RWMutex`.
 ### Constructor
 
 ```go
-func NewStore(dir string) func() *Store
+func NewStore(dir string) func() (*Store, error)
 ```
 
 Returns a DI-injectable constructor for a store rooted at `dir`. Only `.html`
@@ -119,7 +119,7 @@ call `Close()` when done.
 ### Constructor
 
 ```go
-func NewStore(fsys fs.FS) func() *Store
+func NewStore(fsys fs.FS) func() (*Store, error)
 ```
 
 Returns a DI-injectable constructor for a read-only template store backed by
@@ -150,7 +150,7 @@ content, err := store.Get(ctx, "templates/home.html")
 ### Constructor
 
 ```go
-func NewStore(opts ...Option) func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager) *Store
+func NewStore(opts ...Option) func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager) (*Store, error)
 ```
 
 `NewStore` captures options and returns a DI-injectable constructor. The returned
