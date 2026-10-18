@@ -86,15 +86,13 @@ func (s *Service) Name() string { return serviceName }
 // which the framework cancels as soon as Init returns.
 func (s *Service) Init(_ context.Context) error {
 	if !s.customConfigProvided && s.cfgProvider != nil {
-		// Bind checks the validate tags; the rules a tag cannot express
-		// are checked here.
+		// Bind checks the validate tags.
 		if err := s.cfgProvider.Bind(s.cfg); err != nil {
 			return fmt.Errorf("%s: config binding: %w", s.Name(), err)
 		}
-		if err := checkRules(s.cfg); err != nil {
-			return fmt.Errorf("%s: %w", s.Name(), err)
-		}
-	} else if err := validateConfig(s.cfg); err != nil {
+	}
+	// The rules a tag cannot express hold for any config, bound or given.
+	if err := checkRules(s.cfg); err != nil {
 		return fmt.Errorf("%s: %w", s.Name(), err)
 	}
 

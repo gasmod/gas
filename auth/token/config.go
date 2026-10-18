@@ -4,7 +4,6 @@ import (
 	"errors"
 	"time"
 
-	"github.com/gasmod/gas/auth/internal/cfgvalidate"
 	env "github.com/gasmod/gas/config/extensions/gasenv"
 )
 
@@ -44,16 +43,6 @@ func DefaultConfig() *Config {
 			CleanupTimeout:  defaultCleanupTimeout,
 		},
 	}
-}
-
-// validateConfig checks cfg against its validate tags and the rule a tag
-// cannot express. Init calls it for a config that did not come through
-// ConfigProvider.Bind.
-func validateConfig(cfg *Config) error {
-	if err := cfgvalidate.Struct(cfg); err != nil {
-		return err //nolint:wrapcheck // Init adds the context
-	}
-	return checkRules(cfg)
 }
 
 // checkRules checks that background cleanup, when enabled, has a positive

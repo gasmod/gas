@@ -1,7 +1,6 @@
 package apikey
 
 import (
-	"github.com/gasmod/gas/auth/internal/cfgvalidate"
 	env "github.com/gasmod/gas/config/extensions/gasenv"
 )
 
@@ -35,11 +34,4 @@ func DefaultConfig() *Config {
 			KeyLength:  defaultKeyLength,
 		},
 	}
-}
-
-// validateConfig checks cfg against its validate tags. Init calls it for a
-// config that did not come through ConfigProvider.Bind, which already runs
-// the same check.
-func validateConfig(cfg *Config) error {
-	return cfgvalidate.Struct(cfg) //nolint:wrapcheck // Init adds the context
 }

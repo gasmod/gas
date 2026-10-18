@@ -4,7 +4,6 @@ import (
 	"errors"
 	"time"
 
-	"github.com/gasmod/gas/auth/internal/cfgvalidate"
 	env "github.com/gasmod/gas/config/extensions/gasenv"
 )
 
@@ -46,16 +45,6 @@ func DefaultConfig() *Config {
 			Expiry:        defaultExpiry,
 		},
 	}
-}
-
-// validateConfig checks cfg against its validate tags and the rules a tag
-// cannot express. Init calls it for a config that did not come through
-// ConfigProvider.Bind.
-func validateConfig(cfg *Config) error {
-	if err := cfgvalidate.Struct(cfg); err != nil {
-		return err //nolint:wrapcheck // Init adds the context
-	}
-	return checkRules(cfg)
 }
 
 // checkRules checks the key material the signing method needs, which a

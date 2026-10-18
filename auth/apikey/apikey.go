@@ -84,8 +84,6 @@ func (s *Service) Init(_ context.Context) error {
 		if err := s.cfgProvider.Bind(s.cfg); err != nil {
 			return fmt.Errorf("%s: config binding: %w", s.Name(), err)
 		}
-	} else if err := validateConfig(s.cfg); err != nil {
-		return fmt.Errorf("%s: %w", s.Name(), err)
 	}
 
 	if err := s.store.Init(s); err != nil {
