@@ -49,8 +49,11 @@ func newDatabaseService(t *testing.T, apply func(*database.Settings)) *database.
 
 func newMigrateService(t *testing.T, db gas.DatabaseProvider) *migrate.Service {
 	t.Helper()
-	svc := migrate.New()(db)
-	if err := svc.Init(t.Context()); err != nil {
+	svc, err := migrate.New()(db)
+	if err != nil {
+		t.Fatalf("failed to build migrate service: %v", err)
+	}
+	if err = svc.Init(t.Context()); err != nil {
 		t.Fatalf("failed to init migrate service: %v", err)
 	}
 	t.Cleanup(func() { _ = svc.Close(context.Background()) })
