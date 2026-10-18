@@ -87,18 +87,16 @@ func (s *Service) Name() string {
 // the database to verify connectivity. The ping and the retry backoff use
 // ctx, so a canceled or expired ctx stops the retries.
 func (s *Service) Init(ctx context.Context) error {
-	if !s.customConfigProvided {
-		// no custom config provided, try to bind from config service
-		if s.cfgProvider != nil {
-			if err := s.cfgProvider.Bind(s.cfg); err != nil {
-				return fmt.Errorf("%s: config binding: %w", s.Name(), err)
-			}
-		}
-	}
-
 	s.cfg.hasConnector = s.connector != nil
 
-	if err := s.cfg.Validate(); err != nil {
+	if !s.customConfigProvided && s.cfgProvider != nil {
+		// Bind checks the validate tags.
+		if err := s.cfgProvider.Bind(s.cfg); err != nil {
+			return fmt.Errorf("%s: config binding: %w", s.Name(), err)
+		}
+	}
+	// The rules a tag cannot express hold for any config, bound or given.
+	if err := checkRules(s.cfg); err != nil {
 		return fmt.Errorf("%s: invalid configuration: %w", s.Name(), err)
 	}
 
