@@ -57,7 +57,7 @@ type Config struct {
 // Settings represents the configuration required to establish and manage database connections.
 type Settings struct {
 	// Mode selects the backend: ModeSQL (default) or ModePgx.
-	Mode string
+	Mode string `validate:"oneof=sql pgx"`
 
 	// Driver is the database/sql driver name (e.g., "postgres", "pgx", "sqlite").
 	// Only used in ModeSQL.
@@ -67,17 +67,17 @@ type Settings struct {
 	DSN string
 
 	// MaxOpenConns is the maximum number of open connections to the database.
-	MaxOpenConns int32
+	MaxOpenConns int32 `validate:"min=1,max=1000"`
 
 	// MaxIdleConns is the maximum number of idle connections in the pool.
 	// Only used in ModeSQL; pgx manages idle connections internally.
 	MaxIdleConns int
 
 	// ConnMaxLifetime is the maximum amount of time a connection may be reused.
-	ConnMaxLifetime time.Duration
+	ConnMaxLifetime time.Duration `validate:"min=1s,max=2h"`
 
 	// ConnMaxIdleTime is the maximum amount of time a connection may be idle.
-	ConnMaxIdleTime time.Duration
+	ConnMaxIdleTime time.Duration `validate:"min=1s,max=1h,ltefield=ConnMaxLifetime"`
 
 	// ConnRetries is the number of times to retry connecting to the database
 	// on failure. 0 means no retries (fail immediately).
@@ -104,44 +104,28 @@ func DefaultConfig() *Config {
 	}
 }
 
-var (
-	validModes   = map[string]bool{ModeSQL: true, ModePgx: true}
-	validDrivers = map[string]bool{DriverPostgres: true, DriverPgx: true, DriverSQLite: true}
-)
+var validDrivers = map[string]bool{DriverPostgres: true, DriverPgx: true, DriverSQLite: true}
 
+// The MaxIdleConns limits, checked in code because they apply only in
+// ModeSQL. The other limits are validate tags on Settings.
 const (
-	minMaxOpenConns = 1
-	maxMaxOpenConns = 1000
 	minMaxIdleConns = 1
 	maxMaxIdleConns = 1000
-
-	minConnMaxLifetime = 1 * time.Second
-	maxConnMaxLifetime = 2 * time.Hour
-	minConnMaxIdleTime = 1 * time.Second
-	maxConnMaxIdleTime = 1 * time.Hour
 )
 
-// Validate checks the Config struct for correctness and returns an error if any validation rule is violated.
-func (c *Config) Validate() error {
-	if err := c.validateSource(); err != nil {
+// checkRules checks what the validate tags cannot: the rules that depend on
+// the mode or on a connector passed with WithConnector, which is not a config
+// field. The mode, the open-connection range, and the lifetime and idle-time
+// ranges are tags.
+func checkRules(cfg *Config) error {
+	if err := cfg.validateSource(); err != nil {
 		return err
 	}
-	if err := c.validateConns(); err != nil {
-		return err
-	}
-	return c.validateLifetimes()
+	return cfg.validateIdleConns()
 }
 
-// validateSource checks the mode, driver, connector and DSN settings.
+// validateSource checks the connector, driver and DSN settings.
 func (c *Config) validateSource() error {
-	if !validModes[c.Database.Mode] {
-		return fmt.Errorf(
-			"Database.Mode must be one of [%s, %s], got %q",
-			ModeSQL,
-			ModePgx,
-			c.Database.Mode,
-		)
-	}
 	// A driver.Connector is a database/sql concept. initPgx never consults
 	// one and builds its pool from the DSN alone, so accepting the pair
 	// would drop the connector silently and connect somewhere the caller
@@ -169,61 +153,25 @@ func (c *Config) validateSource() error {
 	return nil
 }
 
-// validateConns checks the connection pool size limits.
-func (c *Config) validateConns() error {
-	if c.Database.MaxOpenConns < minMaxOpenConns || c.Database.MaxOpenConns > maxMaxOpenConns {
+// validateIdleConns checks the idle-connection limit, which only ModeSQL uses:
+// pgx manages idle connections itself.
+func (c *Config) validateIdleConns() error {
+	if c.Database.Mode != ModeSQL {
+		return nil
+	}
+	if c.Database.MaxIdleConns < minMaxIdleConns || c.Database.MaxIdleConns > maxMaxIdleConns {
 		return fmt.Errorf(
-			"Database.MaxOpenConns must be between %d and %d, got %d",
-			minMaxOpenConns,
-			maxMaxOpenConns,
+			"Database.MaxIdleConns must be between %d and %d, got %d",
+			minMaxIdleConns,
+			maxMaxIdleConns,
+			c.Database.MaxIdleConns,
+		)
+	}
+	if c.Database.MaxIdleConns > int(c.Database.MaxOpenConns) {
+		return fmt.Errorf(
+			"Database.MaxIdleConns (%d) must not exceed Database.MaxOpenConns (%d)",
+			c.Database.MaxIdleConns,
 			c.Database.MaxOpenConns,
-		)
-	}
-	if c.Database.Mode == ModeSQL {
-		if c.Database.MaxIdleConns < minMaxIdleConns || c.Database.MaxIdleConns > maxMaxIdleConns {
-			return fmt.Errorf(
-				"Database.MaxIdleConns must be between %d and %d, got %d",
-				minMaxIdleConns,
-				maxMaxIdleConns,
-				c.Database.MaxIdleConns,
-			)
-		}
-		if c.Database.MaxIdleConns > int(c.Database.MaxOpenConns) {
-			return fmt.Errorf(
-				"Database.MaxIdleConns (%d) must not exceed Database.MaxOpenConns (%d)",
-				c.Database.MaxIdleConns,
-				c.Database.MaxOpenConns,
-			)
-		}
-	}
-	return nil
-}
-
-// validateLifetimes checks the connection lifetime and idle time limits.
-func (c *Config) validateLifetimes() error {
-	if c.Database.ConnMaxLifetime < minConnMaxLifetime ||
-		c.Database.ConnMaxLifetime > maxConnMaxLifetime {
-		return fmt.Errorf(
-			"Database.ConnMaxLifetime must be between %s and %s, got %s",
-			minConnMaxLifetime,
-			maxConnMaxLifetime,
-			c.Database.ConnMaxLifetime,
-		)
-	}
-	if c.Database.ConnMaxIdleTime < minConnMaxIdleTime ||
-		c.Database.ConnMaxIdleTime > maxConnMaxIdleTime {
-		return fmt.Errorf(
-			"Database.ConnMaxIdleTime must be between %s and %s, got %s",
-			minConnMaxIdleTime,
-			maxConnMaxIdleTime,
-			c.Database.ConnMaxIdleTime,
-		)
-	}
-	if c.Database.ConnMaxIdleTime > c.Database.ConnMaxLifetime {
-		return fmt.Errorf(
-			"Database.ConnMaxIdleTime (%s) must not exceed Database.ConnMaxLifetime (%s)",
-			c.Database.ConnMaxIdleTime,
-			c.Database.ConnMaxLifetime,
 		)
 	}
 	return nil
