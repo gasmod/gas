@@ -3,7 +3,7 @@ package valkey
 import (
 	"time"
 
-	env "github.com/gasmod/gas/config/extensions/gasenv"
+	"github.com/gasmod/gas"
 )
 
 const (
@@ -17,7 +17,7 @@ const (
 
 // Config holds Valkey cache settings.
 type Config struct {
-	env.WithGasEnv
+	gas.WithGasEnv
 
 	Cache Settings
 }

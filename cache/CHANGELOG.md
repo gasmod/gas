@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hand-written message.
   `memory.Config.Validate` checked nothing and is removed with its call
   (gas#116).
+- **BREAKING: the constructors return an error.** `memory.New` and
+  `valkey.New` now return `func(gas.ConfigProvider, gas.Logger) (*Service,
+  error)`, the `CONVENTIONS.md` shape. They cannot fail yet, so they return
+  nil; the change is the shape. Registering them with
+  `gas.WithSingletonService` is unchanged, since the container accepts a
+  trailing error. Code that calls the returned function directly must take
+  the second result (gas#106).
 - `memory.Service` and `valkey.Service` no longer log an error they also
   return: an invalid configuration and valkey's client, ping, and
   out-of-retries failures. The caller that handles the error logs it once.

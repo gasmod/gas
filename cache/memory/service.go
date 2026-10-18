@@ -63,8 +63,8 @@ func WithConfig(cfg *Config) Option {
 }
 
 // New captures options and returns a DI-injectable constructor.
-func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) *Service {
-	return func(cfgProvider gas.ConfigProvider, logger gas.Logger) *Service {
+func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) (*Service, error) {
+	return func(cfgProvider gas.ConfigProvider, logger gas.Logger) (*Service, error) {
 		s := &Service{
 			cfg:         DefaultConfig(),
 			cfgProvider: cfgProvider,
@@ -73,7 +73,7 @@ func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) *Service {
 		for _, opt := range opts {
 			opt(s)
 		}
-		return s
+		return s, nil
 	}
 }
 

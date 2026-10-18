@@ -59,18 +59,22 @@ func WithConfig(cfg *Config) Option {
 // New captures options and returns a DI-injectable constructor.
 func New(
 	opts ...Option,
-) func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager, gas.ConfigProvider) *Service {
-	return func(dbProv gas.DatabaseProvider, logger gas.Logger, migMgr gas.MigrationManager, cfgProvider gas.ConfigProvider) *Service {
+) func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager, gas.ConfigProvider) (*Service, error) {
+	return func(dbProv gas.DatabaseProvider, logger gas.Logger, migMgr gas.MigrationManager, cfgProvider gas.ConfigProvider) (*Service, error) {
+		store, err := db.New()(dbProv, logger, migMgr)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", serviceName, err)
+		}
 		s := &Service{
 			cfg:         DefaultConfig(),
-			store:       db.New()(dbProv, logger, migMgr),
+			store:       store,
 			logger:      logger.With().Str("service", serviceName).Logger(),
 			cfgProvider: cfgProvider,
 		}
 		for _, opt := range opts {
 			opt(s)
 		}
-		return s
+		return s, nil
 	}
 }
 
