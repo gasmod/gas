@@ -312,6 +312,8 @@ func TestIntegration_Close(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Queue.Endpoint = endpoint
 	cfg.Queue.Region = "us-east-1"
+	cfg.Queue.AccessKeyID = "test"
+	cfg.Queue.SecretAccessKey = "test"
 	cfg.Queue.WaitTimeSeconds = 1
 
 	ctor := New(WithConfig(cfg))
