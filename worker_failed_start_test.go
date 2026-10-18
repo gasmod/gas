@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/gasmod/gas"
+	"github.com/gasmod/gas/config"
 )
 
 // startProbe records its lifecycle calls into a shared log.
@@ -199,11 +200,11 @@ func TestApp_FailedConfigBindClosesAll(t *testing.T) {
 	log := &startLog{}
 	app := gas.NewApp(
 		gas.WithServiceInstance[gas.Logger](gas.NewNopLogger()()),
+		gas.WithServiceInstance[gas.ConfigProvider](badHostConfig()),
 		gas.WithSingletonService[*probeA](func() *probeA {
 			return &probeA{&startProbe{name: "a", log: log}}
 		}),
 	)
-	app.Config().Server.Host = ""
 
 	first := app.Start(context.Background())
 	if first == nil {
@@ -221,4 +222,12 @@ func TestApp_FailedConfigBindClosesAll(t *testing.T) {
 	if got := log.snapshot(); len(got) != len(want) {
 		t.Errorf("second Start ran more lifecycle calls: %v", got)
 	}
+}
+
+// badHostConfig returns a ConfigProvider whose Server.Host fails the
+// Config's validate tag, so binding it in App.Start fails.
+func badHostConfig() gas.ConfigProvider {
+	c := config.New()
+	c.Set("server.host", "")
+	return c
 }

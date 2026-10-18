@@ -124,8 +124,8 @@ func (a *App) Router() *Router { return a.router }
 // or use Run to do both and block until shutdown. ctx is passed to the Init
 // of every service built during startup.
 //
-// Like Worker.Start, a Start that fails, including when the config does not
-// bind or validate, closes every service it had initialized and returns the
+// Like Worker.Start, a Start that fails, including when the ConfigProvider
+// cannot bind the config (Bind also checks its validate tags), closes every service it had initialized and returns the
 // error; every later Start returns the same error.
 func (a *App) Start(ctx context.Context) error {
 	if err := a.Worker.Start(ctx); err != nil {
@@ -245,10 +245,6 @@ func (a *App) bindConfig() error {
 		if err := cfgProvider.Bind(a.cfg); err != nil {
 			return fmt.Errorf("gas: config binding: %w", err)
 		}
-	}
-
-	if err := a.cfg.Validate(); err != nil {
-		return fmt.Errorf("gas: config validation: %w", err)
 	}
 
 	a.Worker.eventBus.Emit[AppConfigUpdated](AppConfigUpdatedPayload{Config: *a.cfg}).Wait()

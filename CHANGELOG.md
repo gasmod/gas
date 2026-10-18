@@ -63,6 +63,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **`gas.Config.Validate`.** `ConfigProvider.Bind` already validates the
+  struct it binds, so `App.Start` no longer calls a separate `Validate`, and
+  the method is gone; the rule lives in `Server.Host`'s validate tag. An App
+  started without a `ConfigProvider` runs on its Config unchecked.
 - **BREAKING: `gas.StorageProvider` is removed from core**, together with
   `gas.StorageObject`, `gas.ObjectInfo`, `gas.StorageOption`, `gas.InBucket`,
   `gas.WithContentType`, `gas.WithMetadata`, and `gas.ApplyStorageOptions`.
@@ -83,18 +87,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **`Config.Validate` no longer does a DNS lookup.** It checked
-  `Server.Host` with `net.LookupHost`, so startup depended on the resolver:
-  slow or offline DNS delayed or failed `Start`, and a well-formed name that
-  only resolves later (such as a container hostname) was rejected.
+- **Server config validation no longer does a DNS lookup.** `Config.Validate`
+  checked `Server.Host` with `net.LookupHost`, so startup depended on the
+  resolver: slow or offline DNS delayed or failed `Start`, and a well-formed
+  name that only resolves later (such as a container hostname) was rejected.
   `Server.Host` now carries the validate tag
-  `required,max=253,ip|hostname_rfc1123`, and `Validate` runs
-  go-playground/validator over the Config, so the host must be an IP address
-  or an RFC 1123 hostname (no trailing dot) and is not resolved; a host that
-  does not resolve fails when the server listens. `config.Bind` enforces the
-  same tag when it binds a `gas.Config`. The error is now the validator's
-  (`Field validation for 'Host' failed on the 'ip|hostname_rfc1123' tag`),
-  reachable through `errors.As` as `validator.ValidationErrors` (part of #12).
+  `required,max=253,ip|hostname_rfc1123`, which `ConfigProvider.Bind` checks
+  when `App.Start` binds the Config: an IP address or an RFC 1123 hostname
+  (no trailing dot), not resolved, so a host that does not resolve fails when
+  the server listens. The error is the validator's (`Field validation for
+  'Host' failed on the 'ip|hostname_rfc1123' tag`) under
+  `gas: config binding:` (part of #12).
 - **A failed `Start` no longer leaves services running.** When a service's
   `Init` failed, the services initialized before it were never tracked, so
   neither the failed `Start` nor a later `Shutdown` closed them; a failing
