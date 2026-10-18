@@ -1,10 +1,7 @@
 package sqs
 
 import (
-	"sync"
 	"time"
-
-	"github.com/go-playground/validator/v10"
 
 	env "github.com/gasmod/gas/config/extensions/gasenv"
 )
@@ -58,14 +55,3 @@ func DefaultConfig() *Config {
 		},
 	}
 }
-
-// validateConfig checks cfg against its validate tags. Init calls it for a
-// config that did not come through ConfigProvider.Bind, which already runs
-// the same check.
-func validateConfig(cfg *Config) error {
-	return configValidator().Struct(cfg) //nolint:wrapcheck // Init adds the context
-}
-
-// configValidator is built on first use and shared, since a
-// *validator.Validate caches each struct's parsed tags.
-var configValidator = sync.OnceValue(func() *validator.Validate { return validator.New() })

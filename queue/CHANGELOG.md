@@ -13,10 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tags.** `Settings.Region` carries `validate:"required"`,
   `VisibilityTimeout` `validate:"gte=0s"`, and `WaitTimeSeconds`
   `validate:"min=0,max=20"`. `ConfigProvider.Bind` already validates the
-  struct it binds, so `Init` no longer runs a second check on a bound config;
-  a config passed with `WithConfig`, or the defaults with no provider, is
-  checked against the same tags in `Init`. The error for an invalid config is
-  now the validator's instead of the hand-written message (gas#116).
+  struct it binds, so `Init` no longer runs a check of its own. A config
+  passed with `WithConfig` is used as given, as `gas.Config` is when an App
+  has no `ConfigProvider`. The error for an invalid bound config is now the
+  validator's, under `gas/queue/sqs: config binding:`, instead of the
+  hand-written message (gas#116).
 - `sqs.Service` no longer logs an invalid configuration it also returns;
   the caller logs it once. It is returned as
   `gas/queue/sqs: invalid configuration: <cause>`.
