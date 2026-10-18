@@ -132,7 +132,7 @@ func WithName(name string) ShippingOption {
 
 // ShippingLoggerCtor constructs a [ShippingLogger]; it satisfies the Gas DI
 // container's constructor shape.
-type ShippingLoggerCtor func() *ShippingLogger
+type ShippingLoggerCtor func() (*ShippingLogger, error)
 
 // ShippingLogger is a [gas.Logger] that writes locally and ships every record
 // to an HTTP endpoint via a pluggable [Marshaler]. It reuses [SlogLogger] for
@@ -194,7 +194,7 @@ func NewShippingLogger(
 	marshaler Marshaler,
 	opts ...ShippingOption,
 ) ShippingLoggerCtor {
-	return func() *ShippingLogger {
+	return func() (*ShippingLogger, error) {
 		composed, ship, cfg := buildShipping(endpoint, marshaler, opts)
 		return &ShippingLogger{
 			SlogLogger: &SlogLogger{
@@ -204,7 +204,7 @@ func NewShippingLogger(
 			},
 			handler: ship,
 			name:    cfg.name,
-		}
+		}, nil
 	}
 }
 

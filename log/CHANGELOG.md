@@ -23,6 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING: the logger constructors return an error.** `ZeroLogLoggerCtor`,
+  `SlogLoggerCtor` and `ShippingLoggerCtor`, which `NewZeroLogLogger`,
+  `NewSlogLogger` and `NewShippingLogger` return, are now
+  `func() (*T, error)`, the `CONVENTIONS.md` shape. They cannot fail yet, so
+  they return nil; the change is the shape. Registering them with
+  `gas.WithSingletonService` is unchanged, since the container accepts a
+  trailing error. Code that calls the constructor directly, as in
+  `gaslog.NewSlogLogger()()`, must take the second result. `NewShippingHandler`
+  and `NewOTLPMarshaler`, which apps build directly, are unchanged (gas#106).
 - `ShippingLogger` implements the context-aware `gas.Service`: `Init(ctx)` and
   `Close(ctx)`. `Init` stays a no-op (the delivery goroutine starts at
   construction and never derives from the Init ctx). `Close` ignores ctx; the
