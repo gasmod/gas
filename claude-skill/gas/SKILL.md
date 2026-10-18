@@ -323,7 +323,7 @@ svc := c.MustResolve[*myservice.Service]()
 | `BuildAll(ctx) error`                  | Validate lifetimes, topo-sort, eagerly resolve all singletons |
 | `NewScope(ctx) *Scope`                 | Create a scoped resolution context; ctx goes to scoped Inits  |
 | `EachInstance(fn func(reflect.Value))` | Iterate all built singleton instances                         |
-| `CanResolve[T any]() bool`             | Check if `T` can be resolved; builds nothing                  |
+| `CanResolve[T any]() bool`             | Check if exactly `T` is registered; builds nothing            |
 
 **Captive dependency validation:** `BuildAll(ctx)` rejects singletons that depend
 on scoped or transient services — this would "capture" a short-lived instance

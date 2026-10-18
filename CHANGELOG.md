@@ -83,6 +83,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Boot validation no longer accepts dependencies that fail on every
+  request.** A DI-aware handler, or `CanResolve`, accepted an interface that
+  was only implemented by a registered concrete type, but resolution looks up
+  the exact type, so startup passed and each request answered 500. Validation
+  now uses the same exact-type lookup as resolution: register the
+  constructor under the interface (`WithService[MyInterface](...)`) to inject
+  it as one. The captive-dependency check uses the same lookup. A DI-aware
+  `NotFound` handler's dependencies, never validated before, are now checked
+  at startup like a route handler's (#10).
 - **A failed `Start` no longer leaves services running.** When a service's
   `Init` failed, the services initialized before it were never tracked, so
   neither the failed `Start` nor a later `Shutdown` closed them; a failing
