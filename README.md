@@ -103,7 +103,7 @@ Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for
 commits, signed-off commits (DCO), tests with every change, and `make lint`.
 
 ```bash
-make test-all   # go test -race in every module
+make test-all   # go test -race in every module, inside the Docker test container
 make lint-all   # golangci-lint in every module
 make build-all  # go build in every module
 ```

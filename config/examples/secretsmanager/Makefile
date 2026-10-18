@@ -5,8 +5,8 @@ help: ## Display this help screen
 	@grep -h -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 # Testing
-test: ## Run tests
-	go test -race ./...
+test: ## Run tests in the isolated test container (scripts/docker-test.sh)
+	$(shell git rev-parse --show-toplevel)/scripts/docker-test.sh go test -race ./...
 
 test-coverage: ## Run tests with coverage
 	go test -v -race -coverprofile=coverage.out ./...
