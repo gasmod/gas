@@ -13,7 +13,7 @@ func TestDefaultConfig_Validates(t *testing.T) {
 	t.Run("default config passes validation", func(t *testing.T) {
 		cfg := apikey.DefaultConfig()
 
-		err := cfg.Validate()
+		err := apikey.ValidateConfig(cfg)
 
 		require.NoError(t, err)
 	})
@@ -24,10 +24,10 @@ func TestConfig_Validate_KeyLength_TooShort(t *testing.T) {
 		cfg := apikey.DefaultConfig()
 		cfg.APIKey.KeyLength = 15
 
-		err := cfg.Validate()
+		err := apikey.ValidateConfig(cfg)
 
 		require.Error(t, err)
-		assert.Equal(t, "apikey: key length must be at least 16 bytes", err.Error())
+		assert.Contains(t, err.Error(), "Field validation for 'KeyLength' failed on the 'min' tag")
 	})
 }
 
@@ -36,7 +36,7 @@ func TestConfig_Validate_KeyLength_Minimum(t *testing.T) {
 		cfg := apikey.DefaultConfig()
 		cfg.APIKey.KeyLength = 16
 
-		err := cfg.Validate()
+		err := apikey.ValidateConfig(cfg)
 
 		require.NoError(t, err)
 	})

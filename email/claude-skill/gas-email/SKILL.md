@@ -166,21 +166,24 @@ via `WithClient` that is not an `*ses.Client`.
 
 ```go
 type Config struct {
-    env.WithGasEnv
+    gas.WithGasEnv
     Email Settings
 }
 
 type Settings struct {
-    Region         string // AWS region (required)
-    Endpoint       string // optional custom endpoint (e.g. LocalStack)
-    FromEmail      string // default sender address (required)
-    AccessKeyID    string // static AWS key; empty = default credential chain
+    Region          string `validate:"required"` // AWS region
+    Endpoint        string // optional custom endpoint (e.g. LocalStack)
+    FromEmail       string `validate:"required"` // default sender address
+    AccessKeyID     string // static AWS key; empty = default credential chain
     SecretAccessKey string // static AWS secret; empty = default credential chain
 }
 
-func DefaultConfig() *Config   // zero-value defaults (no default region)
-func (c *Config) Validate() error // rejects empty Region, empty FromEmail
+func DefaultConfig() *Config // zero-value defaults (no default region)
 ```
+
+The rules are `validate` tags, which `ConfigProvider.Bind` checks when `Init`
+binds the config. A config passed with `WithConfig` is used as given. There is
+no `Validate` method.
 
 ## Test Mock
 

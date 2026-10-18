@@ -63,8 +63,8 @@ func WithConfig(cfg *Config) Option {
 }
 
 // New captures options and returns a DI-injectable constructor.
-func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) *Service {
-	return func(cfgProvider gas.ConfigProvider, logger gas.Logger) *Service {
+func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) (*Service, error) {
+	return func(cfgProvider gas.ConfigProvider, logger gas.Logger) (*Service, error) {
 		s := &Service{
 			cfg:         DefaultConfig(),
 			cfgProvider: cfgProvider,
@@ -73,26 +73,20 @@ func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) *Service {
 		for _, opt := range opts {
 			opt(s)
 		}
-		return s
+		return s, nil
 	}
 }
 
 // Name returns the service identifier.
 func (s *Service) Name() string { return serviceName }
 
-// Init validates the configuration and starts the background cleanup goroutine.
+// Init binds the configuration and starts the background cleanup goroutine.
 // The goroutine does not inherit ctx; it runs until Close.
 func (s *Service) Init(context.Context) error {
-	if !s.customConfigProvided {
-		if s.cfgProvider != nil {
-			if err := s.cfgProvider.Bind(s.cfg); err != nil {
-				return fmt.Errorf("%s: config binding: %w", s.Name(), err)
-			}
+	if !s.customConfigProvided && s.cfgProvider != nil {
+		if err := s.cfgProvider.Bind(s.cfg); err != nil {
+			return fmt.Errorf("%s: config binding: %w", s.Name(), err)
 		}
-	}
-
-	if err := s.cfg.Validate(); err != nil {
-		return fmt.Errorf("%s: invalid configuration: %w", s.Name(), err)
 	}
 
 	s.mu.Lock()

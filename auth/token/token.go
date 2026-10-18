@@ -61,11 +61,15 @@ func WithConfig(cfg *Config) Option {
 // New captures options and returns a DI-injectable constructor.
 func New(
 	opts ...Option,
-) func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager, gas.ConfigProvider) *Service {
-	return func(dbProv gas.DatabaseProvider, logger gas.Logger, migMgr gas.MigrationManager, cfgProvider gas.ConfigProvider) *Service {
+) func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager, gas.ConfigProvider) (*Service, error) {
+	return func(dbProv gas.DatabaseProvider, logger gas.Logger, migMgr gas.MigrationManager, cfgProvider gas.ConfigProvider) (*Service, error) {
+		store, err := db.New()(dbProv, logger, migMgr)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", serviceName, err)
+		}
 		s := &Service{
 			cfg:         DefaultConfig(),
-			store:       db.New()(dbProv, logger, migMgr),
+			store:       store,
 			logger:      logger.With().Str("service", serviceName).Logger(),
 			done:        make(chan struct{}),
 			cfgProvider: cfgProvider,
@@ -73,7 +77,7 @@ func New(
 		for _, opt := range opts {
 			opt(s)
 		}
-		return s
+		return s, nil
 	}
 }
 
@@ -85,15 +89,14 @@ func (s *Service) Name() string { return serviceName }
 // runs until Close and deliberately does not derive from the Init context,
 // which the framework cancels as soon as Init returns.
 func (s *Service) Init(_ context.Context) error {
-	if !s.customConfigProvided {
-		if s.cfgProvider != nil {
-			if err := s.cfgProvider.Bind(s.cfg); err != nil {
-				return fmt.Errorf("%s: config binding: %w", s.Name(), err)
-			}
+	if !s.customConfigProvided && s.cfgProvider != nil {
+		// Bind checks the validate tags.
+		if err := s.cfgProvider.Bind(s.cfg); err != nil {
+			return fmt.Errorf("%s: config binding: %w", s.Name(), err)
 		}
 	}
-
-	if err := s.cfg.Validate(); err != nil {
+	// The rules a tag cannot express hold for any config, bound or given.
+	if err := checkRules(s.cfg); err != nil {
 		return fmt.Errorf("%s: %w", s.Name(), err)
 	}
 

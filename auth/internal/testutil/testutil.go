@@ -36,11 +36,14 @@ func newDatabaseService(t *testing.T, apply func(*database.Settings)) *database.
 	t.Helper()
 	cfg := database.DefaultConfig()
 	apply(&cfg.Database)
-	svc := database.New(database.WithConfig(cfg))(
+	svc, err := database.New(database.WithConfig(cfg))(
 		&configtest.MockConfig{},
 		NewNopLogger(),
 	)
-	if err := svc.Init(t.Context()); err != nil {
+	if err != nil {
+		t.Fatalf("failed to build database service: %v", err)
+	}
+	if err = svc.Init(t.Context()); err != nil {
 		t.Fatalf("failed to init database service: %v", err)
 	}
 	t.Cleanup(func() { _ = svc.Close(context.Background()) })

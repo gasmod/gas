@@ -12,6 +12,7 @@ import (
 	awsses "github.com/aws/aws-sdk-go-v2/service/ses"
 
 	"github.com/gasmod/gas"
+	"github.com/gasmod/gas/config/configtest"
 	"github.com/gasmod/gas/email"
 )
 
@@ -85,44 +86,6 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if cfg.Email.FromEmail != "" {
 		t.Errorf("FromEmail = %q, want empty", cfg.Email.FromEmail)
-	}
-}
-
-func TestConfigValidate(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		modify  func(*Config)
-		name    string
-		wantErr bool
-	}{
-		{
-			name:    "valid",
-			modify:  func(_ *Config) {},
-			wantErr: false,
-		},
-		{
-			name:    "empty region",
-			modify:  func(c *Config) { c.Email.Region = "" },
-			wantErr: true,
-		},
-		{
-			name:    "empty from email",
-			modify:  func(c *Config) { c.Email.FromEmail = "" },
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			cfg := validConfig()
-			tt.modify(cfg)
-			err := cfg.Validate()
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
 	}
 }
 
@@ -549,8 +512,8 @@ func TestIsErrClosed(t *testing.T) {
 	}
 }
 
-// A configuration that fails validation is returned with the service name,
-// so the error is identifiable without a log line.
+// A configuration that fails validation when bound is returned with the
+// service name, so the error is identifiable without a log line.
 func TestInit_InvalidConfigNamesService(t *testing.T) {
 	t.Parallel()
 

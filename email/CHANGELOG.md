@@ -16,6 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `gas.WithSingletonService` is unchanged, since the container accepts a
   trailing error. Code that calls the returned function directly must take
   the second result (gas#106).
+- **BREAKING: `ses.Config.Validate` is removed; the rules are validate
+  tags.** `Settings.Region` and `Settings.FromEmail` carry
+  `validate:"required"`. `ConfigProvider.Bind` already validates the struct it
+  binds, so `Init` no longer runs a check of its own. A config passed with
+  `WithConfig` is used as given, as `gas.Config` is when an App has no
+  `ConfigProvider`. The error for an invalid bound config is now the
+  validator's (`Field validation for 'Region' failed on the 'required' tag`)
+  under `gas/email/ses: config binding:` instead of `Email.Region must not be
+  empty` (gas#116).
 - `ses.Service` no longer logs an error it also returns: an invalid
   configuration and a failed send. The caller that handles the error logs it
   once. An invalid configuration is returned as
