@@ -1,8 +1,10 @@
 package valkey
 
 import (
-	"errors"
+	"sync"
 	"time"
+
+	"github.com/go-playground/validator/v10"
 
 	env "github.com/gasmod/gas/config/extensions/gasenv"
 )
@@ -25,15 +27,15 @@ type Config struct {
 
 // Settings represents the configuration for the Valkey cache.
 type Settings struct {
-	// Addr is the Valkey server address in host:port format.
-	Addr string
+	// Addr is the Valkey server address in host:port format. Required.
+	Addr string `validate:"required"`
 
 	// Password is the authentication password. Empty means no auth.
 	//nolint:gosec // intentional
 	Password string
 
-	// DB is the database number to use (0-15).
-	DB int
+	// DB is the database number to use (0-15). Must not be negative.
+	DB int `validate:"min=0"`
 
 	// DialTimeout is the timeout for establishing new connections.
 	DialTimeout time.Duration
@@ -65,13 +67,13 @@ func DefaultConfig() *Config {
 	}
 }
 
-// Validate checks the Config for correctness.
-func (c *Config) Validate() error {
-	if c.Cache.Addr == "" {
-		return errors.New("Cache.Addr must not be empty")
-	}
-	if c.Cache.DB < 0 {
-		return errors.New("Cache.DB must be >= 0")
-	}
-	return nil
+// validateConfig checks cfg against its validate tags. Init calls it for a
+// config that did not come through ConfigProvider.Bind, which already runs
+// the same check.
+func validateConfig(cfg *Config) error {
+	return configValidator().Struct(cfg) //nolint:wrapcheck // Init adds the context
 }
+
+// configValidator is built on first use and shared, since a
+// *validator.Validate caches each struct's parsed tags.
+var configValidator = sync.OnceValue(func() *validator.Validate { return validator.New() })

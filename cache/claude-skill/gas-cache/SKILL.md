@@ -113,7 +113,6 @@ type Settings struct {
 }
 
 func DefaultConfig() *Config
-func (c *Config) Validate() error
 ```
 
 ## Valkey Backend
@@ -192,9 +191,9 @@ type Config struct {
 }
 
 type Settings struct {
-    Addr              string        // default "localhost:6379"
+    Addr              string        `validate:"required"` // default "localhost:6379"
     Password          string        // empty = no auth
-    DB                int           // 0-15, default 0
+    DB                int           `validate:"min=0"`    // 0-15, default 0
     DialTimeout       time.Duration // default 5s
     WriteTimeout      time.Duration // default 3s
     ConnRetries       int           // default 0 (no retries)
@@ -202,8 +201,12 @@ type Settings struct {
 }
 
 func DefaultConfig() *Config
-func (c *Config) Validate() error  // rejects empty Addr
 ```
+
+The rules are `validate` tags. `ConfigProvider.Bind` checks them when `Init`
+binds the config; a config passed with `WithConfig` (or the defaults, with no
+provider) is checked against the same tags in `Init`. Neither cache config has
+a `Validate` method.
 
 ## Test Mock
 

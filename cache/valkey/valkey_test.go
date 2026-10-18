@@ -59,9 +59,9 @@ func TestConfigValidate(t *testing.T) {
 			cfg := DefaultConfig()
 			tt.modify(cfg)
 
-			err := cfg.Validate()
+			err := validateConfig(cfg)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("Validate() error = %v, wantErr = %v", err, tt.wantErr)
+				t.Errorf("validateConfig() error = %v, wantErr = %v", err, tt.wantErr)
 			}
 		})
 	}

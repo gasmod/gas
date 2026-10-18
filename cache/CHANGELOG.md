@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING: `Config.Validate` is removed from both backends; the rules are
+  validate tags.** In `valkey`, `Settings.Addr` carries `validate:"required"`
+  and `Settings.DB` `validate:"min=0"`. `ConfigProvider.Bind` already
+  validates the struct it binds, so `Init` no longer runs a second check on a
+  bound config; a config passed with `WithConfig`, or the defaults with no
+  provider, is checked against the same tags in `Init`. The error for an
+  invalid config is now the validator's instead of the hand-written message.
+  `memory.Config.Validate` checked nothing and is removed with its call
+  (gas#116).
 - `memory.Service` and `valkey.Service` no longer log an error they also
   return: an invalid configuration and valkey's client, ping, and
   out-of-retries failures. The caller that handles the error logs it once.
