@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING: `database.New` returns an error.** It now returns
+  `func(gas.ConfigProvider, gas.Logger) (*Service, error)`, the
+  `CONVENTIONS.md` shape. It cannot fail yet, so it returns nil; the change is
+  the shape. Registering it with `gas.WithSingletonService` is unchanged,
+  since the container accepts a trailing error. Code that calls the returned
+  function directly must take the second result (gas#106).
 - `Service` no longer logs an error it also returns: an invalid
   configuration, an unknown mode, open, ping, pgx config and pool failures,
   running out of connection retries, a failed `Close`, and a failed rollback
