@@ -171,16 +171,20 @@ type Config struct {
 }
 
 type Settings struct {
-    Region         string // AWS region (required)
-    Endpoint       string // optional custom endpoint (e.g. LocalStack)
-    FromEmail      string // default sender address (required)
-    AccessKeyID    string // static AWS key; empty = default credential chain
+    Region          string `validate:"required"` // AWS region
+    Endpoint        string // optional custom endpoint (e.g. LocalStack)
+    FromEmail       string `validate:"required"` // default sender address
+    AccessKeyID     string // static AWS key; empty = default credential chain
     SecretAccessKey string // static AWS secret; empty = default credential chain
 }
 
-func DefaultConfig() *Config   // zero-value defaults (no default region)
-func (c *Config) Validate() error // rejects empty Region, empty FromEmail
+func DefaultConfig() *Config // zero-value defaults (no default region)
 ```
+
+The rules are `validate` tags. `ConfigProvider.Bind` checks them when `Init`
+binds the config; a config passed with `WithConfig` (or the defaults, with no
+provider) is checked against the same tags in `Init`. Either way a bad config
+fails `Init`. There is no `Validate` method.
 
 ## Test Mock
 

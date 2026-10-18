@@ -8,6 +8,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ses v1.42.4
 	github.com/gasmod/gas v0.5.2
 	github.com/gasmod/gas/config v0.5.2
+	github.com/go-playground/validator/v10 v10.30.5
 	github.com/testcontainers/testcontainers-go v0.44.0
 )
 
@@ -46,7 +47,6 @@ require (
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/go-playground/locales v0.14.2 // indirect
 	github.com/go-playground/universal-translator v0.18.2 // indirect
-	github.com/go-playground/validator/v10 v10.30.5 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/schema v1.4.1 // indirect
 	github.com/klauspost/compress v1.20.3 // indirect

@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING: `ses.Config.Validate` is removed; the rules are validate
+  tags.** `Settings.Region` and `Settings.FromEmail` carry
+  `validate:"required"`. `ConfigProvider.Bind` already validates the struct it
+  binds, so `Init` no longer runs a second check on a bound config; a config
+  passed with `WithConfig`, or the defaults with no provider, is checked
+  against the same tags in `Init`. The error for an invalid config is now the
+  validator's (`Field validation for 'Region' failed on the 'required' tag`)
+  instead of `Email.Region must not be empty` (gas#116).
 - `ses.Service` no longer logs an error it also returns: an invalid
   configuration and a failed send. The caller that handles the error logs it
   once. An invalid configuration is returned as

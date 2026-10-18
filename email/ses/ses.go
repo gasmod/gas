@@ -115,19 +115,18 @@ func NewWithCustomProvider[T gas.TemplateProvider](
 // Name returns the service identifier.
 func (s *Service) Name() string { return serviceName }
 
-// Init validates the configuration and creates the SES client. ctx bounds
-// loading the AWS configuration and fetching the credentials, so Init fails
-// when no credentials can be found.
+// Init binds and validates the configuration and creates the SES client.
+// A config bound from the ConfigProvider is validated by Bind; one passed
+// with WithConfig, or the defaults when there is no provider, is checked
+// against the same validate tags here. ctx bounds loading the AWS
+// configuration and fetching the credentials, so Init fails when no
+// credentials can be found.
 func (s *Service) Init(ctx context.Context) error {
-	if !s.customConfigProvided {
-		if s.cfgProvider != nil {
-			if err := s.cfgProvider.Bind(s.cfg); err != nil {
-				return fmt.Errorf("%s: config binding: %w", s.Name(), err)
-			}
+	if !s.customConfigProvided && s.cfgProvider != nil {
+		if err := s.cfgProvider.Bind(s.cfg); err != nil {
+			return fmt.Errorf("%s: config binding: %w", s.Name(), err)
 		}
-	}
-
-	if err := s.cfg.Validate(); err != nil {
+	} else if err := validateConfig(s.cfg); err != nil {
 		return fmt.Errorf("%s: invalid configuration: %w", s.Name(), err)
 	}
 
