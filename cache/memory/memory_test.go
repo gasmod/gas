@@ -16,7 +16,10 @@ func newTestService(t *testing.T, _ ...Option) *Service {
 	cfg := DefaultConfig()
 	cfg.Cache.CleanupInterval = 0 // disable background cleanup in tests
 
-	svc := New(WithConfig(cfg))(nil, &gas.NopLogger{})
+	svc, err := New(WithConfig(cfg))(nil, &gas.NopLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := svc.Init(t.Context()); err != nil {
 		t.Fatalf("Init() failed: %v", err)
 	}
@@ -163,8 +166,11 @@ func TestMaxEntries(t *testing.T) {
 	cfg.Cache.MaxEntries = 2
 	cfg.Cache.CleanupInterval = 0
 
-	svc := New(WithConfig(cfg))(nil, &gas.NopLogger{})
-	if err := svc.Init(t.Context()); err != nil {
+	svc, err := New(WithConfig(cfg))(nil, &gas.NopLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = svc.Init(t.Context()); err != nil {
 		t.Fatalf("Init() error: %v", err)
 	}
 	t.Cleanup(func() { _ = svc.Close(context.Background()) })
@@ -173,7 +179,7 @@ func TestMaxEntries(t *testing.T) {
 	_ = svc.Set(ctx, "k1", []byte("v1"), 5*time.Minute)
 	_ = svc.Set(ctx, "k2", []byte("v2"), 5*time.Minute)
 
-	err := svc.Set(ctx, "k3", []byte("v3"), 5*time.Minute)
+	err = svc.Set(ctx, "k3", []byte("v3"), 5*time.Minute)
 	if err == nil {
 		t.Error("Set() should return error when max entries reached")
 	}
@@ -211,7 +217,10 @@ func TestCleanup(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Cache.CleanupInterval = 10 * time.Millisecond
 
-	svc := New(WithConfig(cfg))(nil, &gas.NopLogger{})
+	svc, err := New(WithConfig(cfg))(nil, &gas.NopLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := svc.Init(t.Context()); err != nil {
 		t.Fatalf("Init() error: %v", err)
 	}
@@ -238,8 +247,11 @@ func TestDefaultTTL(t *testing.T) {
 	cfg.Cache.DefaultTTL = 1 * time.Millisecond
 	cfg.Cache.CleanupInterval = 0
 
-	svc := New(WithConfig(cfg))(nil, &gas.NopLogger{})
-	if err := svc.Init(t.Context()); err != nil {
+	svc, err := New(WithConfig(cfg))(nil, &gas.NopLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = svc.Init(t.Context()); err != nil {
 		t.Fatalf("Init() error: %v", err)
 	}
 	t.Cleanup(func() { _ = svc.Close(context.Background()) })
@@ -249,7 +261,7 @@ func TestDefaultTTL(t *testing.T) {
 
 	time.Sleep(5 * time.Millisecond)
 
-	_, err := svc.Get(ctx, "key1")
+	_, err = svc.Get(ctx, "key1")
 	if !errors.Is(err, cache.ErrKeyNotFound) {
 		t.Errorf(
 			"Get() error = %v, want %v (DefaultTTL should have expired)",
@@ -262,7 +274,10 @@ func TestDefaultTTL(t *testing.T) {
 func TestUnstartedServiceReturnsErrClosed(t *testing.T) {
 	t.Parallel()
 
-	svc := New(WithConfig(DefaultConfig()))(nil, &gas.NopLogger{})
+	svc, err := New(WithConfig(DefaultConfig()))(nil, &gas.NopLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 
 	if _, err := svc.Get(ctx, "k"); !errors.Is(err, cache.ErrClosed) {

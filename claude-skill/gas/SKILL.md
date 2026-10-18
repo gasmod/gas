@@ -759,7 +759,7 @@ logger := &gas.NopLogger{}                                // a value, e.g. in a 
 
 ```go
 type Config struct {
-	env.WithGasEnv
+	gas.WithGasEnv
 	Server ServerSettings
 }
 

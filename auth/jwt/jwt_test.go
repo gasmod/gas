@@ -42,7 +42,8 @@ func newHS256Service(t *testing.T, key string, opts ...func(*jwtpkg.Config)) *jw
 	for _, fn := range opts {
 		fn(cfg)
 	}
-	svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, &gas.NopLogger{})
+	svc, err := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, &gas.NopLogger{})
+	require.NoError(t, err)
 	require.NoError(t, svc.Init(context.Background()))
 	return svc
 }
@@ -89,7 +90,8 @@ func newRS256Service(t *testing.T, opts ...func(*jwtpkg.Config)) *jwtpkg.Service
 	for _, fn := range opts {
 		fn(cfg)
 	}
-	svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, &gas.NopLogger{})
+	svc, err := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, &gas.NopLogger{})
+	require.NoError(t, err)
 	require.NoError(t, svc.Init(context.Background()))
 	return svc
 }
@@ -328,9 +330,15 @@ func TestSignVerifyHS256(t *testing.T) {
 				Expiry: 15 * time.Minute,
 			},
 		}
-		svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, &gas.NopLogger{})
+		svc, err := jwtpkg.New(
+			jwtpkg.WithConfig(cfg),
+		)(
+			&configtest.MockConfig{},
+			&gas.NopLogger{},
+		)
+		require.NoError(t, err)
 
-		err := svc.Init(context.Background())
+		err = svc.Init(context.Background())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "signing key not configured")
 	})
@@ -544,8 +552,14 @@ func TestRSAKeyLoading(t *testing.T) {
 				Expiry:         15 * time.Minute,
 			},
 		}
-		svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, &gas.NopLogger{})
-		err := svc.Init(context.Background())
+		svc, err := jwtpkg.New(
+			jwtpkg.WithConfig(cfg),
+		)(
+			&configtest.MockConfig{},
+			&gas.NopLogger{},
+		)
+		require.NoError(t, err)
+		err = svc.Init(context.Background())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "load public key")
 	})
@@ -562,8 +576,14 @@ func TestRSAKeyLoading(t *testing.T) {
 				Expiry:        15 * time.Minute,
 			},
 		}
-		svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, &gas.NopLogger{})
-		err := svc.Init(context.Background())
+		svc, err := jwtpkg.New(
+			jwtpkg.WithConfig(cfg),
+		)(
+			&configtest.MockConfig{},
+			&gas.NopLogger{},
+		)
+		require.NoError(t, err)
+		err = svc.Init(context.Background())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "decode PEM")
 	})
@@ -582,8 +602,14 @@ func TestRSAKeyLoading(t *testing.T) {
 				Expiry:         15 * time.Minute,
 			},
 		}
-		svc := jwtpkg.New(jwtpkg.WithConfig(cfg))(&configtest.MockConfig{}, &gas.NopLogger{})
-		err := svc.Init(context.Background())
+		svc, err := jwtpkg.New(
+			jwtpkg.WithConfig(cfg),
+		)(
+			&configtest.MockConfig{},
+			&gas.NopLogger{},
+		)
+		require.NoError(t, err)
+		err = svc.Init(context.Background())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "decode PEM")
 	})

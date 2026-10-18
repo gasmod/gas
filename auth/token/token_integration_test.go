@@ -31,7 +31,8 @@ func setupTokenService(t *testing.T) *token.Service {
 	cfg := token.DefaultConfig()
 	cfg.Token.CleanupInterval = 0 // disable background cleanup by default
 
-	svc := token.New(token.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
+	svc, err := token.New(token.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
+	require.NoError(t, err)
 
 	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
@@ -204,7 +205,8 @@ func TestTokenCleanupGoroutine(t *testing.T) {
 	cfg := token.DefaultConfig()
 	cfg.Token.CleanupInterval = 100 * time.Millisecond
 
-	svc := token.New(token.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
+	svc, err := token.New(token.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
+	require.NoError(t, err)
 	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
 

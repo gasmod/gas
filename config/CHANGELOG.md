@@ -29,6 +29,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING: config depends on core, and core no longer depends on
+  config.** `BindOption` and `BindOptions` are aliases of `gas.BindOption` and
+  `gas.BindOptions`; `BindOptions`' unexported `validate` field is now
+  `gas.BindOptions.Validate`, and `WithValidate` sets it. In `gasenv`,
+  `Environment` and `WithGasEnv` are aliases of `gas.Environment` and
+  `gas.WithGasEnv`, and `Development`, `Testing`, `Staging` and `Production`
+  equal `gas.EnvDevelopment` and the rest, so existing code compiles
+  unchanged; new code should embed `gas.WithGasEnv`. `Config.LoadProvider`
+  and `Config.LoadProviderContext` remain on `*Config` but are no longer part
+  of `gas.ConfigProvider` (gas#105).
 - **`Config.LoadWithContext` now merges atomically.** Every provider is loaded
   before anything is merged, so a failing provider no longer leaves the values
   of the providers ahead of it applied, and a concurrent reader no longer

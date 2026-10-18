@@ -63,7 +63,7 @@ cache.ErrClosed      // returned when an operation is attempted on a service tha
 ### Constructor
 
 ```go
-func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) *Service
+func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) (*Service, error)
 ```
 
 `New` captures options and returns a DI-injectable constructor. The returned
@@ -102,7 +102,7 @@ func receives `gas.ConfigProvider` and `gas.Logger` from the DI container.
 
 ```go
 type Config struct {
-    env.WithGasEnv
+    gas.WithGasEnv
     Cache Settings
 }
 
@@ -121,7 +121,7 @@ func (c *Config) Validate() error
 ### Constructor
 
 ```go
-func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) *Service
+func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) (*Service, error)
 ```
 
 ### Options
@@ -187,7 +187,7 @@ type ValkeyProvider interface {
 
 ```go
 type Config struct {
-    env.WithGasEnv
+    gas.WithGasEnv
     Cache Settings
 }
 

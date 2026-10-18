@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	env "github.com/gasmod/gas/config/extensions/gasenv"
+	"github.com/gasmod/gas"
 )
 
 // Mode selects the database backend.
@@ -44,7 +44,7 @@ const (
 
 // Config holds database connection settings.
 type Config struct {
-	env.WithGasEnv
+	gas.WithGasEnv
 
 	Database Settings
 

@@ -30,28 +30,3 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   assertion is fragile under transport errors.
 - **Next step**: if it recurs, make the fake read the whole part before it
   replies, or accept a transport error in that case.
-
-## KI-030: core and the modules import the config module
-
-- **Status**: decision needed
-- **Area**: core (`go.mod`, `providers.go`, `config.go`) and the modules'
-  configuration structs.
-- **Found**: 2026-10-16, while writing the config packages' `doc.go`.
-- **Detail**: `CLAUDE.md` says modules meet only through the core, yet
-  core's `go.mod` requires `github.com/gasmod/gas/config`. Core's
-  `gas.ConfigProvider` names `config.BindOption` and `providers.Provider`
-  (`providers.go:288`, `:292`, `:293`), and core's own `config.go` embeds
-  `gasenv.WithGasEnv` (`config.go:9`, `:25`). Outside the config module,
-  these non-test files import `config/extensions/gasenv` to embed
-  `WithGasEnv` in their configuration struct: `auth/apikey/config.go`,
-  `auth/jwt/config.go`, `auth/session/config.go`, `auth/token/config.go`,
-  `cache/memory/config.go`, `cache/valkey/config.go`, `database/config.go`,
-  `email/ses/config.go`, `queue/sqs/config.go`, `storage/s3/config.go`,
-  `ui/config.go` and `ui/funcmap.go`. `auth/internal/testutil/testutil.go`
-  imports `config/configtest`, and four test files under the modules import
-  config packages directly. `CLAUDE.md` notes that such imports predate the
-  rule and are being rewritten toward it.
-- **Next step**: Ahmed decides the target shape (a §3 module-boundary
-  decision in `CLAUDE.md`), for example moving the bind-option and provider
-  types and the environment type into core so neither core nor the modules
-  import config.

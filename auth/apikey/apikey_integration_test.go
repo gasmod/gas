@@ -34,7 +34,8 @@ func setupAPIKeyService(t *testing.T) *apikey.Service {
 	migMgr := pg.MigrationManager()
 
 	cfg := apikey.DefaultConfig()
-	svc := apikey.New(apikey.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
+	svc, err := apikey.New(apikey.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
+	require.NoError(t, err)
 
 	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
@@ -52,7 +53,8 @@ func setupAPIKeyServiceWithConfig(t *testing.T, cfg *apikey.Config) *apikey.Serv
 	logger := testutil.NewNopLogger()
 	migMgr := pg.MigrationManager()
 
-	svc := apikey.New(apikey.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
+	svc, err := apikey.New(apikey.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
+	require.NoError(t, err)
 	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
 
@@ -558,7 +560,15 @@ func setupAPIKeyServiceWithProvider(t *testing.T) (*apikey.Service, *testutil.Po
 	logger := testutil.NewNopLogger()
 	migMgr := pg.MigrationManager()
 
-	svc := apikey.New(apikey.WithConfig(apikey.DefaultConfig()))(pg.Provider(), logger, migMgr, nil)
+	svc, err := apikey.New(
+		apikey.WithConfig(apikey.DefaultConfig()),
+	)(
+		pg.Provider(),
+		logger,
+		migMgr,
+		nil,
+	)
+	require.NoError(t, err)
 	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
 

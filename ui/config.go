@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	env "github.com/gasmod/gas/config/extensions/gasenv"
+	"github.com/gasmod/gas"
 )
 
 const (
@@ -21,7 +21,7 @@ const (
 // Config holds all user-facing settings for the gas/ui service.
 type Config struct {
 	// Embedded GasEnv
-	env.WithGasEnv
+	gas.WithGasEnv
 
 	// FuncMap supplies additional template functions. These are merged on
 	// top of the built-in defaults; collisions override the default.
