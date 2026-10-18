@@ -540,12 +540,22 @@ func (r *Router) NotFound(service Service, handler any) {
 	case func(http.ResponseWriter, *http.Request):
 		httpHandler = h
 	default:
-		httpHandler, _ = adaptHandler(
+		var depTypes []reflect.Type
+		httpHandler, depTypes = adaptHandler(
 			handler,
 			func() ErrorHandler { return r.errorHandler },
 			r.validator,
 			r.formDecoder,
 		)
+		// Validated at boot like a route handler's dependencies.
+		if len(depTypes) > 0 && !*r.rebuilding {
+			*r.pendingHandlers = append(*r.pendingHandlers, pendingHandler{
+				service:  service,
+				method:   "NOTFOUND",
+				path:     r.prefix + "/*",
+				depTypes: depTypes,
+			})
+		}
 	}
 
 	if r.isSub {
