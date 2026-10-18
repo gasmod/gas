@@ -7,9 +7,6 @@ import (
 	"io/fs"
 	"net/http"
 	"time"
-
-	"github.com/gasmod/gas/config"
-	"github.com/gasmod/gas/config/providers"
 )
 
 // DatabaseProvider abstracts database access. Implemented by gas/database
@@ -206,15 +203,27 @@ type ReadyProvider interface {
 	CheckReady(ctx context.Context) map[string]error
 }
 
-// ConfigProvider defines the config struct API, used by other modules that needs access to the config provider.
+// ConfigProvider is the configuration API services depend on: reading values,
+// setting defaults, and binding into a struct. The config module's *Config
+// implements it. Loading sources is setup work the app does on the concrete
+// config before registering it, so it is not part of this interface.
 type ConfigProvider interface {
 	SetDefault(key string, value any)
 	SetDefaults(values any) error
 	Set(key string, value any)
-	Bind(dest any, options ...config.BindOption) error
+	// Bind fills dest from the configuration and then validates it against
+	// its validate struct tags, unless an option turns validation off.
+	Bind(dest any, options ...BindOption) error
 	Get(key string) any
 	Find(key string) (value any, exist bool)
 	Values() map[string]any
-	LoadProvider(p providers.Provider) error
-	LoadProviderContext(ctx context.Context, p providers.Provider) error
 }
+
+// BindOptions holds the settings for one ConfigProvider.Bind call.
+type BindOptions struct {
+	// Validate runs struct-tag validation after binding. It defaults to true.
+	Validate bool
+}
+
+// BindOption changes the BindOptions of one Bind call.
+type BindOption func(*BindOptions)
