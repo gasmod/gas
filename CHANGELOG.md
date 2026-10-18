@@ -83,6 +83,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Plain handlers get panic recovery.** Only DI-aware handlers were wrapped
+  in recovery, so a panic in a plain `http.HandlerFunc` route or `NotFound`
+  handler bypassed the error handler: net/http recovered it, logged it to the
+  server's error log, and dropped the connection with no response. Plain
+  handlers now get the same recovery: the stack goes to stderr and to the
+  request's `Logger`, and the error handler renders the error (500 by
+  default). `http.ErrAbortHandler` still aborts. The default error handler
+  also no longer panics on a request with no request scope, such as one
+  served by a `Router` used without an App (part of #12).
 - **A failed `Start` no longer leaves services running.** When a service's
   `Init` failed, the services initialized before it were never tracked, so
   neither the failed `Start` nor a later `Shutdown` closed them; a failing

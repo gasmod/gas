@@ -416,8 +416,8 @@ Signature rules (panics at `Handle()` call time if violated):
 Boot-time validation ensures every handler dependency is registered in the
 container — the app fails fast at startup, not at request time.
 
-The adapter installs panic recovery around every DI-aware handler.
-`http.ErrAbortHandler` is re-panicked; all other panics are logged and passed
+The router installs panic recovery around every handler, DI-aware or a plain
+`http.HandlerFunc`, including `NotFound` handlers. `http.ErrAbortHandler` is re-panicked; all other panics are logged and passed
 to the `ErrorHandler` as `fmt.Errorf("gas: handler panic: %v", rec)`.
 
 ### Middleware
