@@ -96,7 +96,15 @@ func resolveInside(absPath, baseDir string) (string, error) {
 }
 
 // within reports whether path is dir or lies inside it. Both must be
-// absolute and clean.
+// absolute and clean. A clean filesystem root already ends in a separator,
+// so it is used as the prefix as is.
 func within(path, dir string) bool {
-	return path == dir || strings.HasPrefix(path, dir+string(os.PathSeparator))
+	if path == dir {
+		return true
+	}
+	prefix := dir
+	if !strings.HasSuffix(prefix, string(os.PathSeparator)) {
+		prefix += string(os.PathSeparator)
+	}
+	return strings.HasPrefix(path, prefix)
 }

@@ -110,3 +110,22 @@ func TestSafeOpen_Refusals(t *testing.T) {
 		t.Errorf("SafeOpen(app.json) = %q, %v, want the file", got, err)
 	}
 }
+
+func TestWithin(t *testing.T) {
+	for _, tc := range []struct {
+		path, dir string
+		want      bool
+	}{
+		{"/app", "/app", true},
+		{"/app/config.json", "/app", true},
+		{"/application/config.json", "/app", false},
+		{"/etc/config.json", "/app", false},
+		{"/", "/", true},
+		{"/config.json", "/", true},
+		{"/etc/app/config.json", "/", true},
+	} {
+		if got := within(filepath.FromSlash(tc.path), filepath.FromSlash(tc.dir)); got != tc.want {
+			t.Errorf("within(%q, %q) = %v, want %v", tc.path, tc.dir, got, tc.want)
+		}
+	}
+}
