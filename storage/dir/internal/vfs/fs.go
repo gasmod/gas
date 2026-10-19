@@ -12,6 +12,7 @@ import (
 const (
 	objectsPath  = ".gas/objects"
 	locksPath    = ".gas/locks"
+	bucketsPath  = ".gas/buckets"
 	metaFileExt  = ".gas.json"
 	fileHeadSize = 512
 

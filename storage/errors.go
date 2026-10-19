@@ -87,6 +87,17 @@ var (
 	// constructor's argument list.
 	ErrInvalidOption = errors.New("storage: invalid option")
 
+	// ErrInvalidLimit is returned by ListObjects for a MaxKeys under 1 and
+	// by ListBuckets for a MaxBuckets outside 1 to 10000. Nothing is sent to
+	// the backend.
+	ErrInvalidLimit = errors.New("storage: invalid limit")
+
+	// ErrInvalidContinuationToken is returned by ListObjects and ListBuckets
+	// for a ContinuationToken that is set but empty, and by the dir backend
+	// for one it did not issue. S3 may reject a token it did not issue with
+	// an error that carries no sentinel.
+	ErrInvalidContinuationToken = errors.New("storage: invalid continuation token")
+
 	// ErrInvalidTTL is returned by Presigner methods for a TTL that is
 	// negative, under one second, or over seven days. Nothing is signed.
 	ErrInvalidTTL = errors.New("storage: invalid TTL")

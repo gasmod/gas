@@ -153,11 +153,18 @@ func ValidateInput(input *storage.BaseObjectInput, cfgBucket string) (string, er
 		return "", storage.ErrInvalidKey
 	}
 
-	if input.Bucket != nil {
-		if !IsValidBucketName(*input.Bucket) {
+	return resolveBucket(input.Bucket, cfgBucket)
+}
+
+// resolveBucket returns the explicit bucket when it is set, otherwise
+// cfgBucket, or storage.ErrInvalidBucket when the one chosen is not a valid
+// bucket name.
+func resolveBucket(bucket *string, cfgBucket string) (string, error) {
+	if bucket != nil {
+		if !IsValidBucketName(*bucket) {
 			return "", storage.ErrInvalidBucket
 		}
-		return *input.Bucket, nil
+		return *bucket, nil
 	}
 
 	if IsValidBucketName(cfgBucket) {
@@ -165,6 +172,65 @@ func ValidateInput(input *storage.BaseObjectInput, cfgBucket string) (string, er
 	}
 
 	return "", storage.ErrInvalidBucket
+}
+
+// List limits, as in S3: a ListObjects page holds at most MaxListKeys
+// entries, and a ListBuckets page holds MaxListBuckets buckets when
+// MaxBuckets is nil and at most that many otherwise.
+const (
+	MaxListKeys    = 1000
+	MaxListBuckets = 10000
+)
+
+// ValidateListObjects checks input and resolves the bucket it lists and the
+// page size: the bucket as for ValidateInput, then MaxKeys (under 1 is
+// storage.ErrInvalidLimit; nil or over MaxListKeys is MaxListKeys), then
+// the ContinuationToken (set but empty is
+// storage.ErrInvalidContinuationToken). The errors are bare sentinels for
+// the caller to wrap.
+func ValidateListObjects(
+	input *storage.ListObjectsInput,
+	cfgBucket string,
+) (bucket string, maxKeys int, err error) {
+	bucket, err = resolveBucket(input.Bucket, cfgBucket)
+	if err != nil {
+		return "", 0, err
+	}
+
+	maxKeys = MaxListKeys
+	if input.MaxKeys != nil {
+		if *input.MaxKeys < 1 {
+			return "", 0, storage.ErrInvalidLimit
+		}
+		maxKeys = min(int(*input.MaxKeys), MaxListKeys)
+	}
+
+	if input.ContinuationToken != nil && *input.ContinuationToken == "" {
+		return "", 0, storage.ErrInvalidContinuationToken
+	}
+
+	return bucket, maxKeys, nil
+}
+
+// ValidateListBuckets checks input and returns the page size: MaxBuckets
+// outside 1 to MaxListBuckets is storage.ErrInvalidLimit and nil is
+// MaxListBuckets; a ContinuationToken that is set but empty is
+// storage.ErrInvalidContinuationToken. The errors are bare sentinels for
+// the caller to wrap.
+func ValidateListBuckets(input *storage.ListBucketsInput) (int, error) {
+	maxBuckets := MaxListBuckets
+	if input.MaxBuckets != nil {
+		if *input.MaxBuckets < 1 || *input.MaxBuckets > MaxListBuckets {
+			return 0, storage.ErrInvalidLimit
+		}
+		maxBuckets = int(*input.MaxBuckets)
+	}
+
+	if input.ContinuationToken != nil && *input.ContinuationToken == "" {
+		return 0, storage.ErrInvalidContinuationToken
+	}
+
+	return maxBuckets, nil
 }
 
 // Errorf formats an error like fmt.Errorf, prefixed with

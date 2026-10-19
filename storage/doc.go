@@ -15,7 +15,8 @@
 //	gas.WithSingletonService[storage.Provider](s3.NewProvider()),
 //	gas.WithSingletonService[storage.Presigner](s3.NewPresigner()),
 //
-// Provider creates buckets and reads, writes, inspects, and deletes objects.
+// Provider creates and lists buckets and reads, writes, inspects, lists, and
+// deletes objects.
 // Presigner issues time-limited URLs that let a client upload or download one
 // object directly against the backend, without going through the app.
 //
@@ -77,6 +78,36 @@
 // ErrContentLengthMismatch depending on the backend and the object's size (see
 // each backend); callers must not rely on the order. Backend constructors
 // given a nil option return ErrInvalidOption instead of panicking.
+//
+// # Listing
+//
+// ListObjects and ListBuckets return one page at a time, following S3
+// ListObjectsV2 and ListBuckets: entries in byte order of their UTF-8 names,
+// at most MaxKeys objects and common prefixes (1000 by default and at most)
+// or MaxBuckets buckets (10000 by default), and a continuation token that
+// resumes after the page. Callers loop until IsTruncated is false (objects)
+// or the ContinuationToken is empty (buckets):
+//
+//	in := &storage.ListObjectsInput{Prefix: &prefix}
+//	for {
+//		out, err := p.ListObjects(ctx, in)
+//		if err != nil {
+//			return err
+//		}
+//		// use out.Objects and out.CommonPrefixes
+//		if !out.IsTruncated {
+//			break
+//		}
+//		in.ContinuationToken = &out.NextContinuationToken
+//	}
+//
+// A Delimiter rolls the keys that hold it after Prefix up into common
+// prefixes, as S3 does; StartAfter applies to keys before they are rolled
+// up. Tokens are opaque and belong to the backend that issued them. A
+// MaxKeys under 1, or a MaxBuckets outside 1 to 10000, is ErrInvalidLimit,
+// and a set but empty ContinuationToken is ErrInvalidContinuationToken,
+// before anything is sent. ListObjects of a missing bucket is
+// ErrBucketNotFound.
 //
 // # Lifecycle
 //

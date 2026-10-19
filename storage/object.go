@@ -31,3 +31,13 @@ type Object struct {
 	Body io.ReadCloser
 	ObjectInfo
 }
+
+// ObjectSummary describes an object in a ListObjects page.
+type ObjectSummary struct {
+	// LastModified is when the object was last written.
+	LastModified time.Time
+	// Key is the object key.
+	Key string
+	// Size is the object's length in bytes.
+	Size int64
+}

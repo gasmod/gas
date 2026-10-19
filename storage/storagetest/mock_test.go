@@ -37,8 +37,17 @@ func TestMockProvider_Defaults(t *testing.T) {
 	if info, err := m.DeleteObject(ctx, nil); info != nil || err != nil {
 		t.Errorf("DeleteObject() = %v, %v, want nil, nil", info, err)
 	}
+	if out, err := m.ListBuckets(ctx, nil); out != nil || err != nil {
+		t.Errorf("ListBuckets() = %v, %v, want nil, nil", out, err)
+	}
+	if out, err := m.ListObjects(ctx, nil); out != nil || err != nil {
+		t.Errorf("ListObjects() = %v, %v, want nil, nil", out, err)
+	}
 
-	order := []string{"CreateBucket", "HeadObject", "PutObject", "GetObject", "DeleteObject"}
+	order := []string{
+		"CreateBucket", "HeadObject", "PutObject", "GetObject", "DeleteObject",
+		"ListBuckets", "ListObjects",
+	}
 	for _, method := range order {
 		if n := m.CallCount(method); n != 1 {
 			t.Errorf("CallCount(%s) = %d, want 1", method, n)
@@ -129,6 +138,59 @@ func TestMockProvider_DelegatesAndRecords(t *testing.T) {
 	for i, c := range m.Calls {
 		if len(c.Args) != 1 || c.Args[0] != wantArgs[i] {
 			t.Errorf("Calls[%d].Args = %v, want [%v]", i, c.Args, wantArgs[i])
+		}
+	}
+}
+
+// TestMockProvider_DelegatesList checks that the list methods delegate to
+// their Fn fields and record their inputs.
+func TestMockProvider_DelegatesList(t *testing.T) {
+	t.Parallel()
+
+	bucketsIn := &storage.ListBucketsInput{Prefix: new("b")}
+	objectsIn := &storage.ListObjectsInput{Prefix: new("o")}
+
+	type ctxKey struct{}
+	ctx := context.WithValue(context.Background(), ctxKey{}, "v")
+
+	m := &MockProvider{
+		ListBucketsFn: func(
+			c context.Context,
+			in *storage.ListBucketsInput,
+		) (*storage.ListBucketsOutput, error) {
+			if c.Value(ctxKey{}) != "v" || in != bucketsIn {
+				t.Error("ListBucketsFn received wrong arguments")
+			}
+			return &storage.ListBucketsOutput{ContinuationToken: "next"}, nil
+		},
+		ListObjectsFn: func(
+			c context.Context,
+			in *storage.ListObjectsInput,
+		) (*storage.ListObjectsOutput, error) {
+			if c.Value(ctxKey{}) != "v" || in != objectsIn {
+				t.Error("ListObjectsFn received wrong arguments")
+			}
+			return &storage.ListObjectsOutput{IsTruncated: true}, nil
+		},
+	}
+
+	if out, err := m.ListBuckets(ctx, bucketsIn); err != nil || out.ContinuationToken != "next" {
+		t.Errorf("ListBuckets() = %+v, %v", out, err)
+	}
+	if out, err := m.ListObjects(ctx, objectsIn); err != nil || !out.IsTruncated {
+		t.Errorf("ListObjects() = %+v, %v", out, err)
+	}
+
+	want := []Call{
+		{Method: "ListBuckets", Args: []any{bucketsIn}},
+		{Method: "ListObjects", Args: []any{objectsIn}},
+	}
+	if len(m.Calls) != len(want) {
+		t.Fatalf("len(Calls) = %d, want %d", len(m.Calls), len(want))
+	}
+	for i, c := range m.Calls {
+		if c.Method != want[i].Method || len(c.Args) != 1 || c.Args[0] != want[i].Args[0] {
+			t.Errorf("Calls[%d] = %+v, want %+v", i, c, want[i])
 		}
 	}
 }

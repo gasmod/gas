@@ -63,10 +63,12 @@ optional `Bucket`; a nil `Bucket` means the configured default bucket.
 | Method | Returns | Notes |
 |---|---|---|
 | `CreateBucket(ctx, *CreateBucketInput)` | `*BucketInfo` | A bucket you already own is success |
+| `ListBuckets(ctx, *ListBucketsInput)` | `*ListBucketsOutput` | One page of your buckets, by name; filter with `Prefix` |
 | `PutObject(ctx, *PutObjectInput)` | `*ObjectInfo` | Streams the body; content type, metadata and length are optional. A set `ContentLength` must match the body |
 | `GetObject(ctx, *GetObjectInput)` | `*Object` | Body plus `ObjectInfo`; the caller closes `Body` |
 | `HeadObject(ctx, *HeadObjectInput)` | `*ObjectInfo` | Size, content type, modification time, version, metadata |
 | `DeleteObject(ctx, *DeleteObjectInput)` | `*ObjectInfo` | Deleting a missing key succeeds |
+| `ListObjects(ctx, *ListObjectsInput)` | `*ListObjectsOutput` | One page of a bucket's objects, by key, with `Prefix`, `Delimiter` and `StartAfter` |
 | `PresignUploadURL(ctx, *PresignUploadURLInput)` | `*PresignURLResponse` | URL, method, and the headers the client must send |
 | `PresignDownloadURL(ctx, *PresignDownloadURLInput)` | `*PresignURLResponse` | URL, method, and signed headers for a GET |
 
@@ -79,6 +81,17 @@ header that is not one valid byte range is ignored, and one starting past the
 end is `storage.ErrInvalidRange`.
 
 <Code code={region(storage, 'download')} lang="go" />
+
+The list methods return one page at a time, with the semantics of S3
+ListObjectsV2 and ListBuckets. A page holds at most `MaxKeys` objects and
+common prefixes together (1000 by default and at most) or `MaxBuckets` buckets
+(10000 by default). To read the next page, pass the page's
+`NextContinuationToken` (objects) or `ContinuationToken` (buckets) back in the
+next input, and stop when `IsTruncated` is false or the bucket token is empty.
+A `Delimiter` such as `/` groups keys under `CommonPrefixes`, the way S3
+consoles show folders. Tokens are opaque and only valid for the backend that
+issued them. The directory backend reads every key in the bucket on each call,
+which is fine in development and on small buckets.
 
 Presigned URLs let the browser transfer bytes straight to S3, so large files
 never pass through your server. Signing is local; no network call is made. A
@@ -115,11 +128,13 @@ Classify failures with `errors.Is` against the sentinels in `storage`:
 |---|---|
 | `ErrKeyNotFound` | `GetObject` of a missing key |
 | `ErrNotFound` | `HeadObject` of a missing object; on S3 also a missing bucket, because HEAD responses carry no error code |
-| `ErrBucketNotFound` | An object operation on a missing bucket (S3 `HeadObject` excepted) |
+| `ErrBucketNotFound` | An object operation or `ListObjects` on a missing bucket (S3 `HeadObject` excepted) |
 | `ErrVersionNotFound` | S3 `GetObject` of a version that does not exist. S3 `HeadObject` reports it as `ErrNotFound`, and AWS may reject a malformed version ID with an error that carries no sentinel |
 | `ErrBucketExists` | S3 `CreateBucket` of a name another account owns |
 | `ErrInvalidKey`, `ErrInvalidBucket`, `ErrInputRequired` | Input rejected before anything is sent |
 | `ErrInvalidTTL` | A presign TTL out of bounds |
+| `ErrInvalidLimit` | A `MaxKeys` under 1, or a `MaxBuckets` outside 1 to 10000 |
+| `ErrInvalidContinuationToken` | A list token that is set but empty, or one the directory backend did not issue |
 | `ErrInvalidRange` | A `Range` whose first byte is at or past the end of the object, or `bytes=-0` |
 | `ErrNotSupported` | A feature the backend does not implement, such as `Version` or `PartNumber` on the directory backend |
 | `ErrContentLengthMismatch` | A `PutObject` whose body does not match its `ContentLength`; nothing is stored |

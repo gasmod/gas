@@ -27,6 +27,9 @@ func TestSentinelErrors(t *testing.T) {
 		"ErrNotSupported":          ErrNotSupported,
 		"ErrInvalidRange":          ErrInvalidRange,
 		"ErrContentLengthMismatch": ErrContentLengthMismatch,
+		"ErrInvalidLimit":          ErrInvalidLimit,
+
+		"ErrInvalidContinuationToken": ErrInvalidContinuationToken,
 	}
 
 	messages := map[string]string{}

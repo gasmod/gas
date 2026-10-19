@@ -306,6 +306,14 @@ func TestProvider_ZeroValue(t *testing.T) {
 	wantErrIs(t, "GetObject(nil)", err, storage.ErrNotInitialized)
 	_, err = p.DeleteObject(ctx, nil)
 	wantErrIs(t, "DeleteObject(nil)", err, storage.ErrNotInitialized)
+	_, err = p.ListObjects(ctx, &storage.ListObjectsInput{})
+	wantErrIs(t, "ListObjects", err, storage.ErrNotInitialized)
+	_, err = p.ListObjects(ctx, nil)
+	wantErrIs(t, "ListObjects(nil)", err, storage.ErrNotInitialized)
+	_, err = p.ListBuckets(ctx, &storage.ListBucketsInput{})
+	wantErrIs(t, "ListBuckets", err, storage.ErrNotInitialized)
+	_, err = p.ListBuckets(ctx, nil)
+	wantErrIs(t, "ListBuckets(nil)", err, storage.ErrNotInitialized)
 }
 
 // TestProvider_NilInput checks that every method rejects a nil input with
@@ -339,6 +347,14 @@ func TestProvider_NilInput(t *testing.T) {
 		}},
 		{name: "DeleteObject", op: "delete", call: func() error {
 			_, err := p.DeleteObject(ctx, nil)
+			return err
+		}},
+		{name: "ListObjects", op: "list", call: func() error {
+			_, err := p.ListObjects(ctx, nil)
+			return err
+		}},
+		{name: "ListBuckets", op: "list buckets", call: func() error {
+			_, err := p.ListBuckets(ctx, nil)
 			return err
 		}},
 	}

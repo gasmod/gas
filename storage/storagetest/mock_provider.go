@@ -12,11 +12,13 @@ import (
 // that field is nil. The zero value is ready to use.
 type MockProvider struct {
 	CreateBucketFn func(ctx context.Context, input *storage.CreateBucketInput) (*storage.BucketInfo, error)
+	ListBucketsFn  func(ctx context.Context, input *storage.ListBucketsInput) (*storage.ListBucketsOutput, error)
 
 	HeadObjectFn   func(ctx context.Context, input *storage.HeadObjectInput) (*storage.ObjectInfo, error)
 	PutObjectFn    func(ctx context.Context, input *storage.PutObjectInput) (*storage.ObjectInfo, error)
 	GetObjectFn    func(ctx context.Context, input *storage.GetObjectInput) (*storage.Object, error)
 	DeleteObjectFn func(ctx context.Context, input *storage.DeleteObjectInput) (*storage.ObjectInfo, error)
+	ListObjectsFn  func(ctx context.Context, input *storage.ListObjectsInput) (*storage.ListObjectsOutput, error)
 
 	Calls []Call
 	mu    sync.Mutex
@@ -46,6 +48,18 @@ func (m *MockProvider) CreateBucket(
 	m.record("CreateBucket", input)
 	if m.CreateBucketFn != nil {
 		return m.CreateBucketFn(ctx, input)
+	}
+	return nil, nil
+}
+
+// ListBuckets records the call and delegates to ListBucketsFn.
+func (m *MockProvider) ListBuckets(
+	ctx context.Context,
+	input *storage.ListBucketsInput,
+) (*storage.ListBucketsOutput, error) {
+	m.record("ListBuckets", input)
+	if m.ListBucketsFn != nil {
+		return m.ListBucketsFn(ctx, input)
 	}
 	return nil, nil
 }
@@ -94,6 +108,18 @@ func (m *MockProvider) DeleteObject(
 	m.record("DeleteObject", input)
 	if m.DeleteObjectFn != nil {
 		return m.DeleteObjectFn(ctx, input)
+	}
+	return nil, nil
+}
+
+// ListObjects records the call and delegates to ListObjectsFn.
+func (m *MockProvider) ListObjects(
+	ctx context.Context,
+	input *storage.ListObjectsInput,
+) (*storage.ListObjectsOutput, error) {
+	m.record("ListObjects", input)
+	if m.ListObjectsFn != nil {
+		return m.ListObjectsFn(ctx, input)
 	}
 	return nil, nil
 }

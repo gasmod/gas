@@ -556,3 +556,127 @@ func TestCheckLengthReaderBehavior(t *testing.T) {
 		}
 	})
 }
+
+// TestValidateListObjects checks bucket resolution, the MaxKeys range and
+// cap, and the empty continuation token, in that order.
+func TestValidateListObjects(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		want       error
+		in         storage.ListObjectsInput
+		name       string
+		cfgBucket  string
+		wantBucket string
+		wantMax    int
+	}{
+		{name: "defaults", cfgBucket: "cfg-bucket", wantBucket: "cfg-bucket", wantMax: 1000},
+		{
+			name:       "explicit bucket",
+			in:         storage.ListObjectsInput{Bucket: new("my-bucket")},
+			cfgBucket:  "cfg-bucket",
+			wantBucket: "my-bucket",
+			wantMax:    1000,
+		},
+		{name: "no bucket", want: storage.ErrInvalidBucket},
+		{
+			name:      "empty explicit bucket",
+			in:        storage.ListObjectsInput{Bucket: new("")},
+			cfgBucket: "cfg-bucket",
+			want:      storage.ErrInvalidBucket,
+		},
+		{
+			name:       "max keys one",
+			in:         storage.ListObjectsInput{MaxKeys: new(int32(1))},
+			cfgBucket:  "cfg-bucket",
+			wantBucket: "cfg-bucket",
+			wantMax:    1,
+		},
+		{
+			name:       "max keys capped",
+			in:         storage.ListObjectsInput{MaxKeys: new(int32(5000))},
+			cfgBucket:  "cfg-bucket",
+			wantBucket: "cfg-bucket",
+			wantMax:    1000,
+		},
+		{
+			name:      "max keys zero",
+			in:        storage.ListObjectsInput{MaxKeys: new(int32(0))},
+			cfgBucket: "cfg-bucket",
+			want:      storage.ErrInvalidLimit,
+		},
+		{
+			name:      "max keys negative",
+			in:        storage.ListObjectsInput{MaxKeys: new(int32(-1))},
+			cfgBucket: "cfg-bucket",
+			want:      storage.ErrInvalidLimit,
+		},
+		{
+			name: "bucket checked before max keys",
+			in:   storage.ListObjectsInput{MaxKeys: new(int32(0))},
+			want: storage.ErrInvalidBucket,
+		},
+		{
+			name:      "empty token",
+			in:        storage.ListObjectsInput{ContinuationToken: new("")},
+			cfgBucket: "cfg-bucket",
+			want:      storage.ErrInvalidContinuationToken,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			bucket, maxKeys, err := ValidateListObjects(&tt.in, tt.cfgBucket)
+			if !errors.Is(err, tt.want) || bucket != tt.wantBucket || maxKeys != tt.wantMax {
+				t.Errorf("ValidateListObjects() = %q, %d, %v; want %q, %d, %v",
+					bucket, maxKeys, err, tt.wantBucket, tt.wantMax, tt.want)
+			}
+		})
+	}
+}
+
+// TestValidateListBuckets checks the MaxBuckets range and the empty
+// continuation token.
+func TestValidateListBuckets(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		want    error
+		in      storage.ListBucketsInput
+		name    string
+		wantMax int
+	}{
+		{name: "defaults", wantMax: 10000},
+		{name: "one", in: storage.ListBucketsInput{MaxBuckets: new(int32(1))}, wantMax: 1},
+		{
+			name:    "ten thousand",
+			in:      storage.ListBucketsInput{MaxBuckets: new(int32(10000))},
+			wantMax: 10000,
+		},
+		{
+			name: "zero",
+			in:   storage.ListBucketsInput{MaxBuckets: new(int32(0))},
+			want: storage.ErrInvalidLimit,
+		},
+		{
+			name: "over ten thousand",
+			in:   storage.ListBucketsInput{MaxBuckets: new(int32(10001))},
+			want: storage.ErrInvalidLimit,
+		},
+		{
+			name: "empty token",
+			in:   storage.ListBucketsInput{ContinuationToken: new("")},
+			want: storage.ErrInvalidContinuationToken,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			maxBuckets, err := ValidateListBuckets(&tt.in)
+			if !errors.Is(err, tt.want) || maxBuckets != tt.wantMax {
+				t.Errorf("ValidateListBuckets() = %d, %v; want %d, %v",
+					maxBuckets, err, tt.wantMax, tt.want)
+			}
+		})
+	}
+}
