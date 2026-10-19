@@ -63,6 +63,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inline-comment scan re-encoded every byte above 0x7F as a separate
   character, so `café` loaded as `cafÃ©` and any non-ASCII password or
   secret was silently changed. Found by the new fuzz target.
+- **Config files load when the working directory is `/`.** The default file
+  system checks that a file lies inside the working directory by matching
+  the directory plus a separator as a prefix, which for `/` became `//`, so
+  `JSONProvider` and `DotEnvProvider` refused every file with
+  `unsafe file path: outside allowed directory`. Running from `/` is common
+  in containers. A root working directory is now matched as is.
 
 ### Security
 
