@@ -3,11 +3,12 @@ name: gas-storage
 description: >
   Reference documentation for the gas/storage Go module
   (github.com/gasmod/gas/storage), object storage for the Gas ecosystem. Use
-  this skill when writing, reviewing, or debugging Go code that stores or
-  reads objects through storage.Provider or presigns URLs through
+  this skill when writing, reviewing, or debugging Go code that stores,
+  reads, or lists objects or buckets through storage.Provider (including
+  ListObjects pagination, prefixes, and delimiters) or presigns URLs through
   storage.Presigner, on AWS S3 or S3-compatible backends (MinIO, LocalStack)
   or on a local directory. Covers the storage interfaces and input types,
-  sentinel errors, the s3 and dir backends, DI wiring, configuration, and the
+  listing, sentinel errors, the s3 and dir backends, DI wiring, configuration, and the
   storagetest mocks. Use it whenever code imports gasmod/gas/storage or any
   of its packages, even if the user does not mention it by name.
 ---
@@ -35,11 +36,13 @@ Services depend on the interfaces, never on a backend package.
 ```go
 type Provider interface {
     CreateBucket(ctx context.Context, input *CreateBucketInput) (*BucketInfo, error)
+    ListBuckets(ctx context.Context, input *ListBucketsInput) (*ListBucketsOutput, error)
 
     HeadObject(ctx context.Context, input *HeadObjectInput) (*ObjectInfo, error)
     PutObject(ctx context.Context, input *PutObjectInput) (*ObjectInfo, error)
     GetObject(ctx context.Context, input *GetObjectInput) (*Object, error)
     DeleteObject(ctx context.Context, input *DeleteObjectInput) (*ObjectInfo, error)
+    ListObjects(ctx context.Context, input *ListObjectsInput) (*ListObjectsOutput, error)
 }
 
 type Presigner interface {
@@ -64,6 +67,58 @@ type BaseObjectInput struct {
 
 `GetObject` returns `*storage.Object`, which embeds `ObjectInfo` (`LastModified`, `Metadata`, `ContentType`, `Version`, `Size`) and adds a `Body io.ReadCloser` that the caller must close.
 
+## Listing
+
+Both list methods return one page, following S3 ListObjectsV2 and ListBuckets. Entries come in byte order of their UTF-8 names.
+
+```go
+type ListObjectsInput struct {
+    Bucket            *string // nil uses the configured default bucket
+    ContinuationToken *string // NextContinuationToken of the previous page; "" is ErrInvalidContinuationToken
+    Delimiter         *string // rolls keys up into CommonPrefixes
+    MaxKeys           *int32  // nil = 1000, over 1000 = 1000, under 1 = ErrInvalidLimit
+    Prefix            *string
+    StartAfter        *string // applies to keys before they are rolled up
+}
+type ListObjectsOutput struct {
+    NextContinuationToken string // empty when IsTruncated is false
+    Objects               []ObjectSummary // Key, Size, LastModified
+    CommonPrefixes        []string
+    IsTruncated           bool
+}
+
+type ListBucketsInput struct {
+    ContinuationToken *string
+    MaxBuckets        *int32 // nil = 10000, outside 1..10000 = ErrInvalidLimit
+    Prefix            *string
+}
+type ListBucketsOutput struct {
+    ContinuationToken string // empty on the last page
+    Buckets           []BucketSummary // Name, CreationDate
+}
+```
+
+Page through objects:
+
+```go
+in := &storage.ListObjectsInput{Prefix: &prefix, Delimiter: new("/")}
+for {
+    out, err := p.ListObjects(ctx, in)
+    if err != nil {
+        return err
+    }
+    // use out.Objects and out.CommonPrefixes
+    if !out.IsTruncated {
+        break
+    }
+    in.ContinuationToken = &out.NextContinuationToken
+}
+```
+
+- Objects and common prefixes count together toward `MaxKeys`, and each common prefix appears once across all pages.
+- Tokens are opaque and belong to the backend that issued them.
+- `ListObjects` of a missing bucket is `ErrBucketNotFound`.
+
 ## Sentinel errors
 
 Match them with `errors.Is`; never compare messages.
@@ -74,12 +129,14 @@ Match them with `errors.Is`; never compare messages.
 | `storage.ErrInputRequired`   | the input is nil                                                                                                                                                                                                                                |
 | `storage.ErrInvalidKey`      | the key is empty, longer than 1024 bytes, not valid UTF-8, or cleans to `.` or ends in a `.` path element (`./`, `a/.`). Only `/` separates elements, on every OS: `a\.`, `.\` and `\` are valid keys, on Windows too                           |
 | `storage.ErrInvalidBucket`   | the bucket name is invalid, or neither the input nor the config names one                                                                                                                                                                       |
-| `storage.ErrBucketNotFound`  | an object operation targets a missing bucket (s3 HeadObject excepted)                                                                                                                                                                           |
+| `storage.ErrBucketNotFound`  | an object operation, or `ListObjects`, targets a missing bucket (s3 HeadObject excepted)                                                                                                                                                                           |
 | `storage.ErrKeyNotFound`     | `GetObject` of a missing key                                                                                                                                                                                                                    |
 | `storage.ErrNotFound`        | `HeadObject` of a missing object. On s3 this also covers a missing bucket, because S3 HEAD responses have no body                                                                                                                               |
 | `storage.ErrBucketExists`    | s3 `CreateBucket` of a name another account owns (S3 BucketAlreadyExists). `CreateBucket` of a bucket the caller already owns succeeds in both backends and every region                                                                                     |
 | `storage.ErrVersionNotFound` | s3 `GetObject` of a `Version` that does not exist (S3 NoSuchVersion). Matches neither `ErrKeyNotFound` nor `ErrNotFound`. s3 `HeadObject` reports an unknown version as `ErrNotFound`, since HEAD responses have no body. A malformed version ID may get a 400 from AWS with no sentinel. On dir, `Version` is `ErrNotSupported`|
 | `storage.ErrInvalidOption`   | a backend constructor was given a nil option. The message names its zero-based position: `gas/storage/s3/provider: storage: invalid option: option 1 is nil`                                                                                    |
+| `storage.ErrInvalidLimit`    | `ListObjects` with `MaxKeys` under 1, or `ListBuckets` with `MaxBuckets` outside 1 to 10000. Nothing is sent                                                                                                                                     |
+| `storage.ErrInvalidContinuationToken` | a list `ContinuationToken` that is set but empty, or one the dir backend did not issue. s3 may reject a token S3 did not issue with an error that carries no sentinel                                                                   |
 | `storage.ErrInvalidTTL`      | a `Presigner` method was given a TTL that is negative, under one second, or over seven days                                                                                                                                                     |
 | `storage.ErrNotSupported`  | dir `HeadObject` or `GetObject` with `Version` or `PartNumber` set, or `DeleteObject` with `Version` set: dir neither versions objects nor stores them in parts                                                                                   |
 | `storage.ErrContentLengthMismatch` | `PutObject` with `ContentLength` set and a `Body` that is shorter or longer, or a negative length, on both backends. Nothing is stored; the previous object stays                                                                         |
@@ -119,6 +176,7 @@ Behavior:
 - S3 errors map to sentinels: NoSuchBucket to `ErrBucketNotFound`, NoSuchKey to `ErrKeyNotFound`, NoSuchVersion to `ErrVersionNotFound`, a HEAD 404 to `ErrNotFound`, InvalidRange (GET 416) and RequestedRangeNotSatisfiable (HEAD 416) to `ErrInvalidRange`, and BucketAlreadyExists to `ErrBucketExists`. A ranged GetObject or HeadObject reports the range's length as `Size`; `Object` has no total-size or Content-Range field. The SDK error stays in the chain for `errors.As`.
 - `CreateBucket` creates the bucket in the client's region, sending that region as the location constraint outside us-east-1 and `aws-global` (S3 rejects the request there without it); with no configured region it uses the region the SDK resolved. A bucket the caller already owns is success, and its `BucketInfo` may be empty: us-east-1 answers 200 with the usual fields, other regions answer BucketAlreadyOwnedByYou with none.
 - Presign TTL: nil or zero signs 15 minutes, passed to the SDK explicitly, so it also overrides a default expiry set on a presign client given with `WithPresignClient`. Valid TTLs run from 1 second to 7 days inclusive (the AWS SigV4 range); anything else is `ErrInvalidTTL`. `X-Amz-Expires` is whole seconds, truncated toward zero.
+- `ListObjects` sends ListObjectsV2 with `encoding-type=url` and decodes keys and common prefixes, so keys with characters XML 1.0 cannot carry (such as `\x01`) are listed intact. `ListBuckets` lists the buckets the credentials own.
 - `Provider.Client()` and `Presigner.PresignClient()` return the underlying SDK clients, for operations the interfaces do not cover.
 
 ## Directory backend
@@ -138,6 +196,7 @@ func WithRoot(root *os.Root) Option // required
 - **Range.** Get and Head honor `Range` with RFC 9110 single-range semantics: one `bytes=first-last`, `bytes=first-` or `bytes=-suffix` range, clamped to the object, with `Size` set to its length; anything else is ignored (whole object); a first byte at or past the end, or `bytes=-0`, is `ErrInvalidRange`. S3 (LocalStack at least) is more lenient on some malformed headers (a unit other than bytes, spaces around `=` or `-`, a `+` sign), and answers 416 on an empty object where dir returns the empty body for an ignored header; dir follows RFC 9110.
 - **Ignored fields.** `Response*` and `Expires`. `ObjectInfo` carries no `Version`, and Put and Delete return an empty `ObjectInfo`.
 - **Content type.** A Put without one sniffs it from the body.
+- **Listing.** Each call reads every name in the bucket (or every bucket's name record), so a page costs time in proportion to the bucket. Continuation tokens are not interchangeable with S3's. `CreateBucket` records the bucket's name under `.gas/buckets` the first time it runs, and that record's modification time is `CreationDate`. A bucket whose name record is missing (created by an earlier version) or damaged (a crash left it empty) fails `ListBuckets` until `CreateBucket` of it runs again, which rewrites the record. Metadata that cannot be used fails `ListObjects`; an object deleted while the page is built is left out.
 - **`dir.ErrStaleData`.** `PutObject` returns it together with the `ObjectInfo` when the object was written but the data file it replaced could not be removed. The object reads back as written.
 - **`dir.ErrRootRequired`.** `NewProvider` returns it when no root was given, including `WithRoot(nil)`. It wraps `storage.ErrNotInitialized`.
 - **Nil option.** `NewProvider` given a nil `Option` returns an error wrapping `storage.ErrInvalidOption` and creates nothing in the root.
@@ -194,7 +253,7 @@ func (s *Service) Read(ctx context.Context, key string) ([]byte, error) {
 `storagetest.MockProvider` and `storagetest.MockPresigner` are recording mocks.
 
 - **Zero value.** Ready to use.
-- **Delegation.** Each method records a `Call`, then delegates to its `Fn` field (`CreateBucketFn`, `HeadObjectFn`, `PutObjectFn`, `GetObjectFn`, `DeleteObjectFn`, `PresignUploadURLFn`, `PresignDownloadURLFn`). When that field is nil it returns `nil, nil`.
+- **Delegation.** Each method records a `Call`, then delegates to its `Fn` field (`CreateBucketFn`, `ListBucketsFn`, `HeadObjectFn`, `PutObjectFn`, `GetObjectFn`, `DeleteObjectFn`, `ListObjectsFn`, `PresignUploadURLFn`, `PresignDownloadURLFn`). When that field is nil it returns `nil, nil`.
 - **Assertions.** `CallCount(method)` counts recorded calls, and `Reset()` clears them.
 - **Concurrency.** Safe for concurrent use.
 

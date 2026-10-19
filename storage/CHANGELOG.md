@@ -10,8 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Breaking changes
 
 - **`gas.StorageProvider` is replaced by interfaces in this module.**
-  `storage.Provider` covers `CreateBucket`, `HeadObject`, `PutObject`,
-  `GetObject` and `DeleteObject`. `storage.Presigner` covers
+  `storage.Provider` covers `CreateBucket`, `ListBuckets`, `HeadObject`,
+  `PutObject`, `GetObject`, `DeleteObject` and `ListObjects`. `storage.Presigner` covers
   `PresignUploadURL` and `PresignDownloadURL`. Each method takes an input
   struct (`PutObjectInput` and so on) in place of a key and
   `gas.StorageOption`s. `BaseObjectInput.Key` is a `string`, and a nil
@@ -94,6 +94,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   region, sending the location constraint S3 requires outside us-east-1 and
   `aws-global`. For a bucket the caller already owns it succeeds, and the
   returned `BucketInfo` may be empty.
+- **Listing** in both backends. `ListObjects` returns one page of a
+  bucket's objects with S3 ListObjectsV2 semantics (`Prefix`, `Delimiter`
+  and common prefixes, `StartAfter`, `MaxKeys` up to 1000, and a
+  continuation token), and `ListBuckets` one page of buckets (`Prefix`,
+  `MaxBuckets` up to 10000, and a continuation token). s3 requests
+  URL-encoded keys and decodes them, so keys with characters XML cannot
+  carry are listed. dir reads every name in the bucket on each call, and
+  records each bucket's name under `.gas/buckets` when `CreateBucket`
+  runs; a bucket created before that, or whose record a crash left
+  damaged, fails `ListBuckets` until `CreateBucket` of it runs again. `storagetest.MockProvider` gains
+  `ListBucketsFn` and `ListObjectsFn`.
+  - `storage.ErrInvalidLimit`, for a `MaxKeys` under 1 or a `MaxBuckets`
+    outside 1 to 10000.
+  - `storage.ErrInvalidContinuationToken`, for an empty token, or one the
+    dir backend did not issue.
 - **LocalStack test suite** for the s3 backend, against
   `localstack/localstack:4.14.0` pinned by digest.
 

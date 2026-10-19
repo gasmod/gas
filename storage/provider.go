@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// Provider is an object store: it creates buckets and writes, reads,
-// inspects, and deletes objects. Every method validates its input before
+// Provider is an object store: it creates and lists buckets and writes,
+// reads, inspects, lists, and deletes objects. Every method validates its input before
 // contacting the backend and returns the sentinel errors in this package,
 // wrapped with the backend and operation; see the package documentation for
 // which sentinel each case produces. Implementations are safe for concurrent
@@ -17,6 +17,8 @@ type Provider interface {
 	// caller already owns succeeds; ErrBucketExists means the name is taken
 	// by someone else.
 	CreateBucket(ctx context.Context, input *CreateBucketInput) (*BucketInfo, error)
+	// ListBuckets returns one page of the caller's buckets, in name order.
+	ListBuckets(ctx context.Context, input *ListBucketsInput) (*ListBucketsOutput, error)
 
 	// HeadObject returns the description of an object without its contents.
 	// A missing object is ErrNotFound.
@@ -29,6 +31,9 @@ type Provider interface {
 	GetObject(ctx context.Context, input *GetObjectInput) (*Object, error)
 	// DeleteObject deletes an object. Deleting a missing key succeeds.
 	DeleteObject(ctx context.Context, input *DeleteObjectInput) (*ObjectInfo, error)
+	// ListObjects returns one page of a bucket's objects, in key order. A
+	// missing bucket is ErrBucketNotFound.
+	ListObjects(ctx context.Context, input *ListObjectsInput) (*ListObjectsOutput, error)
 }
 
 // CreateBucketInput names the bucket CreateBucket creates.
@@ -119,4 +124,74 @@ type DeleteObjectInput struct {
 	// Version deletes one version of the object instead of the latest.
 	Version *string
 	BaseObjectInput
+}
+
+// ListBucketsInput selects the page of buckets ListBuckets returns. Every
+// field is optional; the zero value lists the first page of every bucket.
+type ListBucketsInput struct {
+	// ContinuationToken resumes a listing from the ContinuationToken of the
+	// previous page. A non-nil empty string is ErrInvalidContinuationToken.
+	ContinuationToken *string
+	// MaxBuckets is the most buckets the page holds, from 1 to 10000. Nil
+	// means 10000. A value outside the range is ErrInvalidLimit.
+	MaxBuckets *int32
+	// Prefix limits the listing to bucket names that start with it.
+	Prefix *string
+}
+
+// ListBucketsOutput is one page of buckets.
+type ListBucketsOutput struct {
+	// ContinuationToken resumes the listing after this page. It is empty on
+	// the last page.
+	ContinuationToken string
+	// Buckets are the buckets of the page, in name order.
+	Buckets []BucketSummary
+}
+
+// BucketSummary describes a bucket in a ListBuckets page.
+type BucketSummary struct {
+	// CreationDate is when the bucket was created, as the backend reports
+	// it.
+	CreationDate time.Time
+	// Name is the bucket name.
+	Name string
+}
+
+// ListObjectsInput selects the page of objects ListObjects returns. It
+// follows S3 ListObjectsV2. Only Bucket resolves like an object input's;
+// every other field is optional.
+type ListObjectsInput struct {
+	// Bucket is the bucket to list. Nil selects the configured bucket, as in
+	// BaseObjectInput.
+	Bucket *string
+	// ContinuationToken resumes a listing from the NextContinuationToken of
+	// the previous page. A non-nil empty string is
+	// ErrInvalidContinuationToken.
+	ContinuationToken *string
+	// Delimiter groups keys: a key that holds Delimiter after Prefix is not
+	// listed itself but rolled up into a common prefix, which runs from the
+	// start of the key to the end of the first Delimiter after Prefix.
+	Delimiter *string
+	// MaxKeys is the most objects and common prefixes the page holds
+	// together. Nil means 1000, a value over 1000 is treated as 1000, and a
+	// value under 1 is ErrInvalidLimit.
+	MaxKeys *int32
+	// Prefix limits the listing to keys that start with it.
+	Prefix *string
+	// StartAfter starts the listing after this key, which need not exist.
+	StartAfter *string
+}
+
+// ListObjectsOutput is one page of objects.
+type ListObjectsOutput struct {
+	// NextContinuationToken resumes the listing after this page. It is empty
+	// when IsTruncated is false.
+	NextContinuationToken string
+	// Objects are the objects of the page, in key order.
+	Objects []ObjectSummary
+	// CommonPrefixes are the prefixes keys were rolled up into by Delimiter,
+	// in order. Each is listed once across all pages.
+	CommonPrefixes []string
+	// IsTruncated reports whether more objects or common prefixes follow.
+	IsTruncated bool
 }

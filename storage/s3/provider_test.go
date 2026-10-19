@@ -349,6 +349,8 @@ func TestProvider_NilInput(t *testing.T) {
 			_, err := p.DeleteObject(ctx, nil)
 			return err
 		},
+		"list":         func() error { _, err := p.ListObjects(ctx, nil); return err },
+		"list buckets": func() error { _, err := p.ListBuckets(ctx, nil); return err },
 	}
 	for op, call := range calls {
 		err := call()

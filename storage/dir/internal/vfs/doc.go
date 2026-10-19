@@ -11,15 +11,20 @@
 //	│   ├── objects/
 //	│   │   └── <bucket-hash>/
 //	│   │       └── <key-hash>_<uuid>     data file
-//	│   └── locks/
-//	│       └── <bucket-hash>/
-//	│           └── <key-hash>            lock file
+//	│   ├── locks/
+//	│   │   └── <bucket-hash>/
+//	│   │       └── <key-hash>            lock file
+//	│   └── buckets/
+//	│       └── <bucket-hash>             bucket name record
 //	└── <bucket-hash>/
 //	    └── <key-hash>.gas.json           metadata file
 //
 // A bucket exists when its metadata directory does; CreateBucket makes it
 // last, so a half-created bucket reads as missing and is completed by the
-// next CreateBucket.
+// next CreateBucket. Before it, CreateBucket writes the bucket's name record
+// if there is none, which ListBuckets reads the name from: names are not
+// recoverable from their hashes. Keys lists a bucket's keys from the
+// metadata files.
 //
 // # Objects
 //

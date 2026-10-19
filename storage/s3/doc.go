@@ -76,8 +76,12 @@
 //	gas/storage/s3/provider: <op>: <cause>
 //	gas/storage/s3/presigner: <op>: <cause>
 //
-// where <op> is one of "create bucket", "head", "put", "get", "delete",
-// "presign upload", or "presign download". S3 errors are mapped to storage
+// where <op> is one of "create bucket", "list buckets", "head", "put", "get",
+// "delete", "list", "presign upload", or "presign download". A list page
+// size out of range is storage.ErrInvalidLimit and an empty continuation
+// token storage.ErrInvalidContinuationToken, before any request is sent; a
+// token S3 did not issue may be rejected with an error that carries no
+// sentinel. S3 errors are mapped to storage
 // sentinels, and the SDK error stays in the chain for errors.As:
 //
 //   - NoSuchBucket: storage.ErrBucketNotFound
@@ -104,6 +108,11 @@
 // no object key or metadata value to an error message, but the SDK's own
 // error for a failed request (connection refused, for example) includes the
 // request URL, which contains the bucket and the key.
+//
+// ListObjects uses ListObjectsV2 with encoding-type url and decodes the keys
+// and common prefixes in the response, so keys holding characters XML 1.0
+// cannot carry are listed intact. ListBuckets lists the buckets the
+// credentials own.
 //
 // CreateBucket creates the bucket in the client's region. Outside us-east-1
 // and aws-global (the SDK's pseudo-region for the global endpoint)

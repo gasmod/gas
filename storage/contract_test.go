@@ -138,9 +138,9 @@ func (m *memS3) nextVersion() string {
 }
 
 // ServeHTTP serves path-style bucket/key requests: a PUT on a bucket with no
-// key creates it, then NoSuchBucket for an unknown bucket, then put, get or
-// head, and delete (which records a delete marker version), and
-// NotImplemented for any other method.
+// key creates it and a GET on the root lists buckets, then NoSuchBucket for
+// an unknown bucket, then ListObjectsV2, put, get or head, and delete (which
+// records a delete marker version), and NotImplemented for any other method.
 func (m *memS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	bucket, key, hasKey := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
 	m.mu.Lock()
@@ -150,10 +150,18 @@ func (m *memS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		m.createBucket(w, r, bucket)
 		return
 	}
+	if r.Method == http.MethodGet && bucket == "" {
+		m.listBuckets(w, r)
+		return
+	}
 
 	objs, ok := m.buckets[bucket]
 	if !ok {
 		memError(w, r, http.StatusNotFound, "NoSuchBucket")
+		return
+	}
+	if r.Method == http.MethodGet && !hasKey && r.URL.Query().Get("list-type") == "2" {
+		memListObjects(w, r, bucket, objs)
 		return
 	}
 	switch r.Method {
@@ -418,6 +426,8 @@ func classify(err error) string {
 		{storage.ErrBucketExists, "ErrBucketExists"},
 		{storage.ErrNotSupported, "ErrNotSupported"},
 		{storage.ErrInvalidRange, "ErrInvalidRange"},
+		{storage.ErrInvalidLimit, "ErrInvalidLimit"},
+		{storage.ErrInvalidContinuationToken, "ErrInvalidContinuationToken"},
 		{storage.ErrContentLengthMismatch, "ErrContentLengthMismatch"},
 	}
 	var names []string

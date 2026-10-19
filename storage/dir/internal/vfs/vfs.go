@@ -25,11 +25,15 @@ func NewVFS(root *os.Root) (*VFS, error) {
 	if err := ensureDirInRoot(vfs.root, locksPath, "locks"); err != nil {
 		return nil, err
 	}
+	if err := ensureDirInRoot(vfs.root, bucketsPath, "buckets"); err != nil {
+		return nil, err
+	}
 
 	return vfs, nil
 }
 
-// CreateBucket creates the directories of the bucket name. The metadata
+// CreateBucket creates the directories of the bucket name and writes its
+// name record, which ListBuckets reads the name from. The metadata
 // directory is created last, with Mkdir, and is the commit point: a bucket
 // whose earlier directories exist but whose metadata directory does not is
 // completed, and one whose metadata directory exists returns an error
@@ -41,6 +45,9 @@ func (vfs *VFS) CreateBucket(name string) error {
 		return err
 	}
 	if err := ensureDirInRoot(vfs.root, locksDir, "locks"); err != nil {
+		return err
+	}
+	if err := vfs.writeBucketName(name); err != nil {
 		return err
 	}
 

@@ -29,9 +29,12 @@
 //	<bucket-hash>/<key-hash>.gas.json            metadata of each object
 //	.gas/objects/<bucket-hash>/<key-hash>_<uuid> data file of each object
 //	.gas/locks/<bucket-hash>/<key-hash>          lock file of each object
+//	.gas/buckets/<bucket-hash>                   name of each bucket
 //
 // The metadata file holds the key, content type, user metadata and the name
-// of the object's current data file. A Put writes a new data file, then
+// of the object's current data file. The bucket's name record holds its
+// name, for ListBuckets; CreateBucket writes it once, before the bucket
+// exists. A Put writes a new data file, then
 // renames a new metadata file over the old one; that rename is the commit
 // point, so readers see the old object or the new one, never a mix, and a
 // failed Put leaves the previous object as it was. The replaced data file is
@@ -67,8 +70,8 @@
 // # Errors
 //
 // Every error is prefixed "gas/storage/dir/provider: <op>: ", with op one of
-// create bucket, head, put, get or delete, and wraps the storage sentinel a
-// caller can act on:
+// create bucket, list buckets, head, put, get, delete or list, and wraps the
+// storage sentinel a caller can act on:
 //
 //   - storage.ErrNotInitialized: a Provider that NewProvider did not build,
 //     from every method. NewProvider returns ErrRootRequired, which wraps it,
@@ -80,8 +83,11 @@
 //   - storage.ErrInputRequired: a nil input.
 //   - storage.ErrInvalidKey and storage.ErrInvalidBucket: a key or bucket
 //     name that fails validation, checked before any disk access.
-//   - storage.ErrBucketNotFound: a missing bucket, from Head, Put, Get and
-//     Delete.
+//   - storage.ErrBucketNotFound: a missing bucket, from Head, Put, Get,
+//     Delete and ListObjects.
+//   - storage.ErrInvalidLimit and storage.ErrInvalidContinuationToken: a
+//     list page size out of range, or a continuation token that is empty or
+//     that this backend did not issue.
 //   - storage.ErrNotFound from Head, and storage.ErrKeyNotFound from Get: a
 //     missing object. Each matches only its own sentinel, as with s3.
 //   - storage.ErrInvalidRange: a Head or Get whose Range cannot be satisfied.
@@ -120,6 +126,16 @@
 // empty ObjectInfo. A Put without a content type sniffs one from the body with
 // http.DetectContentType. Metadata keys keep their case, and invalid UTF-8 in
 // metadata is replaced with U+FFFD when it is stored.
+//
+// Listing reads every name in the bucket (or every bucket's name record) on
+// each call, so a page costs time in proportion to the bucket, not the page.
+// Its continuation tokens hold the last name of the page, encoded; they are
+// not interchangeable with S3's. A bucket's CreationDate is when CreateBucket
+// first wrote its name record. A bucket whose name record is missing or does
+// not hold its name (one created by an earlier version, or a record a crash
+// left empty) fails ListBuckets until CreateBucket of it runs again, which
+// rewrites the record.
+// Metadata that cannot be used fails ListObjects rather than being skipped.
 //
 // SPDX-License-Identifier: MIT
 package dir
