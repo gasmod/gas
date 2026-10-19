@@ -71,6 +71,7 @@ linters:
         - .WithMessage(
         - .WithMessagef(
         - .WithStack(
+        - .WithCause(
         - (github.com/gasmod/gas.Context).
         - (github.com/gasmod/gas.UIProvider).
 
