@@ -2,11 +2,11 @@ module github.com/gasmod/gas/example/hello-world
 
 go 1.27
 
-require github.com/gasmod/gas v0.5.5
+require github.com/gasmod/gas v0.5.6
 
 require (
 	github.com/gabriel-vasile/mimetype v1.4.16 // indirect
-	github.com/gasmod/gas/config v0.5.5 // indirect
+	github.com/gasmod/gas/config v0.5.6 // indirect
 	github.com/go-chi/chi/v5 v5.5.0 // indirect
 	github.com/go-playground/locales v0.14.2 // indirect
 	github.com/go-playground/universal-translator v0.18.2 // indirect
