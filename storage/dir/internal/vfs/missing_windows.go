@@ -18,12 +18,24 @@ import (
 // a file through such a handle fails with STATUS_DELETE_PENDING, which Go
 // passes through RtlNtStatusToDosError (NTStatus.Errno in
 // syscall_windows.go). Windows documents that as mapping to
-// ERROR_ACCESS_DENIED; ERROR_DELETE_PENDING is accepted too. Neither has run
-// here: the first Windows run is CI's. A caller must confirm the bucket is
+// ERROR_ACCESS_DENIED, which is what Windows 11 and Server 2025 report;
+// ERROR_DELETE_PENDING is accepted too. A caller must confirm the bucket is
 // gone (see Removed) before treating access denied as missing, since it has
 // other causes.
 func IsMissing(err error) bool {
 	return errors.Is(err, os.ErrNotExist) ||
 		errors.Is(err, windows.ERROR_ACCESS_DENIED) ||
+		errors.Is(err, windows.ERROR_DELETE_PENDING)
+}
+
+// isDeletePending reports whether err is what an operation on a name gets
+// while another holder is removing it. os.Root.Remove sets a POSIX delete
+// disposition on a handle and then closes it (Go's
+// internal/syscall/windows.Deleteat), and until that close the name is
+// delete-pending: opening or statting it fails with STATUS_DELETE_PENDING,
+// which Go reports as ERROR_ACCESS_DENIED. Once the remove returns the name
+// is gone, so see retryPending.
+func isDeletePending(err error) bool {
+	return errors.Is(err, windows.ERROR_ACCESS_DENIED) ||
 		errors.Is(err, windows.ERROR_DELETE_PENDING)
 }

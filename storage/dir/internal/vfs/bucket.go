@@ -245,7 +245,7 @@ func (b *Bucket) OpenObject(ctx context.Context, input *OpenObjectInput) (*Objec
 // openData opens the data file meta names and checks that it is a regular
 // file.
 func (b *Bucket) openData(meta *ObjectMetadata) (*Object, error) {
-	f, err := b.objRoot.Open(meta.DataFile)
+	f, err := retryPending(func() (*os.File, error) { return b.objRoot.Open(meta.DataFile) })
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("%w: open data file: %w", ErrCorrupt, err)
 	}
@@ -361,7 +361,7 @@ func (b *Bucket) releaseWith(name string, err error) error {
 func (b *Bucket) meta(name string) (*ObjectMetadata, error) {
 	file := name + metaFileExt
 
-	data, err := b.metaRoot.ReadFile(file)
+	data, err := retryPending(func() ([]byte, error) { return b.metaRoot.ReadFile(file) })
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("%w: read meta file: %w", ErrObjectNotFound, err)

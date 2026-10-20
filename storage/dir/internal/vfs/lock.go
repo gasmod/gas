@@ -8,6 +8,7 @@ import (
 	"os"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/gasmod/gas/storage/dir/internal/util"
 )
@@ -111,7 +112,7 @@ func (l *ObjectsLock) lockFile(ctx context.Context, name string) (*os.File, erro
 // acquireFile opens and locks the file at name. On error it has given the
 // slot back (or handed it to abandon).
 func (l *ObjectsLock) acquireFile(ctx context.Context, name string) (*os.File, error) {
-	f, fErr := openInRoot(l.locksRoot, name, "lock file")
+	f, fErr := l.openFile(ctx, name)
 	if fErr != nil {
 		l.dropSlot(name)
 		return nil, fErr
@@ -147,6 +148,24 @@ func (l *ObjectsLock) acquireFile(ctx context.Context, name string) (*os.File, e
 	return f, nil
 }
 
+// openFile opens the file at name, retrying while a holder is removing it,
+// like retryPending but giving up when ctx is done or the lock is closed.
+func (l *ObjectsLock) openFile(ctx context.Context, name string) (*os.File, error) {
+	for i := 0; ; i++ {
+		f, err := openInRoot(l.locksRoot, name, "lock file")
+		if err == nil || i == deletePendingRetries || !isDeletePending(err) {
+			return f, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("wait for lock: %w", ctx.Err())
+		case <-l.closed:
+			return nil, fmt.Errorf("wait for lock: %w", os.ErrClosed)
+		case <-time.After(deletePendingBackoff):
+		}
+	}
+}
+
 // lockWaitHook, when set, is called with the name of every lock an
 // ObjectsLock finds held by another holder, just before it waits for it.
 // Only tests set it, to know that a caller has reached that wait.
@@ -170,7 +189,7 @@ func (l *ObjectsLock) isCurrent(f *os.File, name string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("stat held lock file: %w", err)
 	}
-	current, err := l.locksRoot.Lstat(name)
+	current, err := retryPending(func() (os.FileInfo, error) { return l.locksRoot.Lstat(name) })
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}

@@ -104,7 +104,7 @@ func (vfs *VFS) createBucket(name string) error {
 // want of its files then failed because the bucket was deleted under it.
 // An error comparing the two counts as not removed.
 func (vfs *VFS) Removed(b *Bucket) bool {
-	cur, err := vfs.root.Lstat(b.dir)
+	cur, err := retryPending(func() (os.FileInfo, error) { return vfs.root.Lstat(b.dir) })
 	if errors.Is(err, os.ErrNotExist) {
 		return true
 	}
@@ -181,7 +181,7 @@ func (vfs *VFS) OpenBucket(name string) (*Bucket, error) {
 // openBucketDir opens the bucket directory name as a root. what names the
 // directory in the error.
 func (vfs *VFS) openBucketDir(name, what string) (*os.Root, error) {
-	r, err := vfs.root.OpenRoot(name)
+	r, err := retryPending(func() (*os.Root, error) { return vfs.root.OpenRoot(name) })
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("%w: open %s dir: %w", ErrBucketNotFound, what, err)
 	}

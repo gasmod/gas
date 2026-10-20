@@ -106,7 +106,8 @@ func (vfs *VFS) ListBuckets(ctx context.Context) ([]BucketEntry, []Skipped, erro
 			return nil, nil, bErr
 		}
 		if !ok {
-			if _, sErr := vfs.root.Lstat(e.Name()); errors.Is(sErr, os.ErrNotExist) {
+			_, sErr := retryPending(func() (os.FileInfo, error) { return vfs.root.Lstat(e.Name()) })
+			if errors.Is(sErr, os.ErrNotExist) {
 				// Deleted since the root was read: gone, not unnamed.
 				continue
 			}
@@ -130,7 +131,7 @@ func (vfs *VFS) ListBuckets(ctx context.Context) ([]BucketEntry, []Skipped, erro
 func (vfs *VFS) bucketEntry(h string) (BucketEntry, bool, error) {
 	file := filepath.Join(bucketsPath, h)
 
-	fi, err := vfs.root.Lstat(file)
+	fi, err := retryPending(func() (os.FileInfo, error) { return vfs.root.Lstat(file) })
 	if errors.Is(err, os.ErrNotExist) {
 		return BucketEntry{}, false, nil
 	}
@@ -142,7 +143,7 @@ func (vfs *VFS) bucketEntry(h string) (BucketEntry, bool, error) {
 			"bucket name record %s is not a regular file", file)
 	}
 
-	name, err := vfs.root.ReadFile(file)
+	name, err := retryPending(func() ([]byte, error) { return vfs.root.ReadFile(file) })
 	if errors.Is(err, os.ErrNotExist) {
 		// Removed since the Lstat, by a DeleteBucket.
 		return BucketEntry{}, false, nil
@@ -236,7 +237,7 @@ func (b *Bucket) checkKey(name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	fi, err := b.objRoot.Lstat(meta.DataFile)
+	fi, err := retryPending(func() (os.FileInfo, error) { return b.objRoot.Lstat(meta.DataFile) })
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		return "", fmt.Errorf("%w: %w", ErrCorrupt, errDataFileGone)

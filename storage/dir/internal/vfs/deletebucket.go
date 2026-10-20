@@ -221,7 +221,7 @@ func (b *Bucket) entryState(name, file string, temp bool) (entry, error) {
 		return entry{}, err
 	}
 
-	fi, err := b.objRoot.Lstat(meta.DataFile)
+	fi, err := retryPending(func() (os.FileInfo, error) { return b.objRoot.Lstat(meta.DataFile) })
 	switch {
 	case err == nil && fi.Mode().IsRegular():
 		return entry{state: stateObject, meta: meta}, nil
@@ -241,7 +241,7 @@ func (b *Bucket) entryState(name, file string, temp bool) (entry, error) {
 // write left, or gone when the write renamed it away while the caller
 // waited for the key's lock.
 func (b *Bucket) tempState(file string) (entry, error) {
-	_, err := b.metaRoot.Lstat(file)
+	_, err := retryPending(func() (os.FileInfo, error) { return b.metaRoot.Lstat(file) })
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		return entry{state: stateGone}, nil
@@ -394,7 +394,8 @@ func (vfs *VFS) removeDataFiles(objDir string, locksRoot *os.Root, report func(S
 // is no longer current and retries. A missing lock file is free: no holder
 // can be in the middle of a write without one.
 func withFreeLock(locksRoot *os.Root, name string, fn func() error) (bool, error) {
-	f, err := locksRoot.OpenFile(name, os.O_RDWR, 0)
+	// A holder removing the file is giving it up; wait for it to be gone.
+	f, err := retryPending(func() (*os.File, error) { return locksRoot.OpenFile(name, os.O_RDWR, 0) })
 	if errors.Is(err, os.ErrNotExist) {
 		if fn == nil {
 			return true, nil

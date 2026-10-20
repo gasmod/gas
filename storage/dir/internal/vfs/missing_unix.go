@@ -13,3 +13,6 @@ import (
 func IsMissing(err error) bool {
 	return errors.Is(err, os.ErrNotExist)
 }
+
+// isDeletePending is always false: removing a file frees its name at once.
+func isDeletePending(error) bool { return false }

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 const (
@@ -36,6 +37,28 @@ func rmInRoot(r *os.Root, name, what string) error {
 		return fmt.Errorf("remove %s: %w", what, err)
 	}
 	return nil
+}
+
+// deletePendingRetries bounds how many times an operation on a name is
+// retried while another holder is removing it (see isDeletePending), with
+// deletePendingBackoff between tries. The removal ends as soon as the
+// holder's remove returns, so the bound only matters for an error with
+// another cause, which then surfaces.
+const (
+	deletePendingRetries = 100
+	deletePendingBackoff = time.Millisecond
+)
+
+// retryPending calls op, and calls it again while it fails because a name
+// it uses is being removed, up to deletePendingRetries times. It returns
+// the last results, which then see the name gone or replaced.
+func retryPending[T any](op func() (T, error)) (T, error) {
+	v, err := op()
+	for i := 0; i < deletePendingRetries && isDeletePending(err); i++ {
+		time.Sleep(deletePendingBackoff)
+		v, err = op()
+	}
+	return v, err
 }
 
 // discardTmp removes a temp file left by a failed write and joins any removal
