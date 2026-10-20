@@ -395,7 +395,9 @@ func (vfs *VFS) removeDataFiles(objDir string, locksRoot *os.Root, report func(S
 // can be in the middle of a write without one.
 func withFreeLock(locksRoot *os.Root, name string, fn func() error) (bool, error) {
 	// A holder removing the file is giving it up; wait for it to be gone.
-	f, err := retryPending(func() (*os.File, error) { return locksRoot.OpenFile(name, os.O_RDWR, 0) })
+	f, err := retryPending(
+		func() (*os.File, error) { return locksRoot.OpenFile(name, os.O_RDWR, 0) },
+	)
 	if errors.Is(err, os.ErrNotExist) {
 		if fn == nil {
 			return true, nil
