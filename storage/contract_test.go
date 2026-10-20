@@ -3,6 +3,8 @@ package storage_test
 import (
 	"bytes"
 	"context"
+	"crypto/md5" //nolint:gosec // see memETag
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -37,7 +39,10 @@ import (
 // reads back as binary/octet-stream (not reached in practice: the transfer
 // manager always sends one), the bucket is versioned (every PUT gets
 // a version id, a DELETE without versionId creates a delete marker with its
-// own version id), HEAD errors carry no body, and GET of an unknown version
+// own version id), an object's ETag is the quoted hex MD5 of its body,
+// Cache-Control, Content-Disposition, Content-Encoding, Content-Language and
+// Expires are stored as sent and returned on GET and HEAD, HEAD errors carry
+// no body, and GET of an unknown version
 // is 404 NoSuchVersion. A GET or HEAD honors a single "bytes=first-last",
 // "bytes=first-" or "bytes=-suffix" range and ignores any other Range
 // header; an unsatisfiable range is 416 InvalidRange. Buckets have owners, identified by the access key
@@ -61,9 +66,17 @@ const (
 type memObject struct {
 	modified    time.Time
 	meta        map[string]string
+	headers     http.Header // the stored system headers, memSystemHeaders
 	contentType string
 	version     string
+	etag        string // hex MD5 of body, unquoted
 	body        []byte
+}
+
+// memSystemHeaders are the headers memS3 stores with an object and returns
+// on GET and HEAD, as S3 does.
+var memSystemHeaders = []string{
+	"Cache-Control", "Content-Disposition", "Content-Encoding", "Content-Language", "Expires",
 }
 
 // memS3 is an in-memory S3 emulation served over HTTP, holding objects per
@@ -118,6 +131,29 @@ func (m *memS3) createBucket(w http.ResponseWriter, r *http.Request, bucket stri
 	}
 }
 
+// bucketOp serves HEAD and DELETE on a bucket: 404 NoSuchBucket for a
+// missing one, 403 AccessDenied for one another account owns, and for
+// DELETE 409 BucketNotEmpty while it holds objects. A HEAD of the caller's
+// bucket reports its region. The caller holds m.mu.
+func (m *memS3) bucketOp(w http.ResponseWriter, r *http.Request, bucket string) {
+	owner, exists := m.owners[bucket]
+	switch {
+	case !exists:
+		memError(w, r, http.StatusNotFound, "NoSuchBucket")
+	case owner != requestAccessKey(r):
+		memError(w, r, http.StatusForbidden, "AccessDenied")
+	case r.Method == http.MethodHead:
+		w.Header().Set("X-Amz-Bucket-Region", "us-east-1")
+		w.WriteHeader(http.StatusOK)
+	case len(m.buckets[bucket]) > 0:
+		memError(w, r, http.StatusConflict, "BucketNotEmpty")
+	default:
+		delete(m.buckets, bucket)
+		delete(m.owners, bucket)
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 // memError writes an S3-style XML error with the given status and code.
 // HEAD responses carry no body, as on S3.
 func memError(w http.ResponseWriter, r *http.Request, status int, code string) {
@@ -152,6 +188,10 @@ func (m *memS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodGet && bucket == "" {
 		m.listBuckets(w, r)
+		return
+	}
+	if (r.Method == http.MethodHead || r.Method == http.MethodDelete) && (!hasKey || key == "") {
+		m.bucketOp(w, r, bucket)
 		return
 	}
 
@@ -191,6 +231,9 @@ func (m *memS3) put(
 		memError(w, r, http.StatusNotImplemented, "NotImplemented")
 		return
 	}
+	if !memCondition(w, r, objs[key]) {
+		return
+	}
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		memError(w, r, http.StatusBadRequest, "IncompleteBody")
@@ -200,8 +243,15 @@ func (m *memS3) put(
 		body:        body,
 		contentType: r.Header.Get("Content-Type"),
 		meta:        map[string]string{},
+		headers:     http.Header{},
 		version:     m.nextVersion(),
+		etag:        memETag(body),
 		modified:    time.Now().UTC().Truncate(time.Second),
+	}
+	for _, h := range memSystemHeaders {
+		if v := r.Header.Get(h); v != "" {
+			o.headers.Set(h, v)
+		}
 	}
 	if o.contentType == "" {
 		o.contentType = "binary/octet-stream"
@@ -213,7 +263,7 @@ func (m *memS3) put(
 		}
 	}
 	objs[key] = o
-	w.Header().Set("ETag", `"`+o.version+`"`)
+	w.Header().Set("ETag", `"`+o.etag+`"`)
 	w.Header().Set("X-Amz-Version-Id", o.version)
 	w.WriteHeader(http.StatusOK)
 }
@@ -247,8 +297,11 @@ func (m *memS3) get(
 	h.Set("Content-Length", fmt.Sprint(len(body)))
 	h.Set("Content-Type", o.contentType)
 	h.Set("Last-Modified", o.modified.Format(http.TimeFormat))
-	h.Set("ETag", `"`+o.version+`"`)
+	h.Set("ETag", `"`+o.etag+`"`)
 	h.Set("X-Amz-Version-Id", o.version)
+	for k, v := range o.headers {
+		h[k] = v
+	}
 	for k, v := range o.meta {
 		h["X-Amz-Meta-"+k] = []string{v}
 	}
@@ -256,6 +309,36 @@ func (m *memS3) get(
 	if r.Method == http.MethodGet {
 		_, _ = w.Write(body)
 	}
+}
+
+// memCondition applies a put's If-Match and If-None-Match to cur, the object
+// it would replace, as memS3 emulates S3 conditional writes: If-None-Match
+// "*" on an existing object and If-Match with another ETag are 412
+// PreconditionFailed, and If-Match on a missing key is 404 NoSuchKey. It
+// writes the error and reports false when the put must not proceed.
+func memCondition(w http.ResponseWriter, r *http.Request, cur *memObject) bool {
+	if r.Header.Get("If-None-Match") == "*" && cur != nil {
+		memError(w, r, http.StatusPreconditionFailed, "PreconditionFailed")
+		return false
+	}
+	if m := r.Header.Get("If-Match"); m != "" {
+		if cur == nil {
+			memError(w, r, http.StatusNotFound, "NoSuchKey")
+			return false
+		}
+		if m != `"`+cur.etag+`"` {
+			memError(w, r, http.StatusPreconditionFailed, "PreconditionFailed")
+			return false
+		}
+	}
+	return true
+}
+
+// memETag returns the ETag S3 gives an object written in one part: the hex
+// MD5 of its body.
+func memETag(body []byte) string {
+	sum := md5.Sum(body) //nolint:gosec // S3 ETags are MD5; nothing relies on it for security
+	return hex.EncodeToString(sum[:])
 }
 
 // memRange applies a Range header to body the way memS3 emulates S3: a
@@ -381,7 +464,8 @@ func cput(p storage.Provider, in storage.BaseObjectInput, body io.Reader, ct *st
 	meta map[string]string,
 ) (*storage.ObjectInfo, error) {
 	return p.PutObject(context.Background(), &storage.PutObjectInput{
-		BaseObjectInput: in, Body: body, ContentType: ct, Metadata: meta,
+		BaseObjectInput: in, Body: body,
+		ObjectHeaders: storage.ObjectHeaders{ContentType: ct, Metadata: meta},
 	})
 }
 
@@ -429,6 +513,11 @@ func classify(err error) string {
 		{storage.ErrInvalidLimit, "ErrInvalidLimit"},
 		{storage.ErrInvalidContinuationToken, "ErrInvalidContinuationToken"},
 		{storage.ErrContentLengthMismatch, "ErrContentLengthMismatch"},
+		{storage.ErrInvalidHeader, "ErrInvalidHeader"},
+		{storage.ErrBucketNotEmpty, "ErrBucketNotEmpty"},
+		{storage.ErrAccessDenied, "ErrAccessDenied"},
+		{storage.ErrPreconditionFailed, "ErrPreconditionFailed"},
+		{storage.ErrInvalidCondition, "ErrInvalidCondition"},
 	}
 	var names []string
 	for _, s := range sentinels {
@@ -504,7 +593,7 @@ func contractCreateBucket(t *testing.T, p storage.Provider) {
 		t.Fatalf("CreateBucket(owned) = %s (%v), want ok", classify(err), err)
 	}
 	if info == nil {
-		t.Fatal("CreateBucket(owned) returned nil BucketInfo")
+		t.Fatal("CreateBucket(owned) returned nil Bucket")
 	}
 	_, body, err := cget(p, storage.HeadObjectInput{BaseObjectInput: in})
 	if err != nil || string(body) != "kept" {
@@ -865,6 +954,38 @@ func divergences(t *testing.T) []divergence {
 				"s3":  "application/octet-stream",
 			},
 		},
+		// dir stores Expires as given. The SDK sends Expires only as a time
+		// and writes it back as an IMF-fixdate, so s3 accepts only text that
+		// is already in that form and would survive the trip unchanged.
+		{
+			name:    "Expires in RFC 850 form",
+			observe: observeExpires("Wednesday, 21-Oct-26 07:28:00 GMT"),
+			want: map[string]string{
+				"dir": "Wednesday, 21-Oct-26 07:28:00 GMT",
+				"s3":  "put ErrInvalidHeader",
+			},
+		},
+		{
+			name:    "Expires in asctime form",
+			observe: observeExpires("Wed Oct 21 07:28:00 2026"),
+			want: map[string]string{
+				"dir": "Wed Oct 21 07:28:00 2026",
+				"s3":  "put ErrInvalidHeader",
+			},
+		},
+		{
+			name:    "Expires with a weekday that does not match the date",
+			observe: observeExpires("Mon, 21 Oct 2026 07:28:00 GMT"),
+			want: map[string]string{
+				"dir": "Mon, 21 Oct 2026 07:28:00 GMT",
+				"s3":  "put ErrInvalidHeader",
+			},
+		},
+		{
+			name:    "Expires that is not a date",
+			observe: observeExpires("0"),
+			want:    map[string]string{"dir": "0", "s3": "put ErrInvalidHeader"},
+		},
 		{
 			name:    "metadata key case",
 			observe: observeMeta(map[string]string{"Owner": "x", "Trace-ID": "y"}),
@@ -1007,6 +1128,25 @@ func observeMeta(meta map[string]string) func(*testing.T, storage.Provider) stri
 			t.Fatal(err)
 		}
 		return metaString(h.Metadata)
+	}
+}
+
+// observeExpires returns the Expires read back after putting expires, or the
+// put's error class.
+func observeExpires(expires string) func(*testing.T, storage.Provider) string {
+	return func(t *testing.T, p storage.Provider) string {
+		if _, err := p.PutObject(context.Background(), &storage.PutObjectInput{
+			BaseObjectInput: key("k"),
+			Body:            strings.NewReader("x"),
+			ObjectHeaders:   storage.ObjectHeaders{Expires: &expires},
+		}); err != nil {
+			return "put " + classify(err)
+		}
+		h, err := chead(p, key("k"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return h.Expires
 	}
 }
 

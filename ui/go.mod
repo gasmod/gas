@@ -3,8 +3,8 @@ module github.com/gasmod/gas/ui
 go 1.27
 
 require (
-	github.com/gasmod/gas v0.5.6
-	github.com/gasmod/gas/config v0.5.6
+	github.com/gasmod/gas v0.6.0
+	github.com/gasmod/gas/config v0.6.0
 )
 
 require (

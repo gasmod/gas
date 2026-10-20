@@ -70,7 +70,7 @@ func TestCreateBucket_Errors(t *testing.T) {
 			if err := os.WriteFile([]string{m, o, l}[i], nil, 0o600); err != nil {
 				t.Fatalf("WriteFile: %v", err)
 			}
-			err := v.CreateBucket("b")
+			_, err := v.CreateBucket(t.Context(), "b")
 			if err == nil {
 				t.Fatal("CreateBucket succeeded with a file in place of a bucket dir")
 			}
@@ -93,7 +93,7 @@ func TestCreateBucket_Exists(t *testing.T) {
 	putObject(t, b, "k", "x", "")
 
 	for range 2 {
-		if err := v.CreateBucket("b"); !errors.Is(err, ErrBucketExists) {
+		if _, err := v.CreateBucket(t.Context(), "b"); !errors.Is(err, ErrBucketExists) {
 			t.Fatalf("CreateBucket of an existing bucket = %v, want ErrBucketExists", err)
 		}
 	}
@@ -117,7 +117,7 @@ func TestCreateBucket_CompletesPartialBucket(t *testing.T) {
 	if _, err := v.OpenBucket("b"); !errors.Is(err, ErrBucketNotFound) {
 		t.Fatalf("OpenBucket of a partial bucket = %v, want ErrBucketNotFound", err)
 	}
-	if err := v.CreateBucket("b"); err != nil {
+	if _, err := v.CreateBucket(t.Context(), "b"); err != nil {
 		t.Fatalf("CreateBucket: %v", err)
 	}
 	b := newOpenBucket(t, v)
@@ -140,7 +140,7 @@ func TestOpenBucket_Missing(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			v, dir := newTestVFS(t)
 			if tt.remove >= 0 {
-				if err := v.CreateBucket("b"); err != nil {
+				if _, err := v.CreateBucket(t.Context(), "b"); err != nil {
 					t.Fatalf("CreateBucket: %v", err)
 				}
 				m, o, l := bucketPaths(dir)
@@ -169,7 +169,7 @@ func TestOpenBucket_NotADirectory(t *testing.T) {
 	for i, name := range []string{"meta dir", "object dir", "locks dir"} {
 		t.Run(name, func(t *testing.T) {
 			v, dir := newTestVFS(t)
-			if err := v.CreateBucket("b"); err != nil {
+			if _, err := v.CreateBucket(t.Context(), "b"); err != nil {
 				t.Fatalf("CreateBucket: %v", err)
 			}
 			m, o, l := bucketPaths(dir)

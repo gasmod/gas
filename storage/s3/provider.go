@@ -96,20 +96,21 @@ func NewProvider(opts ...ProviderOption) func(cfgProvider gas.ConfigProvider) (*
 	}
 }
 
-// CreateBucket creates the bucket named in input and returns its ARN and
-// location as reported by S3. The configured bucket is not a fallback. The
+// CreateBucket creates the bucket named in input and returns its name and
+// the ARN S3 reports; CreationDate and Region are empty, since S3 reports
+// neither. The configured bucket is not a fallback. The
 // bucket is created in the client's region: outside us-east-1 (and the
 // aws-global pseudo-region, which maps to it) the request carries that region
 // as its location constraint, and the region the SDK resolved is used when
-// none is configured. A bucket the caller already owns is success. Its
-// BucketInfo may be empty: in us-east-1 S3 answers 200 and reports the ARN
-// and location as for a new bucket, while elsewhere it answers
-// BucketAlreadyOwnedByYou with neither. A name another account owns is
+// none is configured. A bucket the caller already owns is success, and its
+// Bucket may hold only the name: in us-east-1 S3 is said to answer 200 and
+// report the ARN as for a new bucket, while elsewhere it answers
+// BucketAlreadyOwnedByYou with none (not verified against AWS). A name another account owns is
 // storage.ErrBucketExists.
 func (p *Provider) CreateBucket(
 	ctx context.Context,
 	input *storage.CreateBucketInput,
-) (*storage.BucketInfo, error) {
+) (*storage.Bucket, error) {
 	if err := p.checkReady(); err != nil {
 		return nil, err
 	}
@@ -127,20 +128,79 @@ func (p *Provider) CreateBucket(
 		CreateBucketConfiguration: createBucketConfiguration(p.client.Options().Region),
 	})
 	if isBucketOwnedByCaller(err) {
-		return &storage.BucketInfo{}, nil
+		return &storage.Bucket{Name: input.Bucket}, nil
 	}
 	if err != nil {
 		return nil, internal.Errorf("s3/provider", "create bucket: %w", wrapS3Error(err))
 	}
 
-	return &storage.BucketInfo{
-		ID:       valueOf(res.BucketArn),
-		Location: valueOf(res.Location),
+	return &storage.Bucket{Name: input.Bucket, ID: valueOf(res.BucketArn)}, nil
+}
+
+// HeadBucket reports whether the bucket input.Bucket exists and returns its
+// Name, with the ARN as ID and the region S3 reports. CreationDate is empty:
+// S3's HeadBucket does not report it. A missing bucket is
+// storage.ErrBucketNotFound, and a 403 is storage.ErrAccessDenied, which S3
+// answers both for a bucket another account owns and for one the caller
+// owns without permission to it (not verified against AWS). The configured
+// bucket is not a fallback.
+func (p *Provider) HeadBucket(
+	ctx context.Context,
+	input *storage.HeadBucketInput,
+) (*storage.Bucket, error) {
+	if err := p.checkReady(); err != nil {
+		return nil, err
+	}
+
+	if input == nil {
+		return nil, internal.Errorf("s3/provider", "head bucket: %w", storage.ErrInputRequired)
+	}
+
+	if !internal.IsValidBucketName(input.Bucket) {
+		return nil, internal.Errorf("s3/provider", "head bucket: %w", storage.ErrInvalidBucket)
+	}
+
+	res, err := p.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: new(input.Bucket)})
+	if err != nil {
+		return nil, internal.Errorf("s3/provider", "head bucket: %w", wrapBucketError(err))
+	}
+
+	return &storage.Bucket{
+		Name:   input.Bucket,
+		ID:     valueOf(res.BucketArn),
+		Region: valueOf(res.BucketRegion),
 	}, nil
 }
 
+// DeleteBucket deletes the empty bucket input.Bucket. A bucket that holds
+// objects is storage.ErrBucketNotEmpty (S3's BucketNotEmpty), a missing one
+// storage.ErrBucketNotFound, and a 403 storage.ErrAccessDenied. The
+// configured bucket is not a fallback.
+func (p *Provider) DeleteBucket(ctx context.Context, input *storage.DeleteBucketInput) error {
+	if err := p.checkReady(); err != nil {
+		return err
+	}
+
+	if input == nil {
+		return internal.Errorf("s3/provider", "delete bucket: %w", storage.ErrInputRequired)
+	}
+
+	if !internal.IsValidBucketName(input.Bucket) {
+		return internal.Errorf("s3/provider", "delete bucket: %w", storage.ErrInvalidBucket)
+	}
+
+	if _, err := p.client.DeleteBucket(
+		ctx,
+		&s3.DeleteBucketInput{Bucket: new(input.Bucket)},
+	); err != nil {
+		return internal.Errorf("s3/provider", "delete bucket: %w", wrapBucketError(err))
+	}
+	return nil
+}
+
 // HeadObject returns an object's size, content type, last-modified time,
-// version, and metadata. A missing key or bucket is storage.ErrNotFound.
+// version, ETag, metadata and stored headers. Expires is the header's text as
+// S3 returned it. A missing key or bucket is storage.ErrNotFound.
 func (p *Provider) HeadObject(
 	ctx context.Context,
 	input *storage.HeadObjectInput,
@@ -178,17 +238,35 @@ func (p *Provider) HeadObject(
 	}
 
 	return &storage.ObjectInfo{
-		Size:         valueOf(res.ContentLength),
-		ContentType:  valueOf(res.ContentType),
-		LastModified: valueOf(res.LastModified),
-		Version:      valueOf(res.VersionId),
-		Metadata:     res.Metadata,
+		Size:               valueOf(res.ContentLength),
+		ContentType:        valueOf(res.ContentType),
+		LastModified:       valueOf(res.LastModified),
+		Version:            valueOf(res.VersionId),
+		Metadata:           res.Metadata,
+		CacheControl:       valueOf(res.CacheControl),
+		ContentDisposition: valueOf(res.ContentDisposition),
+		ContentEncoding:    valueOf(res.ContentEncoding),
+		ContentLanguage:    valueOf(res.ContentLanguage),
+		Expires:            valueOf(res.ExpiresString),
+		ETag:               unquoteETag(res.ETag),
 	}, nil
 }
 
 // PutObject uploads an object through the transfer manager and returns the
-// version S3 assigned, if any. A nil Body uploads an empty object. A set
-// ContentLength must match the body: a shorter or longer body, or a
+// ETag and the version S3 assigned, if any; the other ObjectInfo fields are
+// empty. A body large enough for the transfer manager to upload in parts
+// gets a multipart ETag, ending in "-" and the part count. Expires must be an
+// IMF-fixdate ("Wed, 21 Oct 2026 07:28:00 GMT", with the right weekday),
+// since the SDK sends it only as a time and writes it back in that form;
+// anything else returns an error wrapping storage.ErrInvalidHeader and sends
+// nothing. A WriteCondition is sent as If-Match (quoted) or If-None-Match:
+// S3's 412 PreconditionFailed is storage.ErrPreconditionFailed, and its
+// NoSuchKey for an If-Match of a missing key storage.ErrKeyNotFound; S3 may
+// also answer 409 ConditionalRequestConflict to a concurrent write, which
+// carries no sentinel (none of these verified against AWS). For a body the
+// transfer manager uploads in parts, it sends the condition with the
+// request that completes the upload. A nil Body uploads an empty object. A set ContentLength must match
+// the body: a shorter or longer body, or a
 // negative length, returns an error wrapping storage.ErrContentLengthMismatch
 // and the object is not stored. A multipart upload in progress is aborted;
 // if the abort itself fails, the incomplete upload remains (its parts are
@@ -214,6 +292,16 @@ func (p *Provider) PutObject(
 		return nil, internal.Errorf("s3/provider", "put: %w", bucketErr)
 	}
 
+	expires, expErr := parseExpires(input.Expires)
+	if expErr != nil {
+		return nil, internal.Errorf("s3/provider", "put: %w", expErr)
+	}
+
+	ifMatch, ifNoneMatch, condErr := conditionHeaders(&input.WriteCondition)
+	if condErr != nil {
+		return nil, internal.Errorf("s3/provider", "put: %w", condErr)
+	}
+
 	// The transfer manager buffers the body and sends what it read, so it
 	// accepts a body that does not match ContentLength; the check is ours.
 	body, lenErr := internal.CheckLength(input.Body, input.ContentLength)
@@ -222,13 +310,19 @@ func (p *Provider) PutObject(
 	}
 
 	in := &transfermanager.UploadObjectInput{
-		Bucket:        new(bucket),
-		Key:           new(input.Key),
-		Body:          body,
-		ContentLength: input.ContentLength,
-		ContentType:   input.ContentType,
-		Expires:       input.Expires,
-		Metadata:      input.Metadata,
+		Bucket:             new(bucket),
+		Key:                new(input.Key),
+		Body:               body,
+		ContentLength:      input.ContentLength,
+		ContentType:        input.ContentType,
+		CacheControl:       input.CacheControl,
+		ContentDisposition: input.ContentDisposition,
+		ContentEncoding:    input.ContentEncoding,
+		ContentLanguage:    input.ContentLanguage,
+		Expires:            expires,
+		Metadata:           input.Metadata,
+		IfMatch:            ifMatch,
+		IfNoneMatch:        ifNoneMatch,
 	}
 
 	if in.Body == nil {
@@ -244,6 +338,7 @@ func (p *Provider) PutObject(
 	}
 
 	return &storage.ObjectInfo{
+		ETag:    unquoteETag(res.ETag),
 		Version: valueOf(res.VersionID),
 	}, nil
 }
@@ -288,12 +383,20 @@ func (p *Provider) GetObject(
 	}
 
 	return &storage.Object{
-		Size:         valueOf(res.ContentLength),
-		ContentType:  valueOf(res.ContentType),
-		LastModified: valueOf(res.LastModified),
-		Version:      valueOf(res.VersionId),
-		Body:         res.Body,
-		Metadata:     res.Metadata,
+		Body: res.Body,
+		ObjectInfo: storage.ObjectInfo{
+			Size:               valueOf(res.ContentLength),
+			ContentType:        valueOf(res.ContentType),
+			LastModified:       valueOf(res.LastModified),
+			Version:            valueOf(res.VersionId),
+			Metadata:           res.Metadata,
+			CacheControl:       valueOf(res.CacheControl),
+			ContentDisposition: valueOf(res.ContentDisposition),
+			ContentEncoding:    valueOf(res.ContentEncoding),
+			ContentLanguage:    valueOf(res.ContentLanguage),
+			Expires:            valueOf(res.ExpiresString),
+			ETag:               unquoteETag(res.ETag),
+		},
 	}, nil
 }
 

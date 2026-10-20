@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/gasmod/gas/storage/dir/internal/util"
 )
@@ -110,7 +112,7 @@ func (l *ObjectsLock) lockFile(ctx context.Context, name string) (*os.File, erro
 // acquireFile opens and locks the file at name. On error it has given the
 // slot back (or handed it to abandon).
 func (l *ObjectsLock) acquireFile(ctx context.Context, name string) (*os.File, error) {
-	f, fErr := openInRoot(l.locksRoot, name, "lock file")
+	f, fErr := l.openFile(ctx, name)
 	if fErr != nil {
 		l.dropSlot(name)
 		return nil, fErr
@@ -124,6 +126,9 @@ func (l *ObjectsLock) acquireFile(ctx context.Context, name string) (*os.File, e
 	}
 
 	if !ok {
+		if hook := lockWaitHook.Load(); hook != nil {
+			(*hook)(name)
+		}
 		done := make(chan error, 1)
 		go func() { done <- lockBlocking(f) }()
 
@@ -143,6 +148,42 @@ func (l *ObjectsLock) acquireFile(ctx context.Context, name string) (*os.File, e
 	return f, nil
 }
 
+// openFile opens the file at name, retrying while a holder is removing it,
+// like retryPending but giving up when ctx is done or the lock is closed.
+func (l *ObjectsLock) openFile(ctx context.Context, name string) (*os.File, error) {
+	deadline := time.Now().Add(deletePendingTimeout)
+	for {
+		f, err := openInRoot(l.locksRoot, name, "lock file")
+		if err == nil || !isDeletePending(err) || !time.Now().Before(deadline) {
+			return f, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("wait for lock: %w", ctx.Err())
+		case <-l.closed:
+			return nil, fmt.Errorf("wait for lock: %w", os.ErrClosed)
+		case <-time.After(deletePendingBackoff):
+		}
+	}
+}
+
+// lockWaitHook, when set, is called with the name of every lock an
+// ObjectsLock finds held by another holder, just before it waits for it.
+// Only tests set it, to know that a caller has reached that wait.
+var lockWaitHook atomic.Pointer[func(name string)]
+
+// SetLockWaitHook sets the function called when a lock has to wait for
+// another holder, or clears it when hook is nil. It is for tests of the
+// packages that use this one, which cannot see when a call they started
+// blocks on a lock.
+func SetLockWaitHook(hook func(name string)) {
+	if hook == nil {
+		lockWaitHook.Store(nil)
+		return
+	}
+	lockWaitHook.Store(&hook)
+}
+
 // isCurrent reports whether f is still the file at name.
 func (l *ObjectsLock) isCurrent(f *os.File, name string) (bool, error) {
 	held, err := f.Stat()
@@ -150,7 +191,11 @@ func (l *ObjectsLock) isCurrent(f *os.File, name string) (bool, error) {
 		return false, fmt.Errorf("stat held lock file: %w", err)
 	}
 	current, err := l.locksRoot.Lstat(name)
-	if errors.Is(err, os.ErrNotExist) {
+	// A name being removed is not f's to keep: only a holder removes, so it
+	// is f, which its last holder released, or a newer file. Do not wait for
+	// the removal to end: where it ends only once every handle is closed (see
+	// isDeletePending), f's handle is one of those.
+	if errors.Is(err, os.ErrNotExist) || isDeletePending(err) {
 		return false, nil
 	}
 	if err != nil {

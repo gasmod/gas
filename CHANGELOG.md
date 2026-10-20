@@ -9,6 +9,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`ServerSettings.ReadHeaderTimeout`**, which `App.Server` sets on the
+  `*http.Server`. It bounds how long a client may take to send its request
+  headers. net/http falls back to `ReadTimeout` only when it is zero, so a
+  service that zeroed `ReadTimeout` to stream request bodies had no header
+  deadline at all. The default is 5s, the header deadline a default config
+  already got from `ReadTimeout`, so default behaviour is unchanged.
+  Closes #144.
+
+### Fixed
+
+- **A server built before `Start` gets the bound config.** `App.Server`
+  copied the config into the `*http.Server` once, and `Start` binds the
+  config only after every service's `Init`, so a service whose `Init`
+  called `Server()` pinned the defaults for the life of the process: the
+  configured address and timeouts were silently discarded. `Start` now
+  applies the bound `Addr` and timeouts to every field the caller left as
+  `Server` set it, and keeps the fields the caller changed. A field set to
+  the value it already had counts as unchanged. `AppConfigUpdated`
+  subscribers run after that and have the last word. This happens once:
+  a later `Start`, or one after `Serve` has begun, leaves the server's
+  fields alone, since net/http is reading them.
+
+### Changed
+
+- **`App.Handler` no longer builds the server.** It used to return
+  `Server().Handler`, so calling it before `Start`, as tests and embedders
+  do, built the `*http.Server` from the config as it stood then. It now
+  builds only the handler, once; a handler assigned to `Server().Handler`
+  is no longer what it returns.
+
+## [0.5.6] - 2026-10-19
+
+No change to this module's code. The release pinned every internal module
+at 0.5.6.
+
+## [0.5.5] - 2026-10-19
+
+The tags v0.5.1 to v0.5.5 shipped their changes under `[Unreleased]`, and
+the entries were first written at 0.5.5. This section holds them, and
+covers every change to this module since 0.5.0.
+
+### Added
+
 - **Service init deadline:** every singleton's Init (at startup and on
   `RestartService`) gets a deadline, 15 seconds by default. When it passes,
   Init's context is canceled and the container waits for Init to return,
@@ -422,6 +465,8 @@ repository; this entry summarizes the framework as published.
 - Eliminated a data race between the router and the service kill-switch by
   switching route storage to copy-on-write.
 
-[Unreleased]: https://github.com/gasmod/gas/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/gasmod/gas/compare/v0.5.6...HEAD
+[0.5.6]: https://github.com/gasmod/gas/compare/v0.5.5...v0.5.6
+[0.5.5]: https://github.com/gasmod/gas/compare/v0.5.0...v0.5.5
 [0.5.0]: https://github.com/gasmod/gas/releases/tag/v0.5.0
 [0.3.0]: https://github.com/gasmod/gas/releases/tag/v0.3.0

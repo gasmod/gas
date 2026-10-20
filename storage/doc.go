@@ -15,8 +15,8 @@
 //	gas.WithSingletonService[storage.Provider](s3.NewProvider()),
 //	gas.WithSingletonService[storage.Presigner](s3.NewPresigner()),
 //
-// Provider creates and lists buckets and reads, writes, inspects, lists, and
-// deletes objects.
+// Provider creates, inspects, lists and deletes buckets, and reads, writes,
+// inspects, lists, and deletes objects.
 // Presigner issues time-limited URLs that let a client upload or download one
 // object directly against the backend, without going through the app.
 //
@@ -34,6 +34,28 @@
 // not a fallback) or the call fails with ErrInvalidBucket. Optional fields
 // are pointers so that "not set" differs from the zero value. A nil input
 // fails with ErrInputRequired.
+//
+// # Objects
+//
+// PutObjectInput embeds ObjectHeaders: the content type, the system headers
+// (Cache-Control, Content-Disposition, Content-Encoding, Content-Language and
+// Expires) and user metadata. Every header a write sets reads back on
+// ObjectInfo from HeadObject and GetObject. Expires is text, so a stored
+// value that is not a date survives the round trip; a backend that cannot
+// store a value unchanged returns ErrInvalidHeader for it rather than
+// rewriting it. The s3 backend accepts only an IMF-fixdate.
+//
+// ObjectInfo.ETag identifies an object's contents, unquoted, and PutObject
+// returns it on every backend. Compare ETags only for equality: an ETag is
+// not always a digest of the body (see ObjectInfo.ETag).
+//
+// PutObjectInput embeds a WriteCondition. IfNoneMatch "*" writes only a key
+// that holds no object, and IfMatch only over the object with that ETag;
+// either way a condition that does not hold is ErrPreconditionFailed and
+// nothing is written, and an IfMatch of a missing key is ErrKeyNotFound. An
+// optimistic update is a HeadObject, then a PutObject with IfMatch set to
+// the ETag it returned. A condition that cannot be evaluated is
+// ErrInvalidCondition, before anything is sent.
 //
 // # Errors
 //
@@ -79,14 +101,26 @@
 // each backend); callers must not rely on the order. Backend constructors
 // given a nil option return ErrInvalidOption instead of panicking.
 //
+// # Buckets
+//
+// CreateBucket, HeadBucket and ListBuckets describe a bucket with Bucket.
+// Which of its fields a backend fills depends on the operation; each
+// backend's documentation says which. HeadBucket of a missing bucket is
+// ErrBucketNotFound, and of one the caller may not access ErrAccessDenied.
+// DeleteBucket deletes an empty bucket: one that holds objects is
+// ErrBucketNotEmpty, and a missing one ErrBucketNotFound. Unlike
+// DeleteObject of a missing key, which succeeds, deleting a missing bucket
+// is an error, as on S3.
+//
 // # Listing
 //
 // ListObjects and ListBuckets return one page at a time, following S3
 // ListObjectsV2 and ListBuckets: entries in byte order of their UTF-8 names,
 // at most MaxKeys objects and common prefixes (1000 by default and at most)
 // or MaxBuckets buckets (10000 by default), and a continuation token that
-// resumes after the page. Callers loop until IsTruncated is false (objects)
-// or the ContinuationToken is empty (buckets):
+// resumes after the page. NextContinuationToken is empty on the last page,
+// and only there, in both listings; ListObjects also reports IsTruncated, as
+// S3 does:
 //
 //	in := &storage.ListObjectsInput{Prefix: &prefix}
 //	for {
@@ -108,6 +142,12 @@
 // and a set but empty ContinuationToken is ErrInvalidContinuationToken,
 // before anything is sent. ListObjects of a missing bucket is
 // ErrBucketNotFound.
+//
+// A listing that leaves out an entry the backend could not read says so in
+// Skipped, a count over the whole bucket (or every bucket) that every page
+// repeats, plus, for objects, any of the page's own found damaged while it
+// was built; the entries it returns are correct. A caller that ignores
+// Skipped sees a short listing and no error. The s3 backend never skips.
 //
 // # Lifecycle
 //

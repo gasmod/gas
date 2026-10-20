@@ -3,10 +3,10 @@ module github.com/gasmod/gas/auth
 go 1.27
 
 require (
-	github.com/gasmod/gas v0.5.6
-	github.com/gasmod/gas/config v0.5.6
-	github.com/gasmod/gas/database v0.5.6
-	github.com/gasmod/gas/migrate v0.5.6
+	github.com/gasmod/gas v0.6.0
+	github.com/gasmod/gas/config v0.6.0
+	github.com/gasmod/gas/database v0.6.0
+	github.com/gasmod/gas/migrate v0.6.0
 	github.com/go-playground/validator/v10 v10.30.5
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0

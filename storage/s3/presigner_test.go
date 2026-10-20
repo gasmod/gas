@@ -213,6 +213,8 @@ func TestPresigner_PresignUploadURL(t *testing.T) {
 	t.Run("explicit bucket", testPresignerPresignUploadURLExplicitBucket)
 
 	t.Run("body is ignored", testPresignerPresignUploadURLBodyIsIgnored)
+
+	t.Run("invalid expires", testPresignerPresignUploadURLInvalidExpires)
 }
 
 // testPresignerPresignUploadURLForwardsAllFields checks that every input
@@ -228,9 +230,12 @@ func testPresignerPresignUploadURLForwardsAllFields(t *testing.T) {
 		PutObjectInput: storage.PutObjectInput{
 			BaseObjectInput: base("up/file name.png"),
 			ContentLength:   new(int64(1234)),
-			ContentType:     new("image/png"),
-			Expires:         &expires,
-			Metadata:        map[string]string{"owner": "ahmed"},
+			ObjectHeaders: storage.ObjectHeaders{
+				ContentType:  new("image/png"),
+				CacheControl: new("private"),
+				Expires:      new(expires.Format(http.TimeFormat)),
+				Metadata:     map[string]string{"owner": "ahmed"},
+			},
 		},
 		TTL: &ttl,
 	})
@@ -259,7 +264,9 @@ func testPresignerPresignUploadURLForwardsAllFields(t *testing.T) {
 		t.Errorf("X-Amz-Credential = %q", q.Get("X-Amz-Credential"))
 	}
 
-	for _, h := range []string{"content-type", "content-length", "expires", "x-amz-meta-owner", "host"} {
+	for _, h := range []string{
+		"content-type", "content-length", "cache-control", "expires", "x-amz-meta-owner", "host",
+	} {
 		if !hasSignedHeader(u, h) {
 			t.Errorf("header %q not signed; signed = %v", h, signedHeaderList(u))
 		}
@@ -278,6 +285,22 @@ func testPresignerPresignUploadURLForwardsAllFields(t *testing.T) {
 	}
 	if n := len(f.requests()); n != 0 {
 		t.Errorf("presigning sent %d requests", n)
+	}
+}
+
+// testPresignerPresignUploadURLInvalidExpires checks that an Expires that is
+// not an HTTP-date is storage.ErrInvalidHeader and nothing is signed.
+func testPresignerPresignUploadURLInvalidExpires(t *testing.T) {
+	t.Parallel()
+	p := newTestPresigner(t, newFakeS3(t, nil), testBucket)
+	res, err := p.PresignUploadURL(context.Background(), &storage.PresignUploadURLInput{
+		PutObjectInput: storage.PutObjectInput{
+			BaseObjectInput: base("k"),
+			ObjectHeaders:   storage.ObjectHeaders{Expires: new("0")},
+		},
+	})
+	if !errors.Is(err, storage.ErrInvalidHeader) || res != nil {
+		t.Errorf("PresignUploadURL(Expires 0) = %v, %v; want nil, ErrInvalidHeader", res, err)
 	}
 }
 

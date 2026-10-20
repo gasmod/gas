@@ -524,7 +524,7 @@ func assertAllOps(t *testing.T, ctx context.Context, b *Bucket, want error) {
 // fails with os.ErrClosed.
 func TestBucket_ClosedOperations(t *testing.T) {
 	v, _ := newTestVFS(t)
-	if err := v.CreateBucket("b"); err != nil {
+	if _, err := v.CreateBucket(t.Context(), "b"); err != nil {
 		t.Fatalf("CreateBucket: %v", err)
 	}
 	b, err := v.OpenBucket("b")

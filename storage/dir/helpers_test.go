@@ -104,8 +104,7 @@ func putWith(p *Provider, key string, body io.Reader, ct *string, meta map[strin
 	return p.PutObject(context.Background(), &storage.PutObjectInput{
 		BaseObjectInput: base(key),
 		Body:            body,
-		ContentType:     ct,
-		Metadata:        meta,
+		ObjectHeaders:   storage.ObjectHeaders{ContentType: ct, Metadata: meta},
 	})
 }
 

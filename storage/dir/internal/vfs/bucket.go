@@ -3,12 +3,15 @@ package vfs
 import (
 	"bytes"
 	"context"
+	"crypto/md5" //nolint:gosec // see writeDataFile
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"time"
 	"uuid"
 
 	"github.com/gasmod/gas/storage/dir/internal/util"
@@ -22,13 +25,17 @@ type Bucket struct {
 	metaRoot *os.Root
 	objRoot  *os.Root
 	lock     *ObjectsLock
+	// dir is the metadata directory, relative to the VFS root.
+	dir string
 }
 
 var _ io.Closer = (*Bucket)(nil)
 
-// NewBucket returns a Bucket on the given roots. Close closes all three.
-func NewBucket(metaRoot, objRoot, locksRoot *os.Root) *Bucket {
+// NewBucket returns a Bucket on the given roots, whose metadata directory is
+// dir relative to the VFS root. Close closes all three roots.
+func NewBucket(dir string, metaRoot, objRoot, locksRoot *os.Root) *Bucket {
 	return &Bucket{
+		dir:      dir,
 		metaRoot: metaRoot,
 		objRoot:  objRoot,
 		lock:     NewLock(locksRoot),
@@ -41,7 +48,18 @@ type CreateObjectInput struct {
 	Body        io.Reader
 	ContentType *string
 	Metadata    map[string]string
-	Key         string
+	Headers
+	Key       string
+	Condition Condition
+}
+
+// Condition makes CreateObject conditional on the object it would replace.
+// The zero value writes unconditionally.
+type Condition struct {
+	// IfMatch, when set, requires an object whose ETag is exactly this one.
+	IfMatch string
+	// IfNoneMatch requires that no object exists under the key.
+	IfNoneMatch bool
 }
 
 // CreateObject writes the object: it writes a new data file, then renames a
@@ -50,17 +68,24 @@ type CreateObjectInput struct {
 // with nothing new left behind.
 //
 // After the commit the previous data file is removed. If that fails, out is
-// the committed metadata and err wraps ErrStaleData. out is also non-nil
-// when the commit succeeded but unlocking the object failed. On every other
-// error out is nil.
+// the committed object and err wraps ErrStaleData. out is also non-nil when
+// the commit succeeded but unlocking the object failed. On every other error
+// out is nil. out carries the metadata written, ETag included, and the size
+// and modification time of the new data file.
 //
 // Metadata that is corrupt (ErrCorrupt) is replaced, so a corrupt key can be
 // repaired; its data file cannot be trusted and is left behind. Metadata
 // that exists but cannot be read fails the call before anything is written.
+//
+// A Condition is checked against the current metadata under the key's lock,
+// before anything is written, so it holds across processes: a write that
+// does not meet it returns an error wrapping ErrPreconditionFailed, and an
+// IfMatch of a key with no metadata one wrapping ErrObjectNotFound. Corrupt
+// metadata meets neither condition: the key is taken, by no known ETag.
 func (b *Bucket) CreateObject(
 	ctx context.Context,
 	input *CreateObjectInput,
-) (out *ObjectMetadata, err error) {
+) (out *ObjectStat, err error) {
 	name := hash(input.Key)
 
 	if lErr := b.lock.Lock(ctx, name); lErr != nil {
@@ -68,7 +93,7 @@ func (b *Bucket) CreateObject(
 	}
 	defer func() { err = b.finishCreate(name, out != nil, err) }()
 
-	prevDataFile, pErr := b.previousDataFile(name)
+	prevDataFile, pErr := b.previousDataFile(name, input.Condition)
 	if pErr != nil {
 		return nil, pErr
 	}
@@ -83,26 +108,29 @@ func (b *Bucket) CreateObject(
 		return nil, fmt.Errorf("sniff content type: %w", ctErr)
 	}
 
-	meta := &ObjectMetadata{
+	meta := ObjectMetadata{
 		Key:         input.Key,
 		ContentType: contentType,
 		Metadata:    input.Metadata,
+		Headers:     input.Headers,
 		DataFile:    newDataFileName(name),
 	}
 
-	if dErr := b.writeDataFile(meta.DataFile, body); dErr != nil {
+	written, dErr := b.writeDataFile(meta.DataFile, body)
+	if dErr != nil {
 		return nil, dErr
 	}
+	meta.ETag = written.etag
 
-	if wErr := b.writeMetaFile(name, meta); wErr != nil {
+	stored, wErr := b.writeMetaFile(name, &meta)
+	if wErr != nil {
 		return nil, discardTmp(b.objRoot, meta.DataFile, wErr)
 	}
 
-	out = &ObjectMetadata{
-		Key:         meta.Key,
-		ContentType: meta.ContentType,
-		Metadata:    meta.Metadata,
-		DataFile:    meta.DataFile,
+	out = &ObjectStat{
+		ObjectMetadata: stored,
+		Size:           written.size,
+		LastModified:   written.modified,
 	}
 
 	if prevDataFile != "" && prevDataFile != meta.DataFile {
@@ -114,17 +142,27 @@ func (b *Bucket) CreateObject(
 	return out, nil
 }
 
+// dataWrite is what writeDataFile wrote: the hex MD5 of the body, its size,
+// and the data file's modification time once written.
+type dataWrite struct {
+	modified time.Time
+	etag     string
+	size     int64
+}
+
 // writeDataFile writes body to the new data file name. The data file is
 // invisible until metadata names it, so it is written in place and removed
 // on failure.
-func (b *Bucket) writeDataFile(name string, body io.Reader) error {
+func (b *Bucket) writeDataFile(name string, body io.Reader) (dataWrite, error) {
 	f, fErr := openInRoot(b.objRoot, name, "data file")
 	if fErr != nil {
-		return fErr
+		return dataWrite{}, fErr
 	}
 
-	if _, cpErr := io.Copy(f, body); cpErr != nil {
-		return discardTmp(
+	sum := md5.New() //nolint:gosec // an S3-style ETag is an MD5; it protects nothing
+	n, cpErr := io.Copy(io.MultiWriter(f, sum), body)
+	if cpErr != nil {
+		return dataWrite{}, discardTmp(
 			b.objRoot,
 			name,
 			fmt.Errorf("copy body to data file: %w", util.CloseWithErr(cpErr, f)),
@@ -132,21 +170,38 @@ func (b *Bucket) writeDataFile(name string, body io.Reader) error {
 	}
 
 	if cErr := f.Close(); cErr != nil {
-		return discardTmp(b.objRoot, name, fmt.Errorf("close data file: %w", cErr))
+		return dataWrite{}, discardTmp(b.objRoot, name, fmt.Errorf("close data file: %w", cErr))
 	}
 
-	return nil
+	// Stat after Close, so the time is the one OpenObject will read.
+	fi, sErr := b.objRoot.Stat(name)
+	if sErr != nil {
+		return dataWrite{}, discardTmp(b.objRoot, name, fmt.Errorf("stat data file: %w", sErr))
+	}
+
+	return dataWrite{etag: hex.EncodeToString(sum.Sum(nil)), size: n, modified: fi.ModTime()}, nil
 }
 
-// previousDataFile returns the data file the current metadata of name points
-// to, or "" when there is none to remove: no metadata, or corrupt metadata
-// whose data file name cannot be trusted.
-func (b *Bucket) previousDataFile(name string) (string, error) {
+// previousDataFile checks cond against the current metadata of name and
+// returns the data file it points to, or "" when there is none to remove:
+// no metadata, or corrupt metadata whose data file name cannot be trusted.
+func (b *Bucket) previousDataFile(name string, cond Condition) (string, error) {
 	prev, err := b.meta(name)
 	switch {
 	case err == nil:
+		if cond.IfNoneMatch || (cond.IfMatch != "" && prev.ETag != cond.IfMatch) {
+			return "", fmt.Errorf("%w: the object does not match", ErrPreconditionFailed)
+		}
 		return prev.DataFile, nil
-	case errors.Is(err, ErrObjectNotFound), errors.Is(err, ErrCorrupt):
+	case errors.Is(err, ErrObjectNotFound):
+		if cond.IfMatch != "" {
+			return "", fmt.Errorf("if match: %w", err)
+		}
+		return "", nil
+	case errors.Is(err, ErrCorrupt):
+		if cond != (Condition{}) {
+			return "", fmt.Errorf("%w: the object's metadata is corrupt", ErrPreconditionFailed)
+		}
 		return "", nil
 	default:
 		return "", err
@@ -190,7 +245,7 @@ func (b *Bucket) OpenObject(ctx context.Context, input *OpenObjectInput) (*Objec
 // openData opens the data file meta names and checks that it is a regular
 // file.
 func (b *Bucket) openData(meta *ObjectMetadata) (*Object, error) {
-	f, err := b.objRoot.Open(meta.DataFile)
+	f, err := retryPending(func() (*os.File, error) { return b.objRoot.Open(meta.DataFile) })
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("%w: open data file: %w", ErrCorrupt, err)
 	}
@@ -210,10 +265,12 @@ func (b *Bucket) openData(meta *ObjectMetadata) (*Object, error) {
 	}
 
 	return &Object{
-		ObjectMetadata: *meta,
-		File:           f,
-		Size:           fi.Size(),
-		LastModified:   fi.ModTime(),
+		File: f,
+		ObjectStat: ObjectStat{
+			ObjectMetadata: *meta,
+			Size:           fi.Size(),
+			LastModified:   fi.ModTime(),
+		},
 	}, nil
 }
 
@@ -298,13 +355,13 @@ func (b *Bucket) releaseWith(name string, err error) error {
 
 // meta reads and checks the metadata file of name. A missing file returns an
 // error wrapping ErrObjectNotFound. A directory in its place, content that
-// does not decode, null, or a data file name that isDataFileName rejects
-// returns one wrapping ErrCorrupt. Errors never quote the file's content,
+// does not decode, null, a key that does not hash to name, or a data file
+// name that isDataFileName rejects returns one wrapping ErrCorrupt. Errors never quote the file's content,
 // which holds the user's key and metadata.
 func (b *Bucket) meta(name string) (*ObjectMetadata, error) {
 	file := name + metaFileExt
 
-	data, err := b.metaRoot.ReadFile(file)
+	data, err := retryPending(func() ([]byte, error) { return b.metaRoot.ReadFile(file) })
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("%w: read meta file: %w", ErrObjectNotFound, err)
@@ -324,6 +381,9 @@ func (b *Bucket) meta(name string) (*ObjectMetadata, error) {
 	}
 	if !isDataFileName(name, meta.DataFile) {
 		return nil, fmt.Errorf("%w: meta file names no valid data file", ErrCorrupt)
+	}
+	if hash(meta.Key) != name {
+		return nil, fmt.Errorf("%w: meta file %s holds another key", ErrCorrupt, name)
 	}
 
 	return meta, nil
@@ -360,25 +420,53 @@ func sniffContentType(
 	return http.DetectContentType(head), reader, nil
 }
 
+// encodeMeta returns meta encoded as a metadata file, and the metadata that
+// file decodes to, which is what OpenObject will read: encoding replaces
+// invalid UTF-8 with U+FFFD, and the decoded copy shares no map with meta.
+func encodeMeta(meta *ObjectMetadata) ([]byte, ObjectMetadata, error) {
+	data, err := json.Marshal(meta)
+	if err != nil {
+		return nil, ObjectMetadata{}, fmt.Errorf("encode meta file: %w", err)
+	}
+	var stored ObjectMetadata
+	if err := json.Unmarshal(data, &stored); err != nil {
+		return nil, ObjectMetadata{}, fmt.Errorf(
+			"decode encoded meta file: %s",
+			describeJSONError(err),
+		)
+	}
+	return data, stored, nil
+}
+
 // writeMetaFile writes meta as the metadata file of name: to a temp file
 // first, then renamed over the current one, so readers see the old metadata
-// or the new, never a partial file. The temp file is removed on failure.
-func (b *Bucket) writeMetaFile(name string, meta *ObjectMetadata) error {
-	data, jsErr := json.Marshal(meta)
-	if jsErr != nil {
-		return fmt.Errorf("encode meta file: %w", jsErr)
+// or the new, never a partial file. The temp file is removed on failure. It
+// returns the metadata as the file decodes, which is what OpenObject will
+// read (see encodeMeta).
+func (b *Bucket) writeMetaFile(name string, meta *ObjectMetadata) (ObjectMetadata, error) {
+	data, stored, eErr := encodeMeta(meta)
+	if eErr != nil {
+		return ObjectMetadata{}, eErr
 	}
 
 	file := name + metaFileExt
 	tmp := file + uuid.New().String()
 
 	if wErr := b.metaRoot.WriteFile(tmp, data, filePerm); wErr != nil {
-		return discardTmp(b.metaRoot, tmp, fmt.Errorf("write meta file: %w", wErr))
+		return ObjectMetadata{}, discardTmp(
+			b.metaRoot,
+			tmp,
+			fmt.Errorf("write meta file: %w", wErr),
+		)
 	}
 
 	if rErr := b.metaRoot.Rename(tmp, file); rErr != nil {
-		return discardTmp(b.metaRoot, tmp, fmt.Errorf("commit meta file: %w", rErr))
+		return ObjectMetadata{}, discardTmp(
+			b.metaRoot,
+			tmp,
+			fmt.Errorf("commit meta file: %w", rErr),
+		)
 	}
 
-	return nil
+	return stored, nil
 }

@@ -558,8 +558,15 @@ func testProviderCreateBucketUsable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateBucket() error: %v", err)
 	}
-	if info.ID != "new-bucket" || info.Location != "new-bucket" {
-		t.Errorf("CreateBucket() = %+v, want ID and Location new-bucket", info)
+	if info.Name != "new-bucket" || info.CreationDate.IsZero() || info.ID != "" ||
+		info.Region != "" {
+		t.Errorf("CreateBucket() = %+v, want Name new-bucket and a CreationDate only", info)
+	}
+	again, err := p.CreateBucket(context.Background(),
+		&storage.CreateBucketInput{Bucket: "new-bucket"})
+	if err != nil || !again.CreationDate.Equal(info.CreationDate) {
+		t.Errorf("CreateBucket() again = %+v, %v; want the first CreationDate %v",
+			again, err, info.CreationDate)
 	}
 	for _, d := range []string{
 		metaDir(dir, "new-bucket"),
@@ -591,8 +598,8 @@ func testProviderCreateBucketExisting(t *testing.T) {
 		if err != nil {
 			t.Fatalf("CreateBucket() of an existing bucket error = %v, want nil", err)
 		}
-		if info == nil || info.ID != testBucket || info.Location != testBucket {
-			t.Fatalf("CreateBucket() of an existing bucket = %+v, want ID and Location %q",
+		if info == nil || info.Name != testBucket {
+			t.Fatalf("CreateBucket() of an existing bucket = %+v, want Name %q",
 				info, testBucket)
 		}
 	}
@@ -1125,21 +1132,48 @@ func TestProvider_IgnoresReadOptions(t *testing.T) {
 	}
 }
 
-// TestProvider_IgnoresWriteOptions documents that dir ignores Expires on
-// Put. ContentLength is enforced; see TestProvider_ContentLength.
-func TestProvider_IgnoresWriteOptions(t *testing.T) {
+// TestProvider_StoresAnyExpires checks that dir stores Expires as given, even
+// text that is not an HTTP-date, where s3 returns storage.ErrInvalidHeader.
+func TestProvider_StoresAnyExpires(t *testing.T) {
 	t.Parallel()
 	p, _ := newTestProvider(t)
 	_, err := p.PutObject(context.Background(), &storage.PutObjectInput{
 		BaseObjectInput: base("k"),
 		Body:            strings.NewReader("0123456789"),
-		Expires:         new(time.Unix(0, 0)),
+		ObjectHeaders:   storage.ObjectHeaders{Expires: new("0")},
 	})
 	if err != nil {
 		t.Fatalf("PutObject() error: %v", err)
 	}
-	if _, data := get(t, p, "k"); string(data) != "0123456789" {
-		t.Errorf("body = %q, want the whole body", data)
+	info, err := head(p, "k")
+	if err != nil || info.Expires != "0" {
+		t.Errorf("HeadObject() Expires = %v, %v; want 0", info, err)
+	}
+}
+
+// TestProvider_PutReturnsTheObject checks that PutObject reports what
+// HeadObject then reads: the ETag, size, modification time, content type and
+// metadata, with invalid UTF-8 replaced as it is when stored.
+func TestProvider_PutReturnsTheObject(t *testing.T) {
+	t.Parallel()
+	p, _ := newTestProvider(t)
+	put, err := putWith(p, "k", strings.NewReader("body"), new("text/x-put"),
+		map[string]string{"a": "1\xff"})
+	if err != nil {
+		t.Fatalf("PutObject() error: %v", err)
+	}
+	info, err := head(p, "k")
+	if err != nil {
+		t.Fatalf("HeadObject() error: %v", err)
+	}
+	if put.ETag == "" || put.Size != 4 || put.LastModified.IsZero() {
+		t.Errorf("PutObject() = %+v, want an ETag, size 4 and a modification time", put)
+	}
+	if put.ETag != info.ETag || put.Size != info.Size ||
+		!put.LastModified.Equal(info.LastModified) ||
+		put.ContentType != info.ContentType ||
+		put.Metadata["a"] != info.Metadata["a"] {
+		t.Errorf("PutObject() = %+v, HeadObject() = %+v; want the same object", put, info)
 	}
 }
 
@@ -1162,6 +1196,8 @@ func TestProvider_ErrorPrefixes(t *testing.T) {
 		&storage.PutObjectInput{BaseObjectInput: inBucket("nope-bucket")},
 	)
 	_, checks["delete"] = p.DeleteObject(ctx, &storage.DeleteObjectInput{BaseObjectInput: base("")})
+	_, checks["head bucket"] = p.HeadBucket(ctx, &storage.HeadBucketInput{Bucket: "nope-bucket"})
+	checks["delete bucket"] = p.DeleteBucket(ctx, &storage.DeleteBucketInput{Bucket: "nope-bucket"})
 
 	for op, err := range checks {
 		want := "gas/storage/dir/provider: " + op + ": "

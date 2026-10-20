@@ -3,11 +3,15 @@ package s3
 import (
 	"errors"
 	"fmt"
+	"net/http"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
+	smithytime "github.com/aws/smithy-go/time"
 
 	"github.com/gasmod/gas/storage"
+	"github.com/gasmod/gas/storage/internal"
 )
 
 // S3 error codes matched when the SDK does not return the modeled error type,
@@ -21,6 +25,8 @@ const (
 	errCodeNotFound                = "NotFound"
 	errCodeBucketAlreadyOwnedByYou = "BucketAlreadyOwnedByYou"
 	errCodeBucketAlreadyExists     = "BucketAlreadyExists"
+	errCodeBucketNotEmpty          = "BucketNotEmpty"
+	errCodePreconditionFailed      = "PreconditionFailed"
 
 	// A GET of an unsatisfiable Range answers 416 InvalidRange. A HEAD 416
 	// has no body, and the SDK names it after the status text instead.
@@ -48,10 +54,46 @@ func wrapS3Error(err error) error {
 		sentinel = storage.ErrBucketExists
 	case isS3ErrorCode(err, errCodeInvalidRange), isS3ErrorCode(err, errCodeRangeNotSatisfiable):
 		sentinel = storage.ErrInvalidRange
+	case isS3ErrorCode(err, errCodePreconditionFailed):
+		sentinel = storage.ErrPreconditionFailed
 	default:
 		return err
 	}
 	return fmt.Errorf("%w: %w", sentinel, err)
+}
+
+// wrapBucketError maps an error from HeadBucket or DeleteBucket like
+// wrapS3Error, for the answers a bucket operation gets: a missing bucket
+// (NoSuchBucket, or the bodiless 404 of a HEAD, which the SDK names
+// NotFound) is storage.ErrBucketNotFound, BucketNotEmpty is
+// storage.ErrBucketNotEmpty, and any 403 is storage.ErrAccessDenied. A HEAD
+// 403 has no body, so the status is matched rather than a code.
+func wrapBucketError(err error) error {
+	var sentinel error
+	switch {
+	case isS3ErrorType[*types.NoSuchBucket](err, errCodeNoSuchBucket),
+		isS3ErrorType[*types.NotFound](err, errCodeNotFound):
+		sentinel = storage.ErrBucketNotFound
+	case isS3ErrorCode(err, errCodeBucketNotEmpty):
+		sentinel = storage.ErrBucketNotEmpty
+	case httpStatus(err) == http.StatusForbidden:
+		sentinel = storage.ErrAccessDenied
+	default:
+		return err
+	}
+	return fmt.Errorf("%w: %w", sentinel, err)
+}
+
+// httpStatus returns the HTTP status of the response err came from, or 0
+// when err carries none.
+func httpStatus(err error) int {
+	if re, ok := errors.AsType[interface {
+		error
+		HTTPStatusCode() int
+	}](err); ok {
+		return re.HTTPStatusCode()
+	}
+	return 0
 }
 
 // isBucketOwnedByCaller reports whether err is S3's BucketAlreadyOwnedByYou,
@@ -95,6 +137,50 @@ func isS3ErrorType[T error](err error, code string) bool {
 func isS3ErrorCode(err error, code string) bool {
 	apiErr, ok := errors.AsType[smithy.APIError](err)
 	return ok && apiErr.ErrorCode() == code
+}
+
+// parseExpires returns the time an Expires header holds, or nil for a nil
+// one. The SDK sends Expires only as a time.Time, which it writes as an
+// IMF-fixdate, so only text already in exactly that form is sent unchanged.
+// Anything else is storage.ErrInvalidHeader, including the obsolete RFC 850
+// and asctime forms and a date whose weekday is wrong, which http.ParseTime
+// accepts but the SDK would rewrite. The error does not quote the text.
+func parseExpires(expires *string) (*time.Time, error) {
+	if expires == nil {
+		return nil, nil
+	}
+	t, err := http.ParseTime(*expires)
+	if err != nil || smithytime.FormatHTTPDate(t) != *expires {
+		return nil, fmt.Errorf(
+			"%w: Expires is not an IMF-fixdate HTTP-date",
+			storage.ErrInvalidHeader,
+		)
+	}
+	return &t, nil
+}
+
+// conditionHeaders returns the If-Match and If-None-Match values to send for
+// c: the IfMatch ETag quoted, as S3 expects, and IfNoneMatch as given. An
+// invalid condition is storage.ErrInvalidCondition.
+func conditionHeaders(c *storage.WriteCondition) (ifMatch, ifNoneMatch *string, err error) {
+	etag, err := internal.ValidateCondition(c)
+	if err != nil {
+		return nil, nil, err //nolint:wrapcheck // a bare sentinel the caller wraps
+	}
+	if etag != "" {
+		ifMatch = new(`"` + etag + `"`)
+	}
+	return ifMatch, c.IfNoneMatch, nil
+}
+
+// unquoteETag returns etag without the double quotes S3 puts around it, or
+// "" for a nil one.
+func unquoteETag(etag *string) string {
+	s := valueOf(etag)
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		return s[1 : len(s)-1]
+	}
+	return s
 }
 
 // valueOf returns the value v points to, or the zero value of T when v is

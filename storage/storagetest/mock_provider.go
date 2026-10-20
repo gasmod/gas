@@ -11,7 +11,9 @@ import (
 // its call and delegates to the matching Fn field, or returns nil, nil when
 // that field is nil. The zero value is ready to use.
 type MockProvider struct {
-	CreateBucketFn func(ctx context.Context, input *storage.CreateBucketInput) (*storage.BucketInfo, error)
+	CreateBucketFn func(ctx context.Context, input *storage.CreateBucketInput) (*storage.Bucket, error)
+	HeadBucketFn   func(ctx context.Context, input *storage.HeadBucketInput) (*storage.Bucket, error)
+	DeleteBucketFn func(ctx context.Context, input *storage.DeleteBucketInput) error
 	ListBucketsFn  func(ctx context.Context, input *storage.ListBucketsInput) (*storage.ListBucketsOutput, error)
 
 	HeadObjectFn   func(ctx context.Context, input *storage.HeadObjectInput) (*storage.ObjectInfo, error)
@@ -44,12 +46,34 @@ func (m *MockProvider) record(method string, args ...any) {
 func (m *MockProvider) CreateBucket(
 	ctx context.Context,
 	input *storage.CreateBucketInput,
-) (*storage.BucketInfo, error) {
+) (*storage.Bucket, error) {
 	m.record("CreateBucket", input)
 	if m.CreateBucketFn != nil {
 		return m.CreateBucketFn(ctx, input)
 	}
 	return nil, nil
+}
+
+// HeadBucket records the call and delegates to HeadBucketFn.
+func (m *MockProvider) HeadBucket(
+	ctx context.Context,
+	input *storage.HeadBucketInput,
+) (*storage.Bucket, error) {
+	m.record("HeadBucket", input)
+	if m.HeadBucketFn != nil {
+		return m.HeadBucketFn(ctx, input)
+	}
+	return nil, nil
+}
+
+// DeleteBucket records the call and delegates to DeleteBucketFn, or returns
+// nil when it is nil.
+func (m *MockProvider) DeleteBucket(ctx context.Context, input *storage.DeleteBucketInput) error {
+	m.record("DeleteBucket", input)
+	if m.DeleteBucketFn != nil {
+		return m.DeleteBucketFn(ctx, input)
+	}
+	return nil
 }
 
 // ListBuckets records the call and delegates to ListBucketsFn.

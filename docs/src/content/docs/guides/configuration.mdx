@@ -113,6 +113,7 @@ Core reads its own `gas.Config` for the HTTP server.
 | `Server.Host` | `0.0.0.0` |
 | `Server.Port` | `8080` |
 | `Server.ReadTimeout` | `5s` |
+| `Server.ReadHeaderTimeout` | `5s`; `0` falls back to `ReadTimeout` |
 | `Server.WriteTimeout` | `10s` |
 | `Server.IdleTimeout` | `2m` |
 | `Server.ShutdownTimeout` | `30s` |

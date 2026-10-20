@@ -70,8 +70,8 @@
 // # Errors
 //
 // Every error is prefixed "gas/storage/dir/provider: <op>: ", with op one of
-// create bucket, list buckets, head, put, get, delete or list, and wraps the
-// storage sentinel a caller can act on:
+// create bucket, head bucket, delete bucket, list buckets, head, put, get,
+// delete or list, and wraps the storage sentinel a caller can act on:
 //
 //   - storage.ErrNotInitialized: a Provider that NewProvider did not build,
 //     from every method. NewProvider returns ErrRootRequired, which wraps it,
@@ -84,7 +84,24 @@
 //   - storage.ErrInvalidKey and storage.ErrInvalidBucket: a key or bucket
 //     name that fails validation, checked before any disk access.
 //   - storage.ErrBucketNotFound: a missing bucket, from Head, Put, Get,
-//     Delete and ListObjects.
+//     Delete, ListObjects, HeadBucket and DeleteBucket.
+//   - storage.ErrPreconditionFailed: a Put whose WriteCondition does not
+//     hold, checked under the object's lock, so across processes too. An
+//     object with no recorded ETag (written by an earlier version) or with
+//     corrupt metadata matches no IfMatch; corrupt metadata also fails
+//     IfNoneMatch. storage.ErrKeyNotFound: a Put with IfMatch of a missing
+//     key. storage.ErrInvalidCondition: a condition that cannot be
+//     evaluated, before any disk access.
+//   - storage.ErrBucketNotEmpty: a DeleteBucket of a bucket that holds an
+//     object, which then removes nothing. Entries no read can use
+//     (unusable metadata, metadata whose data file is gone, temp files of
+//     crashed writes) are not objects: DeleteBucket removes them with the
+//     bucket once it found no object, so they can never make a bucket
+//     undeletable.
+//   - storage.ErrBucketNotFound from Head, Put, Get, Delete and ListObjects,
+//     too, when DeleteBucket removes the bucket while the call runs, such
+//     as a Put of a new key still copying its body; it holds even if a
+//     bucket of the same name is created again meanwhile.
 //   - storage.ErrInvalidLimit and storage.ErrInvalidContinuationToken: a
 //     list page size out of range, or a continuation token that is empty or
 //     that this backend did not issue.
@@ -103,10 +120,11 @@
 //
 // CreateBucket of an existing bucket succeeds and keeps its objects: every
 // bucket under the root belongs to the caller, so this backend never returns
-// storage.ErrBucketExists. Deleting a missing object succeeds. Metadata that cannot be used (it does
-// not decode, names no valid data file, or names a missing one) is reported
-// as an error matching none of the not-found sentinels; a Put over it
-// replaces it. Errors never quote a key, a bucket name given to an
+// storage.ErrBucketExists. Deleting a missing object succeeds. An object
+// whose metadata cannot be used (it does not decode, holds another key,
+// names no valid data file, or names a missing one) is reported by Head and
+// Get as an error wrapping ErrCorrupt, which matches none of the not-found
+// sentinels; a Put over it replaces it. Errors never quote a key, a bucket name given to an
 // operation, or metadata; only hashes of them appear.
 //
 // # Differences from s3
@@ -121,23 +139,50 @@
 // example, accepts a unit other than bytes, spaces around "=" or "-", and a
 // "+" sign), and on an empty object it may answer 416 where this backend
 // returns the empty body; dir follows RFC 9110. PartNumber is
-// storage.ErrNotSupported. The Response* fields of reads, and Expires of Put,
-// are ignored. ObjectInfo carries no Version, and Put and Delete return an
-// empty ObjectInfo. A Put without a content type sniffs one from the body with
-// http.DetectContentType. Metadata keys keep their case, and invalid UTF-8 in
-// metadata is replaced with U+FFFD when it is stored.
+// storage.ErrNotSupported. The Response* fields of reads are ignored. Every
+// header of a Put is stored as given and read back, Expires included, which
+// may be any text, where s3 accepts only an IMF-fixdate. ObjectInfo carries no
+// Version. Put returns the object as Head then reads it: its ETag, the hex
+// MD5 of the body computed as it is written, its size and modification time,
+// content type, metadata and headers. Delete returns an empty ObjectInfo. An
+// object stored by a version of this backend that recorded no ETag reads
+// back with an empty one, and with no headers. A Put without a content type
+// sniffs one from the body with http.DetectContentType. Metadata keys keep
+// their case, and invalid UTF-8 in metadata or a header is replaced with
+// U+FFFD when it is stored.
+//
+// CreateBucket and DeleteBucket of the same name never interleave, across
+// processes too: each holds a lock file named after the bucket under
+// .gas/locks for its whole run.
+//
+// GetObject's Body implements io.ReadSeeker, for whole and ranged reads: a
+// ranged Body seeks within the bytes it returns. The storage interface
+// promises only io.ReadCloser, and s3 makes no such promise.
 //
 // Listing reads every name in the bucket (or every bucket's name record) on
 // each call, so a page costs time in proportion to the bucket, not the page.
 // Its continuation tokens hold the last name of the page, encoded; they are
 // not interchangeable with S3's. A bucket's CreationDate is when CreateBucket
-// first wrote its name record. A bucket whose name record is missing or does
+// first wrote its name record; CreateBucket and ListBuckets report it with
+// the Name, and leave ID and Region empty. A bucket whose name record is missing or does
 // not hold its name (one created by an earlier version, or a record a crash
-// left empty) cannot be named and is left out of ListBuckets, with nothing
-// reported, until CreateBucket of it runs again, which rewrites the record;
-// its objects stay reachable through the other methods meanwhile. A record
-// that cannot be read at all, or that is not a regular file, fails the call.
-// Metadata that cannot be used fails ListObjects rather than being skipped.
+// left empty) cannot be named and is left out of ListBuckets until
+// CreateBucket of it runs again, which rewrites the record; its objects stay
+// reachable through the other methods meanwhile. A record that cannot be
+// read at all, or that is not a regular file, fails the call. Likewise an
+// object that cannot be read (see ErrCorrupt) is left out of ListObjects,
+// while an I/O error reading the metadata still fails it.
+//
+// What a listing leaves out is counted in its Skipped, which covers the
+// whole bucket (or every bucket) and so repeats on every page; a
+// ListObjects page also counts any of its own objects damaged between the
+// scan and the read of its summary. To find
+// what and where, give NewProvider WithSkipHandler: it gets each entry's
+// path relative to the root and an error wrapping ErrCorrupt or
+// ErrUnnamedBucket, and also hears from DeleteBucket about the debris it
+// removes and anything it leaves behind. Finding an object that cannot be
+// read costs one stat of its data file per object per page, on top of
+// reading its metadata.
 //
 // SPDX-License-Identifier: MIT
 package dir

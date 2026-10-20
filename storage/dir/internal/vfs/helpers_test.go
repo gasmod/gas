@@ -30,7 +30,7 @@ func newTestVFS(t *testing.T) (*VFS, string) {
 // newTestBucket creates bucket "b" and opens it.
 func newTestBucket(t *testing.T, v *VFS) *Bucket {
 	t.Helper()
-	if err := v.CreateBucket("b"); err != nil {
+	if _, err := v.CreateBucket(t.Context(), "b"); err != nil {
 		t.Fatalf("CreateBucket: %v", err)
 	}
 	return newOpenBucket(t, v)

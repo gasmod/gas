@@ -23,8 +23,9 @@ import (
 // hold its name (such as one a crash left empty) cannot be named and is left
 // out of the listing until CreateBucket of that bucket runs again, which
 // rewrites it; its objects stay reachable through the other methods
-// meanwhile. A record that cannot be read at all, or that is not a regular
-// file, fails the call instead.
+// meanwhile. It is counted in Skipped and passed to the skip handler with
+// an error wrapping ErrUnnamedBucket. A record that cannot be read at all,
+// or that is not a regular file, fails the call instead.
 func (p *Provider) ListBuckets(
 	ctx context.Context,
 	input *storage.ListBucketsInput,
@@ -47,10 +48,11 @@ func (p *Provider) ListBuckets(
 		return nil, internal.Errorf(mod, "list buckets: %w", tErr)
 	}
 
-	entries, err := p.vfs.ListBuckets(ctx)
+	entries, skipped, err := p.vfs.ListBuckets(ctx)
 	if err != nil {
 		return nil, internal.Errorf(mod, "list buckets: %w", err)
 	}
+	p.reportAll(skipped)
 
 	prefix := valueOf(input.Prefix)
 	created := make(map[string]vfs.BucketEntry, len(entries))
@@ -63,15 +65,18 @@ func (p *Provider) ListBuckets(
 	}
 
 	pg, truncated := page(names, after, maxBuckets)
-	out := &storage.ListBucketsOutput{Buckets: make([]storage.BucketSummary, 0, len(pg))}
+	out := &storage.ListBucketsOutput{
+		Buckets: make([]storage.Bucket, 0, len(pg)),
+		Skipped: len(skipped),
+	}
 	for _, name := range pg {
-		out.Buckets = append(out.Buckets, storage.BucketSummary{
+		out.Buckets = append(out.Buckets, storage.Bucket{
 			Name:         name,
 			CreationDate: created[name].Created,
 		})
 	}
 	if truncated {
-		out.ContinuationToken = encodeToken(pg[len(pg)-1])
+		out.NextContinuationToken = encodeToken(pg[len(pg)-1])
 	}
 	return out, nil
 }
@@ -84,10 +89,12 @@ func (p *Provider) ListBuckets(
 // ContinuationToken this backend did not issue one wrapping
 // storage.ErrInvalidContinuationToken.
 //
-// Each call reads the metadata of every object in the bucket, so a page
-// costs time in proportion to the bucket, not the page. An object deleted
-// while the page is built is left out. Metadata that cannot be used fails
-// the call.
+// Each call reads the metadata of every object in the bucket, and stats its
+// data file, so a page costs time in proportion to the bucket, not the
+// page. An object deleted while the page is built is left out. An object
+// that cannot be read (see ErrCorrupt) is left out too, counted in Skipped
+// for the whole bucket, and passed to the skip handler; an I/O error
+// reading metadata or stating a data file fails the call.
 func (p *Provider) ListObjects(
 	ctx context.Context,
 	input *storage.ListObjectsInput,
@@ -116,7 +123,7 @@ func (p *Provider) ListObjects(
 	}
 
 	out, err := p.listObjects(ctx, bk, input, after, maxKeys)
-	if err = errors.Join(err, bk.Close()); err != nil {
+	if err = errors.Join(p.removedErr(bk, err), bk.Close()); err != nil {
 		return nil, opError("list", nil, err)
 	}
 	return out, nil
@@ -132,10 +139,11 @@ func (p *Provider) listObjects(
 	after string,
 	maxKeys int,
 ) (*storage.ListObjectsOutput, error) {
-	keys, err := bk.Keys(ctx)
+	keys, skipped, err := bk.Keys(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("read keys: %w", err)
 	}
+	p.reportAll(skipped)
 
 	names, common := rollUp(keys, input)
 	pg, truncated := page(names, after, maxKeys)
@@ -143,17 +151,24 @@ func (p *Provider) listObjects(
 		IsTruncated:    truncated,
 		Objects:        make([]storage.ObjectSummary, 0, len(pg)),
 		CommonPrefixes: make([]string, 0),
+		Skipped:        len(skipped),
 	}
 	for _, name := range pg {
 		if common[name] {
 			out.CommonPrefixes = append(out.CommonPrefixes, name)
 			continue
 		}
-		sum, ok, sErr := summary(ctx, bk, name)
-		if sErr != nil {
+		sum, sErr := summary(ctx, bk, name)
+		switch {
+		case errors.Is(sErr, vfs.ErrObjectNotFound):
+			// Deleted since its key was read.
+		case errors.Is(sErr, vfs.ErrCorrupt):
+			// Damaged since its key was read: left out like the others.
+			p.report(vfs.Skipped{Path: bk.MetaPath(name), Err: sErr})
+			out.Skipped++
+		case sErr != nil:
 			return nil, sErr
-		}
-		if ok {
+		default:
 			out.Objects = append(out.Objects, sum)
 		}
 	}
@@ -190,24 +205,23 @@ func rollUp(keys []string, input *storage.ListObjectsInput) ([]string, map[strin
 	return names, common
 }
 
-// summary returns the summary of the object key in bk, or false when it was
-// deleted since its key was read.
-func summary(ctx context.Context, bk *vfs.Bucket, key string) (storage.ObjectSummary, bool, error) {
+// summary returns the summary of the object key in bk. An object deleted
+// since its key was read returns an error wrapping vfs.ErrObjectNotFound,
+// and one damaged since, vfs.ErrCorrupt.
+func summary(ctx context.Context, bk *vfs.Bucket, key string) (storage.ObjectSummary, error) {
 	obj, err := bk.OpenObject(ctx, &vfs.OpenObjectInput{Key: key})
-	if errors.Is(err, vfs.ErrObjectNotFound) {
-		return storage.ObjectSummary{}, false, nil
-	}
 	if err != nil {
-		return storage.ObjectSummary{}, false, fmt.Errorf("open object: %w", err)
+		return storage.ObjectSummary{}, fmt.Errorf("open object: %w", err)
 	}
 	if cErr := obj.File.Close(); cErr != nil {
-		return storage.ObjectSummary{}, false, fmt.Errorf("close data file: %w", cErr)
+		return storage.ObjectSummary{}, fmt.Errorf("close data file: %w", cErr)
 	}
 	return storage.ObjectSummary{
 		Key:          key,
 		LastModified: obj.LastModified,
+		ETag:         obj.ETag,
 		Size:         obj.Size,
-	}, true, nil
+	}, nil
 }
 
 // page sorts names, drops duplicates, and returns at most n of those after

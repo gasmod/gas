@@ -16,7 +16,15 @@ type Provider interface {
 	// CreateBucket creates the bucket named in input. Creating a bucket the
 	// caller already owns succeeds; ErrBucketExists means the name is taken
 	// by someone else.
-	CreateBucket(ctx context.Context, input *CreateBucketInput) (*BucketInfo, error)
+	CreateBucket(ctx context.Context, input *CreateBucketInput) (*Bucket, error)
+	// HeadBucket reports whether a bucket exists and what the backend knows
+	// about it. A missing bucket is ErrBucketNotFound, and one the caller may
+	// not access is ErrAccessDenied.
+	HeadBucket(ctx context.Context, input *HeadBucketInput) (*Bucket, error)
+	// DeleteBucket deletes an empty bucket. A bucket that holds objects is
+	// ErrBucketNotEmpty, and a missing bucket is ErrBucketNotFound: unlike
+	// DeleteObject of a missing key, which succeeds, as on S3.
+	DeleteBucket(ctx context.Context, input *DeleteBucketInput) error
 	// ListBuckets returns one page of the caller's buckets, in name order.
 	ListBuckets(ctx context.Context, input *ListBucketsInput) (*ListBucketsOutput, error)
 
@@ -43,14 +51,34 @@ type CreateBucketInput struct {
 	Bucket string
 }
 
-// BucketInfo describes a bucket CreateBucket created. Fields the backend does
-// not report are empty.
-type BucketInfo struct {
-	// ID identifies the bucket, such as its ARN on S3.
+// HeadBucketInput names the bucket HeadBucket describes.
+type HeadBucketInput struct {
+	// Bucket is the name of the bucket. It must be a valid S3 bucket name;
+	// the configured bucket is not a fallback.
+	Bucket string
+}
+
+// DeleteBucketInput names the bucket DeleteBucket deletes.
+type DeleteBucketInput struct {
+	// Bucket is the name of the bucket. It must be a valid S3 bucket name;
+	// the configured bucket is not a fallback.
+	Bucket string
+}
+
+// Bucket describes a bucket. CreateBucket, HeadBucket and ListBuckets
+// return it; fields
+// the backend does not report for an operation are empty, and each backend's
+// documentation says which those are.
+type Bucket struct {
+	// CreationDate is when the bucket was created, as the backend reports
+	// it.
+	CreationDate time.Time
+	// Name is the bucket name.
+	Name string
+	// ID identifies the bucket on the backend, such as its ARN on S3.
 	ID string
-	// Location is where the backend placed the bucket, such as the Location
-	// header S3 returns.
-	Location string
+	// Region is the region the bucket is in.
+	Region string
 }
 
 // BaseObjectInput identifies an object. It is embedded in every object
@@ -91,6 +119,44 @@ type HeadObjectInput struct {
 	BaseObjectInput
 }
 
+// ObjectHeaders are the headers stored with an object. Each one a write sets
+// reads back on ObjectInfo; a nil one is not stored.
+type ObjectHeaders struct {
+	// Metadata is user metadata stored with the object.
+	Metadata map[string]string
+	// CacheControl is stored as the object's Cache-Control header.
+	CacheControl *string
+	// ContentDisposition is stored as the object's Content-Disposition
+	// header.
+	ContentDisposition *string
+	// ContentEncoding is stored as the object's Content-Encoding header. The
+	// body is stored as given, not decoded or encoded.
+	ContentEncoding *string
+	// ContentLanguage is stored as the object's Content-Language header.
+	ContentLanguage *string
+	// ContentType is the object's media type.
+	ContentType *string
+	// Expires is stored as the object's Expires header, as text. A backend
+	// may accept only the one form it can store unchanged, and return
+	// ErrInvalidHeader for anything else; see each backend's documentation.
+	Expires *string
+}
+
+// WriteCondition makes a write conditional on the object it would replace.
+// The zero value writes unconditionally. At most one field may be set.
+type WriteCondition struct {
+	// IfMatch writes only when an object exists under the key and its ETag
+	// is this one, quoted or not: another ETag, including the empty one of
+	// an object stored by a backend version that recorded none, is
+	// ErrPreconditionFailed, and a missing key is ErrKeyNotFound. An empty
+	// value or "*" is ErrInvalidCondition.
+	IfMatch *string
+	// IfNoneMatch writes only when no object exists under the key, and is
+	// ErrPreconditionFailed otherwise. It must be "*"; any other value is
+	// ErrInvalidCondition.
+	IfNoneMatch *string
+}
+
 // PutObjectInput describes the object PutObject writes.
 type PutObjectInput struct {
 	// Body supplies the contents. Nil writes an empty object. It may be any
@@ -104,12 +170,8 @@ type PutObjectInput struct {
 	// is read to EOF, so one that blocks after exactly ContentLength bytes
 	// without ending blocks PutObject.
 	ContentLength *int64
-	// ContentType is the object's media type.
-	ContentType *string
-	// Expires is stored as the object's Expires header.
-	Expires *time.Time
-	// Metadata is user metadata stored with the object.
-	Metadata map[string]string
+	ObjectHeaders
+	WriteCondition
 	BaseObjectInput
 }
 
@@ -129,8 +191,8 @@ type DeleteObjectInput struct {
 // ListBucketsInput selects the page of buckets ListBuckets returns. Every
 // field is optional; the zero value lists the first page of every bucket.
 type ListBucketsInput struct {
-	// ContinuationToken resumes a listing from the ContinuationToken of the
-	// previous page. A non-nil empty string is ErrInvalidContinuationToken.
+	// ContinuationToken resumes a listing from the NextContinuationToken of
+	// the previous page. A non-nil empty string is ErrInvalidContinuationToken.
 	ContinuationToken *string
 	// MaxBuckets is the most buckets the page holds, from 1 to 10000. Nil
 	// means 10000. A value outside the range is ErrInvalidLimit.
@@ -141,20 +203,17 @@ type ListBucketsInput struct {
 
 // ListBucketsOutput is one page of buckets.
 type ListBucketsOutput struct {
-	// ContinuationToken resumes the listing after this page. It is empty on
-	// the last page.
-	ContinuationToken string
+	// NextContinuationToken resumes the listing after this page. It is empty
+	// on the last page, and only there.
+	NextContinuationToken string
 	// Buckets are the buckets of the page, in name order.
-	Buckets []BucketSummary
-}
-
-// BucketSummary describes a bucket in a ListBuckets page.
-type BucketSummary struct {
-	// CreationDate is when the bucket was created, as the backend reports
-	// it.
-	CreationDate time.Time
-	// Name is the bucket name.
-	Name string
+	Buckets []Bucket
+	// Skipped counts the buckets this listing left out because the backend
+	// could not read them, such as a dir bucket whose name record is
+	// damaged. It covers every bucket, regardless of Prefix or the page, so
+	// every page of one listing repeats it. The buckets returned are
+	// correct. It is always 0 on s3.
+	Skipped int
 }
 
 // ListObjectsInput selects the page of objects ListObjects returns. It
@@ -185,13 +244,22 @@ type ListObjectsInput struct {
 // ListObjectsOutput is one page of objects.
 type ListObjectsOutput struct {
 	// NextContinuationToken resumes the listing after this page. It is empty
-	// when IsTruncated is false.
+	// on the last page, and only there, which is when IsTruncated is false.
 	NextContinuationToken string
 	// Objects are the objects of the page, in key order.
 	Objects []ObjectSummary
 	// CommonPrefixes are the prefixes keys were rolled up into by Delimiter,
 	// in order. Each is listed once across all pages.
 	CommonPrefixes []string
+	// Skipped counts the objects this listing left out because the backend
+	// could not read them, such as a dir object whose metadata is corrupt or
+	// whose data file is gone. It covers the whole bucket, regardless of
+	// Prefix, StartAfter, Delimiter or the page, so every page of one
+	// listing repeats that count; a page also adds any of its own objects
+	// found damaged while it was being built, so pages can differ when
+	// objects are damaged during a listing. The objects returned are
+	// correct. It is always 0 on s3.
+	Skipped int
 	// IsTruncated reports whether more objects or common prefixes follow.
 	IsTruncated bool
 }

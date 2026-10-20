@@ -51,9 +51,21 @@ var (
 	// is sent to the backend.
 	ErrInvalidBucket = errors.New("storage: invalid bucket")
 
-	// ErrBucketNotFound is returned by object operations when the bucket does
-	// not exist (except by the s3 backend's HeadObject; see ErrNotFound).
+	// ErrBucketNotFound is returned by object operations, HeadBucket and
+	// DeleteBucket when the bucket does not exist (except by the s3
+	// backend's HeadObject; see ErrNotFound).
 	ErrBucketNotFound = errors.New("storage: bucket not found")
+
+	// ErrBucketNotEmpty is returned by DeleteBucket when the bucket still
+	// holds objects. No object is deleted.
+	ErrBucketNotEmpty = errors.New("storage: bucket not empty")
+
+	// ErrAccessDenied is returned by HeadBucket and DeleteBucket when the
+	// backend refuses the caller access to the bucket. On S3 that is a 403,
+	// which S3 gives for a bucket another account owns and for one the
+	// caller owns but lacks permission on, so it does not say who owns the
+	// bucket. The dir backend never returns it.
+	ErrAccessDenied = errors.New("storage: access denied")
 
 	// ErrBucketExists is returned by CreateBucket when the bucket name is
 	// taken by someone else (S3's BucketAlreadyExists). Creating a bucket the
@@ -81,6 +93,24 @@ var (
 	// set, because it does not store objects in parts. Nothing is read or
 	// changed.
 	ErrNotSupported = errors.New("storage: not supported")
+
+	// ErrInvalidHeader is returned by PutObject, and by Presigner's
+	// PresignUploadURL, for a header value the backend cannot store as given,
+	// such as an Expires that the s3 backend cannot send unchanged because it
+	// is not an IMF-fixdate.
+	// Nothing is stored or signed.
+	ErrInvalidHeader = errors.New("storage: invalid header")
+
+	// ErrPreconditionFailed is returned by PutObject when its WriteCondition
+	// does not hold: IfNoneMatch "*" and an object exists, or IfMatch and the
+	// object's ETag differs. Nothing is written.
+	ErrPreconditionFailed = errors.New("storage: precondition failed")
+
+	// ErrInvalidCondition is returned by PutObject, and by Presigner's
+	// PresignUploadURL, for a WriteCondition that cannot be evaluated: an
+	// IfNoneMatch other than "*", an empty IfMatch or one of "*", or both
+	// set. Nothing is sent, written or signed.
+	ErrInvalidCondition = errors.New("storage: invalid condition")
 
 	// ErrInvalidOption is returned by a backend constructor given a nil
 	// option. The message names the option's zero-based position in the

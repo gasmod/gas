@@ -39,9 +39,6 @@ func TestProvider_CrossProcessLocking(t *testing.T) {
 	if os.Getenv(crossProcessRootEnv) != "" {
 		t.Skip("running as a cross-process child")
 	}
-	if testing.Short() {
-		t.Skip("spawns child processes; skipped under -short")
-	}
 
 	_, dir := newTestProvider(t)
 
@@ -115,8 +112,10 @@ func TestCrossProcessWriter(t *testing.T) {
 		if _, err := p.PutObject(ctx, &storage.PutObjectInput{
 			BaseObjectInput: in,
 			Body:            bytes.NewReader(bytes.Repeat([]byte(letter), crossProcessBodySize)),
-			ContentType:     &contentType,
-			Metadata:        map[string]string{"letter": letter},
+			ObjectHeaders: storage.ObjectHeaders{
+				ContentType: &contentType,
+				Metadata:    map[string]string{"letter": letter},
+			},
 		}); err != nil {
 			t.Fatalf("PutObject() %d error: %v", i, err)
 		}
