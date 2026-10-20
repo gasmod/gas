@@ -153,11 +153,12 @@ func (a *App) Start(ctx context.Context) error {
 func (a *App) Server() *http.Server {
 	a.srvOnce.Do(func() {
 		a.srv = &http.Server{
-			Addr:         fmt.Sprintf("%s:%d", a.cfg.Server.Host, a.cfg.Server.Port),
-			Handler:      a.csrfProtection.Handler(a.router),
-			ReadTimeout:  a.cfg.Server.ReadTimeout,
-			WriteTimeout: a.cfg.Server.WriteTimeout,
-			IdleTimeout:  a.cfg.Server.IdleTimeout,
+			Addr:              fmt.Sprintf("%s:%d", a.cfg.Server.Host, a.cfg.Server.Port),
+			Handler:           a.csrfProtection.Handler(a.router),
+			ReadTimeout:       a.cfg.Server.ReadTimeout,
+			ReadHeaderTimeout: a.cfg.Server.ReadHeaderTimeout,
+			WriteTimeout:      a.cfg.Server.WriteTimeout,
+			IdleTimeout:       a.cfg.Server.IdleTimeout,
 		}
 	})
 	return a.srv

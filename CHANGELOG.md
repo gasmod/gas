@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`ServerSettings.ReadHeaderTimeout`**, which `App.Server` sets on the
+  `*http.Server`. It bounds how long a client may take to send its request
+  headers. net/http falls back to `ReadTimeout` only when it is zero, so a
+  service that zeroed `ReadTimeout` to stream request bodies had no header
+  deadline at all. The default is 5s, the header deadline a default config
+  already got from `ReadTimeout`, so default behaviour is unchanged.
+  Closes #144.
+
 ## [0.5.6] - 2026-10-19
 
 No change to this module's code. The release pinned every internal module

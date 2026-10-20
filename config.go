@@ -5,12 +5,13 @@ import (
 )
 
 const (
-	defaultHost            = "0.0.0.0"
-	defaultPort            = 8080
-	defaultReadTimeout     = 5 * time.Second
-	defaultWriteTimeout    = 10 * time.Second
-	defaultIdleTimeout     = 2 * time.Minute
-	defaultShutdownTimeout = 30 * time.Second
+	defaultHost              = "0.0.0.0"
+	defaultPort              = 8080
+	defaultReadTimeout       = 5 * time.Second
+	defaultReadHeaderTimeout = 5 * time.Second
+	defaultWriteTimeout      = 10 * time.Second
+	defaultIdleTimeout       = 2 * time.Minute
+	defaultShutdownTimeout   = 30 * time.Second
 
 	// defaultMaxJSONBodyBytes is the default cap on the request body BindJSON
 	// reads: 1 MiB.
@@ -39,6 +40,16 @@ type ServerSettings struct {
 	// ReadTimeout is the maximum duration for reading the entire request.
 	ReadTimeout time.Duration
 
+	// ReadHeaderTimeout is the maximum duration for reading the request
+	// headers. It defaults to 5s, the header deadline net/http derived from
+	// the default ReadTimeout before this field existed. net/http bounds a
+	// TLS handshake by the smallest of ReadHeaderTimeout, ReadTimeout and
+	// WriteTimeout that is set. Zero
+	// falls back to ReadTimeout, as in net/http, so a server that zeroes
+	// ReadTimeout to stream request bodies keeps a header deadline only if
+	// this stays set.
+	ReadHeaderTimeout time.Duration
+
 	// WriteTimeout is the maximum duration before timing out writes of the response.
 	WriteTimeout time.Duration
 
@@ -60,12 +71,13 @@ type ServerSettings struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Server: ServerSettings{
-			Host:            defaultHost,
-			Port:            defaultPort,
-			ReadTimeout:     defaultReadTimeout,
-			WriteTimeout:    defaultWriteTimeout,
-			IdleTimeout:     defaultIdleTimeout,
-			ShutdownTimeout: defaultShutdownTimeout,
+			Host:              defaultHost,
+			Port:              defaultPort,
+			ReadTimeout:       defaultReadTimeout,
+			ReadHeaderTimeout: defaultReadHeaderTimeout,
+			WriteTimeout:      defaultWriteTimeout,
+			IdleTimeout:       defaultIdleTimeout,
+			ShutdownTimeout:   defaultShutdownTimeout,
 
 			MaxJSONBodyBytes: defaultMaxJSONBodyBytes,
 		},

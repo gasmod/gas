@@ -764,13 +764,14 @@ type Config struct {
 }
 
 type ServerSettings struct {
-	Host             string        // default: "0.0.0.0"; IP or RFC 1123 hostname, checked by Bind
-	Port             int           // default: 8080
-	ReadTimeout      time.Duration // default: 5s
-	WriteTimeout     time.Duration // default: 10s
-	IdleTimeout      time.Duration // default: 2m
-	ShutdownTimeout  time.Duration // default: 30s
-	MaxJSONBodyBytes int64         // default: 1 MiB; BindJSON's body cap, <= 0 is no limit
+	Host              string        // default: "0.0.0.0"; IP or RFC 1123 hostname, checked by Bind
+	Port              int           // default: 8080
+	ReadTimeout       time.Duration // default: 5s
+	ReadHeaderTimeout time.Duration // default: 5s; 0 falls back to ReadTimeout
+	WriteTimeout      time.Duration // default: 10s
+	IdleTimeout       time.Duration // default: 2m
+	ShutdownTimeout   time.Duration // default: 30s
+	MaxJSONBodyBytes  int64         // default: 1 MiB; BindJSON's body cap, <= 0 is no limit
 }
 
 gas.DefaultConfig() *Config
