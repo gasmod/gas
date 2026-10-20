@@ -18,10 +18,12 @@ type App struct {
 	*Worker
 
 	srv            *http.Server
+	handler        http.Handler
 	router         *Router
 	cfg            *Config
 	csrfProtection *http.CrossOriginProtection
 	srvOnce        sync.Once
+	handlerOnce    sync.Once
 }
 
 // --- AppOption functions (HTTP-specific) ---
@@ -154,7 +156,7 @@ func (a *App) Server() *http.Server {
 	a.srvOnce.Do(func() {
 		a.srv = &http.Server{
 			Addr:              fmt.Sprintf("%s:%d", a.cfg.Server.Host, a.cfg.Server.Port),
-			Handler:           a.csrfProtection.Handler(a.router),
+			Handler:           a.Handler(),
 			ReadTimeout:       a.cfg.Server.ReadTimeout,
 			ReadHeaderTimeout: a.cfg.Server.ReadHeaderTimeout,
 			WriteTimeout:      a.cfg.Server.WriteTimeout,
@@ -166,9 +168,15 @@ func (a *App) Server() *http.Server {
 
 // Handler returns the fully wrapped http.Handler used by the App's server
 // (router behind CSRF protection). Useful for embedding the App in tests or
-// in an externally managed listener.
+// in an externally managed listener. It is built once and does not build
+// the server, so calling it before Start leaves the server to be built from
+// the bound config. It is the handler the App built: a replacement assigned
+// to Server().Handler is not returned here.
 func (a *App) Handler() http.Handler {
-	return a.Server().Handler
+	a.handlerOnce.Do(func() {
+		a.handler = a.csrfProtection.Handler(a.router)
+	})
+	return a.handler
 }
 
 // Serve starts the HTTP server and blocks until it stops. A clean shutdown

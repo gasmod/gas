@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   already got from `ReadTimeout`, so default behaviour is unchanged.
   Closes #144.
 
+### Changed
+
+- **`App.Handler` no longer builds the server.** It used to return
+  `Server().Handler`, so calling it before `Start`, as tests and embedders
+  do, built the `*http.Server` from the config as it stood then. It now
+  builds only the handler, once; a handler assigned to `Server().Handler`
+  is no longer what it returns.
+
 ## [0.5.6] - 2026-10-19
 
 No change to this module's code. The release pinned every internal module
