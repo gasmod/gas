@@ -70,8 +70,8 @@
 // # Errors
 //
 // Every error is prefixed "gas/storage/dir/provider: <op>: ", with op one of
-// create bucket, list buckets, head, put, get, delete or list, and wraps the
-// storage sentinel a caller can act on:
+// create bucket, head bucket, delete bucket, list buckets, head, put, get,
+// delete or list, and wraps the storage sentinel a caller can act on:
 //
 //   - storage.ErrNotInitialized: a Provider that NewProvider did not build,
 //     from every method. NewProvider returns ErrRootRequired, which wraps it,
@@ -84,7 +84,17 @@
 //   - storage.ErrInvalidKey and storage.ErrInvalidBucket: a key or bucket
 //     name that fails validation, checked before any disk access.
 //   - storage.ErrBucketNotFound: a missing bucket, from Head, Put, Get,
-//     Delete and ListObjects.
+//     Delete, ListObjects, HeadBucket and DeleteBucket.
+//   - storage.ErrBucketNotEmpty: a DeleteBucket of a bucket that holds an
+//     object, which then removes nothing. Entries no read can use
+//     (unusable metadata, metadata whose data file is gone, temp files of
+//     crashed writes) are not objects: DeleteBucket removes them with the
+//     bucket once it found no object, so they can never make a bucket
+//     undeletable.
+//   - storage.ErrBucketNotFound from Head, Put, Get, Delete and ListObjects,
+//     too, when DeleteBucket removes the bucket while the call runs, such
+//     as a Put of a new key still copying its body; it holds even if a
+//     bucket of the same name is created again meanwhile.
 //   - storage.ErrInvalidLimit and storage.ErrInvalidContinuationToken: a
 //     list page size out of range, or a continuation token that is empty or
 //     that this backend did not issue.
@@ -132,6 +142,10 @@
 // sniffs one from the body with http.DetectContentType. Metadata keys keep
 // their case, and invalid UTF-8 in metadata or a header is replaced with
 // U+FFFD when it is stored.
+//
+// CreateBucket and DeleteBucket of the same name never interleave, across
+// processes too: each holds a lock file named after the bucket under
+// .gas/locks for its whole run.
 //
 // Listing reads every name in the bucket (or every bucket's name record) on
 // each call, so a page costs time in proportion to the bucket, not the page.

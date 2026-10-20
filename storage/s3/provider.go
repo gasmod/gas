@@ -137,6 +137,67 @@ func (p *Provider) CreateBucket(
 	return &storage.Bucket{Name: input.Bucket, ID: valueOf(res.BucketArn)}, nil
 }
 
+// HeadBucket reports whether the bucket input.Bucket exists and returns its
+// Name, with the ARN as ID and the region S3 reports. CreationDate is empty:
+// S3's HeadBucket does not report it. A missing bucket is
+// storage.ErrBucketNotFound, and a 403 is storage.ErrAccessDenied, which S3
+// answers both for a bucket another account owns and for one the caller
+// owns without permission to it (not verified against AWS). The configured
+// bucket is not a fallback.
+func (p *Provider) HeadBucket(
+	ctx context.Context,
+	input *storage.HeadBucketInput,
+) (*storage.Bucket, error) {
+	if err := p.checkReady(); err != nil {
+		return nil, err
+	}
+
+	if input == nil {
+		return nil, internal.Errorf("s3/provider", "head bucket: %w", storage.ErrInputRequired)
+	}
+
+	if !internal.IsValidBucketName(input.Bucket) {
+		return nil, internal.Errorf("s3/provider", "head bucket: %w", storage.ErrInvalidBucket)
+	}
+
+	res, err := p.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: new(input.Bucket)})
+	if err != nil {
+		return nil, internal.Errorf("s3/provider", "head bucket: %w", wrapBucketError(err))
+	}
+
+	return &storage.Bucket{
+		Name:   input.Bucket,
+		ID:     valueOf(res.BucketArn),
+		Region: valueOf(res.BucketRegion),
+	}, nil
+}
+
+// DeleteBucket deletes the empty bucket input.Bucket. A bucket that holds
+// objects is storage.ErrBucketNotEmpty (S3's BucketNotEmpty), a missing one
+// storage.ErrBucketNotFound, and a 403 storage.ErrAccessDenied. The
+// configured bucket is not a fallback.
+func (p *Provider) DeleteBucket(ctx context.Context, input *storage.DeleteBucketInput) error {
+	if err := p.checkReady(); err != nil {
+		return err
+	}
+
+	if input == nil {
+		return internal.Errorf("s3/provider", "delete bucket: %w", storage.ErrInputRequired)
+	}
+
+	if !internal.IsValidBucketName(input.Bucket) {
+		return internal.Errorf("s3/provider", "delete bucket: %w", storage.ErrInvalidBucket)
+	}
+
+	if _, err := p.client.DeleteBucket(
+		ctx,
+		&s3.DeleteBucketInput{Bucket: new(input.Bucket)},
+	); err != nil {
+		return internal.Errorf("s3/provider", "delete bucket: %w", wrapBucketError(err))
+	}
+	return nil
+}
+
 // HeadObject returns an object's size, content type, last-modified time,
 // version, ETag, metadata and stored headers. Expires is the header's text as
 // S3 returned it. A missing key or bucket is storage.ErrNotFound.

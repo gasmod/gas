@@ -43,10 +43,16 @@ func TestMockProvider_Defaults(t *testing.T) {
 	if out, err := m.ListObjects(ctx, nil); out != nil || err != nil {
 		t.Errorf("ListObjects() = %v, %v, want nil, nil", out, err)
 	}
+	if b, err := m.HeadBucket(ctx, nil); b != nil || err != nil {
+		t.Errorf("HeadBucket() = %v, %v, want nil, nil", b, err)
+	}
+	if err := m.DeleteBucket(ctx, nil); err != nil {
+		t.Errorf("DeleteBucket() = %v, want nil", err)
+	}
 
 	order := []string{
 		"CreateBucket", "HeadObject", "PutObject", "GetObject", "DeleteObject",
-		"ListBuckets", "ListObjects",
+		"ListBuckets", "ListObjects", "HeadBucket", "DeleteBucket",
 	}
 	for _, method := range order {
 		if n := m.CallCount(method); n != 1 {
@@ -327,5 +333,44 @@ func TestMockPresigner_Concurrent(t *testing.T) {
 	if m.CallCount("PresignUploadURL") != n || m.CallCount("PresignDownloadURL") != n {
 		t.Errorf("CallCount upload=%d download=%d, want %d each",
 			m.CallCount("PresignUploadURL"), m.CallCount("PresignDownloadURL"), n)
+	}
+}
+
+// TestMockProvider_BucketMethods checks that HeadBucket and DeleteBucket
+// delegate to their Fn fields and record their inputs.
+func TestMockProvider_BucketMethods(t *testing.T) {
+	t.Parallel()
+
+	headIn := &storage.HeadBucketInput{Bucket: "h"}
+	delIn := &storage.DeleteBucketInput{Bucket: "d"}
+	m := &MockProvider{
+		HeadBucketFn: func(_ context.Context, in *storage.HeadBucketInput) (*storage.Bucket, error) {
+			if in != headIn {
+				t.Error("HeadBucketFn received wrong arguments")
+			}
+			return &storage.Bucket{Name: "h"}, nil
+		},
+		DeleteBucketFn: func(_ context.Context, in *storage.DeleteBucketInput) error {
+			if in != delIn {
+				t.Error("DeleteBucketFn received wrong arguments")
+			}
+			return storage.ErrBucketNotEmpty
+		},
+	}
+
+	if b, err := m.HeadBucket(context.Background(), headIn); err != nil || b.Name != "h" {
+		t.Errorf("HeadBucket() = %+v, %v", b, err)
+	}
+	if err := m.DeleteBucket(
+		context.Background(),
+		delIn,
+	); !errors.Is(
+		err,
+		storage.ErrBucketNotEmpty,
+	) {
+		t.Errorf("DeleteBucket() = %v, want ErrBucketNotEmpty", err)
+	}
+	if m.CallCount("HeadBucket") != 1 || m.CallCount("DeleteBucket") != 1 {
+		t.Errorf("Calls = %+v, want one HeadBucket and one DeleteBucket", m.Calls)
 	}
 }

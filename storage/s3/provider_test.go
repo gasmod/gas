@@ -349,6 +349,7 @@ func TestProvider_ZeroValue(t *testing.T) {
 			if !errors.Is(err, storage.ErrNotInitialized) {
 				t.Errorf("CreateBucket(nil) error = %v, want ErrNotInitialized", err)
 			}
+
 			_, err = p.HeadObject(ctx, nil)
 			if !errors.Is(err, storage.ErrNotInitialized) {
 				t.Errorf(
@@ -380,8 +381,10 @@ func TestProvider_NilInput(t *testing.T) {
 			_, err := p.DeleteObject(ctx, nil)
 			return err
 		},
-		"list":         func() error { _, err := p.ListObjects(ctx, nil); return err },
-		"list buckets": func() error { _, err := p.ListBuckets(ctx, nil); return err },
+		"list":          func() error { _, err := p.ListObjects(ctx, nil); return err },
+		"list buckets":  func() error { _, err := p.ListBuckets(ctx, nil); return err },
+		"head bucket":   func() error { _, err := p.HeadBucket(ctx, nil); return err },
+		"delete bucket": func() error { return p.DeleteBucket(ctx, nil) },
 	}
 	for op, call := range calls {
 		err := call()

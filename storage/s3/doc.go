@@ -59,8 +59,11 @@
 //
 // CreateBucket returns the bucket's Name and the ARN S3 reports as ID. S3's
 // Location response header is a path, not a region, so it is not reported,
-// and CreationDate and Region are empty. ListBuckets returns the Name and
-// CreationDate, and the ARN and region when S3 sends them.
+// and CreationDate and Region are empty. HeadBucket returns the Name, the
+// ARN and the region S3 reports, but no CreationDate, which S3's HeadBucket
+// does not report: so the same bucket has a Region from HeadBucket and none
+// from CreateBucket. ListBuckets returns the Name and CreationDate, and the
+// ARN and region when S3 sends them.
 //
 // # Lifecycle
 //
@@ -102,7 +105,9 @@
 // sentinels, and the SDK error stays in the chain for errors.As:
 //
 //   - NoSuchBucket: storage.ErrBucketNotFound
+//
 //   - NoSuchKey: storage.ErrKeyNotFound
+//
 //   - NoSuchVersion (GetObject of a Version that does not exist):
 //     storage.ErrVersionNotFound. The SDK has no modeled type for it, so it
 //     is matched by error code. HeadObject cannot see it: S3 answers HEAD of
@@ -110,10 +115,13 @@
 //     A malformed version ID may get a 400 from AWS that maps to no
 //     sentinel (LocalStack answers NoSuchVersion), so do not rely on
 //     storage.ErrVersionNotFound for one.
+//
 //   - NotFound (a HEAD 404, which S3 also returns for a missing bucket):
 //     storage.ErrNotFound
+//
 //   - InvalidRange (a GET 416), and RequestedRangeNotSatisfiable (the SDK's
 //     name for a bodiless HEAD 416): storage.ErrInvalidRange
+//
 //   - BucketAlreadyExists (the name belongs to another account):
 //     storage.ErrBucketExists. BucketAlreadyOwnedByYou is not an error:
 //     CreateBucket of a bucket the caller owns succeeds, and its Bucket may
@@ -121,8 +129,16 @@
 //     other regions answer BucketAlreadyOwnedByYou, which carries none; not
 //     verified against AWS).
 //
-// Any other S3 error, such as AccessDenied or a redirect to another region,
-// carries no sentinel. The package adds
+//   - HeadBucket and DeleteBucket: a missing bucket (NoSuchBucket, or a
+//     HEAD 404) is storage.ErrBucketNotFound, BucketNotEmpty is
+//     storage.ErrBucketNotEmpty, and any 403 is storage.ErrAccessDenied. S3
+//     answers a HEAD 403 both for a bucket another account owns and for one
+//     the caller owns without permission (not verified against AWS). A 301
+//     for a bucket in another region than the client's carries no
+//     sentinel.
+//
+// Any other S3 error, such as AccessDenied from an object operation or a
+// redirect to another region, carries no sentinel. The package adds
 // no object key or metadata value to an error message, but the SDK's own
 // error for a failed request (connection refused, for example) includes the
 // request URL, which contains the bucket and the key.

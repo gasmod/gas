@@ -13,6 +13,10 @@ var (
 	// created.
 	ErrBucketExists = errors.New("bucket already exists")
 
+	// ErrBucketNotEmpty reports that DeleteBucket found an object in the
+	// bucket.
+	ErrBucketNotEmpty = errors.New("bucket not empty")
+
 	// ErrObjectNotFound reports that the object has no metadata file.
 	ErrObjectNotFound = errors.New("object not found")
 

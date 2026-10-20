@@ -3,6 +3,7 @@ package dir
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -75,7 +76,8 @@ func NewProvider(opts ...Option) func(cfgProvider gas.ConfigProvider) (*Provider
 	}
 }
 
-// CreateBucket creates the bucket input.Bucket. The returned Bucket has its
+// CreateBucket creates the bucket input.Bucket. It waits for a DeleteBucket
+// of the same name in progress, until ctx is done. The returned Bucket has its
 // Name and its CreationDate, when CreateBucket first ran for it; ID and
 // Region are empty. Every bucket under the root
 // belongs to the caller, so a bucket that already exists is success, as for a
@@ -83,7 +85,7 @@ func NewProvider(opts ...Option) func(cfgProvider gas.ConfigProvider) (*Provider
 // returns storage.ErrBucketExists. An invalid name returns an error wrapping
 // storage.ErrInvalidBucket.
 func (p *Provider) CreateBucket(
-	_ context.Context,
+	ctx context.Context,
 	input *storage.CreateBucketInput,
 ) (*storage.Bucket, error) {
 	if err := p.checkReady(); err != nil {
@@ -98,20 +100,84 @@ func (p *Provider) CreateBucket(
 		return nil, internal.Errorf(mod, "create bucket: %w", storage.ErrInvalidBucket)
 	}
 
-	if err := p.vfs.CreateBucket(input.Bucket); err != nil && !errors.Is(err, vfs.ErrBucketExists) {
+	entry, err := p.vfs.CreateBucket(ctx, input.Bucket)
+	if err != nil && !errors.Is(err, vfs.ErrBucketExists) {
 		return nil, opError("create bucket", nil, err)
 	}
-
-	// CreateBucket has just written the name record, so it names the bucket
-	// unless something replaced the record since.
-	entry, named, err := p.vfs.BucketEntry(input.Bucket)
-	if err != nil {
-		return nil, internal.Errorf(mod, "create bucket: %w", err)
-	}
-	if !named {
-		return nil, internal.Errorf(mod, "create bucket: name record does not name the bucket")
-	}
 	return &storage.Bucket{Name: input.Bucket, CreationDate: entry.Created}, nil
+}
+
+// HeadBucket reports whether the bucket input.Bucket exists. The returned
+// Bucket has its Name and, when its name record names it, its CreationDate;
+// ID and Region are empty. A bucket whose name record is missing or damaged,
+// which ListBuckets leaves out, exists with a zero CreationDate. A missing
+// bucket returns an error wrapping storage.ErrBucketNotFound, and an invalid
+// name one wrapping storage.ErrInvalidBucket. This backend never returns
+// storage.ErrAccessDenied.
+func (p *Provider) HeadBucket(
+	_ context.Context,
+	input *storage.HeadBucketInput,
+) (*storage.Bucket, error) {
+	if err := p.checkReady(); err != nil {
+		return nil, err
+	}
+
+	if input == nil {
+		return nil, internal.Errorf(mod, "head bucket: %w", storage.ErrInputRequired)
+	}
+
+	if !internal.IsValidBucketName(input.Bucket) {
+		return nil, internal.Errorf(mod, "head bucket: %w", storage.ErrInvalidBucket)
+	}
+
+	entry, err := p.vfs.HeadBucket(input.Bucket)
+	if err != nil {
+		return nil, opError("head bucket", nil, err)
+	}
+	return &storage.Bucket{Name: entry.Name, CreationDate: entry.Created}, nil
+}
+
+// DeleteBucket deletes the bucket input.Bucket, which must hold no object: a
+// bucket that does returns an error wrapping storage.ErrBucketNotEmpty and
+// keeps everything. A missing bucket returns an error wrapping
+// storage.ErrBucketNotFound, and an invalid name one wrapping
+// storage.ErrInvalidBucket.
+//
+// Entries no read can use do not count as objects, so they never keep a
+// bucket from being deleted: metadata that cannot be used, metadata whose
+// data file is gone, and the temp files of crashed writes are removed with
+// the bucket, but only once no object was found. Their contents could not
+// be read through this backend anyway. A write that lands while the delete
+// runs can still make it return storage.ErrBucketNotEmpty after that debris
+// is gone. A file in the bucket's metadata directory that this backend did
+// not write stops the delete with an error.
+//
+// A write of an existing key in progress is waited for, never cut short, so
+// a slow PutObject holds DeleteBucket, and with it a CreateBucket of the
+// same name, until it ends or ctx is done. A write of a new key still
+// copying its body is not waited for: the bucket is deleted under it, and
+// the PutObject returns an error wrapping storage.ErrBucketNotFound.
+//
+// A bucket created again afterwards gets a new CreationDate, except after a
+// crash between the delete's commit and its removal of the bucket's name
+// record, which leaves the old CreationDate in place.
+func (p *Provider) DeleteBucket(ctx context.Context, input *storage.DeleteBucketInput) error {
+	if err := p.checkReady(); err != nil {
+		return err
+	}
+
+	if input == nil {
+		return internal.Errorf(mod, "delete bucket: %w", storage.ErrInputRequired)
+	}
+
+	if !internal.IsValidBucketName(input.Bucket) {
+		return internal.Errorf(mod, "delete bucket: %w", storage.ErrInvalidBucket)
+	}
+
+	if err := p.vfs.DeleteBucket(ctx, input.Bucket); err != nil {
+		return opError("delete bucket", nil, err)
+	}
+	return nil
 }
 
 // HeadObject returns the info of the object. A missing object returns an
@@ -176,7 +242,12 @@ func (p *Provider) HeadObject(
 // returns the ObjectInfo together with an error wrapping ErrStaleData: the
 // object reads back as written.
 //
-// A missing bucket returns an error wrapping storage.ErrBucketNotFound.
+// A missing bucket returns an error wrapping storage.ErrBucketNotFound, and
+// so does a bucket that DeleteBucket removes while the body is being
+// written: the delete does not wait for a write of a new key, since the
+// bucket holds no object yet, and the write then finds no bucket to commit
+// to and stores nothing, even if a bucket of the same name is created
+// again before it ends.
 func (p *Provider) PutObject(
 	ctx context.Context,
 	input *storage.PutObjectInput,
@@ -218,15 +289,27 @@ func (p *Provider) PutObject(
 			Expires:            valueOf(input.Expires),
 		},
 	})
-	err = errors.Join(err, bk.Close())
-	if err != nil {
+	return p.putResult(bk, out, err)
+}
+
+// putResult closes bk and returns what PutObject reports for a write into
+// it that returned out and err: the object, the ObjectInfo with an
+// ErrStaleData error when the object was written but the old data file
+// stayed, or a nil ObjectInfo. A write that failed for want of its files
+// because DeleteBucket removed the bucket under it, even if a bucket of the
+// same name was created since, reports the bucket missing.
+func (p *Provider) putResult(
+	bk *vfs.Bucket,
+	out *vfs.ObjectStat,
+	err error,
+) (*storage.ObjectInfo, error) {
+	if err = errors.Join(p.removedErr(bk, err), bk.Close()); err != nil {
 		if out != nil && errors.Is(err, vfs.ErrStaleData) {
 			info := objectInfo(out)
 			return &info, opError("put", nil, err)
 		}
 		return nil, opError("put", nil, err)
 	}
-
 	info := objectInfo(out)
 	return &info, nil
 }
@@ -307,11 +390,24 @@ func (p *Provider) DeleteObject(
 	}
 
 	err := bk.DeleteObject(ctx, &vfs.DeleteObjectInput{Key: input.Key})
-	if err = errors.Join(err, bk.Close()); err != nil {
+	if err = errors.Join(p.removedErr(bk, err), bk.Close()); err != nil {
 		return nil, opError("delete", nil, err)
 	}
 
 	return &storage.ObjectInfo{}, nil
+}
+
+// removedErr returns err, an error from an operation on bk, marked as the
+// bucket's absence when it is a missing file (see vfs.IsMissing, which on
+// Windows includes a delete-pending directory) because DeleteBucket removed
+// bk while the operation ran, even if a bucket of the same name was created
+// since (see vfs.Removed). Without that, such an operation would report a
+// bare missing file, or a missing key where the whole bucket is gone.
+func (p *Provider) removedErr(bk *vfs.Bucket, err error) error {
+	if vfs.IsMissing(err) && p.vfs.Removed(bk) {
+		return fmt.Errorf("%w: deleted during the operation: %w", vfs.ErrBucketNotFound, err)
+	}
+	return err
 }
 
 // Root returns the root the provider stores into, or nil for a Provider that
@@ -350,6 +446,7 @@ func (p *Provider) openObject(
 	}
 
 	obj, oErr := bk.OpenObject(ctx, &vfs.OpenObjectInput{Key: in.Key})
+	oErr = p.removedErr(bk, oErr)
 	cErr := bk.Close()
 	if oErr != nil {
 		return nil, opError(op, notFound, errors.Join(oErr, cErr))
@@ -440,6 +537,8 @@ func opError(op string, notFound, err error) error {
 	switch {
 	case errors.Is(err, vfs.ErrBucketNotFound):
 		sentinel = storage.ErrBucketNotFound
+	case errors.Is(err, vfs.ErrBucketNotEmpty):
+		sentinel = storage.ErrBucketNotEmpty
 	case errors.Is(err, vfs.ErrObjectNotFound):
 		sentinel = notFound
 	case errors.Is(err, vfs.ErrStaleData):

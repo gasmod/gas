@@ -116,7 +116,7 @@ func (p *Provider) ListObjects(
 	}
 
 	out, err := p.listObjects(ctx, bk, input, after, maxKeys)
-	if err = errors.Join(err, bk.Close()); err != nil {
+	if err = errors.Join(p.removedErr(bk, err), bk.Close()); err != nil {
 		return nil, opError("list", nil, err)
 	}
 	return out, nil

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking changes
 
+- **`storage.Provider` gains `HeadBucket` and `DeleteBucket`.** Every
+  implementation of the interface must add them.
 - **`storage.Bucket` replaces `BucketInfo` and `BucketSummary`.** It has
   `Name`, `CreationDate`, `ID` and `Region`. `CreateBucket` returns
   `*Bucket`, and `ListBucketsOutput.Buckets` is `[]Bucket`. `Location` is
@@ -27,6 +29,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`HeadBucket` and `DeleteBucket`** in both backends, with
+  `HeadBucketInput` and `DeleteBucketInput`, and the sentinels
+  `storage.ErrBucketNotEmpty` and `storage.ErrAccessDenied` (s3 only, for
+  a 403). Deleting a missing bucket is `ErrBucketNotFound`, unlike
+  deleting a missing key. dir's `DeleteBucket` refuses only a bucket that
+  holds an object, and then removes nothing: unreadable metadata, metadata
+  whose data file is gone and temp files of crashed writes do not count,
+  and are removed with the bucket once no object was found, so none of
+  them can make a bucket undeletable. It waits for a write of an existing
+  key in progress rather than cutting it short; a write of a new key still
+  copying its body finds the bucket gone and returns `ErrBucketNotFound`.
+  It removes the bucket's name record, so a bucket created again gets a
+  new `CreationDate`.
+  `CreateBucket` and `DeleteBucket` of one name take a lock under
+  `.gas/locks` and so never interleave, in one process or several.
+  `storagetest.MockProvider` gains `HeadBucketFn` and `DeleteBucketFn`.
 - **System headers.** `CacheControl`, `ContentDisposition`,
   `ContentEncoding` and `ContentLanguage` on `ObjectHeaders`, stored by both
   backends and returned on `ObjectInfo` with `Expires`.

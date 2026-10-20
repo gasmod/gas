@@ -1196,6 +1196,8 @@ func TestProvider_ErrorPrefixes(t *testing.T) {
 		&storage.PutObjectInput{BaseObjectInput: inBucket("nope-bucket")},
 	)
 	_, checks["delete"] = p.DeleteObject(ctx, &storage.DeleteObjectInput{BaseObjectInput: base("")})
+	_, checks["head bucket"] = p.HeadBucket(ctx, &storage.HeadBucketInput{Bucket: "nope-bucket"})
+	checks["delete bucket"] = p.DeleteBucket(ctx, &storage.DeleteBucketInput{Bucket: "nope-bucket"})
 
 	for op, err := range checks {
 		want := "gas/storage/dir/provider: " + op + ": "

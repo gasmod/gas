@@ -24,6 +24,7 @@ const (
 	errCodeNotFound                = "NotFound"
 	errCodeBucketAlreadyOwnedByYou = "BucketAlreadyOwnedByYou"
 	errCodeBucketAlreadyExists     = "BucketAlreadyExists"
+	errCodeBucketNotEmpty          = "BucketNotEmpty"
 
 	// A GET of an unsatisfiable Range answers 416 InvalidRange. A HEAD 416
 	// has no body, and the SDK names it after the status text instead.
@@ -55,6 +56,40 @@ func wrapS3Error(err error) error {
 		return err
 	}
 	return fmt.Errorf("%w: %w", sentinel, err)
+}
+
+// wrapBucketError maps an error from HeadBucket or DeleteBucket like
+// wrapS3Error, for the answers a bucket operation gets: a missing bucket
+// (NoSuchBucket, or the bodiless 404 of a HEAD, which the SDK names
+// NotFound) is storage.ErrBucketNotFound, BucketNotEmpty is
+// storage.ErrBucketNotEmpty, and any 403 is storage.ErrAccessDenied. A HEAD
+// 403 has no body, so the status is matched rather than a code.
+func wrapBucketError(err error) error {
+	var sentinel error
+	switch {
+	case isS3ErrorType[*types.NoSuchBucket](err, errCodeNoSuchBucket),
+		isS3ErrorType[*types.NotFound](err, errCodeNotFound):
+		sentinel = storage.ErrBucketNotFound
+	case isS3ErrorCode(err, errCodeBucketNotEmpty):
+		sentinel = storage.ErrBucketNotEmpty
+	case httpStatus(err) == http.StatusForbidden:
+		sentinel = storage.ErrAccessDenied
+	default:
+		return err
+	}
+	return fmt.Errorf("%w: %w", sentinel, err)
+}
+
+// httpStatus returns the HTTP status of the response err came from, or 0
+// when err carries none.
+func httpStatus(err error) int {
+	if re, ok := errors.AsType[interface {
+		error
+		HTTPStatusCode() int
+	}](err); ok {
+		return re.HTTPStatusCode()
+	}
+	return 0
 }
 
 // isBucketOwnedByCaller reports whether err is S3's BucketAlreadyOwnedByYou,

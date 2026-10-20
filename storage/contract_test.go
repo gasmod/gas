@@ -131,6 +131,29 @@ func (m *memS3) createBucket(w http.ResponseWriter, r *http.Request, bucket stri
 	}
 }
 
+// bucketOp serves HEAD and DELETE on a bucket: 404 NoSuchBucket for a
+// missing one, 403 AccessDenied for one another account owns, and for
+// DELETE 409 BucketNotEmpty while it holds objects. A HEAD of the caller's
+// bucket reports its region. The caller holds m.mu.
+func (m *memS3) bucketOp(w http.ResponseWriter, r *http.Request, bucket string) {
+	owner, exists := m.owners[bucket]
+	switch {
+	case !exists:
+		memError(w, r, http.StatusNotFound, "NoSuchBucket")
+	case owner != requestAccessKey(r):
+		memError(w, r, http.StatusForbidden, "AccessDenied")
+	case r.Method == http.MethodHead:
+		w.Header().Set("X-Amz-Bucket-Region", "us-east-1")
+		w.WriteHeader(http.StatusOK)
+	case len(m.buckets[bucket]) > 0:
+		memError(w, r, http.StatusConflict, "BucketNotEmpty")
+	default:
+		delete(m.buckets, bucket)
+		delete(m.owners, bucket)
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 // memError writes an S3-style XML error with the given status and code.
 // HEAD responses carry no body, as on S3.
 func memError(w http.ResponseWriter, r *http.Request, status int, code string) {
@@ -165,6 +188,10 @@ func (m *memS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodGet && bucket == "" {
 		m.listBuckets(w, r)
+		return
+	}
+	if (r.Method == http.MethodHead || r.Method == http.MethodDelete) && (!hasKey || key == "") {
+		m.bucketOp(w, r, bucket)
 		return
 	}
 
@@ -461,6 +488,8 @@ func classify(err error) string {
 		{storage.ErrInvalidContinuationToken, "ErrInvalidContinuationToken"},
 		{storage.ErrContentLengthMismatch, "ErrContentLengthMismatch"},
 		{storage.ErrInvalidHeader, "ErrInvalidHeader"},
+		{storage.ErrBucketNotEmpty, "ErrBucketNotEmpty"},
+		{storage.ErrAccessDenied, "ErrAccessDenied"},
 	}
 	var names []string
 	for _, s := range sentinels {

@@ -15,8 +15,8 @@
 //	gas.WithSingletonService[storage.Provider](s3.NewProvider()),
 //	gas.WithSingletonService[storage.Presigner](s3.NewPresigner()),
 //
-// Provider creates and lists buckets and reads, writes, inspects, lists, and
-// deletes objects.
+// Provider creates, inspects, lists and deletes buckets, and reads, writes,
+// inspects, lists, and deletes objects.
 // Presigner issues time-limited URLs that let a client upload or download one
 // object directly against the backend, without going through the app.
 //
@@ -95,9 +95,14 @@
 //
 // # Buckets
 //
-// CreateBucket and ListBuckets describe a bucket with Bucket. Which of its
-// fields a backend fills depends on the operation; each backend's
-// documentation says which.
+// CreateBucket, HeadBucket and ListBuckets describe a bucket with Bucket.
+// Which of its fields a backend fills depends on the operation; each
+// backend's documentation says which. HeadBucket of a missing bucket is
+// ErrBucketNotFound, and of one the caller may not access ErrAccessDenied.
+// DeleteBucket deletes an empty bucket: one that holds objects is
+// ErrBucketNotEmpty, and a missing one ErrBucketNotFound. Unlike
+// DeleteObject of a missing key, which succeeds, deleting a missing bucket
+// is an error, as on S3.
 //
 // # Listing
 //

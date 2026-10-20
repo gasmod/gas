@@ -314,6 +314,14 @@ func TestProvider_ZeroValue(t *testing.T) {
 	wantErrIs(t, "ListBuckets", err, storage.ErrNotInitialized)
 	_, err = p.ListBuckets(ctx, nil)
 	wantErrIs(t, "ListBuckets(nil)", err, storage.ErrNotInitialized)
+	_, err = p.HeadBucket(ctx, &storage.HeadBucketInput{Bucket: "bucket"})
+	wantErrIs(t, "HeadBucket", err, storage.ErrNotInitialized)
+	_, err = p.HeadBucket(ctx, nil)
+	wantErrIs(t, "HeadBucket(nil)", err, storage.ErrNotInitialized)
+	err = p.DeleteBucket(ctx, &storage.DeleteBucketInput{Bucket: "bucket"})
+	wantErrIs(t, "DeleteBucket", err, storage.ErrNotInitialized)
+	err = p.DeleteBucket(ctx, nil)
+	wantErrIs(t, "DeleteBucket(nil)", err, storage.ErrNotInitialized)
 }
 
 // TestProvider_NilInput checks that every method rejects a nil input with
@@ -356,6 +364,13 @@ func TestProvider_NilInput(t *testing.T) {
 		{name: "ListBuckets", op: "list buckets", call: func() error {
 			_, err := p.ListBuckets(ctx, nil)
 			return err
+		}},
+		{name: "HeadBucket", op: "head bucket", call: func() error {
+			_, err := p.HeadBucket(ctx, nil)
+			return err
+		}},
+		{name: "DeleteBucket", op: "delete bucket", call: func() error {
+			return p.DeleteBucket(ctx, nil)
 		}},
 	}
 	for _, tt := range tests {

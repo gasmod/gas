@@ -17,6 +17,14 @@ type Provider interface {
 	// caller already owns succeeds; ErrBucketExists means the name is taken
 	// by someone else.
 	CreateBucket(ctx context.Context, input *CreateBucketInput) (*Bucket, error)
+	// HeadBucket reports whether a bucket exists and what the backend knows
+	// about it. A missing bucket is ErrBucketNotFound, and one the caller may
+	// not access is ErrAccessDenied.
+	HeadBucket(ctx context.Context, input *HeadBucketInput) (*Bucket, error)
+	// DeleteBucket deletes an empty bucket. A bucket that holds objects is
+	// ErrBucketNotEmpty, and a missing bucket is ErrBucketNotFound: unlike
+	// DeleteObject of a missing key, which succeeds, as on S3.
+	DeleteBucket(ctx context.Context, input *DeleteBucketInput) error
 	// ListBuckets returns one page of the caller's buckets, in name order.
 	ListBuckets(ctx context.Context, input *ListBucketsInput) (*ListBucketsOutput, error)
 
@@ -43,7 +51,22 @@ type CreateBucketInput struct {
 	Bucket string
 }
 
-// Bucket describes a bucket. CreateBucket and ListBuckets return it; fields
+// HeadBucketInput names the bucket HeadBucket describes.
+type HeadBucketInput struct {
+	// Bucket is the name of the bucket. It must be a valid S3 bucket name;
+	// the configured bucket is not a fallback.
+	Bucket string
+}
+
+// DeleteBucketInput names the bucket DeleteBucket deletes.
+type DeleteBucketInput struct {
+	// Bucket is the name of the bucket. It must be a valid S3 bucket name;
+	// the configured bucket is not a fallback.
+	Bucket string
+}
+
+// Bucket describes a bucket. CreateBucket, HeadBucket and ListBuckets
+// return it; fields
 // the backend does not report for an operation are empty, and each backend's
 // documentation says which those are.
 type Bucket struct {

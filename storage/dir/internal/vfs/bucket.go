@@ -25,13 +25,17 @@ type Bucket struct {
 	metaRoot *os.Root
 	objRoot  *os.Root
 	lock     *ObjectsLock
+	// dir is the metadata directory, relative to the VFS root.
+	dir string
 }
 
 var _ io.Closer = (*Bucket)(nil)
 
-// NewBucket returns a Bucket on the given roots. Close closes all three.
-func NewBucket(metaRoot, objRoot, locksRoot *os.Root) *Bucket {
+// NewBucket returns a Bucket on the given roots, whose metadata directory is
+// dir relative to the VFS root. Close closes all three roots.
+func NewBucket(dir string, metaRoot, objRoot, locksRoot *os.Root) *Bucket {
 	return &Bucket{
+		dir:      dir,
 		metaRoot: metaRoot,
 		objRoot:  objRoot,
 		lock:     NewLock(locksRoot),
