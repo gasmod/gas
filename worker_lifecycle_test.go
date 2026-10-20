@@ -195,8 +195,8 @@ func TestInitDeadlineCancelsAndWaits(t *testing.T) {
 func TestInitSucceedingAfterDeadlineIsClosed(t *testing.T) {
 	for _, r := range lcRegistrations {
 		t.Run(r.name, func(t *testing.T) {
-			p := &lcProbe[lcTag0]{name: "probe", initFn: func(context.Context) error {
-				time.Sleep(80 * time.Millisecond)
+			p := &lcProbe[lcTag0]{name: "probe", initFn: func(ctx context.Context) error {
+				_ = waitForCancel(ctx) // returns after the deadline, ignoring it
 				return nil
 			}}
 			w := gas.NewWorker(gas.WithServiceInitTimeout(20*time.Millisecond), r.reg(p))
@@ -218,10 +218,14 @@ func TestInitSucceedingAfterDeadlineIsClosed(t *testing.T) {
 // The error a late Init's Close returns is reported alongside the timeout.
 func TestInitSucceedingAfterDeadlineReportsCloseError(t *testing.T) {
 	errClose := errors.New("close failed")
-	p := &lcProbe[lcTag0]{name: "probe", closeErr: errClose, initFn: func(context.Context) error {
-		time.Sleep(50 * time.Millisecond)
-		return nil
-	}}
+	p := &lcProbe[lcTag0]{
+		name:     "probe",
+		closeErr: errClose,
+		initFn: func(ctx context.Context) error {
+			_ = waitForCancel(ctx) // returns after the deadline, ignoring it
+			return nil
+		},
+	}
 	w := gas.NewWorker(gas.WithServiceInitTimeout(10*time.Millisecond), gas.WithServiceInstance(p))
 
 	err := w.Start(t.Context())
@@ -572,8 +576,8 @@ func TestInitFailingAfterDeadlineReportsBoth(t *testing.T) {
 	errInit := errors.New("init failed")
 	for _, r := range lcRegistrations {
 		t.Run(r.name, func(t *testing.T) {
-			p := &lcProbe[lcTag0]{name: "probe", initFn: func(context.Context) error {
-				time.Sleep(50 * time.Millisecond)
+			p := &lcProbe[lcTag0]{name: "probe", initFn: func(ctx context.Context) error {
+				_ = waitForCancel(ctx) // returns after the deadline, ignoring it
 				return errInit
 			}}
 			w := gas.NewWorker(gas.WithServiceInitTimeout(10*time.Millisecond), r.reg(p))
