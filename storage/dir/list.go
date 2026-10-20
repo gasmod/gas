@@ -20,8 +20,11 @@ import (
 //
 // Each call reads every bucket's name record. A bucket whose record is
 // missing (created by a version of this backend that kept none) or does not
-// hold its name (such as one a crash left empty) fails the call until
-// CreateBucket of that bucket runs again, which rewrites it.
+// hold its name (such as one a crash left empty) cannot be named and is left
+// out of the listing until CreateBucket of that bucket runs again, which
+// rewrites it; its objects stay reachable through the other methods
+// meanwhile. A record that cannot be read at all, or that is not a regular
+// file, fails the call instead.
 func (p *Provider) ListBuckets(
 	ctx context.Context,
 	input *storage.ListBucketsInput,

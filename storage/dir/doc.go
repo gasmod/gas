@@ -133,8 +133,10 @@
 // not interchangeable with S3's. A bucket's CreationDate is when CreateBucket
 // first wrote its name record. A bucket whose name record is missing or does
 // not hold its name (one created by an earlier version, or a record a crash
-// left empty) fails ListBuckets until CreateBucket of it runs again, which
-// rewrites the record.
+// left empty) cannot be named and is left out of ListBuckets, with nothing
+// reported, until CreateBucket of it runs again, which rewrites the record;
+// its objects stay reachable through the other methods meanwhile. A record
+// that cannot be read at all, or that is not a regular file, fails the call.
 // Metadata that cannot be used fails ListObjects rather than being skipped.
 //
 // SPDX-License-Identifier: MIT
