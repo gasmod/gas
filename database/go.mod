@@ -3,8 +3,8 @@ module github.com/gasmod/gas/database
 go 1.27
 
 require (
-	github.com/gasmod/gas v0.5.6
-	github.com/gasmod/gas/config v0.5.6
+	github.com/gasmod/gas v0.6.0
+	github.com/gasmod/gas/config v0.6.0
 	github.com/go-playground/validator/v10 v10.30.5
 	github.com/jackc/pgx/v5 v5.11.0
 	modernc.org/sqlite v1.60.1

@@ -2,7 +2,7 @@ module github.com/gasmod/gas/config/examples/json_fs
 
 go 1.27
 
-require github.com/gasmod/gas/config v0.5.6
+require github.com/gasmod/gas/config v0.6.0
 
 require (
 	github.com/gabriel-vasile/mimetype v1.4.16 // indirect
