@@ -231,6 +231,9 @@ func (m *memS3) put(
 		memError(w, r, http.StatusNotImplemented, "NotImplemented")
 		return
 	}
+	if !memCondition(w, r, objs[key]) {
+		return
+	}
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		memError(w, r, http.StatusBadRequest, "IncompleteBody")
@@ -306,6 +309,29 @@ func (m *memS3) get(
 	if r.Method == http.MethodGet {
 		_, _ = w.Write(body)
 	}
+}
+
+// memCondition applies a put's If-Match and If-None-Match to cur, the object
+// it would replace, as memS3 emulates S3 conditional writes: If-None-Match
+// "*" on an existing object and If-Match with another ETag are 412
+// PreconditionFailed, and If-Match on a missing key is 404 NoSuchKey. It
+// writes the error and reports false when the put must not proceed.
+func memCondition(w http.ResponseWriter, r *http.Request, cur *memObject) bool {
+	if r.Header.Get("If-None-Match") == "*" && cur != nil {
+		memError(w, r, http.StatusPreconditionFailed, "PreconditionFailed")
+		return false
+	}
+	if m := r.Header.Get("If-Match"); m != "" {
+		if cur == nil {
+			memError(w, r, http.StatusNotFound, "NoSuchKey")
+			return false
+		}
+		if m != `"`+cur.etag+`"` {
+			memError(w, r, http.StatusPreconditionFailed, "PreconditionFailed")
+			return false
+		}
+	}
+	return true
 }
 
 // memETag returns the ETag S3 gives an object written in one part: the hex
@@ -490,6 +516,8 @@ func classify(err error) string {
 		{storage.ErrInvalidHeader, "ErrInvalidHeader"},
 		{storage.ErrBucketNotEmpty, "ErrBucketNotEmpty"},
 		{storage.ErrAccessDenied, "ErrAccessDenied"},
+		{storage.ErrPreconditionFailed, "ErrPreconditionFailed"},
+		{storage.ErrInvalidCondition, "ErrInvalidCondition"},
 	}
 	var names []string
 	for _, s := range sentinels {

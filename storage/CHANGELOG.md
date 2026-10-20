@@ -29,6 +29,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Conditional writes.** `PutObjectInput` embeds `WriteCondition`:
+  `IfNoneMatch` (`"*"` only) writes only a key with no object, and
+  `IfMatch` only over the object with that ETag, quoted or not. A condition
+  that does not hold is the new `storage.ErrPreconditionFailed`, and an
+  `IfMatch` of a missing key `storage.ErrKeyNotFound`; nothing is written.
+  A condition that cannot be evaluated is the new
+  `storage.ErrInvalidCondition`. dir checks the condition under the key's
+  lock, so it holds across processes sharing the root; an object without a
+  recorded ETag matches no `IfMatch`. s3 sends `If-Match` and
+  `If-None-Match`, and `PresignUploadURL` signs them.
 - **`HeadBucket` and `DeleteBucket`** in both backends, with
   `HeadBucketInput` and `DeleteBucketInput`, and the sentinels
   `storage.ErrBucketNotEmpty` and `storage.ErrAccessDenied` (s3 only, for

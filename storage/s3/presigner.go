@@ -107,8 +107,10 @@ func NewPresigner(
 // ContentLength and every header of ObjectHeaders that is set are signed, so
 // the client must send matching headers; Body is ignored. Expires must be an
 // IMF-fixdate, as for PutObject; anything else returns an error wrapping
-// storage.ErrInvalidHeader and nothing is signed. A nil or zero TTL signs a
-// 15-minute expiry; a TTL that is negative, under one second, or over seven
+// storage.ErrInvalidHeader and nothing is signed. A WriteCondition is signed
+// as If-Match or If-None-Match, so the client must send it too; an invalid
+// one returns an error wrapping storage.ErrInvalidCondition. A nil or zero
+// TTL signs a 15-minute expiry; a TTL that is negative, under one second, or over seven
 // days returns an error wrapping storage.ErrInvalidTTL. Fractional seconds
 // are truncated.
 func (p *Presigner) PresignUploadURL(
@@ -138,6 +140,11 @@ func (p *Presigner) PresignUploadURL(
 		return nil, internal.Errorf("s3/presigner", "presign upload: %w", expErr)
 	}
 
+	ifMatch, ifNoneMatch, condErr := conditionHeaders(&input.WriteCondition)
+	if condErr != nil {
+		return nil, internal.Errorf("s3/presigner", "presign upload: %w", condErr)
+	}
+
 	in := &s3.PutObjectInput{
 		Bucket:             new(bucket),
 		Key:                new(input.Key),
@@ -149,6 +156,8 @@ func (p *Presigner) PresignUploadURL(
 		ContentLanguage:    input.ContentLanguage,
 		Metadata:           input.Metadata,
 		Expires:            expires,
+		IfMatch:            ifMatch,
+		IfNoneMatch:        ifNoneMatch,
 	}
 
 	req, err := p.presignClient.PresignPutObject(ctx, in, s3.WithPresignExpires(ttl))

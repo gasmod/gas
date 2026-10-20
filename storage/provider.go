@@ -142,6 +142,21 @@ type ObjectHeaders struct {
 	Expires *string
 }
 
+// WriteCondition makes a write conditional on the object it would replace.
+// The zero value writes unconditionally. At most one field may be set.
+type WriteCondition struct {
+	// IfMatch writes only when an object exists under the key and its ETag
+	// is this one, quoted or not: another ETag, including the empty one of
+	// an object stored by a backend version that recorded none, is
+	// ErrPreconditionFailed, and a missing key is ErrKeyNotFound. An empty
+	// value or "*" is ErrInvalidCondition.
+	IfMatch *string
+	// IfNoneMatch writes only when no object exists under the key, and is
+	// ErrPreconditionFailed otherwise. It must be "*"; any other value is
+	// ErrInvalidCondition.
+	IfNoneMatch *string
+}
+
 // PutObjectInput describes the object PutObject writes.
 type PutObjectInput struct {
 	// Body supplies the contents. Nil writes an empty object. It may be any
@@ -156,6 +171,7 @@ type PutObjectInput struct {
 	// without ending blocks PutObject.
 	ContentLength *int64
 	ObjectHeaders
+	WriteCondition
 	BaseObjectInput
 }
 

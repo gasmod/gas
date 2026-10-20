@@ -236,6 +236,18 @@ func (p *Provider) HeadObject(
 // included, and the returned ObjectInfo is the object as HeadObject reads it,
 // with its ETag, the hex MD5 of the body.
 //
+// A WriteCondition is checked under the object's lock, against the object
+// the write would replace, so it holds across processes sharing the root. A
+// condition that does not hold returns an error wrapping
+// storage.ErrPreconditionFailed, and an IfMatch of a missing key one
+// wrapping storage.ErrKeyNotFound, unless the key is missing because
+// DeleteBucket removed the bucket during the call, which is
+// storage.ErrBucketNotFound; either way nothing is written. An object
+// stored by a version of this backend that recorded no ETag, or whose
+// metadata is corrupt, matches no IfMatch, and corrupt metadata fails
+// IfNoneMatch too. An invalid condition returns an error wrapping
+// storage.ErrInvalidCondition before anything is read.
+//
 // The write is atomic: a failed PutObject leaves the previous object as it
 // was and returns a nil ObjectInfo, with one exception. When the new object
 // was written but the previous data file could not be removed, PutObject
@@ -265,6 +277,11 @@ func (p *Provider) PutObject(
 		return nil, internal.Errorf(mod, "put: %w", inErr)
 	}
 
+	ifMatch, cErr := internal.ValidateCondition(&input.WriteCondition)
+	if cErr != nil {
+		return nil, internal.Errorf(mod, "put: %w", cErr)
+	}
+
 	bk, bkErr := p.vfs.OpenBucket(bucket)
 	if bkErr != nil {
 		return nil, opError("put", nil, bkErr)
@@ -288,6 +305,7 @@ func (p *Provider) PutObject(
 			ContentLanguage:    valueOf(input.ContentLanguage),
 			Expires:            valueOf(input.Expires),
 		},
+		Condition: vfs.Condition{IfMatch: ifMatch, IfNoneMatch: input.IfNoneMatch != nil},
 	})
 	return p.putResult(bk, out, err)
 }
@@ -308,7 +326,8 @@ func (p *Provider) putResult(
 			info := objectInfo(out)
 			return &info, opError("put", nil, err)
 		}
-		return nil, opError("put", nil, err)
+		// Only an IfMatch of a missing key reports the object missing.
+		return nil, opError("put", storage.ErrKeyNotFound, err)
 	}
 	info := objectInfo(out)
 	return &info, nil
@@ -539,6 +558,8 @@ func opError(op string, notFound, err error) error {
 		sentinel = storage.ErrBucketNotFound
 	case errors.Is(err, vfs.ErrBucketNotEmpty):
 		sentinel = storage.ErrBucketNotEmpty
+	case errors.Is(err, vfs.ErrPreconditionFailed):
+		sentinel = storage.ErrPreconditionFailed
 	case errors.Is(err, vfs.ErrObjectNotFound):
 		sentinel = notFound
 	case errors.Is(err, vfs.ErrStaleData):

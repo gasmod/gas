@@ -85,6 +85,13 @@
 //     name that fails validation, checked before any disk access.
 //   - storage.ErrBucketNotFound: a missing bucket, from Head, Put, Get,
 //     Delete, ListObjects, HeadBucket and DeleteBucket.
+//   - storage.ErrPreconditionFailed: a Put whose WriteCondition does not
+//     hold, checked under the object's lock, so across processes too. An
+//     object with no recorded ETag (written by an earlier version) or with
+//     corrupt metadata matches no IfMatch; corrupt metadata also fails
+//     IfNoneMatch. storage.ErrKeyNotFound: a Put with IfMatch of a missing
+//     key. storage.ErrInvalidCondition: a condition that cannot be
+//     evaluated, before any disk access.
 //   - storage.ErrBucketNotEmpty: a DeleteBucket of a bucket that holds an
 //     object, which then removes nothing. Entries no read can use
 //     (unusable metadata, metadata whose data file is gone, temp files of

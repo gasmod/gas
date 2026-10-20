@@ -49,7 +49,17 @@ type CreateObjectInput struct {
 	ContentType *string
 	Metadata    map[string]string
 	Headers
-	Key string
+	Key       string
+	Condition Condition
+}
+
+// Condition makes CreateObject conditional on the object it would replace.
+// The zero value writes unconditionally.
+type Condition struct {
+	// IfMatch, when set, requires an object whose ETag is exactly this one.
+	IfMatch string
+	// IfNoneMatch requires that no object exists under the key.
+	IfNoneMatch bool
 }
 
 // CreateObject writes the object: it writes a new data file, then renames a
@@ -66,6 +76,12 @@ type CreateObjectInput struct {
 // Metadata that is corrupt (ErrCorrupt) is replaced, so a corrupt key can be
 // repaired; its data file cannot be trusted and is left behind. Metadata
 // that exists but cannot be read fails the call before anything is written.
+//
+// A Condition is checked against the current metadata under the key's lock,
+// before anything is written, so it holds across processes: a write that
+// does not meet it returns an error wrapping ErrPreconditionFailed, and an
+// IfMatch of a key with no metadata one wrapping ErrObjectNotFound. Corrupt
+// metadata meets neither condition: the key is taken, by no known ETag.
 func (b *Bucket) CreateObject(
 	ctx context.Context,
 	input *CreateObjectInput,
@@ -77,7 +93,7 @@ func (b *Bucket) CreateObject(
 	}
 	defer func() { err = b.finishCreate(name, out != nil, err) }()
 
-	prevDataFile, pErr := b.previousDataFile(name)
+	prevDataFile, pErr := b.previousDataFile(name, input.Condition)
 	if pErr != nil {
 		return nil, pErr
 	}
@@ -166,15 +182,26 @@ func (b *Bucket) writeDataFile(name string, body io.Reader) (dataWrite, error) {
 	return dataWrite{etag: hex.EncodeToString(sum.Sum(nil)), size: n, modified: fi.ModTime()}, nil
 }
 
-// previousDataFile returns the data file the current metadata of name points
-// to, or "" when there is none to remove: no metadata, or corrupt metadata
-// whose data file name cannot be trusted.
-func (b *Bucket) previousDataFile(name string) (string, error) {
+// previousDataFile checks cond against the current metadata of name and
+// returns the data file it points to, or "" when there is none to remove:
+// no metadata, or corrupt metadata whose data file name cannot be trusted.
+func (b *Bucket) previousDataFile(name string, cond Condition) (string, error) {
 	prev, err := b.meta(name)
 	switch {
 	case err == nil:
+		if cond.IfNoneMatch || (cond.IfMatch != "" && prev.ETag != cond.IfMatch) {
+			return "", fmt.Errorf("%w: the object does not match", ErrPreconditionFailed)
+		}
 		return prev.DataFile, nil
-	case errors.Is(err, ErrObjectNotFound), errors.Is(err, ErrCorrupt):
+	case errors.Is(err, ErrObjectNotFound):
+		if cond.IfMatch != "" {
+			return "", fmt.Errorf("if match: %w", err)
+		}
+		return "", nil
+	case errors.Is(err, ErrCorrupt):
+		if cond != (Condition{}) {
+			return "", fmt.Errorf("%w: the object's metadata is corrupt", ErrPreconditionFailed)
+		}
 		return "", nil
 	default:
 		return "", err

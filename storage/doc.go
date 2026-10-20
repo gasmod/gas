@@ -49,6 +49,14 @@
 // returns it on every backend. Compare ETags only for equality: an ETag is
 // not always a digest of the body (see ObjectInfo.ETag).
 //
+// PutObjectInput embeds a WriteCondition. IfNoneMatch "*" writes only a key
+// that holds no object, and IfMatch only over the object with that ETag;
+// either way a condition that does not hold is ErrPreconditionFailed and
+// nothing is written, and an IfMatch of a missing key is ErrKeyNotFound. An
+// optimistic update is a HeadObject, then a PutObject with IfMatch set to
+// the ETag it returned. A condition that cannot be evaluated is
+// ErrInvalidCondition, before anything is sent.
+//
 // # Errors
 //
 // Every error an operation returns names the backend and the operation, in the

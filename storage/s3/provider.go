@@ -259,7 +259,13 @@ func (p *Provider) HeadObject(
 // IMF-fixdate ("Wed, 21 Oct 2026 07:28:00 GMT", with the right weekday),
 // since the SDK sends it only as a time and writes it back in that form;
 // anything else returns an error wrapping storage.ErrInvalidHeader and sends
-// nothing. A nil Body uploads an empty object. A set ContentLength must match
+// nothing. A WriteCondition is sent as If-Match (quoted) or If-None-Match:
+// S3's 412 PreconditionFailed is storage.ErrPreconditionFailed, and its
+// NoSuchKey for an If-Match of a missing key storage.ErrKeyNotFound; S3 may
+// also answer 409 ConditionalRequestConflict to a concurrent write, which
+// carries no sentinel (none of these verified against AWS). For a body the
+// transfer manager uploads in parts, it sends the condition with the
+// request that completes the upload. A nil Body uploads an empty object. A set ContentLength must match
 // the body: a shorter or longer body, or a
 // negative length, returns an error wrapping storage.ErrContentLengthMismatch
 // and the object is not stored. A multipart upload in progress is aborted;
@@ -291,6 +297,11 @@ func (p *Provider) PutObject(
 		return nil, internal.Errorf("s3/provider", "put: %w", expErr)
 	}
 
+	ifMatch, ifNoneMatch, condErr := conditionHeaders(&input.WriteCondition)
+	if condErr != nil {
+		return nil, internal.Errorf("s3/provider", "put: %w", condErr)
+	}
+
 	// The transfer manager buffers the body and sends what it read, so it
 	// accepts a body that does not match ContentLength; the check is ours.
 	body, lenErr := internal.CheckLength(input.Body, input.ContentLength)
@@ -310,6 +321,8 @@ func (p *Provider) PutObject(
 		ContentLanguage:    input.ContentLanguage,
 		Expires:            expires,
 		Metadata:           input.Metadata,
+		IfMatch:            ifMatch,
+		IfNoneMatch:        ifNoneMatch,
 	}
 
 	if in.Body == nil {

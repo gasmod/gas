@@ -101,6 +101,17 @@ var (
 	// Nothing is stored or signed.
 	ErrInvalidHeader = errors.New("storage: invalid header")
 
+	// ErrPreconditionFailed is returned by PutObject when its WriteCondition
+	// does not hold: IfNoneMatch "*" and an object exists, or IfMatch and the
+	// object's ETag differs. Nothing is written.
+	ErrPreconditionFailed = errors.New("storage: precondition failed")
+
+	// ErrInvalidCondition is returned by PutObject, and by Presigner's
+	// PresignUploadURL, for a WriteCondition that cannot be evaluated: an
+	// IfNoneMatch other than "*", an empty IfMatch or one of "*", or both
+	// set. Nothing is sent, written or signed.
+	ErrInvalidCondition = errors.New("storage: invalid condition")
+
 	// ErrInvalidOption is returned by a backend constructor given a nil
 	// option. The message names the option's zero-based position in the
 	// constructor's argument list.

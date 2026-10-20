@@ -233,6 +233,38 @@ func ValidateListBuckets(input *storage.ListBucketsInput) (int, error) {
 	return maxBuckets, nil
 }
 
+// ValidateCondition checks c and returns its IfMatch ETag without the
+// double quotes it may carry, or "" when IfMatch is not set. An invalid
+// condition is a bare storage.ErrInvalidCondition with the reason.
+func ValidateCondition(c *storage.WriteCondition) (string, error) {
+	if c.IfMatch != nil && c.IfNoneMatch != nil {
+		return "", fmt.Errorf(
+			"%w: IfMatch and IfNoneMatch are both set",
+			storage.ErrInvalidCondition,
+		)
+	}
+	if c.IfNoneMatch != nil && *c.IfNoneMatch != "*" {
+		return "", fmt.Errorf("%w: IfNoneMatch is not \"*\"", storage.ErrInvalidCondition)
+	}
+	if c.IfMatch == nil {
+		return "", nil
+	}
+	etag := unquote(*c.IfMatch)
+	if etag == "" || etag == "*" {
+		return "", fmt.Errorf("%w: IfMatch is empty or \"*\"", storage.ErrInvalidCondition)
+	}
+	return etag, nil
+}
+
+// unquote returns s without one pair of surrounding double quotes, if it
+// has them.
+func unquote(s string) string {
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		return s[1 : len(s)-1]
+	}
+	return s
+}
+
 // Errorf formats an error like fmt.Errorf, prefixed with
 // "gas/storage/<mod>: ". mod is used literally, so a '%' in it is not a
 // verb. Use %w in format to wrap.

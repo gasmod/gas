@@ -17,6 +17,10 @@ var (
 	// bucket.
 	ErrBucketNotEmpty = errors.New("bucket not empty")
 
+	// ErrPreconditionFailed reports that CreateObject's Condition did not
+	// hold, so nothing was written.
+	ErrPreconditionFailed = errors.New("precondition failed")
+
 	// ErrObjectNotFound reports that the object has no metadata file.
 	ErrObjectNotFound = errors.New("object not found")
 

@@ -54,7 +54,11 @@
 // in exactly that form, which is stored unchanged. Anything else, including
 // the obsolete RFC 850 and asctime forms that HTTP allows and a date whose
 // weekday is wrong, is storage.ErrInvalidHeader, and nothing is sent or
-// signed. HeadObject and GetObject return Expires as the text S3
+// signed. A WriteCondition is sent as If-Match, quoted, or If-None-Match, and
+// PresignUploadURL signs it. S3's 412 PreconditionFailed is
+// storage.ErrPreconditionFailed. A 409 ConditionalRequestConflict, which the
+// SDK documents S3 answers when a concurrent write conflicts, carries no
+// sentinel. HeadObject and GetObject return Expires as the text S3
 // sent, unparsed. ETags are returned without S3's quotes.
 //
 // CreateBucket returns the bucket's Name and the ARN S3 reports as ID. S3's

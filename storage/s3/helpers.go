@@ -11,6 +11,7 @@ import (
 	smithytime "github.com/aws/smithy-go/time"
 
 	"github.com/gasmod/gas/storage"
+	"github.com/gasmod/gas/storage/internal"
 )
 
 // S3 error codes matched when the SDK does not return the modeled error type,
@@ -25,6 +26,7 @@ const (
 	errCodeBucketAlreadyOwnedByYou = "BucketAlreadyOwnedByYou"
 	errCodeBucketAlreadyExists     = "BucketAlreadyExists"
 	errCodeBucketNotEmpty          = "BucketNotEmpty"
+	errCodePreconditionFailed      = "PreconditionFailed"
 
 	// A GET of an unsatisfiable Range answers 416 InvalidRange. A HEAD 416
 	// has no body, and the SDK names it after the status text instead.
@@ -52,6 +54,8 @@ func wrapS3Error(err error) error {
 		sentinel = storage.ErrBucketExists
 	case isS3ErrorCode(err, errCodeInvalidRange), isS3ErrorCode(err, errCodeRangeNotSatisfiable):
 		sentinel = storage.ErrInvalidRange
+	case isS3ErrorCode(err, errCodePreconditionFailed):
+		sentinel = storage.ErrPreconditionFailed
 	default:
 		return err
 	}
@@ -153,6 +157,20 @@ func parseExpires(expires *string) (*time.Time, error) {
 		)
 	}
 	return &t, nil
+}
+
+// conditionHeaders returns the If-Match and If-None-Match values to send for
+// c: the IfMatch ETag quoted, as S3 expects, and IfNoneMatch as given. An
+// invalid condition is storage.ErrInvalidCondition.
+func conditionHeaders(c *storage.WriteCondition) (ifMatch, ifNoneMatch *string, err error) {
+	etag, err := internal.ValidateCondition(c)
+	if err != nil {
+		return nil, nil, err //nolint:wrapcheck // a bare sentinel the caller wraps
+	}
+	if etag != "" {
+		ifMatch = new(`"` + etag + `"`)
+	}
+	return ifMatch, c.IfNoneMatch, nil
 }
 
 // unquoteETag returns etag without the double quotes S3 puts around it, or
