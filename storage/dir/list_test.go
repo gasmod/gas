@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -166,8 +167,8 @@ func TestListObjects_Canceled(t *testing.T) {
 }
 
 // TestListBuckets_NameRecord checks that CreateBucket writes the name record
-// once, that a bucket without one fails ListBuckets until CreateBucket runs
-// again, and that a half-created bucket is not listed.
+// once, that a bucket without one is left out of the listing until
+// CreateBucket runs again, and that a half-created bucket is not listed.
 func TestListBuckets_NameRecord(t *testing.T) {
 	t.Parallel()
 	p, dir := newTestProvider(t)
@@ -194,13 +195,14 @@ func TestListBuckets_NameRecord(t *testing.T) {
 			out, err, old)
 	}
 
+	// A bucket whose name record is gone cannot be named, so it is left out
+	// rather than failing the whole listing: one damaged bucket must not
+	// make every other bucket unlistable.
 	if err = os.Remove(nameRecord(dir, testBucket)); err != nil {
 		t.Fatal(err)
 	}
-	_, err = p.ListBuckets(context.Background(), &storage.ListBucketsInput{})
-	wantPresentError(t, "ListBuckets() without a name record", err)
-	if strings.Contains(err.Error(), testBucket) {
-		t.Errorf("ListBuckets() error = %q, quotes the bucket name", err)
+	if got := bucketNames(t, p); !slices.Equal(got, []string{"other-bucket"}) {
+		t.Errorf("ListBuckets() without a name record = %q, want [other-bucket]", got)
 	}
 	createBucket(t, p, testBucket)
 	if got := bucketNames(t, p); !slices.Equal(got, []string{"other-bucket", testBucket}) {
@@ -216,16 +218,16 @@ func TestListBuckets_NameRecord(t *testing.T) {
 }
 
 // TestListBuckets_RecordMismatch checks that a name record holding a name
-// that does not hash to its bucket fails the call.
+// that does not hash to its bucket leaves the bucket out of the listing
+// instead of failing the call.
 func TestListBuckets_RecordMismatch(t *testing.T) {
 	t.Parallel()
 	p, dir := newTestProvider(t)
+	createBucket(t, p, "other-bucket")
 	writeFile(t, nameRecord(dir, testBucket), []byte("another-bucket"))
 
-	_, err := p.ListBuckets(context.Background(), &storage.ListBucketsInput{})
-	wantPresentError(t, "ListBuckets()", err)
-	if strings.Contains(err.Error(), "another-bucket") {
-		t.Errorf("ListBuckets() error = %q, quotes the record", err)
+	if got := bucketNames(t, p); !slices.Equal(got, []string{"other-bucket"}) {
+		t.Errorf("ListBuckets() with a mismatched record = %q, want [other-bucket]", got)
 	}
 
 	// CreateBucket replaces a record that does not hold the bucket's name,
@@ -233,10 +235,114 @@ func TestListBuckets_RecordMismatch(t *testing.T) {
 	for _, bad := range []string{"another-bucket", ""} {
 		writeFile(t, nameRecord(dir, testBucket), []byte(bad))
 		createBucket(t, p, testBucket)
-		if got := bucketNames(t, p); !slices.Equal(got, []string{testBucket}) {
-			t.Errorf("ListBuckets() after repairing a %q record = %q, want [%s]",
+		if got := bucketNames(t, p); !slices.Equal(got, []string{"other-bucket", testBucket}) {
+			t.Errorf("ListBuckets() after repairing a %q record = %q, want [other-bucket %s]",
 				bad, got, testBucket)
 		}
+	}
+}
+
+// TestListBuckets_UnusableRecord checks that a name record that is not a
+// regular file, as opposed to one that is missing or holds the wrong name,
+// still fails the call: it is an I/O fault, not a bucket awaiting repair.
+// The error must point at the record on disk without quoting any bucket
+// name. TestListBuckets_UnreadableRecord covers the record that cannot be
+// read.
+func TestListBuckets_UnusableRecord(t *testing.T) {
+	t.Parallel()
+	p, dir := newTestProvider(t)
+
+	// A directory where the record belongs is not a regular file.
+	record := nameRecord(dir, testBucket)
+	if err := os.Remove(record); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(record, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := p.ListBuckets(context.Background(), &storage.ListBucketsInput{})
+	wantPresentError(t, "ListBuckets() with a non-regular record", err)
+	if strings.Contains(err.Error(), testBucket) {
+		t.Errorf("ListBuckets() error = %q, quotes the bucket name", err)
+	}
+	if !strings.Contains(err.Error(), filepath.Join(".gas", "buckets", sha(testBucket))) {
+		t.Errorf("ListBuckets() error = %q, does not name the record path", err)
+	}
+}
+
+// TestListBuckets_UnreadableRecord checks that a name record the process is
+// not allowed to read fails the call rather than being skipped: unlike a
+// missing or wrong-name record, it is no evidence that the bucket is merely
+// awaiting repair, so skipping it would hide an I/O fault. The error must
+// point at the record on disk without quoting any bucket name.
+func TestListBuckets_UnreadableRecord(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("a file mode does not deny reads on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root reads the record whatever its mode")
+	}
+	p, dir := newTestProvider(t)
+
+	// Lstat needs no permission on the record itself, so this reaches the
+	// read rather than the mode check.
+	record := nameRecord(dir, testBucket)
+	if err := os.Chmod(record, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(record, 0o600) })
+
+	_, err := p.ListBuckets(context.Background(), &storage.ListBucketsInput{})
+	wantPresentError(t, "ListBuckets() with an unreadable record", err)
+	if strings.Contains(err.Error(), testBucket) {
+		t.Errorf("ListBuckets() error = %q, quotes the bucket name", err)
+	}
+	if !strings.Contains(err.Error(), filepath.Join(".gas", "buckets", sha(testBucket))) {
+		t.Errorf("ListBuckets() error = %q, does not name the record path", err)
+	}
+}
+
+// TestListBuckets_SkipDoesNotBreakPaging checks that paging still reaches
+// every readable bucket when one of them is unnameable. The unnameable
+// bucket is dropped in the VFS, before the provider pages what it returns,
+// so this cannot observe it consuming a page slot or disturbing a token;
+// what it checks is that several single-bucket pages still yield every
+// readable bucket, in order.
+func TestListBuckets_SkipDoesNotBreakPaging(t *testing.T) {
+	t.Parallel()
+	p, dir := newTestProvider(t)
+	for _, b := range []string{"bucket-a", "bucket-b", "bucket-c"} {
+		createBucket(t, p, b)
+	}
+	// testBucket sorts last of the four and is the one made unnameable.
+	if err := os.Remove(nameRecord(dir, testBucket)); err != nil {
+		t.Fatal(err)
+	}
+
+	var got []string
+	var token *string
+	for range 10 {
+		out, err := p.ListBuckets(context.Background(), &storage.ListBucketsInput{
+			MaxBuckets:        new(int32(1)),
+			ContinuationToken: token,
+		})
+		if err != nil {
+			t.Fatalf("ListBuckets() error: %v", err)
+		}
+		for _, b := range out.Buckets {
+			got = append(got, b.Name)
+		}
+		if out.ContinuationToken == "" {
+			break
+		}
+		token = &out.ContinuationToken
+	}
+
+	want := []string{"bucket-a", "bucket-b", "bucket-c"}
+	if !slices.Equal(got, want) {
+		t.Errorf("paged ListBuckets() = %q, want %q", got, want)
 	}
 }
 

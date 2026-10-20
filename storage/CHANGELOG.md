@@ -103,7 +103,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carry are listed. dir reads every name in the bucket on each call, and
   records each bucket's name under `.gas/buckets` when `CreateBucket`
   runs; a bucket created before that, or whose record a crash left
-  damaged, fails `ListBuckets` until `CreateBucket` of it runs again. `storagetest.MockProvider` gains
+  damaged, is left out of `ListBuckets` until `CreateBucket` of it runs
+  again. `storagetest.MockProvider` gains
   `ListBucketsFn` and `ListObjectsFn`.
   - `storage.ErrInvalidLimit`, for a `MaxKeys` under 1 or a `MaxBuckets`
     outside 1 to 10000.
@@ -138,6 +139,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   valid keys everywhere, and `a/.` and `./` are invalid everywhere.
 - **s3 NoSuchVersion** is mapped to `storage.ErrVersionNotFound` instead of
   carrying no sentinel.
+- **One unnameable bucket no longer makes `dir.ListBuckets` fail.** A bucket
+  whose name record is missing (one created by a version that kept none) or
+  holds a name that hashes to another bucket (one a crash left damaged) is
+  left out of the listing instead of failing the whole call, so the other
+  buckets stay listable; `CreateBucket` of that bucket rewrites the record
+  and brings it back, and its objects were reachable through the other
+  methods throughout. A name record that cannot be read at all, or that is
+  not a regular file, still fails the call, and those errors now name the
+  record by its path under the root rather than by the bucket's hash alone.
+  Note that a bucket left out is left out silently: this release has no way
+  to report it, since the backend takes no logger and the listing output
+  carries no field for it.
+
+### Known limitations
+
+- **One unreadable object still makes `dir.ListObjects` fail for its whole
+  bucket**, hiding every other object in it. It is the same shape as the
+  `ListBuckets` fault fixed above, and is left as it stands: unreadable
+  object metadata means real corruption, and skipping it silently would hide
+  data loss. The `dir` package documentation states the behaviour.
 
 ## [0.3.0] - 2026-07-03
 

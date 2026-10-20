@@ -66,9 +66,16 @@ func (vfs *VFS) writeBucketName(name string) error {
 
 // ListBuckets returns every bucket under the root, in no particular order. A
 // bucket is a metadata directory, named by a hash, whose name record holds a
-// name with that hash. A bucket with no usable name record, which a version
-// that did not write one or a crash can leave, fails the call: CreateBucket
-// of that bucket writes the record.
+// name with that hash.
+//
+// A bucket whose name record is missing, which a version that did not write
+// one or a crash can leave, or whose record holds a name that hashes to
+// something else, cannot be named and is left out: one such bucket must not
+// make every other bucket unlistable. CreateBucket of that bucket rewrites
+// the record and brings it back, and its objects stay reachable through the
+// other methods meanwhile. A record that cannot be read at all, or that is
+// not a regular file, fails the call instead: that is an I/O fault, not a
+// bucket awaiting repair.
 func (vfs *VFS) ListBuckets(ctx context.Context) ([]BucketEntry, error) {
 	entries, err := fs.ReadDir(vfs.root.FS(), ".")
 	if err != nil {
@@ -83,41 +90,46 @@ func (vfs *VFS) ListBuckets(ctx context.Context) ([]BucketEntry, error) {
 		if !e.IsDir() || !isHash(e.Name()) {
 			continue
 		}
-		b, bErr := vfs.bucketEntry(e.Name())
+		b, ok, bErr := vfs.bucketEntry(e.Name())
 		if bErr != nil {
 			return nil, bErr
 		}
-		out = append(out, b)
+		if ok {
+			out = append(out, b)
+		}
 	}
 	return out, nil
 }
 
 // bucketEntry reads the name record of the bucket whose metadata directory is
-// h and checks that the name it holds hashes to h. Errors name the bucket by
-// its hash only.
-func (vfs *VFS) bucketEntry(h string) (BucketEntry, error) {
+// h and checks that the name it holds hashes to h. It returns false with no
+// error for a bucket that cannot be named, which ListBuckets leaves out. The
+// errors name the record by its path, so an operator can inspect it, and
+// never quote a bucket name: a mismatched record holds a name this bucket
+// does not own.
+func (vfs *VFS) bucketEntry(h string) (BucketEntry, bool, error) {
 	file := filepath.Join(bucketsPath, h)
 
 	fi, err := vfs.root.Lstat(file)
 	if errors.Is(err, os.ErrNotExist) {
-		return BucketEntry{}, fmt.Errorf(
-			"bucket %s has no name record; CreateBucket of it writes one", h)
+		return BucketEntry{}, false, nil
 	}
 	if err != nil {
-		return BucketEntry{}, fmt.Errorf("stat bucket name record %s: %w", h, err)
+		return BucketEntry{}, false, fmt.Errorf("stat bucket name record %s: %w", file, err)
 	}
 	if !fi.Mode().IsRegular() {
-		return BucketEntry{}, fmt.Errorf("bucket name record %s is not a regular file", h)
+		return BucketEntry{}, false, fmt.Errorf(
+			"bucket name record %s is not a regular file", file)
 	}
 
 	name, err := vfs.root.ReadFile(file)
 	if err != nil {
-		return BucketEntry{}, fmt.Errorf("read bucket name record %s: %w", h, err)
+		return BucketEntry{}, false, fmt.Errorf("read bucket name record %s: %w", file, err)
 	}
 	if hash(string(name)) != h {
-		return BucketEntry{}, fmt.Errorf("bucket name record %s does not match its bucket", h)
+		return BucketEntry{}, false, nil
 	}
-	return BucketEntry{Name: string(name), Created: fi.ModTime()}, nil
+	return BucketEntry{Name: string(name), Created: fi.ModTime()}, true, nil
 }
 
 // Keys returns the key of every object in the bucket, in no particular
