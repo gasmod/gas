@@ -34,7 +34,9 @@ func IsMissing(err error) bool {
 // internal/syscall/windows.Deleteat), and until that close the name is
 // delete-pending: opening or statting it fails with STATUS_DELETE_PENDING,
 // which Go reports as ERROR_ACCESS_DENIED. Once the remove returns the name
-// is gone, so see retryPending.
+// is gone, except on a file system without POSIX semantics, where Deleteat
+// falls back to a plain delete and the name stays until every handle to it
+// is closed. See retryPending.
 func isDeletePending(err error) bool {
 	return errors.Is(err, windows.ERROR_ACCESS_DENIED) ||
 		errors.Is(err, windows.ERROR_DELETE_PENDING)

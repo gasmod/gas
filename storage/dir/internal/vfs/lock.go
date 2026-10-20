@@ -151,9 +151,10 @@ func (l *ObjectsLock) acquireFile(ctx context.Context, name string) (*os.File, e
 // openFile opens the file at name, retrying while a holder is removing it,
 // like retryPending but giving up when ctx is done or the lock is closed.
 func (l *ObjectsLock) openFile(ctx context.Context, name string) (*os.File, error) {
-	for i := 0; ; i++ {
+	deadline := time.Now().Add(deletePendingTimeout)
+	for {
 		f, err := openInRoot(l.locksRoot, name, "lock file")
-		if err == nil || i == deletePendingRetries || !isDeletePending(err) {
+		if err == nil || !isDeletePending(err) || !time.Now().Before(deadline) {
 			return f, err
 		}
 		select {
@@ -189,8 +190,12 @@ func (l *ObjectsLock) isCurrent(f *os.File, name string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("stat held lock file: %w", err)
 	}
-	current, err := retryPending(func() (os.FileInfo, error) { return l.locksRoot.Lstat(name) })
-	if errors.Is(err, os.ErrNotExist) {
+	current, err := l.locksRoot.Lstat(name)
+	// A name being removed is not f's to keep: only a holder removes, so it
+	// is f, which its last holder released, or a newer file. Do not wait for
+	// the removal to end: where it ends only once every handle is closed (see
+	// isDeletePending), f's handle is one of those.
+	if errors.Is(err, os.ErrNotExist) || isDeletePending(err) {
 		return false, nil
 	}
 	if err != nil {

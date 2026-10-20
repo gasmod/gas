@@ -104,8 +104,10 @@ func (vfs *VFS) createBucket(name string) error {
 // want of its files then failed because the bucket was deleted under it.
 // An error comparing the two counts as not removed.
 func (vfs *VFS) Removed(b *Bucket) bool {
-	cur, err := retryPending(func() (os.FileInfo, error) { return vfs.root.Lstat(b.dir) })
-	if errors.Is(err, os.ErrNotExist) {
+	cur, err := vfs.root.Lstat(b.dir)
+	// A directory being removed is removed; b's own handle may be what keeps
+	// it from being gone yet (see isDeletePending).
+	if errors.Is(err, os.ErrNotExist) || isDeletePending(err) {
 		return true
 	}
 	if err != nil {
