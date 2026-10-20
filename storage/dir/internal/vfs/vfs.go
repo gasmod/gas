@@ -185,7 +185,7 @@ func (vfs *VFS) openBucketDir(name, what string) (*os.Root, error) {
 	if errors.Is(err, os.ErrNotExist) {
 		// Windows reports a file in place of the directory as a missing path.
 		if fi, sErr := vfs.root.Lstat(name); sErr == nil && !fi.IsDir() {
-			return nil, fmt.Errorf("open %s dir: not a directory: %v", what, err)
+			return nil, fmt.Errorf("open %s dir: %s is not a directory", what, name)
 		}
 		return nil, fmt.Errorf("%w: open %s dir: %w", ErrBucketNotFound, what, err)
 	}
