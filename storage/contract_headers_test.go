@@ -181,8 +181,8 @@ func contractETagListed(t *testing.T, p storage.Provider) {
 	if err != nil {
 		t.Fatalf("ListObjects() error: %v", err)
 	}
-	if len(out.Objects) != 1 {
-		t.Fatalf("ListObjects() = %d objects, want 1", len(out.Objects))
+	if len(out.Objects) != 1 || out.Skipped != 0 {
+		t.Fatalf("ListObjects() = %d objects, Skipped %d; want 1, 0", len(out.Objects), out.Skipped)
 	}
 	if got, want := out.Objects[0].ETag, md5Hex("listed body"); got != want {
 		t.Errorf("ListObjects ETag = %q, want %q", got, want)

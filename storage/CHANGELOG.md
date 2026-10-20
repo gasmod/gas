@@ -29,6 +29,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`Skipped` on `ListObjectsOutput` and `ListBucketsOutput`**: how many
+  entries the listing left out because the backend could not read them,
+  counted over the whole bucket (or every bucket), so every page repeats
+  that count; a `ListObjects` page also adds any of its own objects found
+  damaged while it was built. Always 0 on s3.
+- **`dir.WithSkipHandler`**, which receives the path, relative to the
+  root, and the reason of each entry a dir listing leaves out, each piece
+  of debris `DeleteBucket` removes, and each file it leaves behind. Paths
+  never appear in the listing output.
+- **`dir.ErrCorrupt` and `dir.ErrUnnamedBucket`**, exported so callers can
+  match them. `HeadObject` and `GetObject` of an object that cannot be read
+  now return an error wrapping `dir.ErrCorrupt`; before, it matched no
+  sentinel a caller could name. That includes an object whose metadata
+  holds another key, which `GetObject` used to serve while a listing left
+  it out.
 - **Conditional writes.** `PutObjectInput` embeds `WriteCondition`:
   `IfNoneMatch` (`"*"` only) writes only a key with no object, and
   `IfMatch` only over the object with that ETag, quoted or not. A condition
@@ -93,17 +108,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   methods throughout. A name record that cannot be read at all, or that is
   not a regular file, still fails the call, and those errors now name the
   record by its path under the root rather than by the bucket's hash alone.
-  Note that a bucket left out is left out silently: this release has no way
-  to report it, since the backend takes no logger and the listing output
-  carries no field for it.
-
-### Known limitations
-
-- **One unreadable object still makes `dir.ListObjects` fail for its whole
-  bucket**, hiding every other object in it. It is the same shape as the
-  `ListBuckets` fault fixed above, and is left as it stands: unreadable
-  object metadata means real corruption, and skipping it silently would hide
-  data loss. The `dir` package documentation states the behaviour.
+  It is counted in `Skipped` and reported to the skip handler.
+- **One unreadable object no longer makes `dir.ListObjects` fail for its
+  whole bucket.** An object whose metadata does not decode or holds another
+  key, or whose data file is gone, is left out, counted in `Skipped` and
+  reported to the skip handler, so the rest of the bucket stays listable
+  and the loss is still visible. An I/O error reading metadata still fails
+  the call. Each listing now stats every data file to find these.
 
 ## [0.5.6] - 2026-10-19
 

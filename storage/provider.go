@@ -208,6 +208,12 @@ type ListBucketsOutput struct {
 	NextContinuationToken string
 	// Buckets are the buckets of the page, in name order.
 	Buckets []Bucket
+	// Skipped counts the buckets this listing left out because the backend
+	// could not read them, such as a dir bucket whose name record is
+	// damaged. It covers every bucket, regardless of Prefix or the page, so
+	// every page of one listing repeats it. The buckets returned are
+	// correct. It is always 0 on s3.
+	Skipped int
 }
 
 // ListObjectsInput selects the page of objects ListObjects returns. It
@@ -245,6 +251,15 @@ type ListObjectsOutput struct {
 	// CommonPrefixes are the prefixes keys were rolled up into by Delimiter,
 	// in order. Each is listed once across all pages.
 	CommonPrefixes []string
+	// Skipped counts the objects this listing left out because the backend
+	// could not read them, such as a dir object whose metadata is corrupt or
+	// whose data file is gone. It covers the whole bucket, regardless of
+	// Prefix, StartAfter, Delimiter or the page, so every page of one
+	// listing repeats that count; a page also adds any of its own objects
+	// found damaged while it was being built, so pages can differ when
+	// objects are damaged during a listing. The objects returned are
+	// correct. It is always 0 on s3.
+	Skipped int
 	// IsTruncated reports whether more objects or common prefixes follow.
 	IsTruncated bool
 }

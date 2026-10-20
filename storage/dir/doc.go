@@ -120,10 +120,11 @@
 //
 // CreateBucket of an existing bucket succeeds and keeps its objects: every
 // bucket under the root belongs to the caller, so this backend never returns
-// storage.ErrBucketExists. Deleting a missing object succeeds. Metadata that cannot be used (it does
-// not decode, names no valid data file, or names a missing one) is reported
-// as an error matching none of the not-found sentinels; a Put over it
-// replaces it. Errors never quote a key, a bucket name given to an
+// storage.ErrBucketExists. Deleting a missing object succeeds. An object
+// whose metadata cannot be used (it does not decode, holds another key,
+// names no valid data file, or names a missing one) is reported by Head and
+// Get as an error wrapping ErrCorrupt, which matches none of the not-found
+// sentinels; a Put over it replaces it. Errors never quote a key, a bucket name given to an
 // operation, or metadata; only hashes of them appear.
 //
 // # Differences from s3
@@ -161,11 +162,23 @@
 // first wrote its name record; CreateBucket and ListBuckets report it with
 // the Name, and leave ID and Region empty. A bucket whose name record is missing or does
 // not hold its name (one created by an earlier version, or a record a crash
-// left empty) cannot be named and is left out of ListBuckets, with nothing
-// reported, until CreateBucket of it runs again, which rewrites the record;
-// its objects stay reachable through the other methods meanwhile. A record
-// that cannot be read at all, or that is not a regular file, fails the call.
-// Metadata that cannot be used fails ListObjects rather than being skipped.
+// left empty) cannot be named and is left out of ListBuckets until
+// CreateBucket of it runs again, which rewrites the record; its objects stay
+// reachable through the other methods meanwhile. A record that cannot be
+// read at all, or that is not a regular file, fails the call. Likewise an
+// object that cannot be read (see ErrCorrupt) is left out of ListObjects,
+// while an I/O error reading the metadata still fails it.
+//
+// What a listing leaves out is counted in its Skipped, which covers the
+// whole bucket (or every bucket) and so repeats on every page; a
+// ListObjects page also counts any of its own objects damaged between the
+// scan and the read of its summary. To find
+// what and where, give NewProvider WithSkipHandler: it gets each entry's
+// path relative to the root and an error wrapping ErrCorrupt or
+// ErrUnnamedBucket, and also hears from DeleteBucket about the debris it
+// removes and anything it leaves behind. Finding an object that cannot be
+// read costs one stat of its data file per object per page, on top of
+// reading its metadata.
 //
 // SPDX-License-Identifier: MIT
 package dir

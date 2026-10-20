@@ -143,6 +143,12 @@
 // before anything is sent. ListObjects of a missing bucket is
 // ErrBucketNotFound.
 //
+// A listing that leaves out an entry the backend could not read says so in
+// Skipped, a count over the whole bucket (or every bucket) that every page
+// repeats, plus, for objects, any of the page's own found damaged while it
+// was built; the entries it returns are correct. A caller that ignores
+// Skipped sees a short listing and no error. The s3 backend never skips.
+//
 // # Lifecycle
 //
 // The interfaces define no start or close step. A backend is ready when its

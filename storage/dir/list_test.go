@@ -91,39 +91,6 @@ func TestListObjects_SkipsForeignFiles(t *testing.T) {
 	}
 }
 
-// TestListObjects_Corrupt checks that metadata that cannot be used fails
-// the call with an error that is not a not-found and quotes no key.
-func TestListObjects_Corrupt(t *testing.T) {
-	t.Parallel()
-
-	tests := map[string]func(t *testing.T, dir string){
-		"undecodable": func(t *testing.T, dir string) {
-			writeFile(t, metaFile(dir, "secret-key"), []byte("{not json"))
-		},
-		"holds another key": func(t *testing.T, dir string) {
-			data, err := os.ReadFile(metaFile(dir, "secret-key"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			writeFile(t, metaFile(dir, "other"), data)
-		},
-	}
-	for name, corrupt := range tests {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			p, dir := newTestProvider(t)
-			put(t, p, "secret-key", []byte("v"))
-			corrupt(t, dir)
-
-			_, err := p.ListObjects(context.Background(), &storage.ListObjectsInput{})
-			wantPresentError(t, "ListObjects()", err)
-			if strings.Contains(err.Error(), "secret") {
-				t.Errorf("ListObjects() error = %q, quotes the key", err)
-			}
-		})
-	}
-}
-
 // TestListObjects_InvalidToken checks that a token this backend did not
 // issue is ErrInvalidContinuationToken, and that one it did resumes.
 func TestListObjects_InvalidToken(t *testing.T) {

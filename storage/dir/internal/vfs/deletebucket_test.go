@@ -41,7 +41,7 @@ func TestDeleteBucket_Empty(t *testing.T) {
 	if _, err := v.CreateBucket(t.Context(), "b"); err != nil {
 		t.Fatal(err)
 	}
-	if err := v.DeleteBucket(t.Context(), "b"); err != nil {
+	if err := v.DeleteBucket(t.Context(), "b", nil); err != nil {
 		t.Fatalf("DeleteBucket: %v", err)
 	}
 	assertBucketGone(t, v, dir)
@@ -50,7 +50,7 @@ func TestDeleteBucket_Empty(t *testing.T) {
 // TestDeleteBucket_Missing reports a bucket that does not exist.
 func TestDeleteBucket_Missing(t *testing.T) {
 	v, _ := newTestVFS(t)
-	if err := v.DeleteBucket(t.Context(), "b"); !errors.Is(err, ErrBucketNotFound) {
+	if err := v.DeleteBucket(t.Context(), "b", nil); !errors.Is(err, ErrBucketNotFound) {
 		t.Errorf("DeleteBucket(missing) = %v, want ErrBucketNotFound", err)
 	}
 }
@@ -62,7 +62,7 @@ func TestDeleteBucket_NotEmpty(t *testing.T) {
 	b := newTestBucket(t, v)
 	putObject(t, b, "k", "body", "text/plain")
 
-	if err := v.DeleteBucket(t.Context(), "b"); !errors.Is(err, ErrBucketNotEmpty) {
+	if err := v.DeleteBucket(t.Context(), "b", nil); !errors.Is(err, ErrBucketNotEmpty) {
 		t.Fatalf("DeleteBucket(not empty) = %v, want ErrBucketNotEmpty", err)
 	}
 	if body, _ := getObject(t, newOpenBucket(t, v), "k"); body != "body" {
@@ -78,7 +78,7 @@ func TestDeleteBucket_Emptied(t *testing.T) {
 	if err := b.DeleteObject(t.Context(), &DeleteObjectInput{Key: "k"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := v.DeleteBucket(t.Context(), "b"); err != nil {
+	if err := v.DeleteBucket(t.Context(), "b", nil); err != nil {
 		t.Fatalf("DeleteBucket: %v", err)
 	}
 	assertBucketGone(t, v, dir)
@@ -126,7 +126,7 @@ func TestDeleteBucket_Debris(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			v, dir := newTestVFS(t)
 			tt.setup(t, newTestBucket(t, v), dir)
-			if err := v.DeleteBucket(t.Context(), "b"); err != nil {
+			if err := v.DeleteBucket(t.Context(), "b", nil); err != nil {
 				t.Fatalf("DeleteBucket: %v", err)
 			}
 			assertBucketGone(t, v, dir)
@@ -145,7 +145,7 @@ func TestDeleteBucket_ForeignFile(t *testing.T) {
 	}
 	writeDebris(t, dir, "notes.txt", "mine")
 
-	err := v.DeleteBucket(t.Context(), "b")
+	err := v.DeleteBucket(t.Context(), "b", nil)
 	if err == nil || errors.Is(err, ErrBucketNotEmpty) || errors.Is(err, ErrBucketNotFound) {
 		t.Fatalf("DeleteBucket(foreign file) = %v, want a plain error", err)
 	}
@@ -165,6 +165,8 @@ func TestDeleteBucket_ForeignFile(t *testing.T) {
 // temp metadata file of a write in progress. A writer holds the key's lock
 // from before it writes the temp file until after it renames it, so the
 // sweep waits for it; the write then lands and the bucket is not empty.
+// Nothing is reported removed: the temp file the sweep listed was renamed
+// away by the write, not removed by the sweep.
 func TestDeleteBucket_InFlightWrite(t *testing.T) {
 	v, dir := newTestVFS(t)
 	if _, err := v.CreateBucket(t.Context(), "b"); err != nil {
@@ -202,7 +204,10 @@ func TestDeleteBucket_InFlightWrite(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
-	go func() { done <- v.DeleteBucket(t.Context(), "b") }()
+	var reports []Skipped
+	go func() {
+		done <- v.DeleteBucket(t.Context(), "b", func(s Skipped) { reports = append(reports, s) })
+	}()
 
 	select {
 	case err := <-done:
@@ -223,6 +228,9 @@ func TestDeleteBucket_InFlightWrite(t *testing.T) {
 
 	if err := <-done; !errors.Is(err, ErrBucketNotEmpty) {
 		t.Fatalf("DeleteBucket after the write = %v, want ErrBucketNotEmpty", err)
+	}
+	for _, s := range reports {
+		t.Errorf("DeleteBucket reported %s: %v; want nothing reported", s.Path, s.Err)
 	}
 	if body, _ := getObject(t, newOpenBucket(t, v), "k"); body != "body" {
 		t.Errorf("object written during DeleteBucket = %q, want body", body)
@@ -248,7 +256,7 @@ func TestDeleteBucket_KeepsHeldLockFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := v.DeleteBucket(t.Context(), "b"); err != nil {
+	if err := v.DeleteBucket(t.Context(), "b", nil); err != nil {
 		t.Fatalf("DeleteBucket: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(locksDir, "held")); err != nil {
@@ -271,7 +279,7 @@ func TestDeleteBucket_ThenCreate(t *testing.T) {
 	if err := os.Chtimes(record, old, old); err != nil {
 		t.Fatal(err)
 	}
-	if err := v.DeleteBucket(t.Context(), "b"); err != nil {
+	if err := v.DeleteBucket(t.Context(), "b", nil); err != nil {
 		t.Fatal(err)
 	}
 	entry, err := v.CreateBucket(t.Context(), "b")
@@ -310,7 +318,7 @@ func TestHeadBucket(t *testing.T) {
 func TestBucketLifecycleLock(t *testing.T) {
 	for name, op := range map[string]func(v *VFS) error{
 		"CreateBucket": func(v *VFS) error { _, err := v.CreateBucket(t.Context(), "b"); return err },
-		"DeleteBucket": func(v *VFS) error { return v.DeleteBucket(t.Context(), "b") },
+		"DeleteBucket": func(v *VFS) error { return v.DeleteBucket(t.Context(), "b", nil) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			v, dir := newTestVFS(t)
@@ -360,7 +368,7 @@ func TestDeleteBucket_RefusedDeletesNothing(t *testing.T) {
 	}
 	writeDebris(t, dir, debris+metaFileExt, "{")
 
-	if err := v.DeleteBucket(t.Context(), "b"); !errors.Is(err, ErrBucketNotEmpty) {
+	if err := v.DeleteBucket(t.Context(), "b", nil); !errors.Is(err, ErrBucketNotEmpty) {
 		t.Fatalf("DeleteBucket = %v, want ErrBucketNotEmpty", err)
 	}
 	metaDir, _, _ := bucketPaths(dir)
@@ -396,7 +404,7 @@ func TestDeleteBucket_KeepsDataFileOfWriteInProgress(t *testing.T) {
 		t.Fatal(wErr)
 	}
 
-	if dErr := v.DeleteBucket(t.Context(), "b"); dErr != nil {
+	if dErr := v.DeleteBucket(t.Context(), "b", nil); dErr != nil {
 		t.Fatalf("DeleteBucket: %v", dErr)
 	}
 	if _, sErr := os.Stat(data); sErr != nil {

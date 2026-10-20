@@ -13,6 +13,10 @@ var (
 	// created.
 	ErrBucketExists = errors.New("bucket already exists")
 
+	// ErrUnnamed reports that a bucket's name record is missing or holds a
+	// name that does not hash to the bucket, so the bucket cannot be named.
+	ErrUnnamed = errors.New("bucket cannot be named")
+
 	// ErrBucketNotEmpty reports that DeleteBucket found an object in the
 	// bucket.
 	ErrBucketNotEmpty = errors.New("bucket not empty")

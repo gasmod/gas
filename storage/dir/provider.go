@@ -25,6 +25,7 @@ type Provider struct {
 	vfs    *vfs.VFS
 	root   *os.Root
 	config *Config
+	skip   SkipHandler
 }
 
 var _ storage.Provider = (*Provider)(nil)
@@ -174,7 +175,7 @@ func (p *Provider) DeleteBucket(ctx context.Context, input *storage.DeleteBucket
 		return internal.Errorf(mod, "delete bucket: %w", storage.ErrInvalidBucket)
 	}
 
-	if err := p.vfs.DeleteBucket(ctx, input.Bucket); err != nil {
+	if err := p.vfs.DeleteBucket(ctx, input.Bucket, p.report); err != nil {
 		return opError("delete bucket", nil, err)
 	}
 	return nil
@@ -429,6 +430,29 @@ func (p *Provider) removedErr(bk *vfs.Bucket, err error) error {
 	return err
 }
 
+// report passes s to the skip handler, if there is one, with its error
+// wrapping the sentinel of this package its vfs sentinel stands for.
+func (p *Provider) report(s vfs.Skipped) {
+	if p.skip == nil {
+		return
+	}
+	err := s.Err
+	switch {
+	case errors.Is(err, vfs.ErrCorrupt):
+		err = fmt.Errorf("%w: %w", ErrCorrupt, err)
+	case errors.Is(err, vfs.ErrUnnamed):
+		err = fmt.Errorf("%w: %w", ErrUnnamedBucket, err)
+	}
+	p.skip(s.Path, err)
+}
+
+// reportAll passes each of skipped to the skip handler; see report.
+func (p *Provider) reportAll(skipped []vfs.Skipped) {
+	for _, s := range skipped {
+		p.report(s)
+	}
+}
+
 // Root returns the root the provider stores into, or nil for a Provider that
 // NewProvider did not build. The caller that opened the root closes it.
 func (p *Provider) Root() *os.Root {
@@ -558,6 +582,8 @@ func opError(op string, notFound, err error) error {
 		sentinel = storage.ErrBucketNotFound
 	case errors.Is(err, vfs.ErrBucketNotEmpty):
 		sentinel = storage.ErrBucketNotEmpty
+	case errors.Is(err, vfs.ErrCorrupt):
+		sentinel = ErrCorrupt
 	case errors.Is(err, vfs.ErrPreconditionFailed):
 		sentinel = storage.ErrPreconditionFailed
 	case errors.Is(err, vfs.ErrObjectNotFound):

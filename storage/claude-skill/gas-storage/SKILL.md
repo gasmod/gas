@@ -89,6 +89,7 @@ type ListObjectsInput struct {
 type ListObjectsOutput struct {
     NextContinuationToken string // empty when IsTruncated is false
     Objects               []ObjectSummary // Key, ETag, Size, LastModified
+    Skipped               int // entries left out as unreadable, whole bucket (every page repeats it, plus that page's own objects damaged mid-listing); 0 on s3
     CommonPrefixes        []string
     IsTruncated           bool
 }
@@ -101,6 +102,7 @@ type ListBucketsInput struct {
 type ListBucketsOutput struct {
     NextContinuationToken string   // empty on the last page, and only there
     Buckets               []Bucket // Name, CreationDate, ID, Region
+    Skipped               int      // buckets left out as unnameable; 0 on s3
 }
 
 type Bucket struct {
@@ -219,7 +221,9 @@ func WithRoot(root *os.Root) Option // required
 - **Bucket fields.** `CreateBucket`, `HeadBucket` and `ListBuckets` fill `Name` and `CreationDate`; `ID` and `Region` are empty. `HeadBucket` of a bucket whose name record is missing or damaged succeeds with a zero `CreationDate`.
 - **DeleteBucket.** Refuses a bucket that holds an object, removing nothing. Unreadable metadata, metadata whose data file is gone, and temp files of crashed writes do not count: they are removed with the bucket once no object was found, so they can never make it undeletable. A file in the bucket's metadata directory that dir did not write fails the call. A write of an existing key in progress is waited for, so a slow `PutObject` holds `DeleteBucket` (and a same-name `CreateBucket`, which waits for the delete) until it ends or ctx is done. A write of a new key still copying its body is not waited for: the bucket is deleted and that `PutObject` returns `ErrBucketNotFound`. A bucket created again gets a new `CreationDate`, except after a crash between the delete's commit and its removal of the name record.
 - **Content type.** A Put without one sniffs it from the body.
-- **Listing.** Each call reads every name in the bucket (or every bucket's name record), so a page costs time in proportion to the bucket. Continuation tokens are not interchangeable with S3's. `CreateBucket` records the bucket's name under `.gas/buckets` the first time it runs, and that record's modification time is `CreationDate`. A bucket whose name record is missing (created by an earlier version) or damaged (a crash left it empty) is left out of `ListBuckets`, with nothing reported, until `CreateBucket` of it runs again, which rewrites the record; its objects stay reachable through the other methods meanwhile. A record that cannot be read at all, or that is not a regular file, fails the call. Metadata that cannot be used fails `ListObjects`; an object deleted while the page is built is left out.
+- **Listing.** Each call reads every name in the bucket (or every bucket's name record), so a page costs time in proportion to the bucket. Continuation tokens are not interchangeable with S3's. `CreateBucket` records the bucket's name under `.gas/buckets` the first time it runs, and that record's modification time is `CreationDate`. A bucket whose name record is missing (created by an earlier version) or damaged (a crash left it empty) is left out of `ListBuckets` until `CreateBucket` of it runs again, which rewrites the record; its objects stay reachable through the other methods meanwhile. An object that cannot be read (metadata that does not decode or holds another key, or a data file that is gone) is left out of `ListObjects`; an I/O error reading metadata still fails the call, and an object deleted while the page is built is left out. Each listing counts what it left out in `Skipped`, over the whole bucket (or every bucket), so every page repeats it.
+- **Skip handler.** `dir.WithSkipHandler(func(path string, err error))` hears about each entry a listing leaves out and each piece of debris `DeleteBucket` removes or leftover it leaves: `path` is relative to the root, and `err` wraps `dir.ErrCorrupt` (an object that cannot be read) or `dir.ErrUnnamedBucket` (a bucket that cannot be named), or is a plain error. It runs synchronously, once per entry per call (so once per page), and may call the provider: `DeleteBucket` calls it only after releasing its locks. Paths never appear in the listing output.
+- **`dir.ErrCorrupt`.** `HeadObject` and `GetObject` of an object that cannot be read return an error wrapping it; it matches none of the not-found sentinels. A `PutObject` of the key replaces the object.
 - **`dir.ErrStaleData`.** `PutObject` returns it together with the `ObjectInfo` when the object was written but the data file it replaced could not be removed. The object reads back as written.
 - **`dir.ErrRootRequired`.** `NewProvider` returns it when no root was given, including `WithRoot(nil)`. It wraps `storage.ErrNotInitialized`.
 - **Nil option.** `NewProvider` given a nil `Option` returns an error wrapping `storage.ErrInvalidOption` and creates nothing in the root.

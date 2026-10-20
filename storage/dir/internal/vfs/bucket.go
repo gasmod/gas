@@ -355,8 +355,8 @@ func (b *Bucket) releaseWith(name string, err error) error {
 
 // meta reads and checks the metadata file of name. A missing file returns an
 // error wrapping ErrObjectNotFound. A directory in its place, content that
-// does not decode, null, or a data file name that isDataFileName rejects
-// returns one wrapping ErrCorrupt. Errors never quote the file's content,
+// does not decode, null, a key that does not hash to name, or a data file
+// name that isDataFileName rejects returns one wrapping ErrCorrupt. Errors never quote the file's content,
 // which holds the user's key and metadata.
 func (b *Bucket) meta(name string) (*ObjectMetadata, error) {
 	file := name + metaFileExt
@@ -381,6 +381,9 @@ func (b *Bucket) meta(name string) (*ObjectMetadata, error) {
 	}
 	if !isDataFileName(name, meta.DataFile) {
 		return nil, fmt.Errorf("%w: meta file names no valid data file", ErrCorrupt)
+	}
+	if hash(meta.Key) != name {
+		return nil, fmt.Errorf("%w: meta file %s holds another key", ErrCorrupt, name)
 	}
 
 	return meta, nil

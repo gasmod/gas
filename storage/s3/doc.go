@@ -61,6 +61,8 @@
 // sentinel. HeadObject and GetObject return Expires as the text S3
 // sent, unparsed. ETags are returned without S3's quotes.
 //
+// The Skipped count of both listings is always 0: S3 returns what it holds.
+//
 // CreateBucket returns the bucket's Name and the ARN S3 reports as ID. S3's
 // Location response header is a path, not a region, so it is not reported,
 // and CreationDate and Region are empty. HeadBucket returns the Name, the
