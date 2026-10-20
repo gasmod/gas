@@ -25,55 +25,61 @@ import (
 // DeleteTokenByID. Each iteration issues a token and has many goroutines
 // race to verify it. If the race is hit, more than one goroutine succeeds.
 func TestTokenVerifyRace_StressTest(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping stress test in short mode")
-	}
-	svc := setupTokenService(t)
-
-	const iterations = 20
-	const goroutines = 100
-
-	var totalDoubleVerifies int
-
-	for iter := range iterations {
-		rawToken, err := svc.Issue(
-			context.Background(),
-			fmt.Sprintf("user-%d", iter),
-			"verify",
-			15*time.Minute,
-		)
-		require.NoError(t, err)
-
-		var wg sync.WaitGroup
-		var successCount atomic.Int32
-		wg.Add(goroutines)
-		for range goroutines {
-			go func() {
-				defer wg.Done()
-				_, verifyErr := svc.Verify(context.Background(), rawToken, "verify")
-				if verifyErr == nil {
-					successCount.Add(1)
-				}
-			}()
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		if testing.Short() {
+			t.Skip("skipping stress test in short mode")
 		}
-		wg.Wait()
+		svc := setupTokenService(t, b)
 
-		if successCount.Load() > 1 {
-			totalDoubleVerifies++
-			t.Logf("iteration %d: %d goroutines succeeded (expected 1)", iter, successCount.Load())
+		const iterations = 20
+		const goroutines = 100
+
+		var totalDoubleVerifies int
+
+		for iter := range iterations {
+			rawToken, err := svc.Issue(
+				context.Background(),
+				fmt.Sprintf("user-%d", iter),
+				"verify",
+				15*time.Minute,
+			)
+			require.NoError(t, err)
+
+			var wg sync.WaitGroup
+			var successCount atomic.Int32
+			wg.Add(goroutines)
+			for range goroutines {
+				go func() {
+					defer wg.Done()
+					_, verifyErr := svc.Verify(context.Background(), rawToken, "verify")
+					if verifyErr == nil {
+						successCount.Add(1)
+					}
+				}()
+			}
+			wg.Wait()
+
+			if successCount.Load() > 1 {
+				totalDoubleVerifies++
+				t.Logf(
+					"iteration %d: %d goroutines succeeded (expected 1)",
+					iter,
+					successCount.Load(),
+				)
+			}
 		}
-	}
 
-	// This assertion documents the vulnerability. On a fast local database
-	// the window may be too small to hit reliably, but in production with
-	// network latency the risk is real.
-	if totalDoubleVerifies > 0 {
-		t.Errorf("RACE CONFIRMED: %d/%d iterations had >1 successful verify — "+
-			"the single-use invariant was violated", totalDoubleVerifies, iterations)
-	} else {
-		t.Logf("race window not hit in %d iterations (does not mean it's safe — "+
-			"see TestTokenVerifyRace_DeleteDoesNotCheckRowCount for the code-level proof)", iterations)
-	}
+		// This assertion documents the vulnerability. On a fast local database
+		// the window may be too small to hit reliably, but in production with
+		// network latency the risk is real.
+		if totalDoubleVerifies > 0 {
+			t.Errorf("RACE CONFIRMED: %d/%d iterations had >1 successful verify — "+
+				"the single-use invariant was violated", totalDoubleVerifies, iterations)
+		} else {
+			t.Logf("race window not hit in %d iterations (does not mean it's safe — "+
+				"see TestTokenVerifyRace_DeleteDoesNotCheckRowCount for the code-level proof)", iterations)
+		}
+	})
 }
 
 // TestTokenVerifyRace_DeleteDoesNotCheckRowCount proves that DeleteTokenByID
@@ -81,87 +87,83 @@ func TestTokenVerifyRace_StressTest(t *testing.T) {
 // cause: two concurrent Verify calls that both read the token before either
 // deletes it will BOTH proceed to return the subject.
 func TestTokenVerifyRace_DeleteDoesNotCheckRowCount(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-	svc := setupTokenService(t)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupTokenService(t, b)
 
-	// Issue a token and verify it (consuming it).
-	rawToken, err := svc.Issue(context.Background(), "user-del", "verify", 15*time.Minute)
-	require.NoError(t, err)
+		// Issue a token and verify it (consuming it).
+		rawToken, err := svc.Issue(context.Background(), "user-del", "verify", 15*time.Minute)
+		require.NoError(t, err)
 
-	subject, err := svc.Verify(context.Background(), rawToken, "verify")
-	require.NoError(t, err)
-	assert.Equal(t, "user-del", subject)
+		subject, err := svc.Verify(context.Background(), rawToken, "verify")
+		require.NoError(t, err)
+		assert.Equal(t, "user-del", subject)
 
-	// The token is now deleted. A second Verify correctly returns invalid
-	// because GetTokenByHash finds nothing. But this only works because the
-	// GET fails — not because DELETE checked its row count.
-	_, err = svc.Verify(context.Background(), rawToken, "verify")
-	assert.Error(t, err, "second verify fails because GET finds nothing")
+		// The token is now deleted. A second Verify correctly returns invalid
+		// because GetTokenByHash finds nothing. But this only works because the
+		// GET fails — not because DELETE checked its row count.
+		_, err = svc.Verify(context.Background(), rawToken, "verify")
+		assert.Error(t, err, "second verify fails because GET finds nothing")
 
-	// The vulnerability: if two goroutines both GET the record before either
-	// DELETEs, both will have a valid record, both will DELETE (one with 0
-	// rows affected — silently), and both will return success.
-	//
-	// To fix: use DELETE ... RETURNING or check RowsAffected from DeleteTokenByHash.
+		// The vulnerability: if two goroutines both GET the record before either
+		// DELETEs, both will have a valid record, both will DELETE (one with 0
+		// rows affected — silently), and both will return success.
+		//
+		// To fix: use DELETE ... RETURNING or check RowsAffected from DeleteTokenByHash.
+	})
 }
 
 // TestTokenVerifyRace_SimulatedWithDirectSQL directly simulates the race by
 // issuing a token, manually querying it twice (simulating two concurrent GETs),
 // then deleting it. This proves the code path that enables the race.
 func TestTokenVerifyRace_SimulatedWithDirectSQL(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		logger := testutil.NewNopLogger()
+		migMgr := b.Migrations
 
-	pg := testutil.SetupPostgres(t)
-	logger := testutil.NewNopLogger()
-	migMgr := pg.MigrationManager()
+		cfg := token.DefaultConfig()
+		cfg.Token.CleanupInterval = 0
 
-	cfg := token.DefaultConfig()
-	cfg.Token.CleanupInterval = 0
+		svc, err := token.New(token.WithConfig(cfg))(b.DB, logger, migMgr, nil)
+		require.NoError(t, err)
+		require.NoError(t, svc.Init(context.Background()))
+		require.NoError(t, migMgr.RunPending())
+		t.Cleanup(func() { _ = svc.Close(context.Background()) })
 
-	svc, err := token.New(token.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
-	require.NoError(t, err)
-	require.NoError(t, svc.Init(context.Background()))
-	require.NoError(t, migMgr.RunPending())
-	t.Cleanup(func() { _ = svc.Close(context.Background()) })
+		rawToken, err := svc.Issue(context.Background(), "user-sim", "verify", 15*time.Minute)
+		require.NoError(t, err)
 
-	rawToken, err := svc.Issue(context.Background(), "user-sim", "verify", 15*time.Minute)
-	require.NoError(t, err)
+		tokenHash := cryptoutil.SHA256Hex(rawToken)
+		db := b.DB.DB()
 
-	tokenHash := cryptoutil.SHA256Hex(rawToken)
-	db := pg.Provider().DB()
+		// Simulate two concurrent GETs — both see the token.
+		var subject1, subject2 string
+		err = db.QueryRow("SELECT subject FROM __gas_auth_tokens WHERE token_hash = $1", tokenHash).
+			Scan(&subject1)
+		require.NoError(t, err, "first GET finds the token")
 
-	// Simulate two concurrent GETs — both see the token.
-	var subject1, subject2 string
-	err = db.QueryRow("SELECT subject FROM __gas_auth_tokens WHERE token_hash = $1", tokenHash).
-		Scan(&subject1)
-	require.NoError(t, err, "first GET finds the token")
+		err = db.QueryRow("SELECT subject FROM __gas_auth_tokens WHERE token_hash = $1", tokenHash).
+			Scan(&subject2)
+		require.NoError(t, err, "second GET also finds the token (race window)")
 
-	err = db.QueryRow("SELECT subject FROM __gas_auth_tokens WHERE token_hash = $1", tokenHash).
-		Scan(&subject2)
-	require.NoError(t, err, "second GET also finds the token (race window)")
+		assert.Equal(t, "user-sim", subject1)
+		assert.Equal(t, "user-sim", subject2)
 
-	assert.Equal(t, "user-sim", subject1)
-	assert.Equal(t, "user-sim", subject2)
+		// First DELETE succeeds.
+		res, err := db.Exec("DELETE FROM __gas_auth_tokens WHERE token_hash = $1", tokenHash)
+		require.NoError(t, err)
+		rows, _ := res.RowsAffected()
+		assert.Equal(t, int64(1), rows, "first DELETE removes the token")
 
-	// First DELETE succeeds.
-	res, err := db.Exec("DELETE FROM __gas_auth_tokens WHERE token_hash = $1", tokenHash)
-	require.NoError(t, err)
-	rows, _ := res.RowsAffected()
-	assert.Equal(t, int64(1), rows, "first DELETE removes the token")
+		// Second DELETE also succeeds — with 0 rows affected, but NO error.
+		res, err = db.Exec("DELETE FROM __gas_auth_tokens WHERE token_hash = $1", tokenHash)
+		require.NoError(t, err, "second DELETE does not return an error")
+		rows, _ = res.RowsAffected()
+		assert.Equal(t, int64(0), rows, "second DELETE affects 0 rows")
 
-	// Second DELETE also succeeds — with 0 rows affected, but NO error.
-	res, err = db.Exec("DELETE FROM __gas_auth_tokens WHERE token_hash = $1", tokenHash)
-	require.NoError(t, err, "second DELETE does not return an error")
-	rows, _ = res.RowsAffected()
-	assert.Equal(t, int64(0), rows, "second DELETE affects 0 rows")
-
-	// Both callers would now proceed with a valid record and return success.
-	// The fix: the application must check RowsAffected or use an atomic
-	// DELETE ... RETURNING instead of separate GET + DELETE.
+		// Both callers would now proceed with a valid record and return success.
+		// The fix: the application must check RowsAffected or use an atomic
+		// DELETE ... RETURNING instead of separate GET + DELETE.
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -171,26 +173,25 @@ func TestTokenVerifyRace_SimulatedWithDirectSQL(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestTokenVerify_WrongPurposeConsumesToken(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-	svc := setupTokenService(t)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupTokenService(t, b)
 
-	rawToken, err := svc.Issue(
-		context.Background(),
-		"user-purpose",
-		"password-reset",
-		15*time.Minute,
-	)
-	require.NoError(t, err)
+		rawToken, err := svc.Issue(
+			context.Background(),
+			"user-purpose",
+			"password-reset",
+			15*time.Minute,
+		)
+		require.NoError(t, err)
 
-	// Verify with wrong purpose — token is consumed but returns error.
-	_, err = svc.Verify(context.Background(), rawToken, "email-verify")
-	assert.Error(t, err, "wrong purpose returns error")
+		// Verify with wrong purpose — token is consumed but returns error.
+		_, err = svc.Verify(context.Background(), rawToken, "email-verify")
+		assert.Error(t, err, "wrong purpose returns error")
 
-	// Now the correct purpose also fails — the token was already burned.
-	_, err = svc.Verify(context.Background(), rawToken, "password-reset")
-	assert.Error(t, err, "correct purpose fails because token was already consumed")
+		// Now the correct purpose also fails — the token was already burned.
+		_, err = svc.Verify(context.Background(), rawToken, "password-reset")
+		assert.Error(t, err, "correct purpose fails because token was already consumed")
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -198,19 +199,15 @@ func TestTokenVerify_WrongPurposeConsumesToken(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestTokenCleanupRemovesExpired(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	pg := testutil.SetupPostgres(t)
+	b := testutil.PostgresBackend(t)
 	logger := testutil.NewNopLogger()
-	migMgr := pg.MigrationManager()
+	migMgr := b.Migrations
 
 	cfg := token.DefaultConfig()
 	cfg.Token.CleanupInterval = 200 * time.Millisecond
 	cfg.Token.CleanupTimeout = 5 * time.Second
 
-	svc, err := token.New(token.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
+	svc, err := token.New(token.WithConfig(cfg))(b.DB, logger, migMgr, nil)
 	require.NoError(t, err)
 	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
@@ -221,7 +218,7 @@ func TestTokenCleanupRemovesExpired(t *testing.T) {
 	require.NoError(t, err)
 
 	tokenHash := cryptoutil.SHA256Hex(rawToken)
-	db := pg.Provider().DB()
+	db := b.DB.DB()
 
 	// Token exists initially.
 	var count int
@@ -240,27 +237,24 @@ func TestTokenCleanupRemovesExpired(t *testing.T) {
 }
 
 func TestTokenCleanupGracefulShutdown(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		logger := testutil.NewNopLogger()
+		migMgr := b.Migrations
 
-	pg := testutil.SetupPostgres(t)
-	logger := testutil.NewNopLogger()
-	migMgr := pg.MigrationManager()
+		cfg := token.DefaultConfig()
+		cfg.Token.CleanupInterval = 100 * time.Millisecond
+		cfg.Token.CleanupTimeout = 5 * time.Second
 
-	cfg := token.DefaultConfig()
-	cfg.Token.CleanupInterval = 100 * time.Millisecond
-	cfg.Token.CleanupTimeout = 5 * time.Second
+		svc, err := token.New(token.WithConfig(cfg))(b.DB, logger, migMgr, nil)
+		require.NoError(t, err)
+		require.NoError(t, svc.Init(context.Background()))
+		require.NoError(t, migMgr.RunPending())
 
-	svc, err := token.New(token.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
-	require.NoError(t, err)
-	require.NoError(t, svc.Init(context.Background()))
-	require.NoError(t, migMgr.RunPending())
+		// Let a few cleanup cycles run.
+		time.Sleep(350 * time.Millisecond)
 
-	// Let a few cleanup cycles run.
-	time.Sleep(350 * time.Millisecond)
-
-	// Close should stop the goroutine without hanging.
-	err = svc.Close(context.Background())
-	assert.NoError(t, err, "Close should shut down cleanup goroutine cleanly")
+		// Close should stop the goroutine without hanging.
+		err = svc.Close(context.Background())
+		assert.NoError(t, err, "Close should shut down cleanup goroutine cleanly")
+	})
 }

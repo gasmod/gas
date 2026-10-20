@@ -23,31 +23,30 @@ import (
 // the entire Authenticate call fails — even though the key was already
 // validated.
 func TestAPIKeyLastUsedUpdateIsCoupledToAuth(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-	svc := setupAPIKeyService(t)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupAPIKeyService(t, b)
 
-	key, _, err := svc.Generate(context.Background(), "user-1", "test-key", nil)
-	require.NoError(t, err)
+		key, _, err := svc.Generate(context.Background(), "user-1", "test-key", nil)
+		require.NoError(t, err)
 
-	// First auth succeeds — this also updates last_used.
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Header.Set("X-API-Key", key)
-	principal, err := svc.Authenticate(context.Background(), req)
-	require.NoError(t, err)
-	assert.Equal(t, "user-1", principal.Subject())
+		// First auth succeeds — this also updates last_used.
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("X-API-Key", key)
+		principal, err := svc.Authenticate(context.Background(), req)
+		require.NoError(t, err)
+		assert.Equal(t, "user-1", principal.Subject())
 
-	// Verify that last_used was set by listing keys.
-	keys, err := svc.List(context.Background(), "user-1")
-	require.NoError(t, err)
-	require.Len(t, keys, 1)
-	assert.NotNil(t, keys[0].LastUsed, "last_used is set after authentication")
+		// Verify that last_used was set by listing keys.
+		keys, err := svc.List(context.Background(), "user-1")
+		require.NoError(t, err)
+		require.Len(t, keys, 1)
+		assert.NotNil(t, keys[0].LastUsed, "last_used is set after authentication")
 
-	// We can't easily simulate a DB write failure here without mocking,
-	// but this test documents that UpdateLastUsed is in the critical auth path.
-	// If it were best-effort (log and continue), a transient DB write failure
-	// would not reject an otherwise valid request.
+		// We can't easily simulate a DB write failure here without mocking,
+		// but this test documents that UpdateLastUsed is in the critical auth path.
+		// If it were best-effort (log and continue), a transient DB write failure
+		// would not reject an otherwise valid request.
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -58,22 +57,18 @@ func TestAPIKeyLastUsedUpdateIsCoupledToAuth(t *testing.T) {
 // in the database indefinitely — there is no cleanup goroutine like in
 // session and token services.
 func TestAPIKeyExpiredKeysAccumulate(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	pg := testutil.SetupPostgres(t)
+	b := testutil.PostgresBackend(t)
 	logger := testutil.NewNopLogger()
-	migMgr := pg.MigrationManager()
+	migMgr := b.Migrations
 
 	cfg := apikey.DefaultConfig()
-	svc, err := apikey.New(apikey.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
+	svc, err := apikey.New(apikey.WithConfig(cfg))(b.DB, logger, migMgr, nil)
 	require.NoError(t, err)
 	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
 	t.Cleanup(func() { _ = svc.Close(context.Background()) })
 
-	db := pg.Provider().DB()
+	db := b.DB.DB()
 
 	// Generate a key.
 	_, info, err := svc.Generate(context.Background(), "user-exp", "expiring-key", nil)
@@ -119,16 +114,12 @@ func TestAPIKeyExpiredKeysAccumulate(t *testing.T) {
 // TestAPIKeyScopeQueryingLimitation demonstrates that scopes stored as
 // comma-separated TEXT cannot be queried at the database level.
 func TestAPIKeyScopeQueryingLimitation(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	pg := testutil.SetupPostgres(t)
+	b := testutil.PostgresBackend(t)
 	logger := testutil.NewNopLogger()
-	migMgr := pg.MigrationManager()
+	migMgr := b.Migrations
 
 	cfg := apikey.DefaultConfig()
-	svc, err := apikey.New(apikey.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
+	svc, err := apikey.New(apikey.WithConfig(cfg))(b.DB, logger, migMgr, nil)
 	require.NoError(t, err)
 	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
@@ -153,7 +144,7 @@ func TestAPIKeyScopeQueryingLimitation(t *testing.T) {
 	require.NoError(t, err)
 
 	// PostgreSQL can query scopes using array operators.
-	db := pg.Provider().DB()
+	db := b.DB.DB()
 	var count int
 	err = db.QueryRow("SELECT COUNT(*) FROM __gas_auth_api_keys WHERE 'write' = ANY(scopes) AND subject = $1",
 		"user-scope").
@@ -174,17 +165,16 @@ func TestAPIKeyScopeQueryingLimitation(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestAPIKeyCloseIsNoOp(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-	svc := setupAPIKeyService(t)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupAPIKeyService(t, b)
 
-	// Close is a no-op — no goroutines to stop, no resources to release.
-	err := svc.Close(context.Background())
-	assert.NoError(t, err)
+		// Close is a no-op — no goroutines to stop, no resources to release.
+		err := svc.Close(context.Background())
+		assert.NoError(t, err)
 
-	// Service can still be used after Close (it's truly stateless).
-	// This is correct behavior but means expired keys are never cleaned up.
-	_, _, err = svc.Generate(context.Background(), "user-after-close", "key", nil)
-	assert.NoError(t, err, "service still works after Close — no cleanup goroutine to stop")
+		// Service can still be used after Close (it's truly stateless).
+		// This is correct behavior but means expired keys are never cleaned up.
+		_, _, err = svc.Generate(context.Background(), "user-after-close", "key", nil)
+		assert.NoError(t, err, "service still works after Close — no cleanup goroutine to stop")
+	})
 }

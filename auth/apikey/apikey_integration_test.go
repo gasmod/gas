@@ -24,17 +24,13 @@ import (
 // Helpers
 // ---------------------------------------------------------------------------
 
-func setupAPIKeyService(t *testing.T) *apikey.Service {
+func setupAPIKeyService(t *testing.T, b testutil.Backend) *apikey.Service {
 	t.Helper()
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-	pg := testutil.SetupPostgres(t)
 	logger := testutil.NewNopLogger()
-	migMgr := pg.MigrationManager()
+	migMgr := b.Migrations
 
 	cfg := apikey.DefaultConfig()
-	svc, err := apikey.New(apikey.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
+	svc, err := apikey.New(apikey.WithConfig(cfg))(b.DB, logger, migMgr, nil)
 	require.NoError(t, err)
 
 	require.NoError(t, svc.Init(context.Background()))
@@ -44,16 +40,16 @@ func setupAPIKeyService(t *testing.T) *apikey.Service {
 	return svc
 }
 
-func setupAPIKeyServiceWithConfig(t *testing.T, cfg *apikey.Config) *apikey.Service {
+func setupAPIKeyServiceWithConfig(
+	t *testing.T,
+	b testutil.Backend,
+	cfg *apikey.Config,
+) *apikey.Service {
 	t.Helper()
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-	pg := testutil.SetupPostgres(t)
 	logger := testutil.NewNopLogger()
-	migMgr := pg.MigrationManager()
+	migMgr := b.Migrations
 
-	svc, err := apikey.New(apikey.WithConfig(cfg))(pg.Provider(), logger, migMgr, nil)
+	svc, err := apikey.New(apikey.WithConfig(cfg))(b.DB, logger, migMgr, nil)
 	require.NoError(t, err)
 	require.NoError(t, svc.Init(context.Background()))
 	require.NoError(t, migMgr.RunPending())
@@ -73,55 +69,63 @@ func authenticateWithAPIKey(svc *apikey.Service, headerName, key string) (gas.Pr
 // ---------------------------------------------------------------------------
 
 func TestAPIKeyGenerateAndAuthenticate(t *testing.T) {
-	svc := setupAPIKeyService(t)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupAPIKeyService(t, b)
 
-	key, info, err := svc.Generate(
-		context.Background(),
-		"user-123",
-		"my-key",
-		[]string{"read", "write"},
-	)
-	require.NoError(t, err)
-	assert.NotEmpty(t, key)
-	assert.NotEmpty(t, info.ID)
+		key, info, err := svc.Generate(
+			context.Background(),
+			"user-123",
+			"my-key",
+			[]string{"read", "write"},
+		)
+		require.NoError(t, err)
+		assert.NotEmpty(t, key)
+		assert.NotEmpty(t, info.ID)
 
-	principal, err := authenticateWithAPIKey(svc, "X-API-Key", key)
-	require.NoError(t, err)
-	assert.Equal(t, "user-123", principal.Subject())
-	assert.Equal(t, "apikey", principal.Scheme())
-	assert.Equal(t, info.ID, principal.CredentialID())
+		principal, err := authenticateWithAPIKey(svc, "X-API-Key", key)
+		require.NoError(t, err)
+		assert.Equal(t, "user-123", principal.Subject())
+		assert.Equal(t, "apikey", principal.Scheme())
+		assert.Equal(t, info.ID, principal.CredentialID())
 
-	// Scopes in metadata.
-	scopes := principal.Metadata().Value(apikey.PrincipalMetadataKeyScopes)
-	assert.IsType(t, []string{}, scopes)
-	assert.Len(t, scopes, 2)
-	assert.Equal(t, []string{"read", "write"}, scopes)
+		// Scopes in metadata.
+		scopes := principal.Metadata().Value(apikey.PrincipalMetadataKeyScopes)
+		assert.IsType(t, []string{}, scopes)
+		assert.Len(t, scopes, 2)
+		assert.Equal(t, []string{"read", "write"}, scopes)
+	})
 }
 
 func TestAPIKeyAuthenticateNoHeader(t *testing.T) {
-	svc := setupAPIKeyService(t)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupAPIKeyService(t, b)
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	_, err := svc.Authenticate(context.Background(), req)
-	assert.ErrorIs(t, err, auth.ErrUnauthenticated)
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		_, err := svc.Authenticate(context.Background(), req)
+		assert.ErrorIs(t, err, auth.ErrUnauthenticated)
+	})
 }
 
 func TestAPIKeyAuthenticateInvalidKey(t *testing.T) {
-	svc := setupAPIKeyService(t)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupAPIKeyService(t, b)
 
-	_, err := authenticateWithAPIKey(svc, "X-API-Key", "totally-fake-key")
-	assert.ErrorIs(t, err, auth.ErrUnauthenticated)
+		_, err := authenticateWithAPIKey(svc, "X-API-Key", "totally-fake-key")
+		assert.ErrorIs(t, err, auth.ErrUnauthenticated)
+	})
 }
 
 func TestAPIKeyAuthenticateWrongHeaderName(t *testing.T) {
-	svc := setupAPIKeyService(t)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupAPIKeyService(t, b)
 
-	key, _, err := svc.Generate(context.Background(), "user-header", "test", nil)
-	require.NoError(t, err)
+		key, _, err := svc.Generate(context.Background(), "user-header", "test", nil)
+		require.NoError(t, err)
 
-	// Use wrong header name.
-	_, err = authenticateWithAPIKey(svc, "Authorization", key)
-	assert.ErrorIs(t, err, auth.ErrUnauthenticated)
+		// Use wrong header name.
+		_, err = authenticateWithAPIKey(svc, "Authorization", key)
+		assert.ErrorIs(t, err, auth.ErrUnauthenticated)
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -129,127 +133,141 @@ func TestAPIKeyAuthenticateWrongHeaderName(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestAPIKeyRevoke(t *testing.T) {
-	svc := setupAPIKeyService(t)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupAPIKeyService(t, b)
 
-	key, info, err := svc.Generate(context.Background(), "user-revoke", "test", nil)
-	require.NoError(t, err)
+		key, info, err := svc.Generate(context.Background(), "user-revoke", "test", nil)
+		require.NoError(t, err)
 
-	principal := auth.NewPrincipal("user-revoke", "apikey", info.ID, nil)
-	require.NoError(t, svc.Revoke(context.Background(), principal))
+		principal := auth.NewPrincipal("user-revoke", "apikey", info.ID, nil)
+		require.NoError(t, svc.Revoke(context.Background(), principal))
 
-	_, err = authenticateWithAPIKey(svc, "X-API-Key", key)
-	assert.ErrorIs(t, err, auth.ErrUnauthenticated)
+		_, err = authenticateWithAPIKey(svc, "X-API-Key", key)
+		assert.ErrorIs(t, err, auth.ErrUnauthenticated)
+	})
 }
 
 func TestAPIKeyRevokeAll(t *testing.T) {
-	svc := setupAPIKeyService(t)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupAPIKeyService(t, b)
 
-	key1, _, err := svc.Generate(context.Background(), "user-revoke-all", "key1", nil)
-	require.NoError(t, err)
-	key2, _, err := svc.Generate(context.Background(), "user-revoke-all", "key2", nil)
-	require.NoError(t, err)
-	key3, _, err := svc.Generate(context.Background(), "user-revoke-all", "key3", nil)
-	require.NoError(t, err)
+		key1, _, err := svc.Generate(context.Background(), "user-revoke-all", "key1", nil)
+		require.NoError(t, err)
+		key2, _, err := svc.Generate(context.Background(), "user-revoke-all", "key2", nil)
+		require.NoError(t, err)
+		key3, _, err := svc.Generate(context.Background(), "user-revoke-all", "key3", nil)
+		require.NoError(t, err)
 
-	require.NoError(t, svc.RevokeAll(context.Background(), "user-revoke-all"))
+		require.NoError(t, svc.RevokeAll(context.Background(), "user-revoke-all"))
 
-	for _, key := range []string{key1, key2, key3} {
-		_, err := authenticateWithAPIKey(svc, "X-API-Key", key)
-		assert.ErrorIs(t, err, auth.ErrUnauthenticated, "key should be revoked")
-	}
+		for _, key := range []string{key1, key2, key3} {
+			_, err := authenticateWithAPIKey(svc, "X-API-Key", key)
+			assert.ErrorIs(t, err, auth.ErrUnauthenticated, "key should be revoked")
+		}
+	})
 }
 
 func TestAPIKeyRevokeAllBySchemeAPIKey(t *testing.T) {
-	svc := setupAPIKeyService(t)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupAPIKeyService(t, b)
 
-	key, _, err := svc.Generate(context.Background(), "user-scheme", "test", nil)
-	require.NoError(t, err)
+		key, _, err := svc.Generate(context.Background(), "user-scheme", "test", nil)
+		require.NoError(t, err)
 
-	require.NoError(t, svc.RevokeAllByScheme(context.Background(), "user-scheme", "apikey"))
+		require.NoError(t, svc.RevokeAllByScheme(context.Background(), "user-scheme", "apikey"))
 
-	_, err = authenticateWithAPIKey(svc, "X-API-Key", key)
-	assert.ErrorIs(t, err, auth.ErrUnauthenticated)
+		_, err = authenticateWithAPIKey(svc, "X-API-Key", key)
+		assert.ErrorIs(t, err, auth.ErrUnauthenticated)
+	})
 }
 
 func TestAPIKeyRevokeExcludesFromList(t *testing.T) {
-	svc := setupAPIKeyService(t)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupAPIKeyService(t, b)
 
-	_, keepInfo, err := svc.Generate(context.Background(), "user-list", "keep", nil)
-	require.NoError(t, err)
-	_, revokeInfo, err := svc.Generate(context.Background(), "user-list", "revoke", nil)
-	require.NoError(t, err)
+		_, keepInfo, err := svc.Generate(context.Background(), "user-list", "keep", nil)
+		require.NoError(t, err)
+		_, revokeInfo, err := svc.Generate(context.Background(), "user-list", "revoke", nil)
+		require.NoError(t, err)
 
-	principal := auth.NewPrincipal("user-list", "apikey", revokeInfo.ID, nil)
-	require.NoError(t, svc.Revoke(context.Background(), principal))
+		principal := auth.NewPrincipal("user-list", "apikey", revokeInfo.ID, nil)
+		require.NoError(t, svc.Revoke(context.Background(), principal))
 
-	keys, err := svc.List(context.Background(), "user-list")
-	require.NoError(t, err)
-	require.Len(t, keys, 1)
-	assert.Equal(t, keepInfo.ID, keys[0].ID)
+		keys, err := svc.List(context.Background(), "user-list")
+		require.NoError(t, err)
+		require.Len(t, keys, 1)
+		assert.Equal(t, keepInfo.ID, keys[0].ID)
 
-	allKeys, err := svc.List(context.Background(), "user-list", apikey.WithIncludeRevoked())
-	require.NoError(t, err)
-	require.Len(t, allKeys, 2)
-	byID := map[string]apikey.KeyInfo{}
-	for _, k := range allKeys {
-		byID[k.ID] = k
-	}
-	require.Contains(t, byID, keepInfo.ID)
-	require.Contains(t, byID, revokeInfo.ID)
-	assert.Nil(t, byID[keepInfo.ID].DeletedAt)
-	assert.NotNil(t, byID[revokeInfo.ID].DeletedAt)
+		allKeys, err := svc.List(context.Background(), "user-list", apikey.WithIncludeRevoked())
+		require.NoError(t, err)
+		require.Len(t, allKeys, 2)
+		byID := map[string]apikey.KeyInfo{}
+		for _, k := range allKeys {
+			byID[k.ID] = k
+		}
+		require.Contains(t, byID, keepInfo.ID)
+		require.Contains(t, byID, revokeInfo.ID)
+		assert.Nil(t, byID[keepInfo.ID].DeletedAt)
+		assert.NotNil(t, byID[revokeInfo.ID].DeletedAt)
+	})
 }
 
 func TestAPIKeyDeleteHardRemovesRow(t *testing.T) {
-	svc := setupAPIKeyService(t)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupAPIKeyService(t, b)
 
-	key, info, err := svc.Generate(context.Background(), "user-delete", "test", nil)
-	require.NoError(t, err)
+		key, info, err := svc.Generate(context.Background(), "user-delete", "test", nil)
+		require.NoError(t, err)
 
-	principal := auth.NewPrincipal("user-delete", "apikey", info.ID, nil)
-	require.NoError(t, svc.Delete(context.Background(), principal))
+		principal := auth.NewPrincipal("user-delete", "apikey", info.ID, nil)
+		require.NoError(t, svc.Delete(context.Background(), principal))
 
-	_, err = authenticateWithAPIKey(svc, "X-API-Key", key)
-	assert.ErrorIs(t, err, auth.ErrUnauthenticated)
+		_, err = authenticateWithAPIKey(svc, "X-API-Key", key)
+		assert.ErrorIs(t, err, auth.ErrUnauthenticated)
 
-	keys, err := svc.List(context.Background(), "user-delete")
-	require.NoError(t, err)
-	assert.Empty(t, keys)
+		keys, err := svc.List(context.Background(), "user-delete")
+		require.NoError(t, err)
+		assert.Empty(t, keys)
+	})
 }
 
 func TestAPIKeyDeleteAllHardRemovesRows(t *testing.T) {
-	svc := setupAPIKeyService(t)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupAPIKeyService(t, b)
 
-	_, _, err := svc.Generate(context.Background(), "user-delete-all", "k1", nil)
-	require.NoError(t, err)
-	_, _, err = svc.Generate(context.Background(), "user-delete-all", "k2", nil)
-	require.NoError(t, err)
+		_, _, err := svc.Generate(context.Background(), "user-delete-all", "k1", nil)
+		require.NoError(t, err)
+		_, _, err = svc.Generate(context.Background(), "user-delete-all", "k2", nil)
+		require.NoError(t, err)
 
-	// Soft-delete one first to prove DeleteAll removes both active and soft-deleted rows.
-	_, revokedInfo, err := svc.Generate(context.Background(), "user-delete-all", "k3", nil)
-	require.NoError(t, err)
-	principal := auth.NewPrincipal("user-delete-all", "apikey", revokedInfo.ID, nil)
-	require.NoError(t, svc.Revoke(context.Background(), principal))
+		// Soft-delete one first to prove DeleteAll removes both active and soft-deleted rows.
+		_, revokedInfo, err := svc.Generate(context.Background(), "user-delete-all", "k3", nil)
+		require.NoError(t, err)
+		principal := auth.NewPrincipal("user-delete-all", "apikey", revokedInfo.ID, nil)
+		require.NoError(t, svc.Revoke(context.Background(), principal))
 
-	require.NoError(t, svc.DeleteAll(context.Background(), "user-delete-all"))
+		require.NoError(t, svc.DeleteAll(context.Background(), "user-delete-all"))
 
-	keys, err := svc.List(context.Background(), "user-delete-all")
-	require.NoError(t, err)
-	assert.Empty(t, keys)
+		keys, err := svc.List(context.Background(), "user-delete-all")
+		require.NoError(t, err)
+		assert.Empty(t, keys)
+	})
 }
 
 func TestAPIKeyRevokeAllBySchemeWrongScheme(t *testing.T) {
-	svc := setupAPIKeyService(t)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupAPIKeyService(t, b)
 
-	key, _, err := svc.Generate(context.Background(), "user-wrong-scheme", "test", nil)
-	require.NoError(t, err)
+		key, _, err := svc.Generate(context.Background(), "user-wrong-scheme", "test", nil)
+		require.NoError(t, err)
 
-	// Wrong scheme → no-op.
-	require.NoError(t, svc.RevokeAllByScheme(context.Background(), "user-wrong-scheme", "jwt"))
+		// Wrong scheme → no-op.
+		require.NoError(t, svc.RevokeAllByScheme(context.Background(), "user-wrong-scheme", "jwt"))
 
-	principal, err := authenticateWithAPIKey(svc, "X-API-Key", key)
-	require.NoError(t, err)
-	assert.Equal(t, "user-wrong-scheme", principal.Subject())
+		principal, err := authenticateWithAPIKey(svc, "X-API-Key", key)
+		require.NoError(t, err)
+		assert.Equal(t, "user-wrong-scheme", principal.Subject())
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -257,19 +275,21 @@ func TestAPIKeyRevokeAllBySchemeWrongScheme(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestAPIKeyUpdatesLastUsed(t *testing.T) {
-	svc := setupAPIKeyService(t)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupAPIKeyService(t, b)
 
-	key, _, err := svc.Generate(context.Background(), "user-last-used", "test", nil)
-	require.NoError(t, err)
+		key, _, err := svc.Generate(context.Background(), "user-last-used", "test", nil)
+		require.NoError(t, err)
 
-	// Authenticate to trigger last_used update.
-	_, err = authenticateWithAPIKey(svc, "X-API-Key", key)
-	require.NoError(t, err)
+		// Authenticate to trigger last_used update.
+		_, err = authenticateWithAPIKey(svc, "X-API-Key", key)
+		require.NoError(t, err)
 
-	keys, err := svc.List(context.Background(), "user-last-used")
-	require.NoError(t, err)
-	require.Len(t, keys, 1)
-	assert.NotNil(t, keys[0].LastUsed, "last_used should be set after authentication")
+		keys, err := svc.List(context.Background(), "user-last-used")
+		require.NoError(t, err)
+		require.Len(t, keys, 1)
+		assert.NotNil(t, keys[0].LastUsed, "last_used should be set after authentication")
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -277,51 +297,62 @@ func TestAPIKeyUpdatesLastUsed(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestAPIKeyList(t *testing.T) {
-	svc := setupAPIKeyService(t)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupAPIKeyService(t, b)
 
-	_, _, err := svc.Generate(context.Background(), "user-list", "key1", []string{"read"})
-	require.NoError(t, err)
-	_, _, err = svc.Generate(context.Background(), "user-list", "key2", []string{"write"})
-	require.NoError(t, err)
+		_, _, err := svc.Generate(context.Background(), "user-list", "key1", []string{"read"})
+		require.NoError(t, err)
+		_, _, err = svc.Generate(context.Background(), "user-list", "key2", []string{"write"})
+		require.NoError(t, err)
 
-	keys, err := svc.List(context.Background(), "user-list")
-	require.NoError(t, err)
-	assert.Len(t, keys, 2)
+		keys, err := svc.List(context.Background(), "user-list")
+		require.NoError(t, err)
+		assert.Len(t, keys, 2)
 
-	// Should not contain key hashes.
-	for _, k := range keys {
-		assert.NotEmpty(t, k.ID)
-		assert.NotEmpty(t, k.Name)
-		assert.NotEmpty(t, k.KeyPrefix)
-	}
+		// Should not contain key hashes.
+		for _, k := range keys {
+			assert.NotEmpty(t, k.ID)
+			assert.NotEmpty(t, k.Name)
+			assert.NotEmpty(t, k.KeyPrefix)
+		}
+	})
 }
 
 func TestAPIKeyListEmpty(t *testing.T) {
-	svc := setupAPIKeyService(t)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupAPIKeyService(t, b)
 
-	keys, err := svc.List(context.Background(), "nonexistent-user")
-	require.NoError(t, err)
-	assert.Empty(t, keys)
+		keys, err := svc.List(context.Background(), "nonexistent-user")
+		require.NoError(t, err)
+		assert.Empty(t, keys)
+	})
 }
 
 func TestAPIKeyListOrdering(t *testing.T) {
-	svc := setupAPIKeyService(t)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupAPIKeyService(t, b)
 
-	for i := range 5 {
-		_, _, err := svc.Generate(context.Background(), "user-order", fmt.Sprintf("key-%d", i), nil)
+		for i := range 5 {
+			_, _, err := svc.Generate(
+				context.Background(),
+				"user-order",
+				fmt.Sprintf("key-%d", i),
+				nil,
+			)
+			require.NoError(t, err)
+			time.Sleep(10 * time.Millisecond)
+		}
+
+		keys, err := svc.List(context.Background(), "user-order")
 		require.NoError(t, err)
-		time.Sleep(10 * time.Millisecond)
-	}
+		require.Len(t, keys, 5)
 
-	keys, err := svc.List(context.Background(), "user-order")
-	require.NoError(t, err)
-	require.Len(t, keys, 5)
-
-	// Should be ordered by created_at DESC (newest first).
-	for i := 1; i < len(keys); i++ {
-		assert.True(t, !keys[i-1].CreatedAt.Before(keys[i].CreatedAt),
-			"keys should be ordered newest first")
-	}
+		// Should be ordered by created_at DESC (newest first).
+		for i := 1; i < len(keys); i++ {
+			assert.True(t, !keys[i-1].CreatedAt.Before(keys[i].CreatedAt),
+				"keys should be ordered newest first")
+		}
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -329,31 +360,35 @@ func TestAPIKeyListOrdering(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestAPIKeyEmptyScopes(t *testing.T) {
-	svc := setupAPIKeyService(t)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupAPIKeyService(t, b)
 
-	key, _, err := svc.Generate(context.Background(), "user-empty-scopes", "test", nil)
-	require.NoError(t, err)
+		key, _, err := svc.Generate(context.Background(), "user-empty-scopes", "test", nil)
+		require.NoError(t, err)
 
-	principal, err := authenticateWithAPIKey(svc, "X-API-Key", key)
-	require.NoError(t, err)
+		principal, err := authenticateWithAPIKey(svc, "X-API-Key", key)
+		require.NoError(t, err)
 
-	scopes := principal.Metadata().Value(apikey.PrincipalMetadataKeyScopes)
-	assert.IsType(t, []string{}, scopes)
-	assert.Len(t, scopes, 0)
+		scopes := principal.Metadata().Value(apikey.PrincipalMetadataKeyScopes)
+		assert.IsType(t, []string{}, scopes)
+		assert.Len(t, scopes, 0)
+	})
 }
 
 func TestAPIKeyCSVScopeInjection(t *testing.T) {
-	svc := setupAPIKeyService(t)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupAPIKeyService(t, b)
 
-	// Scopes containing commas are now rejected at generation time.
-	_, _, err := svc.Generate(
-		context.Background(),
-		"user-csv",
-		"test",
-		[]string{"scope,with,commas", "normal"},
-	)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "must not contain commas")
+		// Scopes containing commas are now rejected at generation time.
+		_, _, err := svc.Generate(
+			context.Background(),
+			"user-csv",
+			"test",
+			[]string{"scope,with,commas", "normal"},
+		)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "must not contain commas")
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -361,48 +396,54 @@ func TestAPIKeyCSVScopeInjection(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestAPIKeyWithPrefix(t *testing.T) {
-	cfg := apikey.DefaultConfig()
-	cfg.APIKey.Prefix = "gas_"
-	svc := setupAPIKeyServiceWithConfig(t, cfg)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		cfg := apikey.DefaultConfig()
+		cfg.APIKey.Prefix = "gas_"
+		svc := setupAPIKeyServiceWithConfig(t, b, cfg)
 
-	key, _, err := svc.Generate(context.Background(), "user-prefix", "test", nil)
-	require.NoError(t, err)
-	assert.True(t, strings.HasPrefix(key, "gas_"), "key should start with prefix")
+		key, _, err := svc.Generate(context.Background(), "user-prefix", "test", nil)
+		require.NoError(t, err)
+		assert.True(t, strings.HasPrefix(key, "gas_"), "key should start with prefix")
 
-	principal, err := authenticateWithAPIKey(svc, "X-API-Key", key)
-	require.NoError(t, err)
-	assert.Equal(t, "user-prefix", principal.Subject())
+		principal, err := authenticateWithAPIKey(svc, "X-API-Key", key)
+		require.NoError(t, err)
+		assert.Equal(t, "user-prefix", principal.Subject())
+	})
 }
 
 func TestAPIKeyWithEmptyPrefix(t *testing.T) {
-	cfg := apikey.DefaultConfig()
-	cfg.APIKey.Prefix = ""
-	svc := setupAPIKeyServiceWithConfig(t, cfg)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		cfg := apikey.DefaultConfig()
+		cfg.APIKey.Prefix = ""
+		svc := setupAPIKeyServiceWithConfig(t, b, cfg)
 
-	key, _, err := svc.Generate(context.Background(), "user-no-prefix", "test", nil)
-	require.NoError(t, err)
-	assert.NotEmpty(t, key)
+		key, _, err := svc.Generate(context.Background(), "user-no-prefix", "test", nil)
+		require.NoError(t, err)
+		assert.NotEmpty(t, key)
 
-	principal, err := authenticateWithAPIKey(svc, "X-API-Key", key)
-	require.NoError(t, err)
-	assert.Equal(t, "user-no-prefix", principal.Subject())
+		principal, err := authenticateWithAPIKey(svc, "X-API-Key", key)
+		require.NoError(t, err)
+		assert.Equal(t, "user-no-prefix", principal.Subject())
+	})
 }
 
 func TestAPIKeyPrefixInList(t *testing.T) {
-	cfg := apikey.DefaultConfig()
-	cfg.APIKey.Prefix = "test_"
-	svc := setupAPIKeyServiceWithConfig(t, cfg)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		cfg := apikey.DefaultConfig()
+		cfg.APIKey.Prefix = "test_"
+		svc := setupAPIKeyServiceWithConfig(t, b, cfg)
 
-	key, _, err := svc.Generate(context.Background(), "user-prefix-list", "test", nil)
-	require.NoError(t, err)
+		key, _, err := svc.Generate(context.Background(), "user-prefix-list", "test", nil)
+		require.NoError(t, err)
 
-	keys, err := svc.List(context.Background(), "user-prefix-list")
-	require.NoError(t, err)
-	require.Len(t, keys, 1)
+		keys, err := svc.List(context.Background(), "user-prefix-list")
+		require.NoError(t, err)
+		require.Len(t, keys, 1)
 
-	// KeyPrefix should be prefix + 8 chars of the raw key.
-	assert.True(t, strings.HasPrefix(key, keys[0].KeyPrefix),
-		"key should start with its prefix")
+		// KeyPrefix should be prefix + 8 chars of the raw key.
+		assert.True(t, strings.HasPrefix(key, keys[0].KeyPrefix),
+			"key should start with its prefix")
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -410,95 +451,107 @@ func TestAPIKeyPrefixInList(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestAPIKeyExpiredKeyRejected(t *testing.T) {
-	svc := setupAPIKeyService(t)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupAPIKeyService(t, b)
 
-	key, _, err := svc.Generate(
-		context.Background(), "user-expired", "expired", nil,
-		apikey.WithExpiresAt(time.Now().Add(-time.Minute)),
-	)
-	require.NoError(t, err)
+		key, _, err := svc.Generate(
+			context.Background(), "user-expired", "expired", nil,
+			apikey.WithExpiresAt(time.Now().Add(-time.Minute)),
+		)
+		require.NoError(t, err)
 
-	_, err = authenticateWithAPIKey(svc, "X-API-Key", key)
-	assert.ErrorIs(t, err, auth.ErrCredentialsExpired)
+		_, err = authenticateWithAPIKey(svc, "X-API-Key", key)
+		assert.ErrorIs(t, err, auth.ErrCredentialsExpired)
+	})
 }
 
 func TestAPIKeyWithTTLAuthenticatesUntilExpiry(t *testing.T) {
-	svc := setupAPIKeyService(t)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupAPIKeyService(t, b)
 
-	before := time.Now()
-	key, info, err := svc.Generate(
-		context.Background(), "user-ttl", "ttl", nil,
-		apikey.WithTTL(time.Hour),
-	)
-	require.NoError(t, err)
-	require.NotNil(t, info.ExpiresAt)
-	assert.WithinRange(t, *info.ExpiresAt, before.Add(time.Hour), time.Now().Add(time.Hour))
+		before := time.Now()
+		key, info, err := svc.Generate(
+			context.Background(), "user-ttl", "ttl", nil,
+			apikey.WithTTL(time.Hour),
+		)
+		require.NoError(t, err)
+		require.NotNil(t, info.ExpiresAt)
+		assert.WithinRange(t, *info.ExpiresAt, before.Add(time.Hour), time.Now().Add(time.Hour))
 
-	principal, err := authenticateWithAPIKey(svc, "X-API-Key", key)
-	require.NoError(t, err)
-	assert.Equal(t, "user-ttl", principal.Subject())
+		principal, err := authenticateWithAPIKey(svc, "X-API-Key", key)
+		require.NoError(t, err)
+		assert.Equal(t, "user-ttl", principal.Subject())
+	})
 }
 
 func TestAPIKeyExpiryOptions(t *testing.T) {
-	svc := setupAPIKeyService(t)
-	fixed := time.Now().Add(48 * time.Hour).Truncate(time.Second)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupAPIKeyService(t, b)
+		fixed := time.Now().Add(48 * time.Hour).Truncate(time.Second)
 
-	tests := []struct {
-		// want is nil when the key must not expire, or the expected expiry.
-		want func() *time.Time
-		name string
-		opts []apikey.GenerateOption
-	}{
-		{
-			name: "no option",
-			want: func() *time.Time { return nil },
-		},
-		{
-			name: "zero TTL ignored",
-			opts: []apikey.GenerateOption{apikey.WithTTL(0)},
-			want: func() *time.Time { return nil },
-		},
-		{
-			name: "negative TTL ignored",
-			opts: []apikey.GenerateOption{apikey.WithTTL(-time.Hour)},
-			want: func() *time.Time { return nil },
-		},
-		{
-			name: "zero ExpiresAt ignored",
-			opts: []apikey.GenerateOption{apikey.WithExpiresAt(time.Time{})},
-			want: func() *time.Time { return nil },
-		},
-		{
-			name: "ExpiresAt after TTL wins",
-			opts: []apikey.GenerateOption{apikey.WithTTL(time.Hour), apikey.WithExpiresAt(fixed)},
-			want: func() *time.Time { return &fixed },
-		},
-		{
-			name: "TTL after ExpiresAt wins",
-			opts: []apikey.GenerateOption{apikey.WithExpiresAt(fixed), apikey.WithTTL(time.Hour)},
-			want: func() *time.Time { return new(time.Now().Add(time.Hour)) },
-		},
-	}
+		tests := []struct {
+			// want is nil when the key must not expire, or the expected expiry.
+			want func() *time.Time
+			name string
+			opts []apikey.GenerateOption
+		}{
+			{
+				name: "no option",
+				want: func() *time.Time { return nil },
+			},
+			{
+				name: "zero TTL ignored",
+				opts: []apikey.GenerateOption{apikey.WithTTL(0)},
+				want: func() *time.Time { return nil },
+			},
+			{
+				name: "negative TTL ignored",
+				opts: []apikey.GenerateOption{apikey.WithTTL(-time.Hour)},
+				want: func() *time.Time { return nil },
+			},
+			{
+				name: "zero ExpiresAt ignored",
+				opts: []apikey.GenerateOption{apikey.WithExpiresAt(time.Time{})},
+				want: func() *time.Time { return nil },
+			},
+			{
+				name: "ExpiresAt after TTL wins",
+				opts: []apikey.GenerateOption{
+					apikey.WithTTL(time.Hour),
+					apikey.WithExpiresAt(fixed),
+				},
+				want: func() *time.Time { return &fixed },
+			},
+			{
+				name: "TTL after ExpiresAt wins",
+				opts: []apikey.GenerateOption{
+					apikey.WithExpiresAt(fixed),
+					apikey.WithTTL(time.Hour),
+				},
+				want: func() *time.Time { return new(time.Now().Add(time.Hour)) },
+			},
+		}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, info, err := svc.Generate(
-				context.Background(),
-				"user-opts",
-				tt.name,
-				nil,
-				tt.opts...)
-			require.NoError(t, err)
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				_, info, err := svc.Generate(
+					context.Background(),
+					"user-opts",
+					tt.name,
+					nil,
+					tt.opts...)
+				require.NoError(t, err)
 
-			want := tt.want()
-			if want == nil {
-				assert.Nil(t, info.ExpiresAt)
-				return
-			}
-			require.NotNil(t, info.ExpiresAt)
-			assert.WithinDuration(t, *want, *info.ExpiresAt, time.Second)
-		})
-	}
+				want := tt.want()
+				if want == nil {
+					assert.Nil(t, info.ExpiresAt)
+					return
+				}
+				require.NotNil(t, info.ExpiresAt)
+				assert.WithinDuration(t, *want, *info.ExpiresAt, time.Second)
+			})
+		}
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -506,36 +559,47 @@ func TestAPIKeyExpiryOptions(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestAPIKeyBruteForceResistance(t *testing.T) {
-	svc := setupAPIKeyService(t)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupAPIKeyService(t, b)
 
-	_, _, err := svc.Generate(context.Background(), "user-brute", "test", nil)
-	require.NoError(t, err)
+		_, _, err := svc.Generate(context.Background(), "user-brute", "test", nil)
+		require.NoError(t, err)
 
-	// Try many random keys — all should return ErrUnauthenticated.
-	for i := range 20 {
-		_, err := authenticateWithAPIKey(svc, "X-API-Key", fmt.Sprintf("random-key-%d", i))
-		assert.ErrorIs(t, err, auth.ErrUnauthenticated, "brute force attempt %d", i)
-	}
+		// Try many random keys — all should return ErrUnauthenticated.
+		for i := range 20 {
+			_, err := authenticateWithAPIKey(svc, "X-API-Key", fmt.Sprintf("random-key-%d", i))
+			assert.ErrorIs(t, err, auth.ErrUnauthenticated, "brute force attempt %d", i)
+		}
+	})
 }
 
 func TestAPIKeyNearMissGivesNoSignal(t *testing.T) {
-	svc := setupAPIKeyService(t)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupAPIKeyService(t, b)
 
-	key, _, err := svc.Generate(context.Background(), "user-near-miss", "test", nil)
-	require.NoError(t, err)
+		key, _, err := svc.Generate(context.Background(), "user-near-miss", "test", nil)
+		require.NoError(t, err)
 
-	// Try key minus last character.
-	nearMiss := key[:len(key)-1]
-	_, err = authenticateWithAPIKey(svc, "X-API-Key", nearMiss)
-	assert.ErrorIs(t, err, auth.ErrUnauthenticated, "near miss should give no signal")
+		// Try key minus last character.
+		nearMiss := key[:len(key)-1]
+		_, err = authenticateWithAPIKey(svc, "X-API-Key", nearMiss)
+		assert.ErrorIs(t, err, auth.ErrUnauthenticated, "near miss should give no signal")
+	})
 }
 
 func TestAPIKeyGenerateRejectsCommaInScope(t *testing.T) {
-	svc := setupAPIKeyService(t)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupAPIKeyService(t, b)
 
-	_, _, err := svc.Generate(context.Background(), "user-1", "bad-scope", []string{"read,write"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "must not contain commas")
+		_, _, err := svc.Generate(
+			context.Background(),
+			"user-1",
+			"bad-scope",
+			[]string{"read,write"},
+		)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "must not contain commas")
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -543,68 +607,72 @@ func TestAPIKeyGenerateRejectsCommaInScope(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestAPIKeyConcurrentGenerateAndAuthenticate(t *testing.T) {
-	svc := setupAPIKeyService(t)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupAPIKeyService(t, b)
 
-	const goroutines = 30
-	var wg sync.WaitGroup
-	var successCount atomic.Int32
+		const goroutines = 30
+		var wg sync.WaitGroup
+		var successCount atomic.Int32
 
-	keys := make([]string, goroutines)
-	wg.Add(goroutines)
-	for i := range goroutines {
-		go func(idx int) {
-			defer wg.Done()
-			key, _, genErr := svc.Generate(
-				context.Background(),
-				fmt.Sprintf("user-%d", idx),
-				fmt.Sprintf("key-%d", idx),
-				nil,
-			)
-			require.NoError(t, genErr)
-			keys[idx] = key
-		}(i)
-	}
-	wg.Wait()
+		keys := make([]string, goroutines)
+		wg.Add(goroutines)
+		for i := range goroutines {
+			go func(idx int) {
+				defer wg.Done()
+				key, _, genErr := svc.Generate(
+					context.Background(),
+					fmt.Sprintf("user-%d", idx),
+					fmt.Sprintf("key-%d", idx),
+					nil,
+				)
+				require.NoError(t, genErr)
+				keys[idx] = key
+			}(i)
+		}
+		wg.Wait()
 
-	wg.Add(goroutines)
-	for i := range goroutines {
-		go func(idx int) {
-			defer wg.Done()
-			principal, authErr := authenticateWithAPIKey(svc, "X-API-Key", keys[idx])
-			if authErr == nil && principal != nil {
-				successCount.Add(1)
-			}
-		}(i)
-	}
-	wg.Wait()
+		wg.Add(goroutines)
+		for i := range goroutines {
+			go func(idx int) {
+				defer wg.Done()
+				principal, authErr := authenticateWithAPIKey(svc, "X-API-Key", keys[idx])
+				if authErr == nil && principal != nil {
+					successCount.Add(1)
+				}
+			}(i)
+		}
+		wg.Wait()
 
-	assert.Equal(t, int32(goroutines), successCount.Load())
+		assert.Equal(t, int32(goroutines), successCount.Load())
+	})
 }
 
 func TestAPIKeyConcurrentRevokeWhileAuthenticating(t *testing.T) {
-	svc := setupAPIKeyService(t)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupAPIKeyService(t, b)
 
-	key, info, err := svc.Generate(context.Background(), "user-race", "test", nil)
-	require.NoError(t, err)
+		key, info, err := svc.Generate(context.Background(), "user-race", "test", nil)
+		require.NoError(t, err)
 
-	var wg sync.WaitGroup
-	wg.Add(2)
+		var wg sync.WaitGroup
+		wg.Add(2)
 
-	go func() {
-		defer wg.Done()
-		for range 20 {
-			_, _ = authenticateWithAPIKey(svc, "X-API-Key", key)
-		}
-	}()
+		go func() {
+			defer wg.Done()
+			for range 20 {
+				_, _ = authenticateWithAPIKey(svc, "X-API-Key", key)
+			}
+		}()
 
-	go func() {
-		defer wg.Done()
-		time.Sleep(5 * time.Millisecond)
-		principal := auth.NewPrincipal("user-race", "apikey", info.ID, nil)
-		_ = svc.Revoke(context.Background(), principal)
-	}()
+		go func() {
+			defer wg.Done()
+			time.Sleep(5 * time.Millisecond)
+			principal := auth.NewPrincipal("user-race", "apikey", info.ID, nil)
+			_ = svc.Revoke(context.Background(), principal)
+		}()
 
-	wg.Wait()
+		wg.Wait()
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -612,102 +680,86 @@ func TestAPIKeyConcurrentRevokeWhileAuthenticating(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestAPIKeyCustomHeaderName(t *testing.T) {
-	cfg := apikey.DefaultConfig()
-	cfg.APIKey.HeaderName = "Authorization"
-	svc := setupAPIKeyServiceWithConfig(t, cfg)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		cfg := apikey.DefaultConfig()
+		cfg.APIKey.HeaderName = "Authorization"
+		svc := setupAPIKeyServiceWithConfig(t, b, cfg)
 
-	key, _, err := svc.Generate(context.Background(), "user-custom-header", "test", nil)
-	require.NoError(t, err)
+		key, _, err := svc.Generate(context.Background(), "user-custom-header", "test", nil)
+		require.NoError(t, err)
 
-	principal, err := authenticateWithAPIKey(svc, "Authorization", key)
-	require.NoError(t, err)
-	assert.Equal(t, "user-custom-header", principal.Subject())
+		principal, err := authenticateWithAPIKey(svc, "Authorization", key)
+		require.NoError(t, err)
+		assert.Equal(t, "user-custom-header", principal.Subject())
+	})
 }
 
 func TestAPIKeyEmptySubject(t *testing.T) {
-	svc := setupAPIKeyService(t)
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupAPIKeyService(t, b)
 
-	key, _, err := svc.Generate(context.Background(), "", "test", nil)
-	require.NoError(t, err)
+		key, _, err := svc.Generate(context.Background(), "", "test", nil)
+		require.NoError(t, err)
 
-	principal, err := authenticateWithAPIKey(svc, "X-API-Key", key)
-	require.NoError(t, err)
-	assert.Equal(t, "", principal.Subject())
+		principal, err := authenticateWithAPIKey(svc, "X-API-Key", key)
+		require.NoError(t, err)
+		assert.Equal(t, "", principal.Subject())
+	})
 }
 
 // ---------------------------------------------------------------------------
 // Transaction Tests
 // ---------------------------------------------------------------------------
 
-func setupAPIKeyServiceWithProvider(t *testing.T) (*apikey.Service, *testutil.PostgresContainer) {
-	t.Helper()
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-	pg := testutil.SetupPostgres(t)
-	logger := testutil.NewNopLogger()
-	migMgr := pg.MigrationManager()
-
-	svc, err := apikey.New(
-		apikey.WithConfig(apikey.DefaultConfig()),
-	)(
-		pg.Provider(),
-		logger,
-		migMgr,
-		nil,
-	)
-	require.NoError(t, err)
-	require.NoError(t, svc.Init(context.Background()))
-	require.NoError(t, migMgr.RunPending())
-
-	t.Cleanup(func() { _ = svc.Close(context.Background()) })
-	return svc, pg
-}
-
 func TestAPIKeyWithTxRollback(t *testing.T) {
-	svc, pg := setupAPIKeyServiceWithProvider(t)
-	ctx := context.Background()
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupAPIKeyService(t, b)
+		ctx := context.Background()
 
-	tx, err := pg.Provider().BeginTx(ctx, nil)
-	require.NoError(t, err)
+		tx, err := b.DB.BeginTx(ctx, nil)
+		require.NoError(t, err)
 
-	_, _, err = svc.WithTx(tx).Generate(ctx, "user-tx-rollback", "k", []string{"read"})
-	require.NoError(t, err)
+		_, _, err = svc.WithTx(tx).Generate(ctx, "user-tx-rollback", "k", []string{"read"})
+		require.NoError(t, err)
 
-	require.NoError(t, tx.Rollback())
+		require.NoError(t, tx.Rollback())
 
-	keys, err := svc.List(ctx, "user-tx-rollback")
-	require.NoError(t, err)
-	assert.Empty(t, keys, "rolled-back generate must not leave a row")
+		keys, err := svc.List(ctx, "user-tx-rollback")
+		require.NoError(t, err)
+		assert.Empty(t, keys, "rolled-back generate must not leave a row")
+	})
 }
 
 func TestAPIKeyWithTxCommit(t *testing.T) {
-	svc, pg := setupAPIKeyServiceWithProvider(t)
-	ctx := context.Background()
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupAPIKeyService(t, b)
+		ctx := context.Background()
 
-	tx, err := pg.Provider().BeginTx(ctx, nil)
-	require.NoError(t, err)
+		tx, err := b.DB.BeginTx(ctx, nil)
+		require.NoError(t, err)
 
-	_, info, err := svc.WithTx(tx).Generate(ctx, "user-tx-commit", "k", []string{"read"})
-	require.NoError(t, err)
+		_, info, err := svc.WithTx(tx).Generate(ctx, "user-tx-commit", "k", []string{"read"})
+		require.NoError(t, err)
 
-	require.NoError(t, tx.Commit())
+		require.NoError(t, tx.Commit())
 
-	keys, err := svc.List(ctx, "user-tx-commit")
-	require.NoError(t, err)
-	require.Len(t, keys, 1)
-	assert.Equal(t, info.ID, keys[0].ID)
+		keys, err := svc.List(ctx, "user-tx-commit")
+		require.NoError(t, err)
+		require.Len(t, keys, 1)
+		assert.Equal(t, info.ID, keys[0].ID)
+	})
 }
 
 func TestAPIKeyWithTxMixedOperations(t *testing.T) {
-	svc, pg := setupAPIKeyServiceWithProvider(t)
+	b := testutil.PostgresBackend(t)
+	svc := setupAPIKeyService(t, b)
 	ctx := context.Background()
 
 	// Seed a pre-existing key outside any tx.
 	_, seedInfo, err := svc.Generate(ctx, "user-tx-mixed", "seed", []string{"read"})
 	require.NoError(t, err)
 
-	tx, err := pg.Provider().BeginTx(ctx, nil)
+	tx, err := b.DB.BeginTx(ctx, nil)
 	require.NoError(t, err)
 	txSvc := svc.WithTx(tx)
 
@@ -746,6 +798,8 @@ func TestAPIKeyWithTxMixedOperations(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestAPIKeyServiceName(t *testing.T) {
-	svc := setupAPIKeyService(t)
-	assert.Equal(t, "gas/auth/apikey", svc.Name())
+	testutil.ForEachBackend(t, func(t *testing.T, b testutil.Backend) {
+		svc := setupAPIKeyService(t, b)
+		assert.Equal(t, "gas/auth/apikey", svc.Name())
+	})
 }
