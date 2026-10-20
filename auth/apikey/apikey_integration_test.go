@@ -409,9 +409,97 @@ func TestAPIKeyPrefixInList(t *testing.T) {
 // Expiry Tests
 // ---------------------------------------------------------------------------
 
-// Note: The apikey.Generate does not accept an expiry parameter.
-// Expiry must be set directly in the DB for testing. We test the
-// Authenticate path's expiry check via direct DB manipulation.
+func TestAPIKeyExpiredKeyRejected(t *testing.T) {
+	svc := setupAPIKeyService(t)
+
+	key, _, err := svc.Generate(
+		context.Background(), "user-expired", "expired", nil,
+		apikey.WithExpiresAt(time.Now().Add(-time.Minute)),
+	)
+	require.NoError(t, err)
+
+	_, err = authenticateWithAPIKey(svc, "X-API-Key", key)
+	assert.ErrorIs(t, err, auth.ErrCredentialsExpired)
+}
+
+func TestAPIKeyWithTTLAuthenticatesUntilExpiry(t *testing.T) {
+	svc := setupAPIKeyService(t)
+
+	before := time.Now()
+	key, info, err := svc.Generate(
+		context.Background(), "user-ttl", "ttl", nil,
+		apikey.WithTTL(time.Hour),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, info.ExpiresAt)
+	assert.WithinRange(t, *info.ExpiresAt, before.Add(time.Hour), time.Now().Add(time.Hour))
+
+	principal, err := authenticateWithAPIKey(svc, "X-API-Key", key)
+	require.NoError(t, err)
+	assert.Equal(t, "user-ttl", principal.Subject())
+}
+
+func TestAPIKeyExpiryOptions(t *testing.T) {
+	svc := setupAPIKeyService(t)
+	fixed := time.Now().Add(48 * time.Hour).Truncate(time.Second)
+
+	tests := []struct {
+		// want is nil when the key must not expire, or the expected expiry.
+		want func() *time.Time
+		name string
+		opts []apikey.GenerateOption
+	}{
+		{
+			name: "no option",
+			want: func() *time.Time { return nil },
+		},
+		{
+			name: "zero TTL ignored",
+			opts: []apikey.GenerateOption{apikey.WithTTL(0)},
+			want: func() *time.Time { return nil },
+		},
+		{
+			name: "negative TTL ignored",
+			opts: []apikey.GenerateOption{apikey.WithTTL(-time.Hour)},
+			want: func() *time.Time { return nil },
+		},
+		{
+			name: "zero ExpiresAt ignored",
+			opts: []apikey.GenerateOption{apikey.WithExpiresAt(time.Time{})},
+			want: func() *time.Time { return nil },
+		},
+		{
+			name: "ExpiresAt after TTL wins",
+			opts: []apikey.GenerateOption{apikey.WithTTL(time.Hour), apikey.WithExpiresAt(fixed)},
+			want: func() *time.Time { return &fixed },
+		},
+		{
+			name: "TTL after ExpiresAt wins",
+			opts: []apikey.GenerateOption{apikey.WithExpiresAt(fixed), apikey.WithTTL(time.Hour)},
+			want: func() *time.Time { return new(time.Now().Add(time.Hour)) },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, info, err := svc.Generate(
+				context.Background(),
+				"user-opts",
+				tt.name,
+				nil,
+				tt.opts...)
+			require.NoError(t, err)
+
+			want := tt.want()
+			if want == nil {
+				assert.Nil(t, info.ExpiresAt)
+				return
+			}
+			require.NotNil(t, info.ExpiresAt)
+			assert.WithinDuration(t, *want, *info.ExpiresAt, time.Second)
+		})
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Brute Force Resistance
