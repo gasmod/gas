@@ -696,3 +696,22 @@ func TestWorker_CheckHealth_Concurrent(t *testing.T) {
 		}
 	}
 }
+
+// Run returns Start's error without blocking for a signal.
+func TestWorker_Run_StartFailure(t *testing.T) {
+	initErr := errors.New("init failed")
+	w := gas.NewWorker(
+		gas.WithServiceInstance[*testService](&testService{name: "bad", initErr: initErr}),
+	)
+
+	done := make(chan error, 1)
+	go func() { done <- w.Run() }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, initErr) {
+			t.Errorf("Run() = %v, want the init error", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run() blocked after a failed Start")
+	}
+}
