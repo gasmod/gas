@@ -16,9 +16,12 @@ type testPrincipal struct {
 	subject string
 }
 
-func (p testPrincipal) Subject() string                 { return p.subject }
-func (p testPrincipal) Scheme() string                  { return "test" }
-func (p testPrincipal) CredentialID() string            { return "cred-1" }
+func (p testPrincipal) Subject() string { return p.subject }
+
+func (p testPrincipal) Scheme() string { return "test" }
+
+func (p testPrincipal) CredentialID() string { return "cred-1" }
+
 func (p testPrincipal) Metadata() gas.PrincipalMetadata { return p.meta }
 
 // principalRouter returns a router with one route that reports the result of
@@ -150,9 +153,12 @@ func TestMetadataValue(t *testing.T) {
 // *ptrPrincipal is a typed-nil Principal.
 type ptrPrincipal struct{ subject string }
 
-func (p *ptrPrincipal) Subject() string                 { return p.subject }
-func (p *ptrPrincipal) Scheme() string                  { return "test" }
-func (p *ptrPrincipal) CredentialID() string            { return "cred-1" }
+func (p *ptrPrincipal) Subject() string { return p.subject }
+
+func (p *ptrPrincipal) Scheme() string { return "test" }
+
+func (p *ptrPrincipal) CredentialID() string { return "cred-1" }
+
 func (p *ptrPrincipal) Metadata() gas.PrincipalMetadata { return nil }
 
 // A typed-nil Principal stored in the context counts as absent, so a
