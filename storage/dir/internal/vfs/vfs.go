@@ -183,6 +183,10 @@ func (vfs *VFS) OpenBucket(name string) (*Bucket, error) {
 func (vfs *VFS) openBucketDir(name, what string) (*os.Root, error) {
 	r, err := retryPending(func() (*os.Root, error) { return vfs.root.OpenRoot(name) })
 	if errors.Is(err, os.ErrNotExist) {
+		// Windows reports a file in place of the directory as a missing path.
+		if fi, sErr := vfs.root.Lstat(name); sErr == nil && !fi.IsDir() {
+			return nil, fmt.Errorf("open %s dir: not a directory: %v", what, err)
+		}
 		return nil, fmt.Errorf("%w: open %s dir: %w", ErrBucketNotFound, what, err)
 	}
 	if err != nil {
