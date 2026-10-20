@@ -92,6 +92,30 @@ jobs:
         run: go test -v -race -short ./...
         working-directory: ${{ matrix.modules }}
 
+  # Runs the storage module's tests on Windows, where the dir backend locks
+  # with LockFileEx (lock_win.go) and removes files and directories under
+  # Windows sharing rules. It is its own job, not an OS axis on go-test, so
+  # the check names the ruleset on main requires stay as they are. Only
+  # storage runs: it is the module with Windows-specific code. -race is left
+  # to the Linux job. LocalStack tests skip themselves here, since they need
+  # a Linux container.
+  go-test-windows:
+    needs: detect-modules
+    runs-on: windows-latest
+    env:
+      SELECTED: ${{ contains(needs.detect-modules.outputs.modules, '/storage"') }}
+    steps:
+      - uses: actions/checkout@v7
+        if: env.SELECTED == 'true'
+      - uses: actions/setup-go@v7
+        if: env.SELECTED == 'true'
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: go test storage
+        if: env.SELECTED == 'true'
+        run: go test -v -short ./...
+        working-directory: storage
+
   go-vet:
     needs: detect-modules
     runs-on: ubuntu-latest

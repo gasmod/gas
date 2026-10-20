@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -47,6 +48,10 @@ var (
 // validation is switched on explicitly so the presigning tests are meaningful.
 func localstackEndpoint(t *testing.T) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("LocalStack is a Linux container image, which the Docker of " +
+			"GitHub's Windows runners, running Windows containers, cannot start")
+	}
 	if testing.Short() {
 		t.Skip("skipping LocalStack integration test in short mode")
 	}
