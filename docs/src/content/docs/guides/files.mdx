@@ -62,11 +62,13 @@ optional `Bucket`; a nil `Bucket` means the configured default bucket.
 
 | Method | Returns | Notes |
 |---|---|---|
-| `CreateBucket(ctx, *CreateBucketInput)` | `*BucketInfo` | A bucket you already own is success |
+| `CreateBucket(ctx, *CreateBucketInput)` | `*Bucket` | A bucket you already own is success |
+| `HeadBucket(ctx, *HeadBucketInput)` | `*Bucket` | Whether a bucket exists, and what the backend knows about it |
+| `DeleteBucket(ctx, *DeleteBucketInput)` | `error` | Deletes an empty bucket; a missing one is `ErrBucketNotFound` |
 | `ListBuckets(ctx, *ListBucketsInput)` | `*ListBucketsOutput` | One page of your buckets, by name; filter with `Prefix` |
-| `PutObject(ctx, *PutObjectInput)` | `*ObjectInfo` | Streams the body; content type, metadata and length are optional. A set `ContentLength` must match the body |
+| `PutObject(ctx, *PutObjectInput)` | `*ObjectInfo` | Streams the body; headers, metadata, length and a write condition are optional. A set `ContentLength` must match the body. Returns the ETag |
 | `GetObject(ctx, *GetObjectInput)` | `*Object` | Body plus `ObjectInfo`; the caller closes `Body` |
-| `HeadObject(ctx, *HeadObjectInput)` | `*ObjectInfo` | Size, content type, modification time, version, metadata |
+| `HeadObject(ctx, *HeadObjectInput)` | `*ObjectInfo` | Size, content type, modification time, ETag, version, metadata and stored headers |
 | `DeleteObject(ctx, *DeleteObjectInput)` | `*ObjectInfo` | Deleting a missing key succeeds |
 | `ListObjects(ctx, *ListObjectsInput)` | `*ListObjectsOutput` | One page of a bucket's objects, by key, with `Prefix`, `Delimiter` and `StartAfter` |
 | `PresignUploadURL(ctx, *PresignUploadURLInput)` | `*PresignURLResponse` | URL, method, and the headers the client must send |
@@ -86,12 +88,26 @@ The list methods return one page at a time, with the semantics of S3
 ListObjectsV2 and ListBuckets. A page holds at most `MaxKeys` objects and
 common prefixes together (1000 by default and at most) or `MaxBuckets` buckets
 (10000 by default). To read the next page, pass the page's
-`NextContinuationToken` (objects) or `ContinuationToken` (buckets) back in the
-next input, and stop when `IsTruncated` is false or the bucket token is empty.
+`NextContinuationToken` back in the next input as `ContinuationToken`, and stop
+when it is empty, which happens on the last page only (`ListObjects` also
+reports `IsTruncated`). Each page's `Skipped` counts the entries the backend
+could not read and left out, over the whole bucket; the directory backend
+reports where they are to a handler given with `dir.WithSkipHandler`, and S3
+never skips.
 A `Delimiter` such as `/` groups keys under `CommonPrefixes`, the way S3
 consoles show folders. Tokens are opaque and only valid for the backend that
 issued them. The directory backend reads every key in the bucket on each call,
 which is fine in development and on small buckets.
+
+`PutObjectInput` embeds `ObjectHeaders` (content type, `Cache-Control`,
+`Content-Disposition`, `Content-Encoding`, `Content-Language`, `Expires` and
+metadata), and every header a write sets reads back on `ObjectInfo`. `Expires`
+is text; the S3 backend accepts only an IMF-fixdate such as
+`Wed, 21 Oct 2026 07:28:00 GMT`. Every object reports an `ETag`, unquoted;
+compare ETags only for equality. `PutObjectInput` also embeds a
+`WriteCondition`: `IfNoneMatch: "*"` writes only a key with no object, and
+`IfMatch` only over the object with that ETag, so an update can be made
+conditional on what was read.
 
 Presigned URLs let the browser transfer bytes straight to S3, so large files
 never pass through your server. Signing is local; no network call is made. A
@@ -103,7 +119,7 @@ over seven days is `storage.ErrInvalidTTL`.
 On S3, `CreateBucket` creates the bucket in the client's region and sends the
 location constraint S3 requires outside us-east-1 and `aws-global`. With no
 configured region it uses the region the AWS SDK resolved. For a bucket you
-already own it succeeds, and the returned `BucketInfo` may be empty.
+already own it succeeds, and the returned `Bucket` may hold only the name.
 
 ## Config
 
@@ -128,9 +144,14 @@ Classify failures with `errors.Is` against the sentinels in `storage`:
 |---|---|
 | `ErrKeyNotFound` | `GetObject` of a missing key |
 | `ErrNotFound` | `HeadObject` of a missing object; on S3 also a missing bucket, because HEAD responses carry no error code |
-| `ErrBucketNotFound` | An object operation or `ListObjects` on a missing bucket (S3 `HeadObject` excepted) |
+| `ErrBucketNotFound` | An object operation, `ListObjects`, `HeadBucket` or `DeleteBucket` on a missing bucket (S3 `HeadObject` excepted) |
 | `ErrVersionNotFound` | S3 `GetObject` of a version that does not exist. S3 `HeadObject` reports it as `ErrNotFound`, and AWS may reject a malformed version ID with an error that carries no sentinel |
 | `ErrBucketExists` | S3 `CreateBucket` of a name another account owns |
+| `ErrBucketNotEmpty` | `DeleteBucket` of a bucket that holds objects |
+| `ErrAccessDenied` | S3 `HeadBucket` or `DeleteBucket` answered 403 |
+| `ErrPreconditionFailed` | A `PutObject` whose `WriteCondition` does not hold; nothing is written |
+| `ErrInvalidCondition` | A `WriteCondition` that cannot be evaluated, such as an `IfNoneMatch` other than `*` |
+| `ErrInvalidHeader` | An S3 `PutObject` or presigned upload whose `Expires` is not an IMF-fixdate |
 | `ErrInvalidKey`, `ErrInvalidBucket`, `ErrInputRequired` | Input rejected before anything is sent |
 | `ErrInvalidTTL` | A presign TTL out of bounds |
 | `ErrInvalidLimit` | A `MaxKeys` under 1, or a `MaxBuckets` outside 1 to 10000 |
