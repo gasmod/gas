@@ -56,6 +56,9 @@ func TestAPIKeyLastUsedUpdateIsCoupledToAuth(t *testing.T) {
 // TestAPIKeyExpiredKeysAccumulate demonstrates that expired API keys remain
 // in the database indefinitely — there is no cleanup goroutine like in
 // session and token services.
+//
+// PostgreSQL only: it writes expires_at as a raw time.Time, which the SQLite
+// driver stores in a format the SQLite adapter cannot parse back.
 func TestAPIKeyExpiredKeysAccumulate(t *testing.T) {
 	b := testutil.PostgresBackend(t)
 	logger := testutil.NewNopLogger()
@@ -113,6 +116,8 @@ func TestAPIKeyExpiredKeysAccumulate(t *testing.T) {
 
 // TestAPIKeyScopeQueryingLimitation demonstrates that scopes stored as
 // comma-separated TEXT cannot be queried at the database level.
+//
+// PostgreSQL only: it queries scopes with PostgreSQL's ANY(array).
 func TestAPIKeyScopeQueryingLimitation(t *testing.T) {
 	b := testutil.PostgresBackend(t)
 	logger := testutil.NewNopLogger()

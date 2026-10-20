@@ -159,10 +159,15 @@ type Backend struct {
 	Name       string
 }
 
-// ForEachBackend runs fn in one subtest per backend, named after it. The
-// postgres subtest skips under -short.
+// ForEachBackend runs fn in one subtest per backend, named after it: sqlite,
+// which needs no Docker and runs under -short, then postgres, which skips
+// under -short.
 func ForEachBackend(t *testing.T, fn func(t *testing.T, b Backend)) {
 	t.Helper()
+	t.Run("sqlite", func(t *testing.T) {
+		_, db, migrations := SetupSQLite(t)
+		fn(t, Backend{DB: db, Migrations: migrations, Name: "sqlite"})
+	})
 	t.Run("postgres", func(t *testing.T) {
 		fn(t, PostgresBackend(t))
 	})

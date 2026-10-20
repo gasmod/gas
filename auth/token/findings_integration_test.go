@@ -198,6 +198,10 @@ func TestTokenVerify_WrongPurposeConsumesToken(t *testing.T) {
 // Finding #4: Cleanup context handling
 // ---------------------------------------------------------------------------
 
+// PostgreSQL only for now: SQLite stores expires_at at whole-second precision
+// (token/db/adapters.go:248), so a 50ms token is not yet expired to the
+// cleanup query within the wait. That precision is an open question with the
+// maintainer.
 func TestTokenCleanupRemovesExpired(t *testing.T) {
 	b := testutil.PostgresBackend(t)
 	logger := testutil.NewNopLogger()

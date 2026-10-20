@@ -750,6 +750,8 @@ func TestAPIKeyWithTxCommit(t *testing.T) {
 	})
 }
 
+// PostgreSQL only: it reads outside an open transaction, which needs a second
+// connection, and the SQLite test database has one.
 func TestAPIKeyWithTxMixedOperations(t *testing.T) {
 	b := testutil.PostgresBackend(t)
 	svc := setupAPIKeyService(t, b)
