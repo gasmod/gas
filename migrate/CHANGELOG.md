@@ -43,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wraps `ErrDuplicateVersion`, and `CheckReady` now returns it too. `Down`'s
   message names the services rather than printing their values.
 - `CheckReady` counts each pending version once.
+- `RunPending` and `Down` return a "not initialized" error when called
+  before `Init`, as `ClearDirty` and `CheckReady` already did. They used
+  to panic with a nil pointer dereference.
 
 ### Added
 
