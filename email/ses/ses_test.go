@@ -580,3 +580,129 @@ func TestInit_StaticCredentials(t *testing.T) {
 		t.Fatalf("Init() = %v, want nil", err)
 	}
 }
+
+// TestSendFromTemplateRenderErrors checks that a failure to get, parse, or
+// execute any of the three templates is returned and stops the send.
+func TestSendFromTemplateRenderErrors(t *testing.T) {
+	t.Parallel()
+
+	errStorage := errors.New("storage error")
+	templates := map[string]string{
+		"bad-parse": "{{.Invalid template",
+		"bad-exec":  `{{template "missing"}}`,
+	}
+	tmpl := &mockTemplateProvider{
+		getFn: func(_ context.Context, name string) ([]byte, error) {
+			if name == "bad-get" {
+				return nil, errStorage
+			}
+			return []byte(templates[name]), nil
+		},
+	}
+
+	tests := []struct {
+		wantIs  error
+		name    string
+		wantMsg string
+		msg     gas.TemplatedEmail
+	}{
+		{
+			name:   "subject get",
+			msg:    gas.TemplatedEmail{SubjectTemplate: "bad-get"},
+			wantIs: errStorage,
+		},
+		{
+			name:    "subject parse",
+			msg:     gas.TemplatedEmail{SubjectTemplate: "bad-parse"},
+			wantMsg: "parse:",
+		},
+		{
+			name:    "subject execute",
+			msg:     gas.TemplatedEmail{SubjectTemplate: "bad-exec"},
+			wantMsg: "execute:",
+		},
+		{name: "html get", msg: gas.TemplatedEmail{HTMLTemplate: "bad-get"}, wantIs: errStorage},
+		{name: "html parse", msg: gas.TemplatedEmail{HTMLTemplate: "bad-parse"}, wantMsg: "parse:"},
+		{
+			name:    "html execute",
+			msg:     gas.TemplatedEmail{HTMLTemplate: "bad-exec"},
+			wantMsg: "execute:",
+		},
+		{name: "text get", msg: gas.TemplatedEmail{TextTemplate: "bad-get"}, wantIs: errStorage},
+		{name: "text parse", msg: gas.TemplatedEmail{TextTemplate: "bad-parse"}, wantMsg: "parse:"},
+		{
+			name:    "text execute",
+			msg:     gas.TemplatedEmail{TextTemplate: "bad-exec"},
+			wantMsg: "execute:",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mock := &mockSESClient{
+				sendEmailFn: func(context.Context, *awsses.SendEmailInput, ...func(*awsses.Options)) (*awsses.SendEmailOutput, error) {
+					t.Error("SendEmail called after a render failure")
+					return &awsses.SendEmailOutput{}, nil
+				},
+			}
+			svc := newTestService(t, mock, tmpl)
+
+			msg := tt.msg
+			msg.To = []string{"x@x.com"}
+			err := svc.SendFromTemplate(context.Background(), &msg)
+			if err == nil {
+				t.Fatal("SendFromTemplate() error = nil, want a render error")
+			}
+			if tt.wantIs != nil && !errors.Is(err, tt.wantIs) {
+				t.Errorf("error = %v, want it to wrap %v", err, tt.wantIs)
+			}
+			if tt.wantMsg != "" && !strings.Contains(err.Error(), tt.wantMsg) {
+				t.Errorf("error = %v, want it to contain %q", err, tt.wantMsg)
+			}
+		})
+	}
+}
+
+// TestSendFromTemplateEscaping checks that the HTML body is rendered with
+// html/template, which escapes data, and the subject and text body with
+// text/template, which does not.
+func TestSendFromTemplateEscaping(t *testing.T) {
+	t.Parallel()
+
+	tmpl := &mockTemplateProvider{
+		getFn: func(_ context.Context, _ string) ([]byte, error) {
+			return []byte("{{.}}"), nil
+		},
+	}
+	var captured *awsses.SendEmailInput
+	mock := &mockSESClient{
+		sendEmailFn: func(_ context.Context, params *awsses.SendEmailInput, _ ...func(*awsses.Options)) (*awsses.SendEmailOutput, error) {
+			captured = params
+			return &awsses.SendEmailOutput{}, nil
+		},
+	}
+	svc := newTestService(t, mock, tmpl)
+
+	const data = `<b>"Tom" & Jerry</b>`
+	err := svc.SendFromTemplate(context.Background(), &gas.TemplatedEmail{
+		Email:           gas.Email{To: []string{"x@x.com"}},
+		SubjectTemplate: "subject",
+		HTMLTemplate:    "html",
+		TextTemplate:    "text",
+		Data:            data,
+	})
+	if err != nil {
+		t.Fatalf("SendFromTemplate() error = %v", err)
+	}
+
+	if got := *captured.Message.Body.Html.Data; got != "&lt;b&gt;&#34;Tom&#34; &amp; Jerry&lt;/b&gt;" {
+		t.Errorf("HTMLBody = %q, want the data HTML-escaped", got)
+	}
+	if got := *captured.Message.Body.Text.Data; got != data {
+		t.Errorf("TextBody = %q, want %q unescaped", got, data)
+	}
+	if got := *captured.Message.Subject.Data; got != data {
+		t.Errorf("Subject = %q, want %q unescaped", got, data)
+	}
+}
