@@ -386,6 +386,22 @@ func TestAlgorithmConfusion(t *testing.T) {
 		require.Error(t, err, "token signed with different key must be rejected")
 	})
 
+	t.Run("token with another HMAC alg and the same key is rejected", func(t *testing.T) {
+		svc := newHS256Service(t, k)
+
+		// HS512 with the service's own secret verifies unless Verify pins the
+		// algorithm to the configured HS256.
+		token := gojwt.NewWithClaims(gojwt.SigningMethodHS512, gojwt.MapClaims{
+			"sub": "attacker",
+			"exp": gojwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
+		})
+		tokenStr, err := token.SignedString([]byte(k))
+		require.NoError(t, err)
+
+		_, err = svc.Verify(tokenStr)
+		require.ErrorIs(t, err, gojwt.ErrTokenSignatureInvalid)
+	})
+
 	t.Run("RS256 sign and verify round-trip", func(t *testing.T) {
 		svc := newRS256Service(t)
 
