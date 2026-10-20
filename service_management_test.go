@@ -13,150 +13,176 @@ import (
 	"github.com/gasmod/gas"
 )
 
-func TestApp_CloseService(t *testing.T) {
+// managementHosts are the two ways to own the kill switch: a bare Worker, and
+// an App, which adds the router and its built-in service on top.
+var managementHosts = []struct {
+	build    func(...gas.Option) *gas.Worker
+	name     string
+	builtins int // services active before any user service
+}{
+	{gas.NewWorker, "Worker", 1},
+	{func(o ...gas.Option) *gas.Worker { return gas.NewApp(o...).Worker }, "App", 2},
+}
+
+// startHost builds a host holding svc and initializes it.
+func startHost(t *testing.T, build func(...gas.Option) *gas.Worker, svc *testService) *gas.Worker {
+	t.Helper()
+	w := build(gas.WithServiceInstance[*testService](svc))
+	if err := w.InitServices(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	return w
+}
+
+// CloseService closes the service, emits SystemServiceClosed and removes it
+// from the active services.
+func TestCloseService(t *testing.T) {
+	for _, h := range managementHosts {
+		t.Run(h.name, func(t *testing.T) {
+			svc := &testService{name: "test-svc"}
+			w := startHost(t, h.build, svc)
+
+			var closedName string
+			w.EventBus().Subscribe[gas.SystemServiceClosed](
+				func(data gas.SystemServiceClosedPayload) {
+					closedName = data.ServiceName
+				},
+			)
+
+			if err := w.CloseService[*testService](context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if !svc.closed.Load() {
+				t.Error("service not closed")
+			}
+			if closedName != "test-svc" {
+				t.Errorf("service-closed event for %q, want test-svc", closedName)
+			}
+			if slices.Contains(w.ActiveServices(), "test-svc") {
+				t.Error("test-svc still active")
+			}
+		})
+	}
+}
+
+// On an App, a closed service's routes answer 503.
+func TestApp_CloseService_RoutesAnswer503(t *testing.T) {
 	svc := &testService{name: "test-svc"}
-
-	app := gas.NewApp(
-		gas.WithServiceInstance[*testService](svc),
-	)
-
+	app := gas.NewApp(gas.WithServiceInstance[*testService](svc))
 	if err := app.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-
-	router := app.Router()
-
-	// Register a route owned by this service.
-	router.Handle(svc, "GET", "/test", func(w http.ResponseWriter, r *http.Request) {
+	app.Router().Handle(svc, http.MethodGet, "/test", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	// Track service-closed event.
-	var closedName string
-	app.EventBus().Subscribe[gas.SystemServiceClosed](func(data gas.SystemServiceClosedPayload) {
-		closedName = data.ServiceName
-	})
-
-	// Kill-switch.
 	if err := app.CloseService[*testService](context.Background()); err != nil {
 		t.Fatal(err)
 	}
-
-	// Service should be closed.
-	if !svc.closed.Load() {
-		t.Fatal("expected service to be closed")
-	}
-
-	// Route should return 503.
-	req := httptest.NewRequest("GET", "/test", nil)
 	rr := httptest.NewRecorder()
-	router.ServeHTTP(rr, req)
+	app.Router().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/test", nil))
 	if rr.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503, got %d", rr.Code)
-	}
-
-	// Event should have been emitted.
-	if closedName != "test-svc" {
-		t.Fatalf("expected service-closed event for test-svc, got %q", closedName)
-	}
-
-	// Should not be in active services.
-	names := app.ActiveServices()
-	for _, n := range names {
-		if n == "test-svc" {
-			t.Fatal("test-svc should not be active")
-		}
+		t.Errorf("GET /test = %d, want 503", rr.Code)
 	}
 }
 
-func TestApp_RestartService(t *testing.T) {
-	svc := &testService{name: "test-svc"}
+// RestartService initializes a closed service again and emits
+// SystemServiceInitialized.
+func TestRestartService(t *testing.T) {
+	for _, h := range managementHosts {
+		t.Run(h.name, func(t *testing.T) {
+			svc := &testService{name: "test-svc"}
+			w := startHost(t, h.build, svc)
+			if err := w.CloseService[*testService](context.Background()); err != nil {
+				t.Fatal(err)
+			}
 
-	app := gas.NewApp(
-		gas.WithServiceInstance[*testService](svc),
-	)
+			var restartedName string
+			w.EventBus().Subscribe[gas.SystemServiceInitialized](
+				func(data gas.SystemServiceInitializedPayload) {
+					restartedName = data.ServiceName
+				},
+			)
 
-	if err := app.InitServices(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := app.CloseService[*testService](context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	// Track restart event.
-	var restartedName string
-	app.EventBus().Subscribe[gas.SystemServiceInitialized](
-		func(data gas.SystemServiceInitializedPayload) {
-			restartedName = data.ServiceName
-		},
-	)
-
-	// Restart.
-	if err := app.RestartService[*testService](context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	// The container initializes a pre-registered instance like any other
-	// service, so Init has run once at boot and once more on restart.
-	if svc.initCount.Load() != 2 {
-		t.Fatalf("expected Init called twice (boot + restart), got %d", svc.initCount.Load())
-	}
-	if svc.closed.Load() {
-		t.Fatal("service should not be closed after restart")
-	}
-	if restartedName != "test-svc" {
-		t.Fatalf("expected service-initialized event for test-svc, got %q", restartedName)
+			if err := w.RestartService[*testService](context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			// The container initializes a pre-registered instance like any
+			// other service, so Init has run once at boot and once on restart.
+			if got := svc.initCount.Load(); got != 2 {
+				t.Errorf("Init called %d times, want 2 (boot + restart)", got)
+			}
+			if svc.closed.Load() {
+				t.Error("service closed after restart")
+			}
+			if restartedName != "test-svc" {
+				t.Errorf("service-initialized event for %q, want test-svc", restartedName)
+			}
+			if !slices.Contains(w.ActiveServices(), "test-svc") {
+				t.Error("test-svc not active after restart")
+			}
+		})
 	}
 }
 
-func TestApp_CloseService_NotActive(t *testing.T) {
-	app := gas.NewApp()
-	err := app.CloseService[*testService](context.Background())
-	if err == nil {
-		t.Fatal("expected error for non-active service")
+// CloseService and RestartService refuse services in the wrong state.
+func TestServiceManagement_WrongState(t *testing.T) {
+	for _, h := range managementHosts {
+		t.Run(h.name, func(t *testing.T) {
+			if err := h.build().CloseService[*testService](context.Background()); err == nil {
+				t.Error("CloseService of a service never started = nil, want an error")
+			}
+
+			w := startHost(t, h.build, &testService{name: "test-svc"})
+			if err := w.RestartService[*testService](context.Background()); err == nil {
+				t.Error("RestartService of an active service = nil, want an error")
+			}
+			if err := w.CloseService[*testService](context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if err := w.CloseService[*testService](context.Background()); err == nil {
+				t.Error("CloseService of a closed service = nil, want an error")
+			}
+
+			empty := h.build()
+			if err := empty.InitServices(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if err := empty.RestartService[*testService](context.Background()); err == nil {
+				t.Error("RestartService of an unregistered service = nil, want an error")
+			}
+		})
 	}
 }
 
-func TestApp_RestartService_AlreadyActive(t *testing.T) {
-	svc := &testService{name: "test-svc"}
-	app := gas.NewApp(gas.WithServiceInstance[*testService](svc))
-
-	if err := app.InitServices(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	err := app.RestartService[*testService](context.Background())
-	if err == nil {
-		t.Fatal("expected error for already-active service")
+// ActiveServices lists the user's services alongside the host's built-ins.
+func TestActiveServices(t *testing.T) {
+	for _, h := range managementHosts {
+		t.Run(h.name, func(t *testing.T) {
+			names := startHost(t, h.build, &testService{name: "svc-a"}).ActiveServices()
+			if len(names) != h.builtins+1 || !slices.Contains(names, "svc-a") {
+				t.Errorf("ActiveServices() = %v, want svc-a and %d built-ins", names, h.builtins)
+			}
+		})
 	}
 }
 
-func TestApp_RestartService_NotFound(t *testing.T) {
-	app := gas.NewApp()
-	if err := app.InitServices(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	err := app.RestartService[*testService](context.Background())
-	if err == nil {
-		t.Fatal("expected error for unknown service")
-	}
-}
+// A failing Close is logged, not returned: CloseService has already torn the
+// service down, so it still returns nil and drops the service from the
+// active set.
+func TestCloseService_CloseError(t *testing.T) {
+	for _, h := range managementHosts {
+		t.Run(h.name, func(t *testing.T) {
+			svc := &testService{name: "failing-close", closeErr: errors.New("close failed")}
+			w := startHost(t, h.build, svc)
 
-func TestApp_ActiveServices(t *testing.T) {
-	svc1 := &testService{name: "svc-a"}
-
-	app := gas.NewApp(
-		gas.WithServiceInstance[*testService](svc1),
-	)
-
-	if err := app.InitServices(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	names := app.ActiveServices()
-	if len(names) != 3 { // 2 built-in services (gas/router, gas/eventbus) + "svc-a"
-		t.Fatalf("expected 3 active service, got %d", len(names))
+			if err := w.CloseService[*testService](context.Background()); err != nil {
+				t.Errorf("CloseService() = %v, want nil when Close fails", err)
+			}
+			if _, ok := w.ActiveServicesMap()["failing-close"]; ok {
+				t.Error("service still active after a failing Close")
+			}
+		})
 	}
 }
 
@@ -279,169 +305,6 @@ var (
 	_ gas.HealthReporter = (*reporterService[tagA])(nil)
 	_ gas.ReadyReporter  = (*reporterService[tagA])(nil)
 )
-
-func TestApp_CloseService_CloseError(t *testing.T) {
-	svc := &testService{name: "failing-close", closeErr: errors.New("close failed")}
-	app := gas.NewApp(gas.WithServiceInstance[*testService](svc))
-
-	if err := app.InitServices(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	// CloseService should log the error but still return nil because it continues cleanup.
-	// Actually, looking at the code:
-	// if err := svc.Close(ctx); err != nil {
-	//     a.getLogger().Error("service close failed").Str("service", name).Err("error", err).Send()
-	// }
-	// delete(a.activeServices, name)
-	// return nil
-
-	err := app.CloseService[*testService](context.Background())
-	if err != nil {
-		t.Fatalf("expected nil error from CloseService even if Close() fails, got %v", err)
-	}
-
-	if _, ok := app.ActiveServicesMap()["failing-close"]; ok {
-		t.Fatal("service should be removed from active services even if Close() fails")
-	}
-}
-
-func TestWorker_CloseService(t *testing.T) {
-	svc := &testService{name: "test-svc"}
-	w := gas.NewWorker(
-		gas.WithServiceInstance[*testService](svc),
-	)
-
-	if err := w.InitServices(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	var closedName string
-	w.EventBus().Subscribe[gas.SystemServiceClosed](func(data gas.SystemServiceClosedPayload) {
-		closedName = data.ServiceName
-	})
-
-	if err := w.CloseService[*testService](context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	if !svc.closed.Load() {
-		t.Fatal("expected service to be closed")
-	}
-	if closedName != svc.Name() {
-		t.Fatalf("expected service-closed event for test-svc, got %q", closedName)
-	}
-	for _, n := range w.ActiveServices() {
-		if n == svc.Name() {
-			t.Fatal("test-svc should not be active")
-		}
-	}
-}
-
-func TestWorker_CloseService_NotActive(t *testing.T) {
-	w := gas.NewWorker()
-	err := w.CloseService[*testService](context.Background())
-	if err == nil {
-		t.Fatal("expected error for non-active service")
-	}
-}
-
-func TestWorker_RestartService(t *testing.T) {
-	svc := &testService{name: "test-svc"}
-	w := gas.NewWorker(
-		gas.WithServiceInstance[*testService](svc),
-	)
-
-	if err := w.InitServices(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if err := w.CloseService[*testService](context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	var restartedName string
-	w.EventBus().Subscribe[gas.SystemServiceInitialized](
-		func(data gas.SystemServiceInitializedPayload) {
-			restartedName = data.ServiceName
-		},
-	)
-
-	if err := w.RestartService[*testService](context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	// The container initializes a pre-registered instance like any other
-	// service, so Init has run once at boot and once more on restart.
-	if svc.initCount.Load() != 2 {
-		t.Fatalf("expected Init called twice (boot + restart), got %d", svc.initCount.Load())
-	}
-	if svc.closed.Load() {
-		t.Fatal("service should not be closed after restart")
-	}
-	if restartedName != svc.Name() {
-		t.Fatalf("expected service-initialized event for test-svc, got %q", restartedName)
-	}
-}
-
-func TestWorker_RestartService_AlreadyActive(t *testing.T) {
-	svc := &testService{name: "test-svc"}
-	w := gas.NewWorker(gas.WithServiceInstance[*testService](svc))
-
-	if err := w.InitServices(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	err := w.RestartService[*testService](context.Background())
-	if err == nil {
-		t.Fatal("expected error for already-active service")
-	}
-}
-
-func TestWorker_RestartService_NotFound(t *testing.T) {
-	w := gas.NewWorker()
-	if err := w.InitServices(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	err := w.RestartService[*testService](context.Background())
-	if err == nil {
-		t.Fatal("expected error for unknown service")
-	}
-}
-
-func TestWorker_ActiveServices(t *testing.T) {
-	svc := &testService{name: "svc-a"}
-	w := gas.NewWorker(
-		gas.WithServiceInstance[*testService](svc),
-	)
-
-	if err := w.InitServices(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	names := w.ActiveServices()
-	if len(names) != 2 ||
-		!slices.Contains(names, "svc-a") { // 1 built-in service (gas/eventbus) + "svc-a"
-		t.Fatalf("expected 2 active services, got %d", len(names))
-	}
-}
-
-func TestWorker_CloseService_CloseError(t *testing.T) {
-	svc := &testService{name: "failing-close", closeErr: errors.New("close failed")}
-	w := gas.NewWorker(gas.WithServiceInstance[*testService](svc))
-
-	if err := w.InitServices(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	err := w.CloseService[*testService](context.Background())
-	if err != nil {
-		t.Fatalf("expected nil error from CloseService even if Close() fails, got %v", err)
-	}
-
-	if _, ok := w.ActiveServicesMap()[svc.Name()]; ok {
-		t.Fatal("service should be removed from active services even if Close() fails")
-	}
-}
 
 func TestWorker_CheckHealth(t *testing.T) {
 	healthy := &reporterService[tagA]{name: "healthy"}
