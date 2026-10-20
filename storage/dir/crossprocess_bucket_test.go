@@ -42,9 +42,6 @@ func TestProvider_CrossProcessBucketLifecycle(t *testing.T) {
 	if os.Getenv(crossBucketRootEnv) != "" || os.Getenv(crossProcessRootEnv) != "" {
 		t.Skip("running as a cross-process child")
 	}
-	if testing.Short() {
-		t.Skip("spawns child processes; skipped under -short")
-	}
 
 	p, dir := newProvider(t, "")
 

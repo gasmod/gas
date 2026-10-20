@@ -39,9 +39,6 @@ func TestProvider_CrossProcessLocking(t *testing.T) {
 	if os.Getenv(crossProcessRootEnv) != "" {
 		t.Skip("running as a cross-process child")
 	}
-	if testing.Short() {
-		t.Skip("spawns child processes; skipped under -short")
-	}
 
 	_, dir := newTestProvider(t)
 
