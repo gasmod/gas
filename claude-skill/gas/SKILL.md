@@ -261,6 +261,15 @@ yourself, or grab the `*http.Server` / `http.Handler` directly.
 | `Config`  | `() *Config`      | Application configuration (with ServerSettings)                       |
 | `Router`  | `() *Router`      | The app's router                                                      |
 
+A `Server()` built before `Start` (say, from a service's `Init`) starts from
+the config as it stood then. When `Start` binds the config, the bound `Addr`
+and timeouts are applied to every field the caller has not changed; a field
+the caller set, such as `ReadTimeout = 0` to stream, is kept (a field set to
+the value it already had counts as unchanged). `AppConfigUpdated`
+subscribers run after that, so a field they set stays. `Handler()` builds
+only the handler and never the server, and does not reflect a handler
+assigned to `Server().Handler`.
+
 ## DI Container
 
 ### Registration

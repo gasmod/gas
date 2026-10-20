@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 )
 
 // App manages service lifecycle, the HTTP server, and graceful shutdown.
@@ -22,8 +23,36 @@ type App struct {
 	router         *Router
 	cfg            *Config
 	csrfProtection *http.CrossOriginProtection
-	srvOnce        sync.Once
-	handlerOnce    sync.Once
+	// srvCopied holds what Server copied from the Config into srv, so
+	// bindConfig can tell the fields a caller changed from those it left.
+	srvCopied   serverFields
+	srvOnce     sync.Once
+	handlerOnce sync.Once
+	srvMu       sync.Mutex // guards srv, srvCopied and srvSettled
+	// srvSettled is set once the server's fields are final: the bound
+	// config was applied to it, or Serve has begun and net/http reads them.
+	srvSettled bool
+}
+
+// serverFields are the fields of the *http.Server that Server sets from the
+// Config.
+type serverFields struct {
+	addr              string
+	readTimeout       time.Duration
+	readHeaderTimeout time.Duration
+	writeTimeout      time.Duration
+	idleTimeout       time.Duration
+}
+
+// serverFieldsOf returns the server fields s calls for.
+func serverFieldsOf(s *ServerSettings) serverFields {
+	return serverFields{
+		addr:              fmt.Sprintf("%s:%d", s.Host, s.Port),
+		readTimeout:       s.ReadTimeout,
+		readHeaderTimeout: s.ReadHeaderTimeout,
+		writeTimeout:      s.WriteTimeout,
+		idleTimeout:       s.IdleTimeout,
+	}
 }
 
 // --- AppOption functions (HTTP-specific) ---
@@ -152,18 +181,70 @@ func (a *App) Start(ctx context.Context) error {
 
 // Server returns the App's *http.Server, constructing it on first call from
 // the current Config. The instance is cached and safe to call concurrently.
+//
+// A server built before Start, such as by a service's Init, starts from the
+// config as it stood then. When Start binds the config, the bound Addr and
+// timeouts are applied to every one of those fields the caller has not
+// changed; a field the caller set, such as a ReadTimeout of zero to stream
+// request bodies, is kept. "Changed" is a comparison of values, so a field
+// set to the very value the server was built with counts as unchanged and
+// takes the bound value. An AppConfigUpdated subscriber runs after this,
+// so what it sets on the server stays. The bound config is applied once:
+// not again on a later Start, and not at all once Serve has begun, so a
+// Start after Serve leaves the server's fields alone. Only App.Serve marks
+// the server as serving: an embedder that serves Server() itself, with
+// Server().Serve or ListenAndServe, must call Start before it begins, or
+// a later Start can write onto the live server. Do not read or write
+// the server's fields from another goroutine while Start runs, and do not
+// call Server concurrently with Start: building the server reads the
+// Config that Start's bind writes, as it always has.
 func (a *App) Server() *http.Server {
 	a.srvOnce.Do(func() {
+		a.srvMu.Lock()
+		defer a.srvMu.Unlock()
+		f := serverFieldsOf(&a.cfg.Server)
 		a.srv = &http.Server{
-			Addr:              fmt.Sprintf("%s:%d", a.cfg.Server.Host, a.cfg.Server.Port),
+			Addr:              f.addr,
 			Handler:           a.Handler(),
-			ReadTimeout:       a.cfg.Server.ReadTimeout,
-			ReadHeaderTimeout: a.cfg.Server.ReadHeaderTimeout,
-			WriteTimeout:      a.cfg.Server.WriteTimeout,
-			IdleTimeout:       a.cfg.Server.IdleTimeout,
+			ReadTimeout:       f.readTimeout,
+			ReadHeaderTimeout: f.readHeaderTimeout,
+			WriteTimeout:      f.writeTimeout,
+			IdleTimeout:       f.idleTimeout,
 		}
+		a.srvCopied = f
 	})
 	return a.srv
+}
+
+// applyBoundServer gives a server built before the config was bound the
+// bound value of each field the caller left as Server set it. A server
+// built later is built from the bound config and needs nothing. It applies
+// at most once, and never to a server Serve has begun with: a second Start
+// must not write fields net/http is reading.
+func (a *App) applyBoundServer() {
+	a.srvMu.Lock()
+	defer a.srvMu.Unlock()
+	if a.srv == nil || a.srvSettled {
+		return
+	}
+	a.srvSettled = true
+	bound, was := serverFieldsOf(&a.cfg.Server), a.srvCopied
+	if a.srv.Addr == was.addr {
+		a.srv.Addr = bound.addr
+	}
+	if a.srv.ReadTimeout == was.readTimeout {
+		a.srv.ReadTimeout = bound.readTimeout
+	}
+	if a.srv.ReadHeaderTimeout == was.readHeaderTimeout {
+		a.srv.ReadHeaderTimeout = bound.readHeaderTimeout
+	}
+	if a.srv.WriteTimeout == was.writeTimeout {
+		a.srv.WriteTimeout = bound.writeTimeout
+	}
+	if a.srv.IdleTimeout == was.idleTimeout {
+		a.srv.IdleTimeout = bound.idleTimeout
+	}
+	a.srvCopied = bound
 }
 
 // Handler returns the fully wrapped http.Handler used by the App's server
@@ -183,6 +264,11 @@ func (a *App) Handler() http.Handler {
 // (http.ErrServerClosed) returns nil; any other listener error is returned.
 func (a *App) Serve() error {
 	srv := a.Server()
+	// From here net/http reads the server's fields, so Start must no longer
+	// write them; see applyBoundServer.
+	a.srvMu.Lock()
+	a.srvSettled = true
+	a.srvMu.Unlock()
 
 	a.getLogger().Info("server started").
 		Str("environment", a.cfg.GasEnv.String()).
@@ -259,6 +345,8 @@ func (a *App) bindConfig() error {
 	}
 
 	a.router.maxJSONBody.Store(a.cfg.Server.MaxJSONBodyBytes)
+	// Before the event, so a subscriber that sets a server field wins.
+	a.applyBoundServer()
 
 	a.Worker.eventBus.Emit[AppConfigUpdated](AppConfigUpdatedPayload{Config: *a.cfg}).Wait()
 

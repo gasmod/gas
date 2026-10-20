@@ -17,6 +17,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   already got from `ReadTimeout`, so default behaviour is unchanged.
   Closes #144.
 
+### Fixed
+
+- **A server built before `Start` gets the bound config.** `App.Server`
+  copied the config into the `*http.Server` once, and `Start` binds the
+  config only after every service's `Init`, so a service whose `Init`
+  called `Server()` pinned the defaults for the life of the process: the
+  configured address and timeouts were silently discarded. `Start` now
+  applies the bound `Addr` and timeouts to every field the caller left as
+  `Server` set it, and keeps the fields the caller changed. A field set to
+  the value it already had counts as unchanged. `AppConfigUpdated`
+  subscribers run after that and have the last word. This happens once:
+  a later `Start`, or one after `Serve` has begun, leaves the server's
+  fields alone, since net/http is reading them.
+
 ### Changed
 
 - **`App.Handler` no longer builds the server.** It used to return
