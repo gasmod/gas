@@ -7,8 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking changes
+
+- **`storage.Bucket` replaces `BucketInfo` and `BucketSummary`.** It has
+  `Name`, `CreationDate`, `ID` and `Region`. `CreateBucket` returns
+  `*Bucket`, and `ListBucketsOutput.Buckets` is `[]Bucket`. `Location` is
+  gone: on s3 it held CreateBucket's `Location` response header, which is a
+  path, not a place. dir no longer puts the bucket name in `ID`.
+- **`ListBucketsOutput.ContinuationToken` is renamed
+  `NextContinuationToken`**, as on `ListObjectsOutput`. On both, it is empty
+  on the last page and only there.
+- **`PutObjectInput` embeds `ObjectHeaders`**, which holds `ContentType`,
+  `Metadata`, `Expires` and the new system headers. Keyed composite
+  literals that set `ContentType` or `Metadata` directly still compile,
+  since this module requires go 1.27, which accepts promoted fields in
+  composite literals; so do reads and assignments. Unkeyed literals break.
+- **`Expires` is a `*string`**, not a `*time.Time`, so a stored value that is
+  not a date survives a round trip.
+
+### Added
+
+- **System headers.** `CacheControl`, `ContentDisposition`,
+  `ContentEncoding` and `ContentLanguage` on `ObjectHeaders`, stored by both
+  backends and returned on `ObjectInfo` with `Expires`.
+- **`ObjectInfo.ETag` and `ObjectSummary.ETag`**, unquoted. `PutObject`
+  returns it on both backends. dir computes the hex MD5 of the body as it
+  writes it; an object written by an earlier version has an empty ETag.
+- **dir `PutObject` returns the object it wrote**, exactly as `HeadObject`
+  then reads it: ETag, size, modification time, content type, metadata and
+  headers, with invalid UTF-8 already replaced and no map shared with the
+  input. It used to return an empty `ObjectInfo`.
+- **`storage.ErrInvalidHeader`.** s3 `PutObject` and `PresignUploadURL`
+  return it for an `Expires` that is not an IMF-fixdate, such as
+  `Wed, 21 Oct 2026 07:28:00 GMT` with the right weekday. The AWS SDK sends
+  `Expires` only as a time and writes it in that form, so any other text,
+  the RFC 850 and asctime forms included, would be stored rewritten.
+  Nothing is sent or signed.
+- **s3 `ListBuckets`** fills `ID` and `Region` from the ARN and region S3
+  sends.
+
+### Changed
+
+- **dir object metadata** records the ETag and the system headers. An
+  earlier version of the backend reading the same directory ignores those
+  fields and sees the objects without them.
+
 ### Fixed
 
+- **dir stores `Expires`.** It used to be accepted and dropped, and s3 sent
+  it but had no field to return it in.
 - **One unnameable bucket no longer makes `dir.ListBuckets` fail.** A bucket
   whose name record is missing (one created by a version that kept none) or
   holds a name that hashes to another bucket (one a crash left damaged) is

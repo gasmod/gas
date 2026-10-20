@@ -150,9 +150,9 @@ func TestLocalStack_ListBuckets(t *testing.T) {
 		}
 	}
 	if want := slices.Sorted(slices.Values(names)); !slices.Equal(got, want) ||
-		out.ContinuationToken != "" {
+		out.NextContinuationToken != "" {
 		t.Errorf("ListBuckets(prefix) = %q, token %q; want %q in one page", got,
-			out.ContinuationToken, want)
+			out.NextContinuationToken, want)
 	}
 
 	in := storage.ListBucketsInput{Prefix: new(pfx + "-a"), MaxBuckets: new(int32(1))}
@@ -165,10 +165,10 @@ func TestLocalStack_ListBuckets(t *testing.T) {
 		for _, b := range out.Buckets {
 			paged = append(paged, b.Name)
 		}
-		if out.ContinuationToken == "" {
+		if out.NextContinuationToken == "" {
 			break
 		}
-		in.ContinuationToken = new(out.ContinuationToken)
+		in.ContinuationToken = new(out.NextContinuationToken)
 	}
 	if want := []string{pfx + "-a1", pfx + "-a2"}; !slices.Equal(paged, want) {
 		t.Errorf("ListBuckets(prefix -a, one per page) = %q, want %q", paged, want)

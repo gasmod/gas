@@ -3,9 +3,12 @@ package s3
 import (
 	"errors"
 	"fmt"
+	"net/http"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
+	smithytime "github.com/aws/smithy-go/time"
 
 	"github.com/gasmod/gas/storage"
 )
@@ -95,6 +98,36 @@ func isS3ErrorType[T error](err error, code string) bool {
 func isS3ErrorCode(err error, code string) bool {
 	apiErr, ok := errors.AsType[smithy.APIError](err)
 	return ok && apiErr.ErrorCode() == code
+}
+
+// parseExpires returns the time an Expires header holds, or nil for a nil
+// one. The SDK sends Expires only as a time.Time, which it writes as an
+// IMF-fixdate, so only text already in exactly that form is sent unchanged.
+// Anything else is storage.ErrInvalidHeader, including the obsolete RFC 850
+// and asctime forms and a date whose weekday is wrong, which http.ParseTime
+// accepts but the SDK would rewrite. The error does not quote the text.
+func parseExpires(expires *string) (*time.Time, error) {
+	if expires == nil {
+		return nil, nil
+	}
+	t, err := http.ParseTime(*expires)
+	if err != nil || smithytime.FormatHTTPDate(t) != *expires {
+		return nil, fmt.Errorf(
+			"%w: Expires is not an IMF-fixdate HTTP-date",
+			storage.ErrInvalidHeader,
+		)
+	}
+	return &t, nil
+}
+
+// unquoteETag returns etag without the double quotes S3 puts around it, or
+// "" for a nil one.
+func unquoteETag(etag *string) string {
+	s := valueOf(etag)
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		return s[1 : len(s)-1]
+	}
+	return s
 }
 
 // valueOf returns the value v points to, or the zero value of T when v is

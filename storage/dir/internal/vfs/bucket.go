@@ -3,12 +3,15 @@ package vfs
 import (
 	"bytes"
 	"context"
+	"crypto/md5" //nolint:gosec // see writeDataFile
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"time"
 	"uuid"
 
 	"github.com/gasmod/gas/storage/dir/internal/util"
@@ -41,7 +44,8 @@ type CreateObjectInput struct {
 	Body        io.Reader
 	ContentType *string
 	Metadata    map[string]string
-	Key         string
+	Headers
+	Key string
 }
 
 // CreateObject writes the object: it writes a new data file, then renames a
@@ -50,9 +54,10 @@ type CreateObjectInput struct {
 // with nothing new left behind.
 //
 // After the commit the previous data file is removed. If that fails, out is
-// the committed metadata and err wraps ErrStaleData. out is also non-nil
-// when the commit succeeded but unlocking the object failed. On every other
-// error out is nil.
+// the committed object and err wraps ErrStaleData. out is also non-nil when
+// the commit succeeded but unlocking the object failed. On every other error
+// out is nil. out carries the metadata written, ETag included, and the size
+// and modification time of the new data file.
 //
 // Metadata that is corrupt (ErrCorrupt) is replaced, so a corrupt key can be
 // repaired; its data file cannot be trusted and is left behind. Metadata
@@ -60,7 +65,7 @@ type CreateObjectInput struct {
 func (b *Bucket) CreateObject(
 	ctx context.Context,
 	input *CreateObjectInput,
-) (out *ObjectMetadata, err error) {
+) (out *ObjectStat, err error) {
 	name := hash(input.Key)
 
 	if lErr := b.lock.Lock(ctx, name); lErr != nil {
@@ -83,26 +88,29 @@ func (b *Bucket) CreateObject(
 		return nil, fmt.Errorf("sniff content type: %w", ctErr)
 	}
 
-	meta := &ObjectMetadata{
+	meta := ObjectMetadata{
 		Key:         input.Key,
 		ContentType: contentType,
 		Metadata:    input.Metadata,
+		Headers:     input.Headers,
 		DataFile:    newDataFileName(name),
 	}
 
-	if dErr := b.writeDataFile(meta.DataFile, body); dErr != nil {
+	written, dErr := b.writeDataFile(meta.DataFile, body)
+	if dErr != nil {
 		return nil, dErr
 	}
+	meta.ETag = written.etag
 
-	if wErr := b.writeMetaFile(name, meta); wErr != nil {
+	stored, wErr := b.writeMetaFile(name, &meta)
+	if wErr != nil {
 		return nil, discardTmp(b.objRoot, meta.DataFile, wErr)
 	}
 
-	out = &ObjectMetadata{
-		Key:         meta.Key,
-		ContentType: meta.ContentType,
-		Metadata:    meta.Metadata,
-		DataFile:    meta.DataFile,
+	out = &ObjectStat{
+		ObjectMetadata: stored,
+		Size:           written.size,
+		LastModified:   written.modified,
 	}
 
 	if prevDataFile != "" && prevDataFile != meta.DataFile {
@@ -114,17 +122,27 @@ func (b *Bucket) CreateObject(
 	return out, nil
 }
 
+// dataWrite is what writeDataFile wrote: the hex MD5 of the body, its size,
+// and the data file's modification time once written.
+type dataWrite struct {
+	modified time.Time
+	etag     string
+	size     int64
+}
+
 // writeDataFile writes body to the new data file name. The data file is
 // invisible until metadata names it, so it is written in place and removed
 // on failure.
-func (b *Bucket) writeDataFile(name string, body io.Reader) error {
+func (b *Bucket) writeDataFile(name string, body io.Reader) (dataWrite, error) {
 	f, fErr := openInRoot(b.objRoot, name, "data file")
 	if fErr != nil {
-		return fErr
+		return dataWrite{}, fErr
 	}
 
-	if _, cpErr := io.Copy(f, body); cpErr != nil {
-		return discardTmp(
+	sum := md5.New() //nolint:gosec // an S3-style ETag is an MD5; it protects nothing
+	n, cpErr := io.Copy(io.MultiWriter(f, sum), body)
+	if cpErr != nil {
+		return dataWrite{}, discardTmp(
 			b.objRoot,
 			name,
 			fmt.Errorf("copy body to data file: %w", util.CloseWithErr(cpErr, f)),
@@ -132,10 +150,16 @@ func (b *Bucket) writeDataFile(name string, body io.Reader) error {
 	}
 
 	if cErr := f.Close(); cErr != nil {
-		return discardTmp(b.objRoot, name, fmt.Errorf("close data file: %w", cErr))
+		return dataWrite{}, discardTmp(b.objRoot, name, fmt.Errorf("close data file: %w", cErr))
 	}
 
-	return nil
+	// Stat after Close, so the time is the one OpenObject will read.
+	fi, sErr := b.objRoot.Stat(name)
+	if sErr != nil {
+		return dataWrite{}, discardTmp(b.objRoot, name, fmt.Errorf("stat data file: %w", sErr))
+	}
+
+	return dataWrite{etag: hex.EncodeToString(sum.Sum(nil)), size: n, modified: fi.ModTime()}, nil
 }
 
 // previousDataFile returns the data file the current metadata of name points
@@ -210,10 +234,12 @@ func (b *Bucket) openData(meta *ObjectMetadata) (*Object, error) {
 	}
 
 	return &Object{
-		ObjectMetadata: *meta,
-		File:           f,
-		Size:           fi.Size(),
-		LastModified:   fi.ModTime(),
+		File: f,
+		ObjectStat: ObjectStat{
+			ObjectMetadata: *meta,
+			Size:           fi.Size(),
+			LastModified:   fi.ModTime(),
+		},
 	}, nil
 }
 
@@ -360,25 +386,53 @@ func sniffContentType(
 	return http.DetectContentType(head), reader, nil
 }
 
+// encodeMeta returns meta encoded as a metadata file, and the metadata that
+// file decodes to, which is what OpenObject will read: encoding replaces
+// invalid UTF-8 with U+FFFD, and the decoded copy shares no map with meta.
+func encodeMeta(meta *ObjectMetadata) ([]byte, ObjectMetadata, error) {
+	data, err := json.Marshal(meta)
+	if err != nil {
+		return nil, ObjectMetadata{}, fmt.Errorf("encode meta file: %w", err)
+	}
+	var stored ObjectMetadata
+	if err := json.Unmarshal(data, &stored); err != nil {
+		return nil, ObjectMetadata{}, fmt.Errorf(
+			"decode encoded meta file: %s",
+			describeJSONError(err),
+		)
+	}
+	return data, stored, nil
+}
+
 // writeMetaFile writes meta as the metadata file of name: to a temp file
 // first, then renamed over the current one, so readers see the old metadata
-// or the new, never a partial file. The temp file is removed on failure.
-func (b *Bucket) writeMetaFile(name string, meta *ObjectMetadata) error {
-	data, jsErr := json.Marshal(meta)
-	if jsErr != nil {
-		return fmt.Errorf("encode meta file: %w", jsErr)
+// or the new, never a partial file. The temp file is removed on failure. It
+// returns the metadata as the file decodes, which is what OpenObject will
+// read (see encodeMeta).
+func (b *Bucket) writeMetaFile(name string, meta *ObjectMetadata) (ObjectMetadata, error) {
+	data, stored, eErr := encodeMeta(meta)
+	if eErr != nil {
+		return ObjectMetadata{}, eErr
 	}
 
 	file := name + metaFileExt
 	tmp := file + uuid.New().String()
 
 	if wErr := b.metaRoot.WriteFile(tmp, data, filePerm); wErr != nil {
-		return discardTmp(b.metaRoot, tmp, fmt.Errorf("write meta file: %w", wErr))
+		return ObjectMetadata{}, discardTmp(
+			b.metaRoot,
+			tmp,
+			fmt.Errorf("write meta file: %w", wErr),
+		)
 	}
 
 	if rErr := b.metaRoot.Rename(tmp, file); rErr != nil {
-		return discardTmp(b.metaRoot, tmp, fmt.Errorf("commit meta file: %w", rErr))
+		return ObjectMetadata{}, discardTmp(
+			b.metaRoot,
+			tmp,
+			fmt.Errorf("commit meta file: %w", rErr),
+		)
 	}
 
-	return nil
+	return stored, nil
 }

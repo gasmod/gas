@@ -67,7 +67,8 @@ func TestProvider_ListObjects_Decode(t *testing.T) {
 		listResponse(w, "<IsTruncated>true</IsTruncated>"+
 			"<NextContinuationToken>next</NextContinuationToken>"+
 			"<Contents><Key>a+b%2Bc%01%E6%97%A5</Key>"+
-			"<LastModified>2026-03-04T05:06:07.000Z</LastModified><Size>3</Size></Contents>"+
+			"<LastModified>2026-03-04T05:06:07.000Z</LastModified>"+
+			"<ETag>&quot;abc&quot;</ETag><Size>3</Size></Contents>"+
 			"<CommonPrefixes><Prefix>d%20e/</Prefix></CommonPrefixes>")
 	})
 	p := newTestProvider(t, f)
@@ -76,7 +77,12 @@ func TestProvider_ListObjects_Decode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListObjects() error: %v", err)
 	}
-	want := storage.ObjectSummary{Key: "a b+c\x01日", Size: 3, LastModified: lastModified}
+	want := storage.ObjectSummary{
+		Key:          "a b+c\x01日",
+		ETag:         "abc",
+		Size:         3,
+		LastModified: lastModified,
+	}
 	if len(out.Objects) != 1 || out.Objects[0] != want {
 		t.Errorf("Objects = %+v, want [%+v]", out.Objects, want)
 	}
@@ -153,7 +159,9 @@ func TestProvider_ListBuckets(t *testing.T) {
 		w.Header().Set("Content-Type", "application/xml")
 		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><ListAllMyBucketsResult>` +
 			`<Buckets><Bucket><Name>b-1</Name>` +
-			`<CreationDate>2026-01-02T03:04:05.000Z</CreationDate></Bucket></Buckets>` +
+			`<CreationDate>2026-01-02T03:04:05.000Z</CreationDate>` +
+			`<BucketArn>arn:aws:s3:::b-1</BucketArn><BucketRegion>eu-west-1</BucketRegion>` +
+			`</Bucket></Buckets>` +
 			`<ContinuationToken>more</ContinuationToken></ListAllMyBucketsResult>`))
 	})
 	p := newTestProvider(t, f)
@@ -166,8 +174,10 @@ func TestProvider_ListBuckets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListBuckets() error: %v", err)
 	}
-	want := storage.BucketSummary{Name: "b-1", CreationDate: created}
-	if len(out.Buckets) != 1 || out.Buckets[0] != want || out.ContinuationToken != "more" {
+	want := storage.Bucket{
+		Name: "b-1", CreationDate: created, ID: "arn:aws:s3:::b-1", Region: "eu-west-1",
+	}
+	if len(out.Buckets) != 1 || out.Buckets[0] != want || out.NextContinuationToken != "more" {
 		t.Errorf("ListBuckets() = %+v, want [%+v] and token more", out, want)
 	}
 

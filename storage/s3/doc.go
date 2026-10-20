@@ -45,6 +45,23 @@
 // signed. The SDK writes X-Amz-Expires as whole seconds, truncating toward
 // zero, so 1.9s signs as 1 and 7 days minus 1ns as 604799.
 //
+// # Objects and buckets
+//
+// PutObject sends every header of ObjectHeaders and returns the ETag and the
+// version S3 reports; its other ObjectInfo fields are empty. The SDK takes
+// Expires only as a time and writes it as an IMF-fixdate ("Wed, 21 Oct 2026
+// 07:28:00 GMT"), so PutObject and PresignUploadURL accept only text already
+// in exactly that form, which is stored unchanged. Anything else, including
+// the obsolete RFC 850 and asctime forms that HTTP allows and a date whose
+// weekday is wrong, is storage.ErrInvalidHeader, and nothing is sent or
+// signed. HeadObject and GetObject return Expires as the text S3
+// sent, unparsed. ETags are returned without S3's quotes.
+//
+// CreateBucket returns the bucket's Name and the ARN S3 reports as ID. S3's
+// Location response header is a path, not a region, so it is not reported,
+// and CreationDate and Region are empty. ListBuckets returns the Name and
+// CreationDate, and the ARN and region when S3 sends them.
+//
 // # Lifecycle
 //
 // Neither type has a start or close step and neither starts a goroutine that
@@ -99,9 +116,10 @@
 //     name for a bodiless HEAD 416): storage.ErrInvalidRange
 //   - BucketAlreadyExists (the name belongs to another account):
 //     storage.ErrBucketExists. BucketAlreadyOwnedByYou is not an error:
-//     CreateBucket of a bucket the caller owns succeeds, and its BucketInfo
-//     may be empty (us-east-1 answers 200 with the usual fields; other
-//     regions answer BucketAlreadyOwnedByYou, which carries none).
+//     CreateBucket of a bucket the caller owns succeeds, and its Bucket may
+//     hold only the Name (us-east-1 is said to answer 200 with the ARN;
+//     other regions answer BucketAlreadyOwnedByYou, which carries none; not
+//     verified against AWS).
 //
 // Any other S3 error, such as AccessDenied or a redirect to another region,
 // carries no sentinel. The package adds

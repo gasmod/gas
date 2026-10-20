@@ -35,6 +35,20 @@
 // are pointers so that "not set" differs from the zero value. A nil input
 // fails with ErrInputRequired.
 //
+// # Objects
+//
+// PutObjectInput embeds ObjectHeaders: the content type, the system headers
+// (Cache-Control, Content-Disposition, Content-Encoding, Content-Language and
+// Expires) and user metadata. Every header a write sets reads back on
+// ObjectInfo from HeadObject and GetObject. Expires is text, so a stored
+// value that is not a date survives the round trip; a backend that cannot
+// store a value unchanged returns ErrInvalidHeader for it rather than
+// rewriting it. The s3 backend accepts only an IMF-fixdate.
+//
+// ObjectInfo.ETag identifies an object's contents, unquoted, and PutObject
+// returns it on every backend. Compare ETags only for equality: an ETag is
+// not always a digest of the body (see ObjectInfo.ETag).
+//
 // # Errors
 //
 // Every error an operation returns names the backend and the operation, in the
@@ -79,14 +93,21 @@
 // each backend); callers must not rely on the order. Backend constructors
 // given a nil option return ErrInvalidOption instead of panicking.
 //
+// # Buckets
+//
+// CreateBucket and ListBuckets describe a bucket with Bucket. Which of its
+// fields a backend fills depends on the operation; each backend's
+// documentation says which.
+//
 // # Listing
 //
 // ListObjects and ListBuckets return one page at a time, following S3
 // ListObjectsV2 and ListBuckets: entries in byte order of their UTF-8 names,
 // at most MaxKeys objects and common prefixes (1000 by default and at most)
 // or MaxBuckets buckets (10000 by default), and a continuation token that
-// resumes after the page. Callers loop until IsTruncated is false (objects)
-// or the ContinuationToken is empty (buckets):
+// resumes after the page. NextContinuationToken is empty on the last page,
+// and only there, in both listings; ListObjects also reports IsTruncated, as
+// S3 does:
 //
 //	in := &storage.ListObjectsInput{Prefix: &prefix}
 //	for {

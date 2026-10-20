@@ -82,7 +82,7 @@ func TestMockProvider_DelegatesAndRecords(t *testing.T) {
 	ctx := context.WithValue(context.Background(), ctxKey{}, "v")
 
 	m := &MockProvider{
-		CreateBucketFn: func(c context.Context, in *storage.CreateBucketInput) (*storage.BucketInfo, error) {
+		CreateBucketFn: func(c context.Context, in *storage.CreateBucketInput) (*storage.Bucket, error) {
 			if c.Value(ctxKey{}) != "v" || in != createIn {
 				t.Error("CreateBucketFn received wrong arguments")
 			}
@@ -161,7 +161,7 @@ func TestMockProvider_DelegatesList(t *testing.T) {
 			if c.Value(ctxKey{}) != "v" || in != bucketsIn {
 				t.Error("ListBucketsFn received wrong arguments")
 			}
-			return &storage.ListBucketsOutput{ContinuationToken: "next"}, nil
+			return &storage.ListBucketsOutput{NextContinuationToken: "next"}, nil
 		},
 		ListObjectsFn: func(
 			c context.Context,
@@ -174,7 +174,11 @@ func TestMockProvider_DelegatesList(t *testing.T) {
 		},
 	}
 
-	if out, err := m.ListBuckets(ctx, bucketsIn); err != nil || out.ContinuationToken != "next" {
+	if out, err := m.ListBuckets(
+		ctx,
+		bucketsIn,
+	); err != nil ||
+		out.NextContinuationToken != "next" {
 		t.Errorf("ListBuckets() = %+v, %v", out, err)
 	}
 	if out, err := m.ListObjects(ctx, objectsIn); err != nil || !out.IsTruncated {

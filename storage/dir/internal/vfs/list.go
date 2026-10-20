@@ -101,6 +101,13 @@ func (vfs *VFS) ListBuckets(ctx context.Context) ([]BucketEntry, error) {
 	return out, nil
 }
 
+// BucketEntry returns the entry ListBuckets would give the bucket name: its
+// name and creation time, or false with no error when its name record is
+// missing or holds another name.
+func (vfs *VFS) BucketEntry(name string) (BucketEntry, bool, error) {
+	return vfs.bucketEntry(hash(name))
+}
+
 // bucketEntry reads the name record of the bucket whose metadata directory is
 // h and checks that the name it holds hashes to h. It returns false with no
 // error for a bucket that cannot be named, which ListBuckets leaves out. The

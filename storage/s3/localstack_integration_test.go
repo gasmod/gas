@@ -218,8 +218,8 @@ func TestLocalStack_CreateBucket(t *testing.T) {
 		if err != nil {
 			t.Fatalf("CreateBucket() error: %v", err)
 		}
-		if info.Location == "" {
-			t.Error("CreateBucket() Location is empty, want the bucket's location")
+		if info.Name != bucket {
+			t.Errorf("CreateBucket() Name = %q, want %q", info.Name, bucket)
 		}
 		// GetBucketLocation reports us-east-1 as an empty constraint.
 		if got := bucketRegion(t, p, bucket); got != "" {
@@ -330,9 +330,11 @@ func TestLocalStack_PutHeadGet(t *testing.T) {
 	data := []byte("hello localstack")
 	ct := "text/plain"
 	if _, err := p.PutObject(t.Context(), &storage.PutObjectInput{
-		Body:            bytes.NewReader(data),
-		ContentType:     &ct,
-		Metadata:        map[string]string{"owner": "gas"},
+		Body: bytes.NewReader(data),
+		ObjectHeaders: storage.ObjectHeaders{
+			ContentType: &ct,
+			Metadata:    map[string]string{"owner": "gas"},
+		},
 		BaseObjectInput: lsObj(bucket, "dir/a.txt"),
 	}); err != nil {
 		t.Fatalf("PutObject() error: %v", err)
@@ -977,7 +979,10 @@ func TestLocalStack_Presign(t *testing.T) {
 		up, err := ps.PresignUploadURL(
 			t.Context(),
 			&storage.PresignUploadURLInput{PutObjectInput: storage.PutObjectInput{
-				ContentType: &ct, ContentLength: &cl, Metadata: map[string]string{"src": "presign"},
+				ObjectHeaders: storage.ObjectHeaders{
+					ContentType: &ct, Metadata: map[string]string{"src": "presign"},
+				},
+				ContentLength:   &cl,
 				BaseObjectInput: lsObj("", "presigned/obj"),
 			}},
 		)
@@ -1028,7 +1033,8 @@ func TestLocalStack_Presign(t *testing.T) {
 		up, err := ps.PresignUploadURL(
 			t.Context(),
 			&storage.PresignUploadURLInput{PutObjectInput: storage.PutObjectInput{
-				ContentType: &ct, BaseObjectInput: lsObj("", "presigned/ct"),
+				ObjectHeaders:   storage.ObjectHeaders{ContentType: &ct},
+				BaseObjectInput: lsObj("", "presigned/ct"),
 			}},
 		)
 		if err != nil {

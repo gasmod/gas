@@ -121,17 +121,24 @@
 // example, accepts a unit other than bytes, spaces around "=" or "-", and a
 // "+" sign), and on an empty object it may answer 416 where this backend
 // returns the empty body; dir follows RFC 9110. PartNumber is
-// storage.ErrNotSupported. The Response* fields of reads, and Expires of Put,
-// are ignored. ObjectInfo carries no Version, and Put and Delete return an
-// empty ObjectInfo. A Put without a content type sniffs one from the body with
-// http.DetectContentType. Metadata keys keep their case, and invalid UTF-8 in
-// metadata is replaced with U+FFFD when it is stored.
+// storage.ErrNotSupported. The Response* fields of reads are ignored. Every
+// header of a Put is stored as given and read back, Expires included, which
+// may be any text, where s3 accepts only an IMF-fixdate. ObjectInfo carries no
+// Version. Put returns the object as Head then reads it: its ETag, the hex
+// MD5 of the body computed as it is written, its size and modification time,
+// content type, metadata and headers. Delete returns an empty ObjectInfo. An
+// object stored by a version of this backend that recorded no ETag reads
+// back with an empty one, and with no headers. A Put without a content type
+// sniffs one from the body with http.DetectContentType. Metadata keys keep
+// their case, and invalid UTF-8 in metadata or a header is replaced with
+// U+FFFD when it is stored.
 //
 // Listing reads every name in the bucket (or every bucket's name record) on
 // each call, so a page costs time in proportion to the bucket, not the page.
 // Its continuation tokens hold the last name of the page, encoded; they are
 // not interchangeable with S3's. A bucket's CreationDate is when CreateBucket
-// first wrote its name record. A bucket whose name record is missing or does
+// first wrote its name record; CreateBucket and ListBuckets report it with
+// the Name, and leave ID and Region empty. A bucket whose name record is missing or does
 // not hold its name (one created by an earlier version, or a record a crash
 // left empty) cannot be named and is left out of ListBuckets, with nothing
 // reported, until CreateBucket of it runs again, which rewrites the record;

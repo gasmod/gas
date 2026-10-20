@@ -75,8 +75,9 @@ func NewProvider(opts ...Option) func(cfgProvider gas.ConfigProvider) (*Provider
 	}
 }
 
-// CreateBucket creates the bucket input.Bucket. The returned BucketInfo has
-// the bucket name as both ID and Location. Every bucket under the root
+// CreateBucket creates the bucket input.Bucket. The returned Bucket has its
+// Name and its CreationDate, when CreateBucket first ran for it; ID and
+// Region are empty. Every bucket under the root
 // belongs to the caller, so a bucket that already exists is success, as for a
 // bucket the caller owns on S3, and its objects are kept; this backend never
 // returns storage.ErrBucketExists. An invalid name returns an error wrapping
@@ -84,7 +85,7 @@ func NewProvider(opts ...Option) func(cfgProvider gas.ConfigProvider) (*Provider
 func (p *Provider) CreateBucket(
 	_ context.Context,
 	input *storage.CreateBucketInput,
-) (*storage.BucketInfo, error) {
+) (*storage.Bucket, error) {
 	if err := p.checkReady(); err != nil {
 		return nil, err
 	}
@@ -101,10 +102,16 @@ func (p *Provider) CreateBucket(
 		return nil, opError("create bucket", nil, err)
 	}
 
-	return &storage.BucketInfo{
-		ID:       input.Bucket,
-		Location: input.Bucket,
-	}, nil
+	// CreateBucket has just written the name record, so it names the bucket
+	// unless something replaced the record since.
+	entry, named, err := p.vfs.BucketEntry(input.Bucket)
+	if err != nil {
+		return nil, internal.Errorf(mod, "create bucket: %w", err)
+	}
+	if !named {
+		return nil, internal.Errorf(mod, "create bucket: name record does not name the bucket")
+	}
+	return &storage.Bucket{Name: input.Bucket, CreationDate: entry.Created}, nil
 }
 
 // HeadObject returns the info of the object. A missing object returns an
@@ -141,7 +148,7 @@ func (p *Provider) HeadObject(
 		return nil, internal.Errorf(mod, "head: close data file: %w", cErr)
 	}
 
-	info := objectInfo(obj)
+	info := objectInfo(&obj.ObjectStat)
 	if input.Range != nil {
 		_, n, rErr := parseByteRange(*input.Range, obj.Size)
 		if rErr != nil {
@@ -159,8 +166,9 @@ func (p *Provider) HeadObject(
 // and stores nothing. The bucket is checked first, so a missing bucket is
 // reported as such even when the length would also mismatch. Body is read to
 // EOF, so a body that blocks after exactly ContentLength bytes without ending
-// blocks PutObject. The Expires field of input is ignored, and the
-// returned ObjectInfo carries no fields.
+// blocks PutObject. Every header of input is stored as given, Expires
+// included, and the returned ObjectInfo is the object as HeadObject reads it,
+// with its ETag, the hex MD5 of the body.
 //
 // The write is atomic: a failed PutObject leaves the previous object as it
 // was and returns a nil ObjectInfo, with one exception. When the new object
@@ -202,16 +210,25 @@ func (p *Provider) PutObject(
 		Body:        body,
 		ContentType: input.ContentType,
 		Metadata:    input.Metadata,
+		Headers: vfs.Headers{
+			CacheControl:       valueOf(input.CacheControl),
+			ContentDisposition: valueOf(input.ContentDisposition),
+			ContentEncoding:    valueOf(input.ContentEncoding),
+			ContentLanguage:    valueOf(input.ContentLanguage),
+			Expires:            valueOf(input.Expires),
+		},
 	})
 	err = errors.Join(err, bk.Close())
 	if err != nil {
 		if out != nil && errors.Is(err, vfs.ErrStaleData) {
-			return &storage.ObjectInfo{}, opError("put", nil, err)
+			info := objectInfo(out)
+			return &info, opError("put", nil, err)
 		}
 		return nil, opError("put", nil, err)
 	}
 
-	return &storage.ObjectInfo{}, nil
+	info := objectInfo(out)
+	return &info, nil
 }
 
 // GetObject opens the object for reading. The caller closes Body, which keeps
@@ -344,13 +361,19 @@ func (p *Provider) openObject(
 	return obj, nil
 }
 
-// objectInfo returns the storage view of an opened object.
-func objectInfo(obj *vfs.Object) storage.ObjectInfo {
+// objectInfo returns the storage view of an object.
+func objectInfo(obj *vfs.ObjectStat) storage.ObjectInfo {
 	return storage.ObjectInfo{
-		Size:         obj.Size,
-		LastModified: obj.LastModified,
-		ContentType:  obj.ContentType,
-		Metadata:     obj.Metadata,
+		Size:               obj.Size,
+		LastModified:       obj.LastModified,
+		ContentType:        obj.ContentType,
+		Metadata:           obj.Metadata,
+		CacheControl:       obj.CacheControl,
+		ContentDisposition: obj.ContentDisposition,
+		ContentEncoding:    obj.ContentEncoding,
+		ContentLanguage:    obj.ContentLanguage,
+		Expires:            obj.Expires,
+		ETag:               obj.ETag,
 	}
 }
 
@@ -359,7 +382,7 @@ func objectInfo(obj *vfs.Object) storage.ObjectInfo {
 // header is nil or ignored, or a bare storage.ErrInvalidRange. It does not
 // close obj.File on error; the caller does.
 func rangedObject(obj *vfs.Object, header *string) (*storage.Object, error) {
-	out := &storage.Object{ObjectInfo: objectInfo(obj), Body: obj.File}
+	out := &storage.Object{ObjectInfo: objectInfo(&obj.ObjectStat), Body: obj.File}
 	if header == nil {
 		return out, nil
 	}

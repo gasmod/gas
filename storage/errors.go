@@ -82,6 +82,13 @@ var (
 	// changed.
 	ErrNotSupported = errors.New("storage: not supported")
 
+	// ErrInvalidHeader is returned by PutObject, and by Presigner's
+	// PresignUploadURL, for a header value the backend cannot store as given,
+	// such as an Expires that the s3 backend cannot send unchanged because it
+	// is not an IMF-fixdate.
+	// Nothing is stored or signed.
+	ErrInvalidHeader = errors.New("storage: invalid header")
+
 	// ErrInvalidOption is returned by a backend constructor given a nil
 	// option. The message names the option's zero-based position in the
 	// constructor's argument list.

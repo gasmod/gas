@@ -107,7 +107,7 @@ func memListObjects(w http.ResponseWriter, r *http.Request, bucket string,
 		_, _ = fmt.Fprintf(&contents,
 			"<Contents><Key>%s</Key><LastModified>%s</LastModified>"+
 				"<ETag>&quot;%s&quot;</ETag><Size>%d</Size></Contents>",
-			url.QueryEscape(k), o.modified.Format(memTimeFormat), o.version, len(o.body))
+			url.QueryEscape(k), o.modified.Format(memTimeFormat), o.etag, len(o.body))
 	}
 
 	w.Header().Set("Content-Type", "application/xml")
@@ -423,9 +423,13 @@ func contractListBuckets(t *testing.T, p storage.Provider) {
 		}
 	}
 	if want := []string{contractBucket, "list-aa", "list-ab", "list-b"}; !slices.Equal(all, want) ||
-		out.ContinuationToken != "" {
-		t.Errorf("ListBuckets() = %q, token %q; want %q in one page", all, out.ContinuationToken,
-			want)
+		out.NextContinuationToken != "" {
+		t.Errorf(
+			"ListBuckets() = %q, token %q; want %q in one page",
+			all,
+			out.NextContinuationToken,
+			want,
+		)
 	}
 
 	in := storage.ListBucketsInput{Prefix: new("list-a"), MaxBuckets: new(int32(1))}
@@ -438,10 +442,10 @@ func contractListBuckets(t *testing.T, p storage.Provider) {
 		for _, b := range out.Buckets {
 			paged = append(paged, b.Name)
 		}
-		if out.ContinuationToken == "" {
+		if out.NextContinuationToken == "" {
 			break
 		}
-		in.ContinuationToken = new(out.ContinuationToken)
+		in.ContinuationToken = new(out.NextContinuationToken)
 	}
 	if want := []string{"list-aa", "list-ab"}; !slices.Equal(paged, want) {
 		t.Errorf("ListBuckets(prefix list-a, one per page) = %q, want %q", paged, want)

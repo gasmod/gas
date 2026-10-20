@@ -334,10 +334,10 @@ func TestListBuckets_SkipDoesNotBreakPaging(t *testing.T) {
 		for _, b := range out.Buckets {
 			got = append(got, b.Name)
 		}
-		if out.ContinuationToken == "" {
+		if out.NextContinuationToken == "" {
 			break
 		}
-		token = &out.ContinuationToken
+		token = &out.NextContinuationToken
 	}
 
 	want := []string{"bucket-a", "bucket-b", "bucket-c"}

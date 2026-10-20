@@ -41,13 +41,15 @@ func (p *Provider) ListBuckets(
 	}
 
 	out := &storage.ListBucketsOutput{
-		ContinuationToken: valueOf(res.ContinuationToken),
-		Buckets:           make([]storage.BucketSummary, 0, len(res.Buckets)),
+		NextContinuationToken: valueOf(res.ContinuationToken),
+		Buckets:               make([]storage.Bucket, 0, len(res.Buckets)),
 	}
 	for _, b := range res.Buckets {
-		out.Buckets = append(out.Buckets, storage.BucketSummary{
+		out.Buckets = append(out.Buckets, storage.Bucket{
 			Name:         valueOf(b.Name),
 			CreationDate: valueOf(b.CreationDate),
+			ID:           valueOf(b.BucketArn),
+			Region:       valueOf(b.BucketRegion),
 		})
 	}
 	return out, nil
@@ -114,6 +116,7 @@ func listObjectsOutput(res *s3.ListObjectsV2Output) (*storage.ListObjectsOutput,
 		out.Objects = append(out.Objects, storage.ObjectSummary{
 			Key:          k,
 			LastModified: valueOf(o.LastModified),
+			ETag:         unquoteETag(o.ETag),
 			Size:         valueOf(o.Size),
 		})
 	}

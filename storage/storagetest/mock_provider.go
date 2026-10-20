@@ -11,7 +11,7 @@ import (
 // its call and delegates to the matching Fn field, or returns nil, nil when
 // that field is nil. The zero value is ready to use.
 type MockProvider struct {
-	CreateBucketFn func(ctx context.Context, input *storage.CreateBucketInput) (*storage.BucketInfo, error)
+	CreateBucketFn func(ctx context.Context, input *storage.CreateBucketInput) (*storage.Bucket, error)
 	ListBucketsFn  func(ctx context.Context, input *storage.ListBucketsInput) (*storage.ListBucketsOutput, error)
 
 	HeadObjectFn   func(ctx context.Context, input *storage.HeadObjectInput) (*storage.ObjectInfo, error)
@@ -44,7 +44,7 @@ func (m *MockProvider) record(method string, args ...any) {
 func (m *MockProvider) CreateBucket(
 	ctx context.Context,
 	input *storage.CreateBucketInput,
-) (*storage.BucketInfo, error) {
+) (*storage.Bucket, error) {
 	m.record("CreateBucket", input)
 	if m.CreateBucketFn != nil {
 		return m.CreateBucketFn(ctx, input)

@@ -38,6 +38,37 @@ func objectHeaders(w http.ResponseWriter, size int) {
 	w.Header().Set("X-Amz-Version-Id", "ver-123")
 	w.Header().Set("X-Amz-Meta-Owner", "ahmed")
 	w.Header().Set("X-Amz-Meta-Trace-Id", "t-1")
+	w.Header().Set("Cache-Control", "max-age=5")
+	w.Header().Set("Content-Disposition", "inline")
+	w.Header().Set("Content-Encoding", "identity")
+	w.Header().Set("Content-Language", "nl")
+	// Not an HTTP-date: the stored text must come back as it is.
+	w.Header().Set("Expires", "0")
+}
+
+// wantObjectHeaders checks that info carries the ETag and the system headers
+// objectHeaders sets.
+func wantObjectHeaders(t *testing.T, info *storage.ObjectInfo) {
+	t.Helper()
+	got := map[string]string{
+		"ETag":               info.ETag,
+		"CacheControl":       info.CacheControl,
+		"ContentDisposition": info.ContentDisposition,
+		"ContentEncoding":    info.ContentEncoding,
+		"ContentLanguage":    info.ContentLanguage,
+		"Expires":            info.Expires,
+	}
+	want := map[string]string{
+		"ETag":               "etag",
+		"CacheControl":       "max-age=5",
+		"ContentDisposition": "inline",
+		"ContentEncoding":    "identity",
+		"ContentLanguage":    "nl",
+		"Expires":            "0",
+	}
+	if !maps.Equal(got, want) {
+		t.Errorf("headers = %v, want %v", got, want)
+	}
 }
 
 // TestNewProvider covers NewProvider with injected clients, invalid
@@ -552,6 +583,7 @@ func testProviderHeadObjectForwardsAllFieldsAndMapsResponse(t *testing.T) {
 	if !maps.Equal(info.Metadata, want) {
 		t.Errorf("Metadata = %v, want %v", info.Metadata, want)
 	}
+	wantObjectHeaders(t, info)
 }
 
 // testProviderHeadObjectMinimalInputSendsNoOptionalParams checks that a
@@ -727,6 +759,7 @@ func testProviderGetObjectForwardsAllFieldsAndMapsResponse(t *testing.T) {
 	if obj.Metadata["owner"] != "ahmed" {
 		t.Errorf("Metadata = %v", obj.Metadata)
 	}
+	wantObjectHeaders(t, &obj.ObjectInfo)
 }
 
 // testProviderGetObjectEmptyBody checks GetObject of an empty object.
@@ -755,6 +788,7 @@ func TestProvider_PutObject(t *testing.T) {
 	t.Parallel()
 
 	t.Run("forwards all fields", testProviderPutObjectForwardsAllFields)
+	t.Run("invalid expires", testProviderPutObjectInvalidExpires)
 
 	t.Run("nil body sends empty object", testProviderPutObjectNilBodySendsEmptyObject)
 
@@ -785,18 +819,25 @@ func testProviderPutObjectForwardsAllFields(t *testing.T) {
 		BaseObjectInput: base("up/load.txt"),
 		Body:            strings.NewReader(body),
 		ContentLength:   new(int64(len(body))),
-		ContentType:     new("text/x-put"),
-		Expires:         &expires,
-		Metadata:        map[string]string{"owner": "ahmed", "Mixed-Case": "v"},
+		ObjectHeaders: storage.ObjectHeaders{
+			ContentType:        new("text/x-put"),
+			CacheControl:       new("no-store"),
+			ContentDisposition: new("inline"),
+			ContentEncoding:    new("identity"),
+			ContentLanguage:    new("fr"),
+			Expires:            new(expires.Format(http.TimeFormat)),
+			Metadata:           map[string]string{"owner": "ahmed", "Mixed-Case": "v"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("PutObject() error: %v", err)
 	}
-	if info.Version != "put-ver" {
-		t.Errorf("Version = %q, want put-ver", info.Version)
+	if info.Version != "put-ver" || info.ETag != "e" {
+		t.Errorf("PutObject() Version, ETag = %q, %q; want put-ver, e (unquoted)",
+			info.Version, info.ETag)
 	}
 	if info.Size != 0 || info.ContentType != "" || info.Metadata != nil {
-		t.Errorf("PutObject returns only Version, got %+v", info)
+		t.Errorf("PutObject returns only Version and ETag, got %+v", info)
 	}
 
 	req := f.lastRequest(t)
@@ -822,6 +863,36 @@ func testProviderPutObjectForwardsAllFields(t *testing.T) {
 	if req.Header.Get("X-Amz-Meta-Owner") != "ahmed" ||
 		req.Header.Get("X-Amz-Meta-Mixed-Case") != "v" {
 		t.Errorf("metadata headers = %v", req.Header)
+	}
+	for h, want := range map[string]string{
+		"Cache-Control":       "no-store",
+		"Content-Disposition": "inline",
+		"Content-Encoding":    "identity",
+		"Content-Language":    "fr",
+	} {
+		if got := req.Header.Get(h); got != want {
+			t.Errorf("%s = %q, want %q", h, got, want)
+		}
+	}
+}
+
+// testProviderPutObjectInvalidExpires checks that an Expires that is not an
+// HTTP-date is storage.ErrInvalidHeader and sends nothing: the transfer
+// manager takes Expires only as a time, so the text cannot be sent as given.
+func testProviderPutObjectInvalidExpires(t *testing.T) {
+	t.Parallel()
+	f := newFakeS3(t, nil)
+	p := newTestProvider(t, f)
+	_, err := p.PutObject(context.Background(), &storage.PutObjectInput{
+		BaseObjectInput: base("k"),
+		Body:            strings.NewReader("body"),
+		ObjectHeaders:   storage.ObjectHeaders{Expires: new("tomorrow")},
+	})
+	if !errors.Is(err, storage.ErrInvalidHeader) {
+		t.Errorf("PutObject(Expires tomorrow) error = %v, want ErrInvalidHeader", err)
+	}
+	if n := len(f.requests()); n != 0 {
+		t.Errorf("PutObject(Expires tomorrow) sent %d requests, want none", n)
 	}
 }
 
@@ -1651,13 +1722,13 @@ func TestProvider_DIMissingConfigProvider(t *testing.T) {
 }
 
 // TestProvider_CreateBucket covers CreateBucket against the fake endpoint:
-// the request it sends, how the response maps to storage.BucketInfo, input
+// the request it sends, how the response maps to storage.Bucket, input
 // validation, and how an existing bucket is reported.
 func TestProvider_CreateBucket(t *testing.T) {
 	t.Parallel()
 
 	t.Run("sends PUT on the bucket and maps the response", testProviderCreateBucketMapsResponse)
-	t.Run("response without ARN or Location", testProviderCreateBucketEmptyResponse)
+	t.Run("response without ARN", testProviderCreateBucketEmptyResponse)
 	t.Run("ignores the configured bucket", testProviderCreateBucketIgnoresConfiguredBucket)
 	t.Run("invalid bucket names send nothing", testProviderCreateBucketInvalidNames)
 	t.Run("BucketAlreadyExists is ErrBucketExists", testProviderCreateBucketExists)
@@ -1698,7 +1769,7 @@ func createBucketInRegion(
 	t *testing.T,
 	f *fakeS3,
 	region, bucket string,
-) (*storage.BucketInfo, error) {
+) (*storage.Bucket, error) {
 	t.Helper()
 	p, err := NewProvider(WithClient(f.clientInRegion(t, region)))(newConfig(t, map[string]any{}))
 	if err != nil {
@@ -1763,8 +1834,7 @@ func testProviderCreateBucketOtherRegion(t *testing.T) {
 
 // testProviderCreateBucketOwned checks that BucketAlreadyOwnedByYou, S3's
 // answer outside us-east-1 for a bucket the caller already owns, is reported
-// as success, with an empty BucketInfo because that answer carries no ARN or
-// Location.
+// as success, with only the Name, because that answer carries no ARN.
 func testProviderCreateBucketOwned(t *testing.T) {
 	t.Parallel()
 	f := newFakeS3(t, func(w http.ResponseWriter, _ *http.Request, _ []byte) {
@@ -1774,13 +1844,13 @@ func testProviderCreateBucketOwned(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateBucket() of an owned bucket error = %v, want nil", err)
 	}
-	if info == nil || info.ID != "" || info.Location != "" {
-		t.Errorf("CreateBucket() of an owned bucket = %+v, want empty BucketInfo", info)
+	if info == nil || *info != (storage.Bucket{Name: testBucket}) {
+		t.Errorf("CreateBucket() of an owned bucket = %+v, want only the Name", info)
 	}
 }
 
 // createBucket calls CreateBucket on a provider backed by f.
-func createBucket(t *testing.T, f *fakeS3, bucket string) (*storage.BucketInfo, error) {
+func createBucket(t *testing.T, f *fakeS3, bucket string) (*storage.Bucket, error) {
 	t.Helper()
 	return newTestProvider(t, f).CreateBucket(
 		context.Background(),
@@ -1789,7 +1859,8 @@ func createBucket(t *testing.T, f *fakeS3, bucket string) (*storage.BucketInfo, 
 }
 
 // testProviderCreateBucketMapsResponse checks the CreateBucket request and
-// the mapping of the ARN and Location.
+// the mapping of the ARN. The Location header is not a region, so it is not
+// reported.
 func testProviderCreateBucketMapsResponse(t *testing.T) {
 	t.Parallel()
 	f := newFakeS3(t, func(w http.ResponseWriter, _ *http.Request, _ []byte) {
@@ -1801,8 +1872,9 @@ func testProviderCreateBucketMapsResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateBucket() error: %v", err)
 	}
-	if info.ID != "arn:aws:s3:::new-bucket" || info.Location != "/new-bucket" {
-		t.Errorf("CreateBucket() = %+v, want ARN and Location from the response", info)
+	want := storage.Bucket{Name: "new-bucket", ID: "arn:aws:s3:::new-bucket"}
+	if *info != want {
+		t.Errorf("CreateBucket() = %+v, want %+v", info, want)
 	}
 	req := f.lastRequest(t)
 	if req.Method != http.MethodPut || req.Path != "/new-bucket" {
@@ -1811,15 +1883,15 @@ func testProviderCreateBucketMapsResponse(t *testing.T) {
 }
 
 // testProviderCreateBucketEmptyResponse checks CreateBucket when S3 returns
-// no ARN or Location.
+// no ARN.
 func testProviderCreateBucketEmptyResponse(t *testing.T) {
 	t.Parallel()
 	info, err := createBucket(t, newFakeS3(t, nil), "new-bucket")
 	if err != nil {
 		t.Fatalf("CreateBucket() error: %v", err)
 	}
-	if info == nil || info.ID != "" || info.Location != "" {
-		t.Errorf("CreateBucket() = %+v, want empty BucketInfo", info)
+	if info == nil || *info != (storage.Bucket{Name: "new-bucket"}) {
+		t.Errorf("CreateBucket() = %+v, want only the Name", info)
 	}
 }
 

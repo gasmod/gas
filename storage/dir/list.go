@@ -63,15 +63,15 @@ func (p *Provider) ListBuckets(
 	}
 
 	pg, truncated := page(names, after, maxBuckets)
-	out := &storage.ListBucketsOutput{Buckets: make([]storage.BucketSummary, 0, len(pg))}
+	out := &storage.ListBucketsOutput{Buckets: make([]storage.Bucket, 0, len(pg))}
 	for _, name := range pg {
-		out.Buckets = append(out.Buckets, storage.BucketSummary{
+		out.Buckets = append(out.Buckets, storage.Bucket{
 			Name:         name,
 			CreationDate: created[name].Created,
 		})
 	}
 	if truncated {
-		out.ContinuationToken = encodeToken(pg[len(pg)-1])
+		out.NextContinuationToken = encodeToken(pg[len(pg)-1])
 	}
 	return out, nil
 }
@@ -206,6 +206,7 @@ func summary(ctx context.Context, bk *vfs.Bucket, key string) (storage.ObjectSum
 	return storage.ObjectSummary{
 		Key:          key,
 		LastModified: obj.LastModified,
+		ETag:         obj.ETag,
 		Size:         obj.Size,
 	}, true, nil
 }
