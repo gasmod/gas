@@ -459,8 +459,9 @@ func TestRunPending_NotInitialized(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RunPending(); err == nil {
-		t.Fatal("expected error when not initialized")
+	err = s.RunPending()
+	if err == nil || !strings.Contains(err.Error(), "not initialized") {
+		t.Fatalf("err = %v, want a not initialized error", err)
 	}
 }
 
@@ -469,8 +470,9 @@ func TestDown_NotInitialized(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Down(1); err == nil {
-		t.Fatal("expected error when not initialized")
+	err = s.Down(1)
+	if err == nil || !strings.Contains(err.Error(), "not initialized") {
+		t.Fatalf("err = %v, want a not initialized error", err)
 	}
 }
 
