@@ -7,11 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **One unnameable bucket no longer makes `dir.ListBuckets` fail.** A bucket
+  whose name record is missing (one created by a version that kept none) or
+  holds a name that hashes to another bucket (one a crash left damaged) is
+  left out of the listing instead of failing the whole call, so the other
+  buckets stay listable; `CreateBucket` of that bucket rewrites the record
+  and brings it back, and its objects were reachable through the other
+  methods throughout. A name record that cannot be read at all, or that is
+  not a regular file, still fails the call, and those errors now name the
+  record by its path under the root rather than by the bucket's hash alone.
+  Note that a bucket left out is left out silently: this release has no way
+  to report it, since the backend takes no logger and the listing output
+  carries no field for it.
+
+### Known limitations
+
+- **One unreadable object still makes `dir.ListObjects` fail for its whole
+  bucket**, hiding every other object in it. It is the same shape as the
+  `ListBuckets` fault fixed above, and is left as it stands: unreadable
+  object metadata means real corruption, and skipping it silently would hide
+  data loss. The `dir` package documentation states the behaviour.
+
+## [0.5.6] - 2026-10-19
+
 ### Breaking changes
 
+- **`storage.Provider` gains `ListBuckets` and `ListObjects`.** Every
+  implementation of the interface must add them.
+
+### Added
+
+- **Listing** in both backends. `ListObjects` returns one page of a
+  bucket's objects with S3 ListObjectsV2 semantics (`Prefix`, `Delimiter`
+  and common prefixes, `StartAfter`, `MaxKeys` up to 1000, and a
+  continuation token), and `ListBuckets` one page of buckets (`Prefix`,
+  `MaxBuckets` up to 10000, and a continuation token). s3 requests
+  URL-encoded keys and decodes them, so keys with characters XML cannot
+  carry are listed. dir reads every name in the bucket on each call, and
+  records each bucket's name under `.gas/buckets` when `CreateBucket`
+  runs; a bucket created before that, or whose record a crash left
+  damaged, fails `ListBuckets` until `CreateBucket` of it runs again. `storagetest.MockProvider` gains
+  `ListBucketsFn` and `ListObjectsFn`.
+  - `storage.ErrInvalidLimit`, for a `MaxKeys` under 1 or a `MaxBuckets`
+    outside 1 to 10000.
+  - `storage.ErrInvalidContinuationToken`, for an empty token, or one the
+    dir backend did not issue.
+
+## [0.5.5] - 2026-10-19
+
+The tags `storage/v0.4.1` to `storage/v0.5.5` shipped their changes under
+`[Unreleased]`, and the entries were first written at 0.5.5. This section
+holds them, and covers every change since 0.3.0, which was released from
+the separate `github.com/gasmod/gas-storage` repository.
+
+### Breaking changes
+
+- **Import path.** The module moved from `github.com/gasmod/gas-storage` to
+  `github.com/gasmod/gas/storage`, in storage/v0.4.1. The old module path is
+  no longer published.
 - **`gas.StorageProvider` is replaced by interfaces in this module.**
-  `storage.Provider` covers `CreateBucket`, `ListBuckets`, `HeadObject`,
-  `PutObject`, `GetObject`, `DeleteObject` and `ListObjects`. `storage.Presigner` covers
+  `storage.Provider` covers `CreateBucket`, `HeadObject`, `PutObject`,
+  `GetObject` and `DeleteObject`. `storage.Presigner` covers
   `PresignUploadURL` and `PresignDownloadURL`. Each method takes an input
   struct (`PutObjectInput` and so on) in place of a key and
   `gas.StorageOption`s. `BaseObjectInput.Key` is a `string`, and a nil
@@ -53,6 +111,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-key locking that also excludes other processes, and atomic
   overwrites.
 - **Sentinels:**
+  - `storage.ErrBucketNotFound`, since storage/v0.5.2. Object operations
+    return it when the bucket does not exist, except the s3 backend's
+    `HeadObject`, which S3 answers for a missing bucket exactly as for a
+    missing key, and which therefore returns `storage.ErrNotFound`.
   - `storage.ErrInputRequired`, `storage.ErrInvalidKey`,
     `storage.ErrInvalidBucket` and `storage.ErrNotFound`.
   - `storage.ErrBucketExists`. s3 `CreateBucket` returns it when the name
@@ -94,22 +156,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   region, sending the location constraint S3 requires outside us-east-1 and
   `aws-global`. For a bucket the caller already owns it succeeds, and the
   returned `BucketInfo` may be empty.
-- **Listing** in both backends. `ListObjects` returns one page of a
-  bucket's objects with S3 ListObjectsV2 semantics (`Prefix`, `Delimiter`
-  and common prefixes, `StartAfter`, `MaxKeys` up to 1000, and a
-  continuation token), and `ListBuckets` one page of buckets (`Prefix`,
-  `MaxBuckets` up to 10000, and a continuation token). s3 requests
-  URL-encoded keys and decodes them, so keys with characters XML cannot
-  carry are listed. dir reads every name in the bucket on each call, and
-  records each bucket's name under `.gas/buckets` when `CreateBucket`
-  runs; a bucket created before that, or whose record a crash left
-  damaged, is left out of `ListBuckets` until `CreateBucket` of it runs
-  again. `storagetest.MockProvider` gains
-  `ListBucketsFn` and `ListObjectsFn`.
-  - `storage.ErrInvalidLimit`, for a `MaxKeys` under 1 or a `MaxBuckets`
-    outside 1 to 10000.
-  - `storage.ErrInvalidContinuationToken`, for an empty token, or one the
-    dir backend did not issue.
 - **LocalStack test suite** for the s3 backend, against
   `localstack/localstack:4.14.0` pinned by digest.
 
@@ -139,28 +185,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   valid keys everywhere, and `a/.` and `./` are invalid everywhere.
 - **s3 NoSuchVersion** is mapped to `storage.ErrVersionNotFound` instead of
   carrying no sentinel.
-- **One unnameable bucket no longer makes `dir.ListBuckets` fail.** A bucket
-  whose name record is missing (one created by a version that kept none) or
-  holds a name that hashes to another bucket (one a crash left damaged) is
-  left out of the listing instead of failing the whole call, so the other
-  buckets stay listable; `CreateBucket` of that bucket rewrites the record
-  and brings it back, and its objects were reachable through the other
-  methods throughout. A name record that cannot be read at all, or that is
-  not a regular file, still fails the call, and those errors now name the
-  record by its path under the root rather than by the bucket's hash alone.
-  Note that a bucket left out is left out silently: this release has no way
-  to report it, since the backend takes no logger and the listing output
-  carries no field for it.
 
-### Known limitations
-
-- **One unreadable object still makes `dir.ListObjects` fail for its whole
-  bucket**, hiding every other object in it. It is the same shape as the
-  `ListBuckets` fault fixed above, and is left as it stands: unreadable
-  object metadata means real corruption, and skipping it silently would hide
-  data loss. The `dir` package documentation states the behaviour.
-
-## [0.3.0] - 2026-07-03
+## 0.3.0 - 2026-07-03
 
 First open source release. Versions prior to 0.3.0 were developed in a private
 repository; this entry summarizes the package as published.
@@ -200,5 +226,6 @@ repository; this entry summarizes the package as published.
   `gas.StorageProvider` (and `gas.ReadyReporter`) that records calls and
   delegates to per-method `Fn` fields for tests that need custom behavior.
 
-[Unreleased]: https://github.com/gasmod/gas/storage/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/gasmod/gas/storage/releases/tag/v0.3.0
+[Unreleased]: https://github.com/gasmod/gas/compare/storage/v0.5.6...HEAD
+[0.5.6]: https://github.com/gasmod/gas/compare/storage/v0.5.5...storage/v0.5.6
+[0.5.5]: https://github.com/gasmod/gas/releases/tag/storage/v0.5.5
