@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.6] - 2026-10-19
+
+No change to this module's code. The release pinned every internal module
+at 0.5.6.
+
+## [0.5.5] - 2026-10-19
+
+The tags v0.5.1 to v0.5.5 shipped their changes under `[Unreleased]`, and
+the entries were first written at 0.5.5. This section holds them, and
+covers every change to this module since 0.5.0.
+
 ### Added
 
 - **Service init deadline:** every singleton's Init (at startup and on
@@ -422,6 +433,8 @@ repository; this entry summarizes the framework as published.
 - Eliminated a data race between the router and the service kill-switch by
   switching route storage to copy-on-write.
 
-[Unreleased]: https://github.com/gasmod/gas/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/gasmod/gas/compare/v0.5.6...HEAD
+[0.5.6]: https://github.com/gasmod/gas/compare/v0.5.5...v0.5.6
+[0.5.5]: https://github.com/gasmod/gas/compare/v0.5.0...v0.5.5
 [0.5.0]: https://github.com/gasmod/gas/releases/tag/v0.5.0
 [0.3.0]: https://github.com/gasmod/gas/releases/tag/v0.3.0
