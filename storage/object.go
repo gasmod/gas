@@ -45,7 +45,8 @@ type ObjectInfo struct {
 // for its contents. The caller must close Body.
 type Object struct {
 	// Body streams the object's contents. Closing it releases the
-	// underlying connection or file.
+	// underlying connection or file. A backend may return a Body that does
+	// more, such as seek; only its own documentation promises that.
 	Body io.ReadCloser
 	ObjectInfo
 }

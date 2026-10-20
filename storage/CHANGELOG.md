@@ -29,6 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **dir `GetObject` bodies are seekable for ranged reads too.** A ranged
+  `Body` used to be a reader that could not seek, while a whole read gave
+  an `*os.File`; both now implement `io.ReadSeeker`, a ranged one seeking
+  within the returned bytes. The dir package documents it; the storage
+  interface still promises only `io.ReadCloser`.
 - **`Skipped` on `ListObjectsOutput` and `ListBucketsOutput`**: how many
   entries the listing left out because the backend could not read them,
   counted over the whole bucket (or every bucket), so every page repeats

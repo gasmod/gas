@@ -155,6 +155,10 @@
 // processes too: each holds a lock file named after the bucket under
 // .gas/locks for its whole run.
 //
+// GetObject's Body implements io.ReadSeeker, for whole and ranged reads: a
+// ranged Body seeks within the bytes it returns. The storage interface
+// promises only io.ReadCloser, and s3 makes no such promise.
+//
 // Listing reads every name in the bucket (or every bucket's name record) on
 // each call, so a page costs time in proportion to the bucket, not the page.
 // Its continuation tokens hold the last name of the page, encoded; they are

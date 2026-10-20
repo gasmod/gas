@@ -341,6 +341,12 @@ func (p *Provider) putResult(
 // storage.ErrBucketNotFound. A set Version returns an error wrapping
 // storage.ErrNotSupported, as for HeadObject.
 //
+// Body implements io.ReadSeeker, for whole and ranged reads alike: a ranged
+// Body seeks within the bytes it returns, with offset 0 at the range's
+// first byte. Callers that type-assert for io.ReadSeeker, to serve the body
+// with http.ServeContent for example, can rely on it with this backend; the
+// s3 backend makes no such promise.
+//
 // A Range selects part of the object with RFC 9110 single-range semantics,
 // matching S3: Body reads only those bytes and Size is their count. A Range
 // that is not a single valid byte range is ignored and the whole object is
@@ -539,18 +545,31 @@ func rangedObject(obj *vfs.Object, header *string) (*storage.Object, error) {
 	return out, nil
 }
 
-// rangeBody returns a ReadCloser that reads n bytes of f from off and closes
-// f. f must support io.ReaderAt, which every data file opened from the root
-// does.
+// rangeBody returns the body of a ranged read: n bytes of f from off, which
+// reads, seeks within those bytes, and closes f. f must support io.ReaderAt,
+// which every data file opened from the root does.
 func rangeBody(f fs.File, off, n int64) (io.ReadCloser, error) {
 	ra, ok := f.(io.ReaderAt)
 	if !ok {
 		return nil, errors.New("data file does not support ranged reads")
 	}
-	return struct {
-		io.Reader
-		io.Closer
-	}{io.NewSectionReader(ra, off, n), f}, nil
+	return &sectionBody{SectionReader: io.NewSectionReader(ra, off, n), file: f}, nil
+}
+
+// sectionBody is the Body of a ranged GetObject: an io.SectionReader over
+// the selected bytes of the data file, so it implements io.ReadSeeker like
+// the *os.File of a whole read, and Close closes the data file.
+type sectionBody struct {
+	*io.SectionReader
+	file fs.File
+}
+
+// Close closes the data file the body reads.
+func (b *sectionBody) Close() error {
+	if err := b.file.Close(); err != nil {
+		return fmt.Errorf("close data file: %w", err)
+	}
+	return nil
 }
 
 // rejectUnsupported validates in's key and bucket, then reports a set
