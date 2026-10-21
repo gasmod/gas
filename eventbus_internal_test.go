@@ -62,6 +62,8 @@ func TestEventBus_PanicLoggedByWorker(t *testing.T) {
 // runOwner is a Service used only as a subscription owner.
 type runOwner struct{}
 
-func (*runOwner) Name() string                { return "run-owner" }
-func (*runOwner) Init(context.Context) error  { return nil }
+func (*runOwner) Name() string { return "run-owner" }
+
+func (*runOwner) Init(context.Context) error { return nil }
+
 func (*runOwner) Close(context.Context) error { return nil }

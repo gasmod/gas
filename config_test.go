@@ -4,8 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-playground/validator/v10"
-
 	"github.com/gasmod/gas"
 )
 
@@ -52,32 +50,4 @@ func TestConfig_BindValidatesHost(t *testing.T) {
 			}
 		})
 	}
-}
-
-// hostConfig returns a ConfigProvider whose Bind sets only Server.Host and
-// then validates with a real validator, as the config module does. Core does
-// not depend on config, so its tests fake the provider.
-func hostConfig(t *testing.T, host string) gas.ConfigProvider {
-	t.Helper()
-	return &hostProvider{host: host}
-}
-
-type hostProvider struct {
-	gas.ConfigProvider // methods other than Bind are unused; calling one panics
-
-	host string
-}
-
-func (p *hostProvider) Bind(dest any, options ...gas.BindOption) error {
-	opts := gas.BindOptions{Validate: true}
-	for _, opt := range options {
-		opt(&opts)
-	}
-	if cfg, ok := dest.(*gas.Config); ok {
-		cfg.Server.Host = p.host
-	}
-	if !opts.Validate {
-		return nil
-	}
-	return validator.New().Struct(dest) //nolint:wrapcheck // the test reads it as is
 }

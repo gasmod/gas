@@ -128,12 +128,12 @@ func parseStem(stem string) (version, description string) {
 // If any migration is marked dirty, it runs nothing and returns an error
 // wrapping ErrDirty until the mark is cleared.
 func (s *Service) RunPending() error {
-	if s.closed.Load() {
-		return fmt.Errorf("gas/migrate: service is closed")
-	}
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if err := s.usable(); err != nil {
+		return err
+	}
 
 	ctx := context.Background()
 
@@ -172,17 +172,29 @@ func (s *Service) RunPending() error {
 	return nil
 }
 
+// usable returns an error when the service is closed or Init has not run,
+// so RunPending and Down fail instead of using a nil query adapter.
+func (s *Service) usable() error {
+	if s.closed.Load() {
+		return fmt.Errorf("gas/migrate: service is closed")
+	}
+	if s.q == nil {
+		return fmt.Errorf("gas/migrate: not initialized")
+	}
+	return nil
+}
+
 // Down reverses the last n applied migrations in reverse version order.
 // While any migration is dirty it runs nothing and returns an error
 // wrapping ErrDirty, since a dirty migration's up SQL was rolled back and
 // its down SQL would act on a schema it never changed.
 func (s *Service) Down(n int) error {
-	if s.closed.Load() {
-		return fmt.Errorf("gas/migrate: service is closed")
-	}
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if err := s.usable(); err != nil {
+		return err
+	}
 
 	ctx := context.Background()
 

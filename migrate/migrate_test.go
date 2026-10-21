@@ -454,6 +454,28 @@ func TestDown_Closed(t *testing.T) {
 	}
 }
 
+func TestRunPending_NotInitialized(t *testing.T) {
+	s, err := New()(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = s.RunPending()
+	if err == nil || !strings.Contains(err.Error(), "not initialized") {
+		t.Fatalf("err = %v, want a not initialized error", err)
+	}
+}
+
+func TestDown_NotInitialized(t *testing.T) {
+	s, err := New()(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = s.Down(1)
+	if err == nil || !strings.Contains(err.Error(), "not initialized") {
+		t.Fatalf("err = %v, want a not initialized error", err)
+	}
+}
+
 //goland:noinspection SqlResolve,SqlNoDataSourceInspection
 func TestGlobalVersionOrder(t *testing.T) {
 	modA := &testService{name: "mod-a"}

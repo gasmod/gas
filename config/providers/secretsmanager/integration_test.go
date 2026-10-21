@@ -22,6 +22,7 @@ import (
 // startLocalStack starts a LocalStack container and returns its endpoint.
 func startLocalStack(t *testing.T) string {
 	t.Helper()
+	requireDocker(t)
 
 	ctx := context.Background()
 

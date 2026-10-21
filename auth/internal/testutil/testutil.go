@@ -81,6 +81,7 @@ type PostgresContainer struct {
 // and migrate service backed by it.
 func SetupPostgres(t *testing.T) *PostgresContainer {
 	t.Helper()
+	requireDocker(t)
 	ctx := context.Background()
 
 	pgContainer, err := postgres.Run(ctx,
@@ -144,6 +145,43 @@ func (pc *PostgresContainer) Provider() *database.Service {
 // MigrationManager returns the real migration service for this container.
 func (pc *PostgresContainer) MigrationManager() *migrate.Service {
 	return pc.migSvc
+}
+
+// ---------------------------------------------------------------------------
+// Backends
+// ---------------------------------------------------------------------------
+
+// Backend is a database, with its migration manager, that a store test runs
+// against.
+type Backend struct {
+	DB         *database.Service
+	Migrations *migrate.Service
+	Name       string
+}
+
+// ForEachBackend runs fn in one subtest per backend, named after it: sqlite,
+// which needs no Docker and runs under -short, then postgres, which skips
+// under -short.
+func ForEachBackend(t *testing.T, fn func(t *testing.T, b Backend)) {
+	t.Helper()
+	t.Run("sqlite", func(t *testing.T) {
+		_, db, migrations := SetupSQLite(t)
+		fn(t, Backend{DB: db, Migrations: migrations, Name: "sqlite"})
+	})
+	t.Run("postgres", func(t *testing.T) {
+		fn(t, PostgresBackend(t))
+	})
+}
+
+// PostgresBackend returns a backend on a fresh PostgreSQL container, skipping
+// the test under -short. Tests that only hold on PostgreSQL use it directly.
+func PostgresBackend(t *testing.T) Backend {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("skipping PostgreSQL test in short mode")
+	}
+	pg := SetupPostgres(t)
+	return Backend{DB: pg.Provider(), Migrations: pg.MigrationManager(), Name: "postgres"}
 }
 
 // ---------------------------------------------------------------------------

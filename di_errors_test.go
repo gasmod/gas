@@ -23,8 +23,10 @@ type (
 // the value type is a shape error.
 type diValueShape struct{}
 
-func (*diValueShape) Name() string                { return "di-value-shape" }
-func (*diValueShape) Init(context.Context) error  { return nil }
+func (*diValueShape) Name() string { return "di-value-shape" }
+
+func (*diValueShape) Init(context.Context) error { return nil }
+
 func (*diValueShape) Close(context.Context) error { return nil }
 
 func requireDIError(t *testing.T, err, sentinel error, wantText string) {
