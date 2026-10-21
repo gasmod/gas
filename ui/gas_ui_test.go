@@ -423,6 +423,59 @@ func TestStaticHandler_DirectoryListingBlocked(t *testing.T) {
 	}
 }
 
+// The root the prefix maps to gets the same answer as a subdirectory: 404,
+// even with an index.html, while files under it still serve.
+func TestStaticHandler_RootListingBlocked(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"app.css", "index.html", "sub/index.html"} {
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.WriteFile(path, []byte(name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fsys := fstest.MapFS{
+		"app.css":        &fstest.MapFile{Data: []byte("app.css")},
+		"index.html":     &fstest.MapFile{Data: []byte("index.html")},
+		"sub/index.html": &fstest.MapFile{Data: []byte("sub/index.html")},
+	}
+
+	for _, prefix := range []string{"/static/", "/static"} {
+		handlers := map[string]http.HandlerFunc{
+			"dir": ui.StaticHandler(prefix, dir),
+			"fs":  ui.StaticHandlerFS(prefix, fsys),
+		}
+		for name, h := range handlers {
+			for _, path := range []string{"/static", "/static/", "/static/sub/"} {
+				code, body := getBody(t, h, path)
+				if code != http.StatusNotFound {
+					t.Errorf(
+						"%s prefix %q: GET %s = %d %q, want 404",
+						name,
+						prefix,
+						path,
+						code,
+						body,
+					)
+				}
+			}
+			code, body := getBody(t, h, "/static/app.css")
+			if code != http.StatusOK || body != "app.css" {
+				t.Errorf(
+					"%s prefix %q: GET /static/app.css = %d %q, want 200 %q",
+					name,
+					prefix,
+					code,
+					body,
+					"app.css",
+				)
+			}
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Service lifecycle
 // ---------------------------------------------------------------------------

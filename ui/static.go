@@ -30,8 +30,9 @@ func staticHandler(prefix string, root http.FileSystem) http.HandlerFunc {
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Block directory listings.
-		if strings.HasSuffix(r.URL.Path, "/") && r.URL.Path != prefix {
+		// Block directory listings, including the root the prefix maps to.
+		if strings.HasSuffix(r.URL.Path, "/") ||
+			(prefix != "" && r.URL.Path == strings.TrimSuffix(prefix, "/")) {
 			http.NotFound(w, r)
 			return
 		}
