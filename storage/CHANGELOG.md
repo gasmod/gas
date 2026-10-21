@@ -166,6 +166,8 @@ the separate `github.com/gasmod/gas-storage` repository.
 - **Import path.** The module moved from `github.com/gasmod/gas-storage` to
   `github.com/gasmod/gas/storage`, in storage/v0.4.1. The old module path is
   no longer published.
+- **Go 1.27 is required.** The `go` directive moves from 1.26.1 to 1.27, in
+  storage/v0.5.0, as core now uses generic methods.
 - **`gas.StorageProvider` is replaced by interfaces in this module.**
   `storage.Provider` covers `CreateBucket`, `HeadObject`, `PutObject`,
   `GetObject` and `DeleteObject`. `storage.Presigner` covers

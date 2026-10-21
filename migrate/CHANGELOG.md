@@ -7,8 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `RunPending` and `Down` return a "not initialized" error when called
+  before `Init`, as `ClearDirty` and `CheckReady` already did. They used
+  to panic with a nil pointer dereference.
+
+### Security
+
+- **Requires Go 1.27.3.** The `go` directive moves from 1.27 to 1.27.3,
+  the first 1.27 release with the fix for GO-2026-6809 (CVE-2026-111943):
+  `crypto/x509` now rejects intermediate certificates known to be
+  compromised. A build with an older toolchain switches to 1.27.3 under
+  `GOTOOLCHAIN=auto` and fails under `GOTOOLCHAIN=local`.
+
+## [0.5.6] - 2026-10-19
+
+The tags `migrate/v0.4.1` to `migrate/v0.5.6` shipped their changes under
+`[Unreleased]`. This section holds them, and covers every change since
+0.3.0, which was released from the separate
+`github.com/gasmod/gas-migrate` repository.
+
 ### Changed
 
+- **BREAKING: import path.** The module moved from
+  `github.com/gasmod/gas-migrate` to `github.com/gasmod/gas/migrate`, in
+  migrate/v0.4.1.
+- **BREAKING: Go 1.27 is required.** The `go` directive moves from 1.26.1
+  to 1.27, in migrate/v0.5.0, as core now uses generic methods.
+- **BREAKING: migrations are registered under a `gas.Service`, not a
+  name.** `Register`, `RegisterSlice` and `RegisterFS` take the owning
+  service instead of its name, on `Service` and on
+  `migratetest.MockMigrationManager`, whose `RegisterFn`, `RegisterSliceFn`
+  and `RegisterFSFn` fields change to match, in migrate/v0.5.0. Pass `s`
+  instead of `s.Name()`.
 - **BREAKING: `migrate.New` returns an error.** It now returns
   `func(gas.DatabaseProvider) (*Service, error)`, the `CONVENTIONS.md`
   shape. It cannot fail yet, so it returns nil; the change is the shape.
@@ -43,9 +75,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wraps `ErrDuplicateVersion`, and `CheckReady` now returns it too. `Down`'s
   message names the services rather than printing their values.
 - `CheckReady` counts each pending version once.
-- `RunPending` and `Down` return a "not initialized" error when called
-  before `Init`, as `ClearDirty` and `CheckReady` already did. They used
-  to panic with a nil pointer dereference.
 
 ### Added
 
@@ -59,15 +88,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ErrDuplicateVersion`, wrapped by `RunPending`, `Down`, and `CheckReady`
   when two different migrations share a version.
 
-### Security
-
-- **Requires Go 1.27.3.** The `go` directive moves from 1.27 to 1.27.3,
-  the first 1.27 release with the fix for GO-2026-6809 (CVE-2026-111943):
-  `crypto/x509` now rejects intermediate certificates known to be
-  compromised. A build with an older toolchain switches to 1.27.3 under
-  `GOTOOLCHAIN=auto` and fails under `GOTOOLCHAIN=local`.
-
-## [0.3.0] - 2026-07-03
+## 0.3.0 - 2026-07-03
 
 First open source release. Versions prior to 0.3.0 were developed in a private
 repository; this entry summarizes the module as published.
@@ -105,6 +126,5 @@ repository; this entry summarizes the module as published.
   same transaction, so a crash between the two no longer leaves the schema
   changed but unrecorded and the pipeline wedged as dirty.
 
-[Unreleased]: https://github.com/gasmod/gas/migrate/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/gasmod/gas/migrate/releases/tag/v0.3.0
-
+[Unreleased]: https://github.com/gasmod/gas/compare/migrate/v0.5.6...HEAD
+[0.5.6]: https://github.com/gasmod/gas/releases/tag/migrate/v0.5.6

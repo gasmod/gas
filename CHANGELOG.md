@@ -41,9 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- **`Worker.ActiveServicesMap`.** It was a test helper compiled into the
-  library. Tests now get it from `export_test.go`; use `ActiveServices` for
-  the names of the active services.
+- **BREAKING: `Worker.ActiveServicesMap`.** It was a test helper compiled
+  into the library. Tests now get it from `export_test.go`; use
+  `ActiveServices` for the names of the active services.
 
 ### Security
 
@@ -84,9 +84,17 @@ covers every change to this module since 0.5.0.
   startup wrap the matching sentinel, so callers can use `errors.Is` instead
   of matching message text. The messages are unchanged, except that the
   scoped-service error now says to use `container.NewScope(ctx)`.
+- **`Router` method shorthands:** `Get`, `Head`, `Post`, `Put`, `Patch`,
+  and `Delete` register a route for that method, as `Handle` does (#51).
 
 ### Changed
 
+- **BREAKING: `*Worker` no longer implements `gas.Service`.** Its `Name`,
+  `Init`, and `Close` were no-ops that existed only so a Worker could be
+  passed as an owner, and they listed the Worker as `gas/worker` in
+  `ActiveServices`, where it no longer appears (#48).
+- **`Context.JSON` wraps an encoding error** as `failed to encode JSON:
+  <cause>`; it used to return the encoder's error as is (#51).
 - **BREAKING: `gas.NewNopLogger` returns an error.** It now returns
   `func() (*NopLogger, error)`, the `CONVENTIONS.md` shape. It never fails and
   returns nil. Registering it with `gas.WithSingletonService` is unchanged,
@@ -298,6 +306,10 @@ covers every change to this module since 0.5.0.
 
 ## [0.5.0] - 2026-09-19
 
+The tags v0.3.1 to v0.4.6 shipped their changes under `[Unreleased]`,
+which became this section at 0.5.0. It covers every change to this module
+since 0.3.0.
+
 ### Added
 
 - **Unified error shape** — `gas.Error` with `Status`, `Code`, `Message`,
@@ -309,8 +321,17 @@ covers every change to this module since 0.5.0.
   handlers, custom `ErrorHandler`s, and custom middleware. It never logs and
   never touches the request scope, so it is safe before the scope middleware
   runs. `gas.WantsJSON` exposes the same Accept negotiation.
-- **`Context.Error` and `Context.ErrorJSON`** — write the unified response
-  directly from a handler.
+- **`Context.WriteError` and `Context.WriteErrorJSON`** write the unified
+  response directly from a handler. v0.3.5 to v0.4.3 named them
+  `Context.Error` and `Context.ErrorJSON` (#44).
+- **Error constructors on `Context`**, one pair per package-level
+  constructor: `NotFound(msg)` and `NotFoundErr(err, msg)`, and likewise for
+  `BadRequest`, `Unauthorized`, `Forbidden`, `Conflict`, `Unprocessable`,
+  `TooManyRequests`, `Internal`, and `ServiceUnavailable`. Each builds a
+  `*gas.Error`, the `Err` form with `err` as its cause, and returns it for
+  the `ErrorHandler` to render; none writes the response (#44).
+- **`Context.Principal`** returns the request's authenticated principal, or
+  a 401 `*gas.Error` when none is attached (#45).
 - **`gas.ErrorResponse`** — the `{"error": {...}}` envelope, exported so Go
   clients and tests can decode it.
 - **`Worker.ReadyFunc`** — the imperative form of `WithReadyFunc`. Safe for
@@ -482,5 +503,5 @@ repository; this entry summarizes the framework as published.
 [Unreleased]: https://github.com/gasmod/gas/compare/v0.5.6...HEAD
 [0.5.6]: https://github.com/gasmod/gas/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/gasmod/gas/compare/v0.5.0...v0.5.5
-[0.5.0]: https://github.com/gasmod/gas/releases/tag/v0.5.0
+[0.5.0]: https://github.com/gasmod/gas/compare/v0.3.0...v0.5.0
 [0.3.0]: https://github.com/gasmod/gas/releases/tag/v0.3.0

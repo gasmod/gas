@@ -7,8 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No change to this module's code. The internal modules it requires are
+pinned at 0.6.0.
+
+### Security
+
+- **Requires Go 1.27.3.** The `go` directive moves from 1.27 to 1.27.3,
+  the first 1.27 release with the fix for GO-2026-6809 (CVE-2026-111943):
+  `crypto/x509` now rejects intermediate certificates known to be
+  compromised. A build with an older toolchain switches to 1.27.3 under
+  `GOTOOLCHAIN=auto` and fails under `GOTOOLCHAIN=local`.
+
+## [0.5.6] - 2026-10-19
+
+The tags `template/v0.4.1` to `template/v0.5.6` shipped their changes under
+`[Unreleased]`. This section holds them, and covers every change since
+0.3.0, which was released from the separate
+`github.com/gasmod/gas-template` repository.
+
 ### Changed
 
+- **BREAKING: import path.** The module moved from
+  `github.com/gasmod/gas-template` to `github.com/gasmod/gas/template`, in
+  template/v0.4.1.
+- **BREAKING: Go 1.27 is required.** The `go` directive moves from 1.26.1
+  to 1.27, in template/v0.5.0, as core now uses generic methods.
 - **BREAKING: the store constructors return an error.** `db.NewStore`,
   `dir.NewStore` and `fs.NewStore` now return `func(<dependencies>) (*Store,
   error)`, the `CONVENTIONS.md` shape. They cannot fail yet, so they return
@@ -37,15 +60,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dereference after `Close`; they return `template.ErrClosed`. `Close` no
   longer races with concurrent reads.
 
-### Security
-
-- **Requires Go 1.27.3.** The `go` directive moves from 1.27 to 1.27.3,
-  the first 1.27 release with the fix for GO-2026-6809 (CVE-2026-111943):
-  `crypto/x509` now rejects intermediate certificates known to be
-  compromised. A build with an older toolchain switches to 1.27.3 under
-  `GOTOOLCHAIN=auto` and fails under `GOTOOLCHAIN=local`.
-
-## [0.3.0] - 2026-07-03
+## 0.3.0 - 2026-07-03
 
 First open source release. Versions prior to 0.3.0 were developed in a private
 repository; this entry summarizes the module as published.
@@ -84,6 +99,5 @@ repository; this entry summarizes the module as published.
 - **DI wiring** — `dir.NewStore`, `fs.NewStore`, and `db.NewStore` all
   return DI-injectable constructors for use with `gas.WithSingletonService`.
 
-[Unreleased]: https://github.com/gasmod/gas/template/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/gasmod/gas/template/releases/tag/v0.3.0
-
+[Unreleased]: https://github.com/gasmod/gas/compare/template/v0.5.6...HEAD
+[0.5.6]: https://github.com/gasmod/gas/releases/tag/template/v0.5.6

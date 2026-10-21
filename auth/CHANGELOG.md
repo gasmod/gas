@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No change to this module's code. The internal modules it requires are
+pinned at 0.6.0.
+
+### Security
+
+- **Requires Go 1.27.3.** The `go` directive moves from 1.27 to 1.27.3,
+  the first 1.27 release with the fix for GO-2026-6809 (CVE-2026-111943):
+  `crypto/x509` now rejects intermediate certificates known to be
+  compromised. A build with an older toolchain switches to 1.27.3 under
+  `GOTOOLCHAIN=auto` and fails under `GOTOOLCHAIN=local`.
+
+## [0.5.6] - 2026-10-19
+
+The tags `auth/v0.4.1` to `auth/v0.5.6` shipped their changes under
+`[Unreleased]`. This section holds them, and covers every change since
+0.1.0, which was released from the separate
+`github.com/gasmod/gas-auth` repository.
+
 ### Added
 
 - **`auth.Authenticator`, `auth.Authorizer`, and `auth.PrincipalRevoker`.**
@@ -16,6 +34,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING: import path.** The module moved from
+  `github.com/gasmod/gas-auth` to `github.com/gasmod/gas/auth`, in
+  auth/v0.4.1.
+- **BREAKING: Go 1.27 is required.** The `go` directive moves from 1.26.1
+  to 1.27, in auth/v0.5.0, as core now uses generic methods.
+- **BREAKING: the `db` stores' `Init` takes the owning `gas.Service`.**
+  `apikey/db`, `session/db` and `token/db` `Store.Init(service gas.Service)`
+  replaces `Init(serviceName string)`, following core's move to service
+  owners, in auth/v0.5.0. Pass the service itself instead of its name.
 - **BREAKING: `Config.Validate` is removed from `jwt`, `session`, `apikey` and
   `token`; the rules are validate tags.** `ConfigProvider.Bind` already
   validates the struct it binds, so `Init` no longer runs a tag check of its
@@ -56,12 +83,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- **Requires Go 1.27.3.** The `go` directive moves from 1.27 to 1.27.3,
-  the first 1.27 release with the fix for GO-2026-6809 (CVE-2026-111943):
-  `crypto/x509` now rejects intermediate certificates known to be
-  compromised. A build with an older toolchain switches to 1.27.3 under
-  `GOTOOLCHAIN=auto` and fails under `GOTOOLCHAIN=local`.
-
 - **`Middleware` and `Chain` no longer treat a nil principal as
   authenticated.** An `Authenticator` that returned `(nil, nil)`, as any
   app-written one could, let `Middleware` call the next handler for a
@@ -74,7 +95,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AuthenticateFn` is unset.** It used to return `(nil, nil)`. Tests that
   relied on that default to pass authentication must set `AuthenticateFn`.
 
-## [0.1.0] - 2026-07-03
+## 0.1.0 - 2026-07-03
 
 First open source release. Versions prior to 0.1.0 were developed in a private
 repository; this entry summarizes the framework as published.
@@ -121,5 +142,5 @@ repository; this entry summarizes the framework as published.
   already-expired context from silently failing the cleanup goroutine on
   every run.
 
-[Unreleased]: https://github.com/gasmod/gas/auth/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/gasmod/gas/auth/releases/tag/v0.1.0
+[Unreleased]: https://github.com/gasmod/gas/compare/auth/v0.5.6...HEAD
+[0.5.6]: https://github.com/gasmod/gas/releases/tag/auth/v0.5.6
