@@ -1,6 +1,6 @@
 module github.com/gasmod/gas/email
 
-go 1.27
+go 1.27.3
 
 require (
 	github.com/aws/aws-sdk-go-v2/config v1.33.9
