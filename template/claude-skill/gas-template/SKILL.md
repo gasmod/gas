@@ -95,9 +95,25 @@ Creates an empty in-memory store. Thread-safe via `sync.RWMutex`.
 func NewStore(dir string) func() (*Store, error)
 ```
 
-Returns a DI-injectable constructor for a store rooted at `dir`. Only `.html`
-files are recognized from disk. The returned `*Store` implements `io.Closer` —
-call `Close()` when done.
+Returns a constructor for a store rooted at `dir`. `List` and
+`RegisterFS` consider only `.html` files; `Get` reads any file under `dir` by
+name and reports every read failure as `ErrTemplateNotFound`. The returned
+`*Store` implements `io.Closer` but not `gas.Service`, and the container
+refuses it: registering it directly, by constructor or as an instance, fails
+at startup with `gas.ErrInvalidServiceShape` (KI-033). Build it yourself,
+register it wrapped in a `composite.Store`, and call `Close()` when done:
+
+```go
+dirStore, err := dir.NewStore("templates")()
+if err != nil {
+    return err
+}
+defer dirStore.Close()
+
+app := gas.NewApp(
+    gas.WithServiceInstance[gas.TemplateProvider](composite.NewStore(dirStore)),
+)
+```
 
 ### Behavior
 
@@ -123,8 +139,8 @@ func NewStore(fsys fs.FS) func() (*Store, error)
 ```
 
 Returns a DI-injectable constructor for a read-only template store backed by
-any `fs.FS` — typically an `embed.FS`. Only files with `.html` extension are
-recognized.
+any `fs.FS` — typically an `embed.FS`. `List` returns only `.html` files;
+`Get` reads any file by name.
 
 ### Behavior
 
@@ -141,7 +157,10 @@ recognized.
 //go:embed templates/*.html
 var templateFS embed.FS
 
-store := tmplfs.NewStore(templateFS)()
+store, err := tmplfs.NewStore(templateFS)()
+if err != nil {
+    return err
+}
 content, err := store.Get(ctx, "templates/home.html")
 ```
 
@@ -183,7 +202,7 @@ Unsupported drivers cause `Init` to return an error.
 
 ### Migration
 
-`Init` registers a single migration (version `20260322235959`, "create __gas_templates
+`Init` registers a single migration (version `20260322235959`, "create templates
 table") with the `gas.MigrationManager`. The migration SQL is driver-specific
 and embedded from `.sql` files. The `gas/migrate` service applies it during the
 app startup sequence. Every store on one driver registers an identical copy under
@@ -198,7 +217,7 @@ not from another service's `Init`.
 
 ```go
 gas.WithReadyFunc(func(c *gas.ServiceContainer) error {
-    store, err := c.Resolve[*tmpldb.Store]()
+    store, err := c.Resolve[gas.TemplateProvider]() // the type the store is registered under
     if err != nil {
         return err
     }
@@ -211,12 +230,14 @@ gas.WithReadyFunc(func(c *gas.ServiceContainer) error {
 - `Get` returns `ErrTemplateNotFound` when no row matches (maps
   `sql.ErrNoRows` to the sentinel).
 - `List` returns names sorted alphabetically (ORDER BY in the query).
-- `Register` upserts via `INSERT ... ON CONFLICT`. Errors are logged but not
-  returned (interface constraint).
+- `Register` upserts (`INSERT ... ON CONFLICT` on PostgreSQL and SQLite,
+  `ON DUPLICATE KEY UPDATE` on MySQL) and returns any database error,
+  wrapped with the template name.
 - `RegisterFS` walks the fs.FS and upserts all `.html` files.
 - `Exists(name string) (bool, error)` — checks whether a template exists.
 - `Delete(name string) error` — deletes a template; returns
   `ErrTemplateNotFound` if no row was affected.
+- `Exists` and `Delete` take no context and run on `context.Background()`.
 
 ### Namespaces
 
@@ -241,7 +262,7 @@ CREATE TABLE __gas_templates (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (namespace, name)
 );
-CREATE INDEX idx_templates_namespace ON templates (namespace);
+CREATE INDEX idx___gas_templates_namespace ON __gas_templates (namespace);
 ```
 
 MySQL uses `BIGINT AUTO_INCREMENT`, `VARCHAR(255)`, `MEDIUMBLOB`, `DATETIME`.
@@ -277,10 +298,10 @@ import "github.com/gasmod/gas/template/templatetest"
 
 ```go
 type MockTemplate struct {
-    GetFn        func(name string) ([]byte, error)
-    ListFn       func() ([]string, error)
-    RegisterFn   func(name string, content []byte)
-    RegisterFSFn func(fsys fs.FS) error
+    GetFn        func(ctx context.Context, name string) ([]byte, error)
+    ListFn       func(ctx context.Context) ([]string, error)
+    RegisterFn   func(ctx context.Context, name string, content []byte) error
+    RegisterFSFn func(ctx context.Context, fsys fs.FS) error
     Calls        []Call
 }
 ```
@@ -303,13 +324,18 @@ app := gas.NewApp(
 )
 ```
 
+The container resolves a dependency by its exact registered type, so register
+the store consumers use under `gas.TemplateProvider`, and the database store's
+dependencies under `gas.DatabaseProvider` and `gas.MigrationManager`
+(`database.New` also needs a registered `gas.ConfigProvider` and `gas.Logger`).
+
 ### Database backend (production)
 
 ```go
 app := gas.NewApp(
-    gas.WithSingletonService[*database.Service](database.New()),
-    gas.WithSingletonService[*migrate.Service](migrate.New()),
-    gas.WithSingletonService[*tmpldb.Store](tmpldb.NewStore()),
+    gas.WithSingletonService[gas.DatabaseProvider](database.New()),
+    gas.WithSingletonService[gas.MigrationManager](migrate.New()),
+    gas.WithSingletonService[gas.TemplateProvider](tmpldb.NewStore()),
 )
 ```
 
@@ -317,24 +343,29 @@ app := gas.NewApp(
 
 ```go
 app := gas.NewApp(
-    gas.WithSingletonService[*database.Service](database.New()),
-    gas.WithSingletonService[*migrate.Service](migrate.New()),
-    gas.WithSingletonService[*tmpldb.Store](
+    gas.WithSingletonService[gas.DatabaseProvider](database.New()),
+    gas.WithSingletonService[gas.MigrationManager](migrate.New()),
+    gas.WithSingletonService[gas.TemplateProvider](
         tmpldb.NewStore(tmpldb.WithNamespace("emails")),
     ),
 )
 ```
 
-### Composite (disk + database fallback)
+### Composite (database writable + embedded fallback)
 
 ```go
 app := gas.NewApp(
-    gas.WithSingletonService[*database.Service](database.New()),
-    gas.WithSingletonService[*migrate.Service](migrate.New()),
+    gas.WithSingletonService[gas.DatabaseProvider](database.New()),
+    gas.WithSingletonService[gas.MigrationManager](migrate.New()),
     gas.WithSingletonService[*tmpldb.Store](tmpldb.NewStore()),
-    // After DB store is available, wire the composite:
-    gas.WithServiceInstance[gas.TemplateProvider](
-        composite.NewStore(dbStore, fsStore),
+    gas.WithSingletonService[gas.TemplateProvider](
+        func(dbStore *tmpldb.Store) (*composite.Store, error) {
+            fsStore, err := tmplfs.NewStore(templateFS)()
+            if err != nil {
+                return nil, err
+            }
+            return composite.NewStore(dbStore, fsStore), nil
+        },
     ),
 )
 ```
@@ -353,13 +384,12 @@ func New(templates gas.TemplateProvider) *Service {
     return &Service{templates: templates}
 }
 
-func (s *Service) Init(ctx context.Context) error {
+func (s *Service) WelcomeTemplate(ctx context.Context) ([]byte, error) {
     content, err := s.templates.Get(ctx, "emails/welcome.html")
-    if err != nil {
-        return err
+    if template.IsNotFound(err) {
+        return nil, gas.NotFound("template not found").WithCause(err)
     }
-    // use content...
-    return nil
+    return content, err
 }
 ```
 
@@ -373,14 +403,14 @@ changing the service registration — no consumer code changes:
 gas.WithServiceInstance[gas.TemplateProvider](memory.NewStore())
 
 // Production
-gas.WithSingletonService[*tmpldb.Store](tmpldb.NewStore())
+gas.WithSingletonService[gas.TemplateProvider](tmpldb.NewStore())
 ```
 
 ### Testing with MockTemplate
 
 ```go
 mock := &templatetest.MockTemplate{}
-mock.GetFn = func(name string) ([]byte, error) {
+mock.GetFn = func(ctx context.Context, name string) ([]byte, error) {
     return []byte("<h1>Hello</h1>"), nil
 }
 

@@ -18,7 +18,7 @@
 // lifecycle of its own; see the sqs sub-package for the backend's
 // constructor, configuration keys and lifecycle.
 //
-// See the module README for usage examples and design rationale.
+// Guides with usage examples are at https://gasmod.github.io/gas.
 //
 // SPDX-License-Identifier: MIT
 package queue

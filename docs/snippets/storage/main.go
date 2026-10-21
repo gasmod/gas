@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/storage"
+	storagedir "github.com/gasmod/gas/storage/dir"
 )
 
 // #region service
@@ -79,5 +81,25 @@ func (s *Service) UploadLink(ctx context.Context, key string) (*storage.PresignU
 }
 
 // #endregion presign
+
+// runWithDir serves an App whose storage.Provider is a local directory.
+func runWithDir(cfg gas.ConfigProvider) error {
+	// #region dir
+	root, err := os.OpenRoot("/var/lib/myapp/storage")
+	if err != nil {
+		return err
+	}
+	defer root.Close() //nolint:errcheck // documentation snippet
+
+	app := gas.NewApp(
+		// The provider binds its settings from the ConfigProvider, so one
+		// must be registered even when nothing is configured.
+		gas.WithServiceInstance[gas.ConfigProvider](cfg),
+		gas.WithSingletonService[storage.Provider](storagedir.NewProvider(storagedir.WithRoot(root))),
+	)
+	// #endregion dir
+
+	return app.Run()
+}
 
 func main() { fmt.Println("documentation snippets") }

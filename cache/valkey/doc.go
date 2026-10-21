@@ -7,10 +7,9 @@
 // # Wiring
 //
 // New returns a DI constructor that takes a gas.ConfigProvider and a
-// gas.Logger and returns *Service; register it under gas.CacheProvider. The
-// constructor does not return an error, so it is not yet on the shape in
-// CONVENTIONS.md (KI-004 in KNOWN_ISSUES.md). WithConfig supplies the
-// configuration directly and skips binding it from the ConfigProvider.
+// gas.Logger and returns *Service and an error, which is always nil; register
+// it under gas.CacheProvider. WithConfig supplies the configuration directly
+// and skips binding it from the ConfigProvider.
 //
 // # Configuration
 //
@@ -19,8 +18,9 @@
 // "localhost:6379"), Password (empty for no authentication), DB (default
 // 0), DialTimeout (default five seconds, also the bound on the connection
 // ping), WriteTimeout (default three seconds), ConnRetries (default 0), and
-// ConnRetryInterval (default two seconds). Validate requires a non-empty
-// Addr and a DB of 0 or more.
+// ConnRetryInterval (default two seconds). When the config is bound from the
+// ConfigProvider, its validate tags require a non-empty Addr and a DB of 0 or
+// more; a config given with WithConfig is used as given.
 //
 // # Lifecycle
 //

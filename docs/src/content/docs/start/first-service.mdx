@@ -23,8 +23,8 @@ its collaborators, which is what makes it testable: pass fakes and you have a
 unit test.
 
 `Init` is where the service claims what it owns, registering routes,
-middleware, and event subscriptions. It runs once, after all singletons are
-built, and before the server accepts traffic. Everything registered here is
+middleware, and event subscriptions. It runs at startup as the service is
+built, after the services it depends on, and before the server accepts traffic. Everything registered here is
 tagged with the service that registered it, which is what makes runtime
 [teardown](/gas/concepts/ownership/) possible.
 

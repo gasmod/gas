@@ -15,8 +15,10 @@ import (
 
 // ListBuckets returns one page of the buckets under the root, in name order.
 // CreationDate is when CreateBucket first ran for the bucket. Nil MaxBuckets
-// is a page of 10000, as on S3. A ContinuationToken this backend did not
-// issue returns an error wrapping storage.ErrInvalidContinuationToken.
+// is a page of 10000, as on S3. A ContinuationToken that is not unpadded
+// base64url, or that decodes to an empty name, returns an error wrapping
+// storage.ErrInvalidContinuationToken. A well-formed token this backend did
+// not issue is accepted and resumes after the name it decodes to.
 //
 // Each call reads every bucket's name record. A bucket whose record is
 // missing (created by a version of this backend that kept none) or does not
@@ -86,8 +88,10 @@ func (p *Provider) ListBuckets(
 // keys up to and including it, Delimiter rolls keys up into common prefixes,
 // and objects and common prefixes together fill at most MaxKeys entries. A
 // missing bucket returns an error wrapping storage.ErrBucketNotFound, and a
-// ContinuationToken this backend did not issue one wrapping
-// storage.ErrInvalidContinuationToken.
+// ContinuationToken that is not unpadded base64url, or that decodes to an
+// empty name, one wrapping storage.ErrInvalidContinuationToken. A
+// well-formed token this backend did not issue is accepted and resumes after
+// the name it decodes to.
 //
 // Each call reads the metadata of every object in the bucket, and stats its
 // data file, so a page costs time in proportion to the bucket, not the
@@ -247,8 +251,9 @@ func encodeToken(name string) string {
 }
 
 // decodeToken returns the entry a continuation token resumes after: "" for a
-// nil token, or a bare storage.ErrInvalidContinuationToken for one that
-// encodeToken did not return.
+// nil token, or a bare storage.ErrInvalidContinuationToken for one that is
+// not unpadded base64url or that decodes to an empty name. Any other token
+// is accepted, whether or not encodeToken returned it.
 func decodeToken(token *string) (string, error) {
 	if token == nil {
 		return "", nil

@@ -28,8 +28,9 @@ func main() {
 	}
 
 	// #region wiring
-	// Start from DefaultConfig: it fills in SigningMethod and Expiry, and a
-	// zero Expiry fails validation.
+	// Start from DefaultConfig: it fills in SigningMethod and Expiry. A config
+	// given with WithConfig skips validation, so a zero Expiry would sign
+	// tokens that expire at once.
 	jwtCfg := jwt.DefaultConfig()
 	jwtCfg.JWT.SigningKey = "a-signing-key-of-at-least-32-bytes!!"
 

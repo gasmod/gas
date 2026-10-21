@@ -33,7 +33,10 @@
 // replaces the whole Config and skips the provider, so start from
 // DefaultConfig. WithConnector supplies a driver.Connector, which is used
 // instead of driver and dsn and is rejected outside sql mode.
-// Config.Validate enforces these rules, and an invalid Config fails Init.
+// Binding checks the range rules through the validate tags, and Init checks
+// the driver, dsn, connector and maxidleconns rules for any Config, so a
+// Config given with WithConfig skips only the range rules. A rule that does
+// not hold fails Init.
 //
 // # Lifecycle
 //
@@ -78,10 +81,12 @@
 //
 // Errors from an operation start with the service name, "gas/database",
 // and wrap the driver's error with %w, so callers can match it with
-// errors.Is or errors.As. Errors from Validate name the offending field
-// instead, for example Database.DSN. The package defines no sentinel errors.
+// errors.Is or errors.As. CheckHealth and CheckReady report a closed or
+// uninitialized service as "database: closed" or "database: not
+// initialized". Configuration errors also name the offending field, for
+// example Database.DSN. The package defines no sentinel errors.
 //
-// See the module README for usage examples and design rationale.
+// Guides with usage examples are at https://gasmod.github.io/gas.
 //
 // SPDX-License-Identifier: MIT
 package database

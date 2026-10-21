@@ -19,7 +19,7 @@ go get github.com/gasmod/gas/log
 
 | Backend | Library | Notes |
 |---|---|---|
-| `NewZeroLogLogger()` | [rs/zerolog](https://github.com/rs/zerolog) | Fast structured JSON, full level support including Trace |
+| `NewZeroLogLogger()` | [rs/zerolog](https://github.com/rs/zerolog) | Structured JSON, full level support including Trace |
 | `NewSlogLogger()` | `log/slog` | Zero extra dependencies. Trace maps to Debug |
 | `NewShippingLogger()` | `log/slog` plus HTTP | Writes locally and batches records to an endpoint |
 

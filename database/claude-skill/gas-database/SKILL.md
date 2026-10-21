@@ -42,7 +42,13 @@ func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) (*Service, error)
 ```
 
 `New` captures options and returns a DI-injectable constructor. The returned
-func receives `gas.ConfigProvider` and `gas.Logger` from the DI container.
+func receives `gas.ConfigProvider` and `gas.Logger` from the DI container, so
+both must be registered even when `WithConfig` is given.
+
+Register the constructor under `gas.DatabaseProvider`, the type other services
+and gas/migrate inject. The container resolves exactly the registered type, so
+a registration under `*database.Service` leaves `gas.DatabaseProvider`
+unregistered and its consumers fail at startup with `gas.ErrNotRegistered`.
 
 ### Options
 
@@ -56,6 +62,12 @@ func receives `gas.ConfigProvider` and `gas.Logger` from the DI container.
   so a connector in ModePgx is rejected at `Init` rather than silently ignored.
 - If `WithConfig` is not provided, the service automatically binds
   configuration from the `gas.ConfigProvider` injected via DI.
+- `WithConfig` replaces the whole `Config`, so start from `DefaultConfig()`
+  and change fields. A bare `&database.Config{...}` literal leaves the pool
+  settings at zero (`MaxIdleConns` 0 keeps no idle connections) and `Mode`
+  empty. An empty `Mode` connects as ModeSQL but skips the ModeSQL-only
+  `Init` checks (a known `Driver`, `MaxIdleConns`); `Mode: database.ModeSQL`
+  with `MaxIdleConns` 0 fails `Init`.
 
 ## Service
 
@@ -81,7 +93,8 @@ func receives `gas.ConfigProvider` and `gas.Logger` from the DI container.
 | `Ping`     | `(ctx context.Context) error`                             | Verify connectivity                           |
 | `Driver`   | `() string`                                               | Returns driver name based on mode/settings    |
 
-`Query` and `Exec` return an error if the service has been closed.
+`Query` and `Exec`, and the transaction helpers below, return an error if the
+service has been closed or not initialized.
 
 ### Probes (gas.HealthReporter, gas.ReadyReporter)
 
@@ -112,10 +125,13 @@ func (s *Service) WithPgxTx(ctx context.Context, opts *pgx.TxOptions, fn func(pg
 Error handling in `WithTx` / `WithPgxTx`:
 
 - `fn` returns nil — the transaction is committed; a commit failure is returned wrapped.
+  An `fn` that commits or rolls back itself and returns nil therefore gets an
+  error wrapping `sql.ErrTxDone` / `pgx.ErrTxClosed` from that commit.
 - `fn` returns an error — the transaction is rolled back and `fn`'s error is
   returned. A rollback that itself fails is joined onto that error with
-  `errors.Join` (not logged); `sql.ErrTxDone` / `pgx.ErrTxClosed` are treated as
-  success, so `fn` may commit or roll back itself.
+  `errors.Join` (not logged); `sql.ErrTxDone` / `pgx.ErrTxClosed` from the
+  rollback are treated as success, so `fn` may finish the transaction itself
+  before returning an error.
 - `fn` panics — the transaction is rolled back and the panic propagates
   unchanged; a failed rollback is logged rather than returned.
 
@@ -186,14 +202,13 @@ const (
 ### Basic registration
 
 ```go
+cfg := database.DefaultConfig()
+cfg.Database.DSN = "postgres://user:pass@localhost:5432/mydb?sslmode=disable"
+cfg.Database.Driver = "pgx"
+
 app := gas.NewApp(
-    gas.WithService[*database.Service](
-        database.New(database.WithConfig(&database.Config{
-            Database: database.Settings{
-                DSN:    "postgres://user:pass@localhost:5432/mydb?sslmode=disable",
-                Driver: "pgx",
-            },
-        })),
+    gas.WithService[gas.DatabaseProvider](
+        database.New(database.WithConfig(cfg)),
         gas.ServiceLifetimeSingleton,
     ),
 )
@@ -202,12 +217,10 @@ app := gas.NewApp(
 ### Native pgx mode
 
 ```go
-database.New(database.WithConfig(&database.Config{
-    Database: database.Settings{
-        Mode: database.ModePgx,
-        DSN:  "postgres://user:pass@localhost:5432/mydb?sslmode=disable",
-    },
-}))
+cfg := database.DefaultConfig()
+cfg.Database.Mode = database.ModePgx
+cfg.Database.DSN = "postgres://user:pass@localhost:5432/mydb?sslmode=disable"
+database.New(database.WithConfig(cfg))
 // After Init(ctx): svc.DB() -> *sql.DB, svc.Pool() -> *pgxpool.Pool
 ```
 
@@ -216,12 +229,10 @@ database.New(database.WithConfig(&database.Config{
 ```go
 import _ "modernc.org/sqlite"
 
-database.New(database.WithConfig(&database.Config{
-    Database: database.Settings{
-        Driver: "sqlite",
-        DSN:    "./app.db",
-    },
-}))
+cfg := database.DefaultConfig()
+cfg.Database.Driver = "sqlite"
+cfg.Database.DSN = "./app.db"
+database.New(database.WithConfig(cfg))
 ```
 
 ### Custom connector
@@ -237,13 +248,11 @@ database.New(database.WithConnector(connector))
 ### With connection retry
 
 ```go
-database.New(database.WithConfig(&database.Config{
-    Database: database.Settings{
-        DSN:               "postgres://user:pass@localhost:5432/mydb?sslmode=disable",
-        ConnRetries:       3,                // retry up to 3 times
-        ConnRetryInterval: 2 * time.Second,  // 2s, 4s, 8s backoff
-    },
-}))
+cfg := database.DefaultConfig()
+cfg.Database.DSN = "postgres://user:pass@localhost:5432/mydb?sslmode=disable"
+cfg.Database.ConnRetries = 3                    // retry up to 3 times
+cfg.Database.ConnRetryInterval = 2 * time.Second // 2s, 4s, 8s backoff
+database.New(database.WithConfig(cfg))
 ```
 
 ### Consuming via gas.DatabaseProvider
@@ -332,13 +341,18 @@ import (
     _ "github.com/jackc/pgx/v5/stdlib"
 
     "github.com/gasmod/gas"
+    config "github.com/gasmod/gas/config"
     database "github.com/gasmod/gas/database"
+    gaslog "github.com/gasmod/gas/log"
 )
 
 func main() {
     app := gas.NewApp(
-        // Register database as a singleton service
-        gas.WithService[*database.Service](
+        // The database constructor injects both, even with WithConfig.
+        gas.WithServiceInstance[gas.ConfigProvider](config.New()),
+        gas.WithSingletonService[gas.Logger](gaslog.NewSlogLogger()),
+        // Register database as a singleton under the interface consumers inject
+        gas.WithService[gas.DatabaseProvider](
             database.New(database.WithConfig(&database.Config{
                 Database: database.Settings{
                     DSN:               "postgres://user:pass@localhost:5432/mydb?sslmode=disable",
@@ -353,7 +367,7 @@ func main() {
             })),
             gas.ServiceLifetimeSingleton, // shared across all services
         ),
-        // Other services receive *database.Service as gas.DatabaseProvider via DI
+        // Other services receive it as gas.DatabaseProvider via DI
     )
 
     app.Run()

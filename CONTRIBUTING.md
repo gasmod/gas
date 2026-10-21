@@ -10,8 +10,10 @@ Thanks for your interest in contributing!
 ## Submitting changes
 
 1. Fork the repo and create a topic branch.
-2. Run tests locally: `go test -race ./...`
-3. Run lint: `make lint` (or `golangci-lint run`).
+2. Run tests locally: `make test` in the module you changed, or `make test-all` from the repo root. Both run
+   `go test -race ./...` inside the Docker test container (`scripts/docker-test.sh`), so Docker is required.
+3. Run lint: `make lint` (or `golangci-lint run`). CI pins the Go and golangci-lint versions in
+   `.github/workflows/test.yml`.
 4. Use **conventional commits** (`feat:`, `fix:`, `docs:`, `refactor:`, etc.).
 5. **Sign off** every commit (`git commit -s`) — required by the DCO.
 6. Open a PR against `main`. Keep PRs focused; one logical change per PR.

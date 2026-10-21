@@ -31,8 +31,8 @@
 //	.gas/locks/<bucket-hash>/<key-hash>          lock file of each object
 //	.gas/buckets/<bucket-hash>                   name of each bucket
 //
-// The metadata file holds the key, content type, user metadata and the name
-// of the object's current data file. The bucket's name record holds its
+// The metadata file holds the key, content type, user metadata, ETag,
+// headers and the name of the object's current data file. The bucket's name record holds its
 // name, for ListBuckets; CreateBucket writes it once, before the bucket
 // exists. A Put writes a new data file, then
 // renames a new metadata file over the old one; that rename is the commit
@@ -69,9 +69,11 @@
 //
 // # Errors
 //
-// Every error is prefixed "gas/storage/dir/provider: <op>: ", with op one of
-// create bucket, head bucket, delete bucket, list buckets, head, put, get,
-// delete or list, and wraps the storage sentinel a caller can act on:
+// Every error is prefixed "gas/storage/dir/provider: ". A method's error then
+// names its op, "<op>: ", with op one of create bucket, head bucket, delete
+// bucket, list buckets, head, put, get, delete or list; the
+// storage.ErrNotInitialized of an unbuilt Provider and the errors of
+// NewProvider carry no op. Each error wraps the storage sentinel a caller can act on:
 //
 //   - storage.ErrNotInitialized: a Provider that NewProvider did not build,
 //     from every method. NewProvider returns ErrRootRequired, which wraps it,
@@ -93,7 +95,8 @@
 //     key. storage.ErrInvalidCondition: a condition that cannot be
 //     evaluated, before any disk access.
 //   - storage.ErrBucketNotEmpty: a DeleteBucket of a bucket that holds an
-//     object, which then removes nothing. Entries no read can use
+//     object, which then removes nothing (if a write lands after the debris
+//     below was swept, that debris is already gone). Entries no read can use
 //     (unusable metadata, metadata whose data file is gone, temp files of
 //     crashed writes) are not objects: DeleteBucket removes them with the
 //     bucket once it found no object, so they can never make a bucket
@@ -103,8 +106,9 @@
 //     as a Put of a new key still copying its body; it holds even if a
 //     bucket of the same name is created again meanwhile.
 //   - storage.ErrInvalidLimit and storage.ErrInvalidContinuationToken: a
-//     list page size out of range, or a continuation token that is empty or
-//     that this backend did not issue.
+//     list page size out of range, or a continuation token that is not
+//     unpadded base64url or that decodes to an empty name. A well-formed
+//     token this backend did not issue is accepted.
 //   - storage.ErrNotFound from Head, and storage.ErrKeyNotFound from Get: a
 //     missing object. Each matches only its own sentinel, as with s3.
 //   - storage.ErrInvalidRange: a Head or Get whose Range cannot be satisfied.
@@ -122,8 +126,8 @@
 // bucket under the root belongs to the caller, so this backend never returns
 // storage.ErrBucketExists. Deleting a missing object succeeds. An object
 // whose metadata cannot be used (it does not decode, holds another key,
-// names no valid data file, or names a missing one) is reported by Head and
-// Get as an error wrapping ErrCorrupt, which matches none of the not-found
+// names no valid data file, or names a missing one) is reported by Head, Get
+// and Delete as an error wrapping ErrCorrupt (Delete then removes nothing), which matches none of the not-found
 // sentinels; a Put over it replaces it. Errors never quote a key, a bucket name given to an
 // operation, or metadata; only hashes of them appear.
 //

@@ -35,8 +35,9 @@
 //
 // # Wiring
 //
-// NewZeroLogLogger, NewSlogLogger and NewShippingLogger take options and
-// return a constructor with no parameters, so the DI container needs nothing
+// NewZeroLogLogger and NewSlogLogger take options, and NewShippingLogger
+// takes an endpoint, a Marshaler and options; each returns a constructor
+// with no parameters, so the DI container needs nothing
 // else to build the logger. The app registers it as the gas.Logger
 // singleton; the package registers nothing itself:
 //

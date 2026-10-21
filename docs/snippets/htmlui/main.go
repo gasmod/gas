@@ -59,14 +59,16 @@ func New(ui gas.UIProvider) *Service { return &Service{ui: ui} }
 func (s *Service) home(w http.ResponseWriter, r *http.Request) {
 	_ = s.ui.Render(w, "home", map[string]any{
 		"SiteName": "Gas",
-		"Name":     "Ahmed",
+		"Name":     "visitor",
 	})
 }
 
 // #endregion render
 
 // #region fragment
-// HTMX asks for a fragment, a browser asks for a full page. Same template.
+// HTMX asks for a fragment, a browser asks for a full page. Both render
+// templates/notes/list.html, which calls the "notes" partial from inside and
+// outside its "content" block.
 func (s *Service) notes(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{"Notes": []string{"first", "second"}}
 

@@ -37,8 +37,8 @@
 // Load with no registered secret returns ErrNoSecretsConfigured. Otherwise
 // errors wrap ErrClientInitFailed (the AWS configuration could not be
 // loaded), ErrSecretFetchFailed (GetSecretValue failed) or
-// ErrSecretDecodeFailed (a root secret is not a JSON object), and name the
-// secret. The first failing secret stops the load.
+// ErrSecretDecodeFailed (a root secret is not a JSON object); fetch and
+// decode errors name the secret. The first failing secret stops the load.
 //
 // SPDX-License-Identifier: MIT
 package secretsmanager

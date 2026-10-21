@@ -91,9 +91,10 @@ func WithEventInitialCapacity(capacity int) SlogLoggerOption
 ```
 
 `WithEventInitialCapacity` controls the pre-allocated attribute slice capacity
-per event. Reduces allocations when you know the typical field count. Values
-≤ 0 default to 5. Each `LogEvent` collects fields and emits them as a single
-`slog.LogAttrs` call on `Send()`.
+per event. Reduces allocations when you know the typical field count. The
+default is 5; the value is used as given, so 0 pre-allocates nothing and a
+negative value panics when an event is created. Each `LogEvent` collects fields
+and emits them as a single `slog.LogAttrs` call on `Send()`.
 
 ## Fluent API
 
@@ -222,7 +223,7 @@ goroutine. The wire shape is a pluggable `Marshaler`, so the transport is
 reusable across schemas; an OTLP/HTTP JSON marshaler ships in the box.
 
 ```go
-logger := gaslog.NewShippingLogger(
+logger, err := gaslog.NewShippingLogger(
     "https://logs.example.com/v1/logs",
     gaslog.NewOTLPMarshaler(
         gaslog.WithServiceName("my-service"),
@@ -232,6 +233,9 @@ logger := gaslog.NewShippingLogger(
     gaslog.WithBatchSize(100),
     gaslog.WithFlushInterval(2*time.Second),
 )()
+if err != nil {
+    return err
+}
 
 logger.Info("request handled").Str("method", "GET").Int("status", 200).Send()
 ```
@@ -283,7 +287,10 @@ the queue is full or the sender is shutting down. The background loop posts a
 batch on size, on the flush interval, on an explicit `Flush()`, and once more
 on shutdown. Delivery failures (marshal error, transport error, non-2xx status)
 go to `WithErrorHandler` and never propagate to the logging call site. There is
-no built-in retry — a failed batch is reported and dropped.
+no built-in retry — a failed batch is reported and dropped. The local handler
+sees each record first: if it returns an error, the record is not shipped and
+`Send` drops the error. After `Close`, the local handler still writes, records
+meant for shipping are dropped, and `Flush` returns at once.
 
 ### Per-sink level thresholds (important nuance)
 
@@ -294,7 +301,7 @@ To keep the console verbose while shipping only Error and up, set the local
 handler's level explicitly:
 
 ```go
-logger := gaslog.NewShippingLogger(
+logger, err := gaslog.NewShippingLogger(
     endpoint,
     gaslog.NewOTLPMarshaler(gaslog.WithServiceName("my-service")),
     gaslog.WithLevel(slog.LevelError), // ship Error+ only
@@ -302,6 +309,9 @@ logger := gaslog.NewShippingLogger(
         slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}),
     ),
 )()
+if err != nil {
+    return err
+}
 ```
 
 ### Field-based routing and alerting (not built in — compose it)

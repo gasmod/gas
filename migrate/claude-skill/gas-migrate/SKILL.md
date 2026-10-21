@@ -49,12 +49,18 @@ func New() func(gas.DatabaseProvider) (*Service, error)
 
 Returns a curried DI-injectable constructor. The inner function receives
 `gas.DatabaseProvider` from the container — requires `gas/database` to be
-registered.
+registered under `gas.DatabaseProvider`.
 
 ```go
 // Usage: the outer call returns the constructor, DI calls the inner function.
-migrate.New()  // → func(gas.DatabaseProvider) *Service
+migrate.New()  // → func(gas.DatabaseProvider) (*Service, error)
 ```
+
+Register it under `gas.MigrationManager`. The container resolves exactly the
+registered type: the Worker looks up `gas.MigrationManager` to run migrations,
+and services such as gas/auth's inject it. Registered only as
+`*migrate.Service`, nothing runs the migrations and those services fail at
+startup with `gas.ErrNotRegistered`.
 
 ## Service
 
@@ -107,11 +113,13 @@ func (s *Service) RunPending() error
 
 // Reverse the last n applied migrations in reverse version order.
 // If n > applied count, rolls back all applied migrations.
-// Blocks if any migration is marked dirty.
+// Blocks if any migration is marked dirty. Every migration it reverts
+// must still be registered, or it returns an error.
 func (s *Service) Down(n int) error
 ```
 
-Both methods return an error if the service is closed. While any migration
+Both methods return an error if the service is closed or `Init` has not run.
+While any migration
 is dirty, `RunPending`, `Down`, and `CheckReady` return an error wrapping
 `migrate.ErrDirty` that names the dirty versions; check it with
 `errors.Is(err, migrate.ErrDirty)`.
@@ -293,11 +301,11 @@ if mock.CallCount("RegisterFS") != 1 {
 ```go
 app := gas.NewApp(
     // Database provider is required — gas/migrate depends on it.
-    gas.WithSingletonService[*database.Service](
+    gas.WithSingletonService[gas.DatabaseProvider](
         database.New(),
     ),
-    // Register gas/migrate as a singleton service.
-    gas.WithSingletonService[*migrate.Service](
+    // Register gas/migrate as a singleton under the interface the Worker uses.
+    gas.WithSingletonService[gas.MigrationManager](
         migrate.New(),
     ),
     // Your services that use migrations.
@@ -306,8 +314,9 @@ app := gas.NewApp(
 ```
 
 The DI container resolves `gas.DatabaseProvider` automatically when constructing
-the migrate service. The App calls `RunPending()` during its startup sequence
-(after `InitServices` and config binding, before ready hooks and HTTP server).
+the migrate service. `Worker.Start` (and so `App.Start` and `Run`) calls
+`RunPending()` after `InitServices` and before the ready hooks; an App binds its
+config and starts the HTTP server after that.
 
 ## Complete Example: Service with Migrations
 
@@ -315,6 +324,7 @@ the migrate service. The App calls `RunPending()` during its startup sequence
 package auth
 
 import (
+    "context"
     "embed"
 
     "github.com/gasmod/gas"
@@ -393,8 +403,10 @@ import (
 
 func main() {
     app := gas.NewApp(
-        gas.WithSingletonService[*database.Service](database.New()),
-        gas.WithSingletonService[*migrate.Service](migrate.New()),
+        // database.New also injects gas.ConfigProvider and gas.Logger, so an
+        // app registers those too (see the gas-database skill).
+        gas.WithSingletonService[gas.DatabaseProvider](database.New()),
+        gas.WithSingletonService[gas.MigrationManager](migrate.New()),
         gas.WithSingletonService[*auth.Service](auth.New),
     )
     app.Run()

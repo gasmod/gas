@@ -36,7 +36,7 @@ Settings bind from the config provider, so a DSN can come from
 
 | Mode | Backend | Use it when |
 |---|---|---|
-| `ModeSQL` (default) | `database/sql` | Any driver: PostgreSQL, SQLite, MySQL |
+| `ModeSQL` (default) | `database/sql` | PostgreSQL or SQLite. `Database.Driver` must be `postgres`, `pgx`, or `sqlite` unless a connector is supplied with `WithConnector` |
 | `ModePgx` | `pgxpool.Pool` | PostgreSQL, and you want pgx types, batching, or the performance |
 
 `DB()` returns a `*sql.DB` in both modes, so sqlc's `database/sql` output always
@@ -52,7 +52,8 @@ including on panic.
 <Code code={region(db, 'transaction')} lang="go" />
 
 If the function returns an error, that error comes back and the rollback is
-attempted; a rollback that itself fails is logged and joined onto it. A commit
+attempted; a rollback that itself fails is joined onto it. After a panic, a
+failed rollback is logged instead, and the panic propagates unchanged. A commit
 failure is returned wrapped. In pgx mode, `WithPgxTx` mirrors this against
 `pgx.Tx`, rolling back on a context detached from cancellation so cleanup still
 runs when the caller's context is already done.
@@ -71,9 +72,10 @@ pairs out of an `embed.FS` using the naming convention
 `Run` (or `Worker.Start`) applies everything pending in global version order
 across all services, after services initialize and before traffic is accepted.
 Each migration runs in its own transaction together with its row in the
-`__gas_migrations` table, and so does each `Down`. On MySQL, DDL statements such
-as `CREATE TABLE` commit implicitly, so a migration containing DDL is not atomic
-with its tracking row there.
+`__gas_migrations` table, and so does each `Down`. On MySQL, reached through
+`WithConnector` or a `gas.DatabaseProvider` of your own, DDL statements such as `CREATE TABLE`
+commit implicitly, so a migration containing DDL is not atomic with its
+tracking row there.
 
 <Aside type="danger" title="Dirty migrations block startup">
 A migration that fails is recorded as dirty, and every later run, and every

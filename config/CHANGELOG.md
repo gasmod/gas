@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+The internal modules this module requires are pinned at 0.6.0.
+
+### Fixed
+
+- **`Bind` no longer picks a field's value at random.** When the source
+  held both a key matching a field's `json` tag and one matching its
+  lowercased Go name, which value the field got depended on map iteration
+  order and could change from one run to the next. The tag key now always
+  wins, in nested structs too. In a nested struct, where keys also match
+  case-insensitively, an exact key beats a case-folded one of the same
+  kind, and among keys that still tie the lexicographically smallest wins,
+  so the result is the same on every run.
+
+### Security
+
+- **Requires Go 1.27.3.** The `go` directive moves from 1.27 to 1.27.3,
+  the first 1.27 release with the fix for GO-2026-6809 (CVE-2026-111943):
+  `crypto/x509` now rejects intermediate certificates known to be
+  compromised. A build with an older toolchain switches to 1.27.3 under
+  `GOTOOLCHAIN=auto` and fails under `GOTOOLCHAIN=local`.
+
+## [0.5.6] - 2026-10-19
+
+The tags `config/v0.4.1` to `config/v0.5.6` shipped their changes under
+`[Unreleased]`. This section holds them, and covers every change since
+0.3.0, which was released from the separate
+`github.com/gasmod/gas-config` repository.
+
 ### Added
 
 - **AWS SecretsManager provider** — `providers/secretsmanager` loads secrets
@@ -26,9 +54,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   registered and the call can be retried. Extension `PreLoad`/`PostLoad` hooks
   are not run — call `Load()` afterwards if an extension such as `gasenv`
   needs to observe the new values.
+- **`configtest.MockConfig` implements `LoadProvider` and
+  `LoadProviderContext`**, recording each call and delegating to the new
+  `LoadProviderFn` and `LoadProviderContextFn` fields when set; unset, they
+  return nil (config/v0.5.2).
 
 ### Changed
 
+- **BREAKING: import path.** The module moved from
+  `github.com/gasmod/gas-config` to `github.com/gasmod/gas/config`, in
+  config/v0.4.1.
+- **BREAKING: Go 1.27 is required.** The `go` directive moves from 1.26.1
+  to 1.27, in config/v0.5.0, as core now uses generic methods.
 - **BREAKING: config depends on core, and core no longer depends on
   config.** `BindOption` and `BindOptions` are aliases of `gas.BindOption` and
   `gas.BindOptions`; `BindOptions`' unexported `validate` field is now
@@ -72,12 +109,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- **Requires Go 1.27.3.** The `go` directive moves from 1.27 to 1.27.3,
-  the first 1.27 release with the fix for GO-2026-6809 (CVE-2026-111943):
-  `crypto/x509` now rejects intermediate certificates known to be
-  compromised. A build with an older toolchain switches to 1.27.3 under
-  `GOTOOLCHAIN=auto` and fails under `GOTOOLCHAIN=local`.
-
 - **The default file system no longer follows a symlinked directory out of
   the working directory.** `JSONProvider` and `DotEnvProvider` checked the
   path only as written, so `link/secret.json`, with `link` a symlink to a
@@ -86,7 +117,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ErrJSONFileReadFailed` or `ErrDotEnvFileReadFailed`. A symlinked
   directory that stays inside the working directory still works.
 
-## [0.3.0] - 2026-07-02
+## 0.3.0 - 2026-07-02
 
 First open source release. Versions prior to 0.3.0 were developed in a private
 repository; this entry summarizes the package as published.
@@ -128,5 +159,5 @@ repository; this entry summarizes the package as published.
   `.env` file from leaking secrets into child processes or overwriting
   dynamic-linker variables.
 
-[Unreleased]: https://github.com/gasmod/gas/config/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/gasmod/gas/config/releases/tag/v0.3.0
+[Unreleased]: https://github.com/gasmod/gas/compare/config/v0.5.6...HEAD
+[0.5.6]: https://github.com/gasmod/gas/releases/tag/config/v0.5.6

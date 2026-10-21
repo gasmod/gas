@@ -2,9 +2,8 @@
 // embed.FS. Its Store implements gas.TemplateProvider.
 //
 // NewStore(fsys) returns a DI constructor with no dependencies that returns
-// *Store; register it under gas.TemplateProvider. The constructor does not
-// return an error, so it is not yet on the shape in CONVENTIONS.md (KI-004
-// in KNOWN_ISSUES.md).
+// *Store and an error, which is always nil; register it under
+// gas.TemplateProvider.
 //
 // Get reads the named file and reports any failure as
 // template.ErrTemplateNotFound. List returns the .html files, sorted.

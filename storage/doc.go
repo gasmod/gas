@@ -59,7 +59,8 @@
 //
 // # Errors
 //
-// Every error an operation returns names the backend and the operation, in the
+// Every error an operation returns, except ErrNotInitialized, names the
+// backend and the operation, in the
 // form "gas/storage/<backend>/<component>: <operation>: <cause>", and wraps
 // one of the sentinels in this package when one applies, so callers branch
 // with errors.Is. Backend-specific causes, such as an AWS SDK error, stay in

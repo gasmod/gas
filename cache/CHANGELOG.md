@@ -7,8 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No change to this module's code. The internal modules it requires are
+pinned at 0.6.0.
+
+### Security
+
+- **Requires Go 1.27.3.** The `go` directive moves from 1.27 to 1.27.3,
+  the first 1.27 release with the fix for GO-2026-6809 (CVE-2026-111943):
+  `crypto/x509` now rejects intermediate certificates known to be
+  compromised. A build with an older toolchain switches to 1.27.3 under
+  `GOTOOLCHAIN=auto` and fails under `GOTOOLCHAIN=local`.
+
+## [0.5.6] - 2026-10-19
+
+The tags `cache/v0.4.1` to `cache/v0.5.6` shipped their changes under
+`[Unreleased]`. This section holds them, and covers every change since
+0.3.0, which was released from the separate
+`github.com/gasmod/gas-cache` repository.
+
 ### Changed
 
+- **BREAKING: import path.** The module moved from
+  `github.com/gasmod/gas-cache` to `github.com/gasmod/gas/cache`, in
+  cache/v0.4.1.
+- **BREAKING: Go 1.27 is required.** The `go` directive moves from 1.26.1
+  to 1.27, in cache/v0.5.0, as core now uses generic methods.
 - **BREAKING: `Config.Validate` is removed from both backends; the rules are
   validate tags.** In `valkey`, `Settings.Addr` carries `validate:"required"`
   and `Settings.DB` `validate:"min=0"`. `ConfigProvider.Bind` already
@@ -60,15 +83,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   atomic pointer, so restarting the service while operations run is no
   longer a data race.
 
-### Security
-
-- **Requires Go 1.27.3.** The `go` directive moves from 1.27 to 1.27.3,
-  the first 1.27 release with the fix for GO-2026-6809 (CVE-2026-111943):
-  `crypto/x509` now rejects intermediate certificates known to be
-  compromised. A build with an older toolchain switches to 1.27.3 under
-  `GOTOOLCHAIN=auto` and fails under `GOTOOLCHAIN=local`.
-
-## [0.3.0] - 2026-07-03
+## 0.3.0 - 2026-07-03
 
 First open source release. Versions prior to 0.3.0 were developed in a private
 repository; this entry summarizes the package as published.
@@ -125,5 +140,5 @@ repository; this entry summarizes the package as published.
   tests, with per-method `Fn` overrides, recorded `Calls`, `Reset()`,
   and `CallCount()`.
 
-[Unreleased]: https://github.com/gasmod/gas/cache/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/gasmod/gas/cache/releases/tag/v0.3.0
+[Unreleased]: https://github.com/gasmod/gas/compare/cache/v0.5.6...HEAD
+[0.5.6]: https://github.com/gasmod/gas/releases/tag/cache/v0.5.6

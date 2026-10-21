@@ -13,9 +13,10 @@ everything.
 
 ## Mock the provider
 
-Every module ships a recording mock in a `*test` package: `storagetest`,
-`cachetest`, `emailtest`, `queuetest`, `templatetest`, `configtest`,
-`migratetest`, `authtest`, and `uitest`. Each records every call and delegates
+Every module except `database` and `log` ships a recording mock in a `*test`
+package: `storagetest`, `cachetest`, `emailtest`, `queuetest`, `templatetest`,
+`configtest`, `migratetest`, `authtest`, and `uitest`. For a logger, the core
+package's `gas.NopLogger` discards everything. Each records every call and delegates
 to an optional `Fn` field, so you set only what the test exercises.
 
 <Code code={region(tst, 'mock')} lang="go" title="files/service_test.go" />
@@ -68,5 +69,7 @@ To run code that expects a request scope, attach one to a context with
 
 When you do want the real thing, the modules' own suites use
 [testcontainers](https://testcontainers.com/) to run Postgres, LocalStack, and
-Valkey, and guard them so `go test -short` skips them. CI runs the short form
-per module, so container-backed tests stay opt-in locally.
+Valkey. `go test -short` skips them, and so does a run without a reachable
+Docker. CI runs each module's full suite with `GAS_TEST_REQUIRE_DOCKER=1`,
+which makes a container-backed test fail instead of skip when Docker is
+unavailable.

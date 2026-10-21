@@ -35,8 +35,9 @@ one replica, use Valkey.
 
 Two details worth copying. A miss is `cache.ErrKeyNotFound`, a sentinel rather
 than a nil value, so an empty result stays distinguishable from an absent one.
-And a cache failure that is not a miss is returned rather than swallowed, so a
-broken cache surfaces instead of quietly turning into load on your database.
+And the example returns a cache failure that is not a miss rather than
+swallowing it, so a broken cache surfaces instead of quietly turning into load
+on your database.
 
 ## Invalidating
 
@@ -70,8 +71,8 @@ keys are user-controlled.
 | `Cache.Addr` | `localhost:6379` | Server address |
 | `Cache.Password` | | Empty means no auth |
 | `Cache.DB` | `0` | Database number |
-| `Cache.DialTimeout` | `5s` | Timeout for new connections |
-| `Cache.WriteTimeout` | `3s` | Write and periodic PING deadline |
+| `Cache.DialTimeout` | `5s` | Timeout for new connections, and the bound on the startup ping |
+| `Cache.WriteTimeout` | `3s` | Passed to the valkey-go client as `ConnWriteTimeout`, which valkey-go uses as its write deadline |
 | `Cache.ConnRetries` | `0` | Connection retry attempts |
 | `Cache.ConnRetryInterval` | `2s` | Base retry interval, doubling each attempt |
 

@@ -45,7 +45,9 @@ func main() {
 // #region explicit-config
 func explicitConfig() *database.Config {
 	// Start from DefaultConfig so Mode and the pool settings are populated. A
-	// bare &database.Config{} literal leaves Mode empty and fails Validate.
+	// bare &database.Config{} literal leaves Mode empty, which connects as
+	// ModeSQL but skips the ModeSQL checks on Driver and MaxIdleConns, and
+	// leaves every pool setting at zero.
 	cfg := database.DefaultConfig()
 	cfg.Database.DSN = "postgres://user:pass@localhost:5432/mydb?sslmode=disable"
 	cfg.Database.Driver = "pgx"

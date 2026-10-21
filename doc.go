@@ -43,8 +43,9 @@
 // waits for Init to return, then fails with an error wrapping
 // context.DeadlineExceeded, so no Init is left running behind a failed
 // start. An Init that ignores the cancellation and returns nil late is
-// closed again. Init's context is canceled when Init returns, so background
-// work a service starts in Init must not derive from it. Scoped services get
+// closed again. When an init deadline applies, Init's context is canceled
+// when Init returns, so background work a service starts in Init must not
+// derive from it. Scoped services get
 // the scope's context with no added deadline; in an App that is the request
 // context, and Close gets it without its cancellation, so scoped services
 // clean up even after the client has gone.
@@ -64,7 +65,7 @@
 // SystemServerShuttingDown and shuts the http.Server down within
 // ServerSettings.ShutdownTimeout, or sooner if its context ends.
 //
-// See the module README for usage examples and design rationale.
+// Guides with usage examples are at https://gasmod.github.io/gas.
 //
 // SPDX-License-Identifier: MIT
 package gas

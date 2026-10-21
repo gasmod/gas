@@ -28,8 +28,10 @@
 // secretaccesskey (static credentials, used only when both are set;
 // otherwise the default AWS credential chain applies). There are no
 // defaults. WithConfig replaces the whole Config and skips the provider.
-// Config.Validate requires region and fromemail, and an invalid Config fails
-// Init, even when WithClient supplies the client.
+// When Config is bound from the provider, Bind validates it against its
+// validate tags, which require region and fromemail, and a binding or
+// validation failure fails Init, even when WithClient supplies the client. A
+// Config given with WithConfig is used as given, without validation.
 //
 // # Lifecycle
 //
@@ -61,7 +63,7 @@
 //
 // email.ErrClosed is the only sentinel. Other errors start with the service
 // name, "gas/email/ses", and wrap the SDK's or the template provider's error
-// with %w. Errors from Validate name the offending field instead, for
+// with %w. Validation errors from Bind also name the offending field, for
 // example Email.Region.
 //
 // SPDX-License-Identifier: MIT
