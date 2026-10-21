@@ -1,0 +1,200 @@
+---
+title: Examples
+description: The runnable applications in the Gas repository, what each one demonstrates, and how to run it.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The repository has two sets of runnable programs: five applications under
+[`example/`](https://github.com/gasmod/gas/tree/main/example), ordered by how
+much of the framework they use, and six small programs under
+[`config/examples/`](https://github.com/gasmod/gas/tree/main/config/examples)
+that each load configuration one way.
+
+| Example | Needs | Demonstrates |
+|---|---|---|
+| [hello-world](#hello-world) | Nothing | The smallest app: one inline handler, no services, no config |
+| [hello-world-2](#hello-world-2) | Nothing | Service lifetimes, route groups, JSON binding and validation, a custom error handler |
+| [templates-basic](#templates-basic) | Nothing | Server-rendered HTML with `gas/ui` over a `gas/template` store, and static files |
+| [lambda-worker](#lambda-worker) | PostgreSQL, SQS, AWS Lambda | `gas.Worker` instead of `gas.App`, as an SQS-triggered Lambda function |
+| [api-server](#api-server) | PostgreSQL, LocalStack | Auth, database, storage, queue, email, and cache in one API |
+
+Every example is its own Go module, listed in the root `go.work`, so it builds
+against the framework source in the same checkout. Each has a `Makefile` with
+`help`, `test`, `test-coverage`, `build`, `lint`, `fmt`, and `mod-update`
+targets. `make test` runs `go test -race ./...` inside the Docker test
+container through `scripts/docker-test.sh`, so it needs Docker; plain
+`go test ./...` in the example's directory runs the same tests on the host.
+
+Start from a clone:
+
+```bash
+git clone https://github.com/gasmod/gas
+cd gas/example
+```
+
+## hello-world
+
+An entire Gas app: `gas.NewApp()`, one `GET /` route registered with
+`Router().Get` that answers `Hello, World!`, and `Run`. With no config
+registered, the server listens on the default `0.0.0.0:8080`.
+
+```bash
+cd hello-world
+go run ./cmd     # curl localhost:8080
+```
+
+## hello-world-2
+
+A tour of the core with no external dependencies. It loads `config.json` with
+the JSON provider and shows:
+
+- singleton, scoped, and transient services side by side (a singleton
+  `gas.Logger`, a scoped request logger, a transient request ID);
+- modules that register their own routes, including a `/notes` route group
+  with its own middleware;
+- `BindJSON` with validation, and the error responses it produces;
+- a custom error handler set with `Router().SetErrorHandler`, panic recovery,
+  and `http.ErrAbortHandler`;
+- a ready hook registered with `ReadyFunc`.
+
+```bash
+cd hello-world-2
+go run ./cmd
+```
+
+Routes to try: `/`, `/greet/{name}`, `/json`, `/error`, `/panic`, `/abort`,
+and `/notes`. See [Routing](/gas/core/routing/),
+[Services and DI](/gas/core/services/), and [Errors](/gas/core/errors/).
+
+## templates-basic
+
+Server-rendered HTML. It registers a `template/fs` store over
+`os.DirFS("templates")` under `gas.TemplateProvider` and
+`ui.New[gas.TemplateProvider]()` under `gas.UIProvider`. A module renders
+`home` through the `base` layout with header and footer partials, and a custom
+`NotFound` handler renders `404` with `RenderWithStatus`. `config.json` serves
+`static/` at `/static/*`, and sets `GasEnv` to `development`, so templates are
+recompiled on every request and edits under `templates/` show on refresh.
+
+```bash
+cd templates-basic
+go run ./cmd     # open http://localhost:8080
+```
+
+See [UI](/gas/modules/ui/) and [Templates](/gas/modules/templates/).
+
+## lambda-worker
+
+A `gas.Worker`: the same container, service lifecycle, and migrations as an
+App, without a router or HTTP server. `app.NewWorker` loads config from
+`APP_`-prefixed environment variables and registers a logger, `gas/database`,
+`gas/queue/sqs`, and a `Handler`. `cmd/main.go` starts the worker in `init`, so
+it survives across invocations, resolves the `Handler` from the container once,
+and hands it to `lambda.StartWithOptions`, with `Worker.Shutdown` wired to
+Lambda's SIGTERM callback.
+
+The handler processes an SQS event: for each record it decodes an order,
+updates its status in PostgreSQL through sqlc-generated queries, and enqueues a
+notification to a second queue. A record that fails is reported as a partial
+batch failure, so SQS retries only that message.
+
+It needs a PostgreSQL database with `db/schema.sql` applied (the worker
+registers no migrations) and an SQS queue to send notifications to, set
+through four `APP_`-prefixed environment variables. All but
+`APP_QUEUE__REGION`, which defaults to `us-east-1`, are required. The driver
+must be `pgx`: `gas/database` defaults to `postgres`, which this example does
+not register. The handler binds the queue URL from the
+`notification_queue_url` key and refuses to start without it.
+
+```bash
+cd lambda-worker
+export APP_DATABASE__DRIVER=pgx
+export APP_DATABASE__DSN='postgres://user:pass@localhost:5432/orders?sslmode=disable'
+export APP_QUEUE__REGION=us-east-1
+export APP_NOTIFICATION_QUEUE_URL='https://sqs.us-east-1.amazonaws.com/123456789012/order-notifications'
+```
+
+The binary only serves invocations inside AWS Lambda. Run outside it,
+`go run ./cmd` starts the worker, which connects to the database and validates
+the config, so it doubles as a startup check, and then exits with
+`expected AWS Lambda environment variables [_LAMBDA_SERVER_PORT AWS_LAMBDA_RUNTIME_API] are not defined`.
+To exercise the handler locally, run its tests, which resolve the `Handler`
+from the worker's container and drive it with SQS events, with no database or
+queue:
+
+```bash
+go test ./...
+```
+
+See [Workers](/gas/core/workers/) and [Queue](/gas/modules/queue/).
+
+## api-server
+
+A file-vault API that uses most of the modules at once: JWT and API key
+authentication from `gas/auth`, PostgreSQL through `gas/database` with
+sqlc-generated queries, S3 storage, an SQS queue, SES email over an in-memory
+template store, and an in-memory cache. The sqlc query sources are in
+`db/queries/`, with the schema in `db/schema.sql`, and the generated code in
+`db/`. The auth, files, and shares services each register one migration and
+the `apikey` store registers two; `gas/migrate`, registered under
+`gas.MigrationManager`, applies all five at startup. Its dependencies run under Docker Compose: PostgreSQL 17,
+and LocalStack 4.14.0 for S3, SQS, and SES. `.env.example` holds the settings
+for that setup.
+
+```bash
+cd api-server
+docker compose up -d
+cp .env.example .env
+go run ./cmd
+```
+
+The server starts in development mode and applies the migrations against the
+Compose PostgreSQL; registering and logging in work from there. The example
+does not create the S3 bucket or the SQS queue it uses, so create them in
+LocalStack before trying uploads or shares.
+
+| Method | Path | Notes |
+|---|---|---|
+| `POST` | `/api/auth/register` | Public |
+| `POST` | `/api/auth/login` | Public, returns a JWT |
+| `POST`, `GET` | `/api/auth/api-keys` | Authenticated |
+| `DELETE` | `/api/auth/api-keys/{id}` | Authenticated |
+| `POST`, `GET` | `/api/files` | Authenticated; `POST` uploads to S3 |
+| `GET`, `DELETE` | `/api/files/{id}` | Authenticated |
+| `GET` | `/api/files/{id}/download` | Authenticated |
+| `POST` | `/api/files/{id}/share` | Authenticated, enqueues a notification |
+| `GET` | `/api/shares/{token}` | Public, single-use share link |
+
+## Tests
+
+The HTTP examples (`hello-world`, `hello-world-2`, `templates-basic`, and
+`api-server`) test through `httptest.NewServer(app.Handler())`, so requests go
+through the same middleware and CSRF protection as in production.
+`lambda-worker` tests its handler through the worker's container instead.
+
+`make test-all` at the repository root runs `make test` in every directory
+that has a `Makefile`, which includes every module and every example.
+
+## Configuration examples
+
+Each program under `config/examples/` loads configuration from one source,
+prints it, and exits. Five of them bind the same struct (server host and port,
+log level, database host, port, user, and password) and print its fields;
+`secretsmanager` binds nothing and prints three values read with `cfg.Get`. Run one with `go run .` in its directory. See
+[Config](/gas/modules/config/) for the providers.
+
+| Program | Source |
+|---|---|
+| `basic` | `config.New()` with no provider, which uses the environment provider; the program sets the variables itself |
+| `env` | The environment provider with the `MYAPP_` prefix |
+| `dotenv` | The `.env` provider, reading `.env.example` |
+| `json` | The JSON provider, reading `config.json` |
+| `json_fs` | The JSON provider, reading `config.json` from an in-memory `fstest.MapFS` |
+| `secretsmanager` | AWS Secrets Manager, or LocalStack when `AWS_ENDPOINT_URL` is set; the secrets must exist first, as its package comment shows |
+
+The `env` program prints a server port of 0, on purpose: it sets the port as
+`MYAPP_SERVER_PORT`, and a single underscore does not nest, so the variable
+sets the key `server_port` rather than `server.port`. Only the `__` separator
+splits a name into levels; `MYAPP_SERVER__PORT` would set `Server.Port`, as
+its comment explains.

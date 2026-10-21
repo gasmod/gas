@@ -1,0 +1,233 @@
+---
+title: App lifecycle
+description: How a Gas App starts, serves, and shuts down, what runs in what order, and the contexts services receive.
+---
+
+import { Aside, Code, Steps } from '@astrojs/starlight/components';
+import lc from '../../../../snippets/core-lifecycle/main.go?raw';
+import { region } from '../../../lib/snippet';
+
+`gas.App` serves HTTP. It embeds a `gas.Worker`, which owns the DI container,
+the event bus, migrations, and service management; the App adds the router,
+CSRF protection, and the HTTP server. Everything on this page about startup and
+shutdown applies to a Worker too, except the steps marked App only. For
+processes without an HTTP server, see [Workers](/gas/core/workers/).
+
+## Run, or its parts
+
+`app.Run()` is the whole lifecycle in one call: start, serve, wait for SIGINT or
+SIGTERM, stop. It uses `context.Background()` for startup and shutdown.
+
+It is built from smaller methods, which you call yourself when something else
+owns the process, or in tests:
+
+| Method | Does |
+|---|---|
+| `Start(ctx)` | Builds and initializes services, runs migrations and ready hooks, binds the config. Does not block or listen. |
+| `Serve()` | Starts the HTTP server and blocks until it stops. A clean shutdown returns nil. |
+| `Handler()` | Returns what the server serves: the router behind CSRF protection. |
+| `Stop(ctx)` | Shuts the HTTP server down, then closes every service. |
+
+`Run` calls `Stop` whether a signal arrives or `Serve` fails, so a port that is
+already taken still closes the services `Start` initialized; `Run` then returns
+the server error joined with any error from `Stop`.
+
+## Startup order
+
+`Start` runs these steps in order. Knowing the order answers most "why hasn't
+my thing happened yet" questions.
+
+<Steps>
+
+1. **Build singletons.** The container validates every registration, runs
+   `Init` on every `Service` registered as an instance, then constructs every
+   singleton in dependency order, calling each one's `Init` as it is built. The
+   details are on [Services and DI](/gas/core/services/#build-order).
+
+2. **Seal the router and check handlers** (App only). The router builds its
+   routing tree from everything registered so far; until then, `Handler()`
+   serves none of your routes. Every [DI-aware handler](/gas/core/handlers/)'s
+   parameter types are checked against the container.
+
+3. **Emit `gas.SystemAllServicesInitialized`**, and wait for its subscribers to
+   return.
+
+4. **Run migrations.** If a `gas.MigrationManager` is registered, its
+   `RunPending` applies every pending migration. See
+   [Migrations](/gas/modules/migrations/).
+
+5. **Run ready hooks**, in registration order.
+
+6. **Bind the config** (App only). If a `gas.ConfigProvider` is registered, the
+   App's `Config` (server settings and environment) is bound from it, and
+   `gas.AppConfigUpdated` is emitted with the result. The event is emitted even
+   when no provider is registered.
+
+</Steps>
+
+`Run` then logs the route map and starts the server.
+
+A failure in any step returns an error from `Start`, and the server never
+accepts a request against a half-built app. The error from a failed migration
+starts with `gas: migrations:`, from a ready hook with `gas: ready hook:`, and
+from config binding with `gas: failed to bind config:`.
+
+Running the [lifecycle sample](#the-whole-sequence) prints the order directly.
+
+### A failed start leaves nothing running
+
+When `Start` fails, it closes, in reverse order, every service it had already
+initialized, and returns the startup error joined with any `Close` errors. The
+`Close` calls get the context passed to `Start` with its cancellation removed,
+so cleanup runs even if that context is what failed.
+
+The App or Worker cannot be started again: every later `Start` returns the same
+error, and a later `Shutdown` has nothing to close. Build a new one to retry.
+
+## Init and Close contexts
+
+`Start`, `InitServices`, `Stop`, `Shutdown`, `CloseService`, `RestartService`,
+`ServiceContainer.BuildAll`, `ServiceContainer.NewScope`, and `Scope.Close` all
+take a context. `Run` takes none.
+
+**Init of a singleton** gets the context passed to `Start` (or to
+`RestartService`) with a per-service deadline added: 15 seconds by default.
+
+- `gas.WithServiceInitTimeout(d)` changes the default for an App or Worker. `0`
+  disables the deadline, and a negative value panics.
+- A service that implements `gas.ServiceInitTimeout` sets its own. `0` means no
+  deadline, and a negative value fails its `Init` without running it.
+
+<Code code={region(lc, 'timeout')} lang="go" title="search.go" />
+
+When the deadline passes, the container cancels the context, waits for `Init`
+to return, and fails with an error that wraps `context.DeadlineExceeded`. An
+`Init` that ignores the cancellation and returns nil late is closed again
+before the error is returned, so nothing it acquired is left open.
+
+While a deadline applies, the context is canceled as soon as `Init` returns.
+Use it for synchronous work in `Init` only: a goroutine started in `Init` must
+not derive its context from it. [Workers](/gas/core/workers/#a-long-running-consumer)
+shows the pattern for a background loop.
+
+**Init of a scoped service** gets the scope's context, with no deadline added.
+In an App that is the request's context.
+
+**Close** gets the caller's shutdown context: the one passed to `Stop`,
+`Shutdown`, `CloseService`, or `Scope.Close`. In an App, a request's scoped
+services are closed with the request's context minus its cancellation, so they
+clean up even after the client has gone.
+
+## Ready hooks
+
+A ready hook is work that needs the built container but must finish before the
+app takes traffic, such as seeding data:
+
+<Code code={region(lc, 'ready')} lang="go" title="main.go" />
+
+Hooks run after migrations, so the schema exists, and before `Start` returns.
+They run in registration order, and the first error aborts startup; it is also
+logged as `ready hook failed`. `app.ReadyFunc(fn)` is the imperative form, and
+panics if it is called after the hooks have run, because the function would
+never run.
+
+## Shutdown
+
+`Run` shuts down on SIGINT or SIGTERM. `Stop(ctx)` does it explicitly:
+
+<Steps>
+
+1. Emit `gas.SystemServerShuttingDown` and wait for its subscribers (App only).
+
+2. Shut the HTTP server down gracefully, giving in-flight requests up to
+   `Server.ShutdownTimeout` (30 seconds by default), or less if `ctx` ends
+   first (App only). An error here is logged as `server shutdown error`, not
+   returned.
+
+3. Emit `gas.SystemShuttingDown` and wait for its subscribers.
+
+4. Close every active service in reverse initialization order, passing `ctx` to
+   each `Close`. Services already closed with
+   [`CloseService`](/gas/core/ownership/) are skipped.
+
+</Steps>
+
+Steps 3 and 4 are `Worker.Shutdown`, which is all a Worker does. A failing
+`Close` does not stop the others; every `Close` error is returned, joined, each
+prefixed with `gas: close <name>:`.
+
+`Shutdown` runs once. Later calls, including concurrent ones, wait for the first
+to finish and return nil. Once it has begun, `CloseService` and
+`RestartService` return an error.
+
+## Start and Stop in tests
+
+`Handler()` returns exactly what the server would serve, so a test can drive
+the full middleware stack without binding a port:
+
+<Code code={region(lc, 'startstop')} lang="go" title="main.go" />
+
+More on this in [Testing](/gas/production/testing/).
+
+## Health and readiness
+
+A service opts in to probes by implementing either interface:
+
+```go
+type HealthReporter interface {
+	CheckHealth(ctx context.Context) error // nil means healthy
+}
+
+type ReadyReporter interface {
+	CheckReady(ctx context.Context) error // nil means ready
+}
+```
+
+`Worker.CheckHealth(ctx)` and `Worker.CheckReady(ctx)` call every active service
+that implements the interface, concurrently, and return a map from service name
+to result. Services that do not implement it are left out, and so are services
+closed with `CloseService`. A reporter that panics is recovered and reported as
+an error.
+
+The Worker registers itself in the container as `gas.HealthProvider` and
+`gas.ReadyProvider`, the interfaces those two methods satisfy, so a service can
+inject them. Gas adds no probe endpoints of its own; expose them like any other
+route:
+
+<Code code={region(lc, 'probes')} lang="go" title="probes.go" />
+
+The two answer different questions. **Health** (liveness) asks whether the
+process is broken in a way a restart would fix: a connection that will not
+recover, corrupt internal state. **Readiness** asks whether traffic should be
+sent to this instance right now: a dependency is briefly unreachable, a cache
+is still warming. Report a transient outage as unready, never unhealthy, or a
+dependency blip becomes a restart loop.
+
+## The whole sequence
+
+The [lifecycle sample](https://github.com/gasmod/gas/blob/main/docs/snippets/core-lifecycle/main.go)
+registers `DB` and `Cache` (which depends on `DB`), subscribes to the system
+events, adds a ready hook, serves one request, and stops. Its output, with log
+lines left out:
+
+```
+GET /readyz: 204
+init db
+init cache
+event SystemAllServicesInitialized
+ready hook
+event AppConfigUpdated
+event SystemServerShuttingDown
+event SystemShuttingDown
+close cache
+close db
+```
+
+There is no migration step in the output because the sample registers no
+`gas.MigrationManager`. The events are covered in [Events](/gas/core/events/).
+
+<Aside type="note" title="Method reference">
+The full method sets are on pkg.go.dev:
+[App](https://pkg.go.dev/github.com/gasmod/gas#App) and
+[Worker](https://pkg.go.dev/github.com/gasmod/gas#Worker).
+</Aside>

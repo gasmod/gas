@@ -1,0 +1,221 @@
+---
+title: Errors
+description: The gas.Error type, its JSON envelope, status codes and error codes, and how the error handler turns handler errors and panics into responses.
+---
+
+import { Code, Aside } from '@astrojs/starlight/components';
+import errs from '../../../../snippets/core-errors/main.go?raw';
+import { region } from '../../../lib/snippet';
+
+A DI-aware handler returns `error`. When the error is a `*gas.Error`, the error
+handler writes it at its status in one envelope that every Gas app shares.
+Anything else becomes a generic `500`. This page covers the error type, the
+envelope, and the error handler that sits between the two.
+
+## Returning errors
+
+<Code code={region(errs, 'handler')} lang="go" title="users/service.go" />
+
+```json
+{"error":{"status":404,"code":"not_found","message":"user not found"}}
+```
+
+Each constructor builds a `*gas.Error` with a fixed status and code:
+
+| Constructor | Status | Code |
+|---|---|---|
+| `gas.BadRequest(msg)` | 400 | `bad_request` |
+| `gas.Unauthorized(msg)` | 401 | `unauthorized` |
+| `gas.Forbidden(msg)` | 403 | `forbidden` |
+| `gas.NotFound(msg)` | 404 | `not_found` |
+| `gas.Conflict(msg)` | 409 | `conflict` |
+| `gas.Unprocessable(msg)` | 422 | `validation_failed` |
+| `gas.TooManyRequests(msg)` | 429 | `rate_limited` |
+| `gas.Internal(msg)` | 500 | `internal_error` |
+| `gas.ServiceUnavailable(msg)` | 503 | `service_unavailable` |
+
+The codes are exported as constants (`gas.CodeNotFound` and so on), together
+with three that request binding uses: `gas.CodeInvalidJSON` (`invalid_json`),
+`gas.CodeInvalidForm` (`invalid_form`), and `gas.CodePayloadTooLarge`
+(`payload_too_large`).
+
+`gas.NewError(status, code, msg)` builds one with any status and code, so an
+application can define its own codes:
+
+<Code code={region(errs, 'custom')} lang="go" />
+
+### From the Context
+
+`gas.Context` has the same nine constructors, plus an `Err` variant of each
+that attaches a cause (`ctx.NotFoundErr(err, msg)` is
+`gas.NotFound(msg).WithCause(err)`):
+
+<Code code={region(errs, 'context')} lang="go" />
+
+They are declared to return `error`, not `*gas.Error`, so the builder methods
+below do not chain off them. Use the package-level constructors when a response
+needs fields or details. Like the package-level ones, they only build the
+error: nothing is written unless the handler returns it.
+
+## The envelope
+
+Every error response Gas writes as JSON has this shape, which
+`gas.ErrorResponse` decodes:
+
+```json
+{"error":{"status":409,"code":"conflict","message":"email already registered",
+  "fields":[{"field":"email","rule":"unique","message":"that address is already in use"}],
+  "details":{"suggestion":"a@example.com"}}}
+```
+
+`fields` and `details` are left out when empty. The `status` in the body always
+matches the status line. A `Status` outside 100 to 599 is written as `500` in
+both places, so an `Error` built by hand can never produce an invalid status
+line.
+
+### Fields and details
+
+<Code code={region(errs, 'detail')} lang="go" />
+
+`WithField(field, rule, message)` appends one entry to `fields`.
+`WithDetail(key, value)` adds a key to `details`, which can hold any value that
+encodes to JSON. Both return the same `*gas.Error`, so they chain.
+
+### Causes are logged, never served
+
+`WithCause(err)` attaches an underlying error. `Unwrap` returns it, so
+`errors.Is` and `errors.As` see through a `*gas.Error` to its cause, and the
+`Error()` string includes it, in the form `code: message: cause`. The cause is
+never written to a response.
+
+<Code code={region(errs, 'classify')} lang="go" />
+
+`gas.AsError(err)` reports whether `err` is or wraps a `*gas.Error` and returns
+it.
+
+### Anything else is a 500
+
+An error that is not and does not wrap a `*gas.Error`, such as a plain error
+from a database call, is rendered as `gas.Internal("internal server error")`
+with the original as its cause:
+
+```json
+{"error":{"status":500,"code":"internal_error","message":"internal server error"}}
+```
+
+The original error reaches the log, not the client.
+
+## Validation errors
+
+`BindJSON` and `BindForm` (see [Handlers and Context](/gas/core/handlers/#binding-request-bodies))
+return a `*gas.Error` the handler can return unchanged:
+
+<Code code={region(errs, 'binding')} lang="go" />
+
+A body that decodes but fails validation is a `422` with code
+`validation_failed`, the message `request validation failed`, and one entry in
+`fields` per failed rule:
+
+```json
+{"error":{"status":422,"code":"validation_failed","message":"request validation failed",
+  "fields":[{"field":"email","rule":"email","message":"must be a valid email address"},
+            {"field":"name","rule":"required","message":"is required"}]}}
+```
+
+`field` is the name the client sent, not the Go field name: the field's `json`
+tag, or its `form` tag when it has no `json` tag, or the Go field name when it
+has neither or its tag is `-`. A field tagged `json:"email" form:"user_email"`
+is reported as `email` from `BindForm` too. `rule` is the validator tag that
+failed.
+
+| Rule | Message |
+|---|---|
+| `required` | `is required` |
+| `email` | `must be a valid email address` |
+| `min` | `must be at least <param>` |
+| `max` | `must be at most <param>` |
+| `len` | `must be exactly <param> characters` |
+| `oneof` | `must be one of: <param>` |
+| `url` | `must be a valid URL` |
+| `uuid` | `must be a valid UUID` |
+| any other | `failed the <rule> rule`, followed by ` (<param>)` when the rule has a parameter |
+
+## The error handler
+
+The router sends four things to the error handler:
+
+- an error returned by a DI-aware handler,
+- a failure to resolve one of a DI-aware handler's dependencies,
+- a panic in a DI-aware handler,
+- a panic in a plain handler.
+
+Nothing else goes through it. Chi's default `404` and `405` responses do not,
+and neither does a cross-origin request rejected before it reaches the router
+(see [Middleware](/gas/core/middleware/#cross-origin-protection)).
+
+### The default handler
+
+The default handler turns the error into a `*gas.Error` as described above,
+logs it, and writes it with `gas.WriteError`. It logs through the `gas.Logger`
+it resolves from the request scope: a status of 500 or above logs at error
+level with the message `unhandled request error`, anything lower at warn level
+with `request error`. When no `gas.Logger` is registered, nothing is logged.
+That logger is the registered `gas.Logger`, not the per-request logger that
+[`RequestLogger`](/gas/core/middleware/#request-logging) puts on the request
+context.
+
+### Content negotiation
+
+`gas.WriteError` writes JSON unless the client asked for HTML.
+`gas.WantsJSON(r)` makes the call from the `Accept` header, matching media-type
+names only and ignoring quality values:
+
+| `Accept` | Body |
+|---|---|
+| absent or empty | JSON envelope |
+| contains `application/json` | JSON envelope |
+| contains `text/html` and not `application/json` | plain text |
+| anything else, including `*/*` | JSON envelope |
+
+The plain-text body is the error's message, written by `http.Error`: content
+type `text/plain; charset=utf-8`, the message followed by a newline, at the
+same status.
+
+### Panics
+
+A recovered panic becomes the error `gas: handler panic: <value>` and goes to
+the error handler, so the default handler renders it as a `500`. The stack
+trace is always written to stderr, and, when a `gas.Logger` is registered,
+logged at error level with the message `handler panic`. A panic with
+`http.ErrAbortHandler` is not recovered: it is re-panicked so `net/http` aborts
+the response the way it expects.
+
+### A custom handler
+
+`gas.WithErrorHandler` replaces the default:
+
+<Code code={region(errs, 'handler-option')} lang="go" title="main.go" />
+
+A custom handler owns the entire response. Nothing is written and nothing is
+logged unless it does so. `ctx.WriteError(err)` renders the standard envelope,
+with the same content negotiation, and neither logs nor resolves anything.
+
+## Writing errors directly
+
+Three functions write an error without going through the error handler. None
+of them log.
+
+- `ctx.WriteError(err)` writes the envelope, negotiated as above.
+- `ctx.WriteErrorJSON(err)` writes the JSON envelope regardless of `Accept`.
+  It is for JSON API routes in an app whose error handler renders HTML:
+
+  <Code code={region(errs, 'json-route')} lang="go" />
+
+- `gas.WriteError(w, r, err)` does the same as `ctx.WriteError` from any
+  `http.Handler`. It reads only `w` and `r`, so it is safe in middleware that
+  runs before the request scope exists:
+
+  <Code code={region(errs, 'write-error')} lang="go" />
+
+All three accept any error. One that is not a `*gas.Error` is written as the
+generic `500`. They return an error only when encoding the JSON body fails.

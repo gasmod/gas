@@ -30,7 +30,7 @@ Both backends need `gas.ConfigProvider` and `gas.Logger`.
 The full guide, with configuration, testing, and worked examples, is on the docs site.
 This README is deliberately a signpost: keeping a second copy here is how the docs drifted before.
 
-- **Guide:** [Cache expensive work](https://gasmod.github.io/gas/guides/caching/)
+- **Guide:** [Cache](https://gasmod.github.io/gas/modules/cache/)
 - **API reference:** [pkg.go.dev/github.com/gasmod/gas/cache](https://pkg.go.dev/github.com/gasmod/gas/cache)
 - **Contributing:** [CONTRIBUTING.md](../CONTRIBUTING.md)
 

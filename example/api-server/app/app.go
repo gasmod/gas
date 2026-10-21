@@ -50,7 +50,7 @@ func New() *gas.App {
 	app.RegisterScopedService[RequestLogger](requestLogger)
 
 	app.RegisterSingletonService[gas.DatabaseProvider](database.New())
-	app.RegisterSingletonService[*migrate.Service](migrate.New())
+	app.RegisterSingletonService[gas.MigrationManager](migrate.New())
 	app.RegisterSingletonService[gas.CacheProvider](cache.New())
 	app.RegisterSingletonService[storage.Provider](storages3.NewProvider())
 	app.RegisterSingletonService[storage.Presigner](storages3.NewPresigner())

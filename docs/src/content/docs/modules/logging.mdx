@@ -1,0 +1,234 @@
+---
+title: Logging
+description: Structured logging over zerolog or log/slog, per-request loggers, and batched HTTP log shipping with gas/log.
+---
+
+import { Code, Aside } from '@astrojs/starlight/components';
+import lg from '../../../../snippets/modules-logging/main.go?raw';
+import lgTest from '../../../../snippets/modules-logging/main_test.go?raw';
+import { region } from '../../../lib/snippet';
+
+## What it is for
+
+Core declares the logging interfaces: `gas.Logger`, `gas.LogEvent` and
+`gas.LoggerContext`. Every service, and core itself, logs against them.
+`gas/log` provides the implementations, so the backend is a wiring decision
+and application code never imports it:
+
+| Backend | Built on | Notes |
+|---|---|---|
+| `NewZeroLogLogger()` | [rs/zerolog](https://github.com/rs/zerolog) | JSON, every level including Trace. Uses zerolog's global logger unless `WithZeroLogInstance` gives another. |
+| `NewSlogLogger()` | `log/slog` | No dependency beyond the standard library. Trace logs at slog's Debug level. Uses `slog.Default()` unless `WithSlogInstance` gives another. |
+| `NewShippingLogger()` | `log/slog` plus HTTP | Writes locally and sends records in batches to an HTTP endpoint. |
+
+## Install
+
+```bash
+go get github.com/gasmod/gas/log
+```
+
+The package name is `log`; the examples import it as `gaslog`.
+
+## Wiring
+
+<Code code={region(lg, 'wiring')} lang="go" title="main.go" />
+
+Each backend function returns a constructor with no parameters, not a logger,
+so the container builds it without resolving anything. Register it as the
+`gas.Logger` **singleton**: most services take a `gas.Logger` in their
+constructor, and the container rejects a singleton that depends on a scoped or
+transient service. Per-request fields go on a separate **scoped** type derived
+from it, `RequestLogger` above, which the
+[request logger](#request-logging) fills for each request.
+
+If no `gas.Logger` is registered at all, Gas logs its own lifecycle messages
+through a logger over `slog.Default()` and logs a `no logger registered`
+warning once. That fallback is not registered in the container, so a service
+that takes a `gas.Logger` still fails to resolve.
+
+## Usage
+
+### Choosing a backend
+
+<Code code={region(lg, 'backends')} lang="go" />
+
+With no options, `NewSlogLogger` logs through `slog.Default()`, which drops
+Debug records unless its level has been lowered, so Trace and Debug calls
+produce nothing. Pass `WithSlogInstance` with a handler at the level you want.
+
+| `gas.Logger` method | zerolog level | slog level | OTLP severity number |
+|---|---|---|---|
+| `Trace` | `TraceLevel` | `LevelDebug` | 5 |
+| `Debug` | `DebugLevel` | `LevelDebug` | 5 |
+| `Info` | `InfoLevel` | `LevelInfo` | 9 |
+| `Warn` | `WarnLevel` | `LevelWarn` | 13 |
+| `Error` | `ErrorLevel` | `LevelError` | 17 |
+
+### Logging
+
+<Code code={region(lg, 'fluent')} lang="go" />
+
+A level method (`Trace`, `Debug`, `Info`, `Warn`, `Error`) starts an event,
+field methods add to it, and `Send()` emits it; an event that is never sent
+logs nothing. The field methods on an event and on `With()` are the same:
+`Str`, `Int`, `Int64`, `Float64`, `Bool`, `Err`, `Duration` and `Any`.
+
+`With()` returns a builder; its `Logger()` returns a new logger that carries
+the fields on every record. The logger `With` was called on is never changed,
+so a singleton shared by every request stays as it was. Logging through any
+backend is safe for concurrent use.
+
+`Flush()` writes buffered records. zerolog and a plain slog logger buffer
+nothing, so for them it does nothing; on a shipping logger it posts the queue
+and waits.
+
+### Request logging
+
+<Code code={region(lg, 'request-logger')} lang="go" />
+
+`gas.RequestLogger[T]()` is core middleware. For each request it resolves `T`
+from the request scope and derives a per-request logger from it with `With`,
+adding a `request_id` field from chi's `RequestID` middleware, which must be
+mounted before it. `gas.WithRequestLoggerAppendRequestID(false)` leaves the
+field out, and `gas.WithRequestLoggerBuilder(fn)` lets you add fields or swap
+the logger after that. If `T` cannot be resolved, the middleware passes the
+request through and logs nothing.
+
+The per-request logger goes on the request context with `gas.WithLogger`.
+When `T` is scoped, as `RequestLogger` is here, it also replaces `T`'s instance
+in the request scope, so handlers and services that take `T` later in the
+request get the logger with `request_id`. A singleton `T` is never replaced.
+
+When the request finishes, the middleware logs a `request` record with
+`method`, `path`, `status`, `bytes`, `duration` and `remote`: at error level
+for a status of 400 or more, at info level otherwise. See
+[Middleware](/gas/core/middleware/) for where it sits in the chain.
+
+### Request-scoped fields
+
+`gas.WithLogger(ctx, logger)` returns a context carrying a logger, and
+`gas.LoggerFromContext(ctx)` returns it, or `nil` when there is none. A
+middleware mounted after the request logger can build on the logger it stored
+and store the result back:
+
+<Code code={region(lg, 'request-fields')} lang="go" />
+
+Code that logs through `gas.LoggerFromContext(r.Context())` then gets both
+`request_id` and `user_id`. The scoped `RequestLogger` instance is not
+updated by this middleware, so a handler that takes `RequestLogger` gets
+`request_id` only.
+
+### Shipping logs
+
+<Code code={region(lg, 'shipping')} lang="go" />
+
+`NewShippingLogger(endpoint, marshaler, opts...)` builds on the slog backend.
+Each record goes to the local handler when it is at or above that handler's
+level, and to a queue when it is at or above the shipping level. A
+background goroutine posts the queue to `endpoint` in batches, one `POST` per
+batch, encoded by the marshaler. `NewOTLPMarshaler` encodes
+OTLP/HTTP JSON logs.
+
+| Option | Default | Notes |
+|---|---|---|
+| `WithBatchSize(n)` | 100 records | A batch is posted when it reaches this size. Values that are not positive are ignored. |
+| `WithQueueSize(n)` | 1024 records | Records waiting for delivery. Values that are not positive are ignored. |
+| `WithFlushInterval(d)` | 2s | A non-empty batch is posted at least this often. Values that are not positive are ignored. |
+| `WithHTTPClient(c)` | a client with a 10s timeout | `nil` is ignored. |
+| `WithLevel(l)` | `slog.LevelInfo` | Minimum level shipped, and the level of the default local handler. `nil` is ignored. |
+| `WithLocalHandler(h)` | JSON on stderr at the shipping level | Replaces the local handler, with its own level. |
+| `WithoutLocalHandler()` | | Ships only. |
+| `WithHeader(k, v)` | | Sent on every batch request, for example an API key. |
+| `WithErrorHandler(fn)` | none | Receives delivery failures. |
+| `WithName(name)` | `gas/log-shipping` | The `gas.Service` name. An empty name is ignored. |
+
+Delivery is best-effort by design, so logging can never stall or fail the
+code that logs:
+
+- A record is queued without blocking. When the queue is full, it is dropped
+  silently.
+- A batch is posted when it reaches the batch size, when the flush interval
+  passes, on `Flush`, and on `Close`.
+- Marshal errors, transport errors and responses with a status of 300 or more
+  go to the `WithErrorHandler` callback, never to the code that logged.
+  Without a callback they are discarded.
+- The local handler sees each record first. If it returns an error, the
+  record is not shipped, and `Send` drops the error.
+
+The shipping logger implements `gas.Service`. Its goroutine starts when it is
+constructed, so it works with or without the container, and its `Init` does
+nothing. `Close`, which the container runs at shutdown, posts the records still
+queued, stops the goroutine and returns once that last post has finished, so
+it can take as long as the HTTP client's timeout; it ignores its context and
+can be called more than once. After `Close`, the local handler still writes,
+records meant for shipping are dropped, and `Flush` returns at once. Outside
+the container, call `Flush()` or `Close` before the process exits.
+
+A sub-logger made with `With()` shares the same handlers and sender, so its
+records are shipped and its `Flush` posts and waits like the parent's.
+
+### Shipping from plain slog
+
+<Code code={region(lg, 'shipping-handler')} lang="go" />
+
+`NewShippingHandler` takes the same arguments and options and returns the
+same local-plus-shipping pipeline as an `slog.Handler`, with an `io.Closer`
+that drains and stops it like `Close` above.
+
+### OTLP and custom formats
+
+`NewOTLPMarshaler` sends one OTLP logs request per batch with
+`Content-Type: application/json`. `WithServiceName` sets the `service.name`
+resource attribute and, unless `WithScopeName` sets one, the instrumentation
+scope name; `WithServiceVersion` sets `service.version`, and
+`WithResourceAttribute(key, value)` adds any other resource attribute. Each
+record carries `timeUnixNano`, `severityText` (`DEBUG`, `INFO`, `WARN`,
+`ERROR`), `severityNumber` from the table above, the message as its body, and
+its fields as attributes. Durations and times are sent as strings.
+
+Any other wire format is a `Marshaler`: `Marshal([]Record) ([]byte, error)`
+encodes one batch into one request body, and `ContentType()` is sent as the
+`Content-Type` header. A `Record` has the `Time`, `Level`, `Message` and
+`Attrs` of the event, including the fields added with `With()`.
+
+<Code code={region(lg, 'marshaler')} lang="go" />
+
+## Configuration
+
+`gas/log` reads no configuration keys from `gas.ConfigProvider`; every setting
+is an option passed to the constructor.
+
+## Errors
+
+The package declares no sentinel errors, and its constructors never return
+an error. Shipping failures are only ever passed to `WithErrorHandler`, with
+these messages:
+
+| Message | When |
+|---|---|
+| `marshal log batch: ...` | The marshaler returned an error. The batch is dropped. |
+| `build log request: ...` | The request could not be built, for example from an invalid endpoint URL. |
+| `ship logs: ...` | The HTTP request failed. |
+| `ship logs: unexpected status <code>` | The endpoint answered with a status of 300 or more. |
+
+<Aside type="caution" title="Known issues">
+`WithEventInitialCapacity` with a negative value makes the first log call
+panic, and the exported `Handler` type cannot be built outside the package,
+despite its doc comment. See [Known issues](/gas/project/known-issues/).
+</Aside>
+
+## Testing
+
+The module ships no mock package. To assert on output, give the slog backend
+a handler over a buffer; where output does not matter, core's `gas.NopLogger`
+discards everything without allocating (`gas.NewNopLogger()` is its
+constructor for the container).
+
+<Code code={region(lgTest, 'testing')} lang="go" title="notes_test.go" />
+
+## API reference
+
+- [`log`](https://pkg.go.dev/github.com/gasmod/gas/log)
+- [`gas.Logger`](https://pkg.go.dev/github.com/gasmod/gas#Logger) and
+  [`gas.RequestLogger`](https://pkg.go.dev/github.com/gasmod/gas#RequestLogger)
+  in core

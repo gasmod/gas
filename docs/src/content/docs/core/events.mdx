@@ -1,0 +1,107 @@
+---
+title: Events
+description: Typed events on the EventBus, owned subscriptions, how Emit runs handlers, and the system events Gas emits during the lifecycle.
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import ev from '../../../../snippets/core-events/main.go?raw';
+import { region } from '../../../lib/snippet';
+
+Services in Gas do not import each other. When one needs to tell others that
+something happened, it emits an event on the `gas.EventBus`, and whoever cares
+subscribes. The emitter does not know who is listening, so either side can be
+replaced or removed without touching the other.
+
+Every App and Worker has one bus. It is registered in the container as
+`*gas.EventBus`, so a service takes it as a constructor parameter, and
+`app.EventBus()` returns it too.
+
+## Declaring an event
+
+An event is a type, not a value. Embedding `gas.Event[Payload]` binds the event
+type to the payload its handlers receive:
+
+<Code code={region(ev, 'event')} lang="go" title="events.go" />
+
+Subscriptions are keyed by the event type, so two events never collide, even
+when their payload types are identical. The payload type is inferred from the
+event type, so you name only the event, and a handler or an emit with the wrong
+payload type does not compile.
+
+## Subscribing
+
+<Code code={region(ev, 'subscribe')} lang="go" title="billing.go" />
+
+`SubscribeWithOwner[E](s, fn)` records `s` as the subscription's owner. When
+`s` is closed with [`CloseService`](/gas/core/ownership/), every subscription it
+owns is removed. A service should always subscribe this way, usually from its
+`Init`, so that a [restart](/gas/core/ownership/#restarting-a-service)
+subscribes it again.
+
+`Subscribe[E](fn)` registers a handler with no owner. Nothing removes it, so it
+lives as long as the bus. It suits code outside any service, such as `main` or
+a test.
+
+`bus.RemoveByService(s)` is what the kill switch calls: it removes every
+subscription `s` made with `SubscribeWithOwner`, across all event types, and
+leaves ownerless ones in place.
+
+## Emitting
+
+<Code code={region(ev, 'emit')} lang="go" title="users.go" />
+
+`Emit[E](payload)` runs every handler subscribed to `E` on its own goroutine
+and returns a `*sync.WaitGroup` that completes when all of them have returned.
+Call `Wait()` on it when the handlers must finish before you continue; drop it
+to carry on immediately. The WaitGroup is never nil, and emitting an event
+nobody subscribes to does nothing.
+
+- Handlers run concurrently, and no ordering between them is guaranteed. A
+  handler that touches shared state must synchronize it, as `Billing` does
+  with its mutex.
+- `Emit` takes a snapshot of the subscribers and runs the handlers without
+  holding the bus lock, so a handler can subscribe or emit in turn. A
+  subscription added during an emit does not receive that emit.
+- The bus is safe for concurrent use.
+
+### Panics in handlers
+
+A handler that panics is recovered. The panic does not take the process down,
+does not keep the WaitGroup from completing, and does not stop the other
+handlers. The stack is written to stderr, and on the bus of an App or Worker
+the panic is also logged as `event subscriber panic`, with the event type and
+the owning service, through the Worker's logger: the registered `gas.Logger`,
+or `slog.Default()` when none is registered.
+
+A bus made with `gas.NewEventBus()` outside an App or Worker writes the stack
+to stderr only.
+
+## System events
+
+Gas emits these during the lifecycle. Subscribe to them like any other event;
+the payload types are named after the event with a `Payload` suffix.
+
+| Event | Payload fields | Emitted |
+|---|---|---|
+| `gas.SystemAllServicesInitialized` | none | During `Start`, once every singleton is built and initialized (and, in an App, the router is sealed and its handlers checked), before migrations run |
+| `gas.SystemServiceClosed` | `ServiceName` | By `CloseService`, after the service is closed |
+| `gas.SystemServiceInitialized` | `ServiceName` | By `RestartService`, after `Init` succeeds; not emitted at startup |
+| `gas.SystemServerShuttingDown` | none | By `App.Stop`, before the HTTP server shuts down; App only |
+| `gas.SystemShuttingDown` | none | When shutdown begins, before any service is closed; for both App and Worker |
+| `gas.AppConfigUpdated` | `Config`, a copy of the bound `gas.Config` | During `App.Start`, after the config is bound; App only |
+
+Gas waits for every subscriber of a system event to return before it moves on,
+so a slow handler delays the step that emitted it. The order these occur in
+during startup and shutdown is on
+[App lifecycle](/gas/core/lifecycle/#startup-order).
+
+<Aside type="tip" title="Subscribe in Init to see startup events">
+`SystemAllServicesInitialized` is emitted once, during `Start`. A service that
+subscribes in its `Init` receives it; a subscription made after `Start` has
+returned does not.
+</Aside>
+
+For shutdown work that must run in every process, subscribe to
+`SystemShuttingDown`; `SystemServerShuttingDown` fires only in an App. For
+releasing a service's own resources, use its `Close` instead, which runs in
+reverse dependency order.

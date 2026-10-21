@@ -1,0 +1,208 @@
+---
+title: Contributing
+description: How to file issues, run the checks, send a pull request, and work on these docs.
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+Issues and pull requests are welcome. The rules here come from
+[`CONTRIBUTING.md`](https://github.com/gasmod/gas/blob/main/CONTRIBUTING.md) and
+[`CONVENTIONS.md`](https://github.com/gasmod/gas/blob/main/CONVENTIONS.md) at the
+repository root; if this page and those files disagree, the files are right.
+
+## Filing issues
+
+- **Bugs:** include the Go version, the OS, a minimal reproducer, and what you
+  expected against what happened.
+- **Features:** describe the use case before the proposed API. Small, focused
+  proposals get reviewed faster.
+- **Security vulnerabilities:** report them privately as
+  [`SECURITY.md`](https://github.com/gasmod/gas/blob/main/SECURITY.md) describes,
+  never in a public issue.
+
+Check [Known issues](/gas/project/known-issues/) first; the defect may already
+be recorded.
+
+## Working on the repository
+
+The repository is a monorepo: the core module at the root and one Go module per
+directory for each official module, the examples, and the docs snippets. A
+`go.work` file at the root ties them together, so a change to one module is
+picked up by the others without a `replace` directive of your own.
+
+Every module, example, and the docs snippets module has a `Makefile` with
+the same targets (`help`, `test`, `test-coverage`, `build`, `lint`, `fmt`,
+`mod-update`), and the root `Makefile` adds targets that run them in every
+directory that has a `Makefile`:
+
+```bash
+make test        # in one module: go test -race ./... in the Docker test container
+make lint        # golangci-lint run
+make test-all    # make test in every directory that has a Makefile
+make lint-all    # make lint in every one
+make build-all   # make build in every one
+make verify-all  # build-all, lint-all, and test-all
+```
+
+`make test` runs through `scripts/docker-test.sh`, which runs the command in a
+container built from `test.Dockerfile`, so Docker is required. The container
+starts with a clean environment (no host variables, no `~/.aws`), so a test that
+leans on your machine's setup fails locally the way it fails in CI. The script
+also sets `GAS_TEST_REQUIRE_DOCKER`, which makes the integration tests fail
+instead of skipping when Docker is unreachable. CI pins the Go and golangci-lint
+versions in `.github/workflows/test.yml`.
+
+## Pull requests
+
+<Steps>
+
+1. Fork the repository and create a topic branch.
+
+2. Run the tests: `make test` in the module you changed, or `make test-all` from
+   the root.
+
+3. Run the linter: `make lint`.
+
+4. Write [conventional commits](https://www.conventionalcommits.org/) (`feat:`,
+   `fix:`, `docs:`, `refactor:`, and so on), and sign off every commit with
+   `git commit -s`, which the
+   [Developer Certificate of Origin](https://developercertificate.org/)
+   requires.
+
+5. Open the pull request against `main`. Keep it focused: one logical change per
+   pull request.
+
+</Steps>
+
+## Tests and code style
+
+- New features need tests. Bug fixes need a regression test.
+- Prefer the table-driven `t.Run("name", func(t *testing.T) { ... })` style used
+  throughout.
+- Keep tests parallel with `t.Parallel()` unless they touch shared state.
+- Follow the existing patterns of the package you are changing.
+- Document exported APIs. A doc comment starts with the name of the symbol.
+
+## Conventions for built-in modules
+
+`CONVENTIONS.md` fixes the shape of every official module:
+
+- A module's constructor captures options and returns the constructor the DI
+  container calls:
+
+  ```go
+  func NewModule(opts ...Option) func(<dependencies>) (*Module, error)
+  ```
+
+  The dependencies are the constructor's parameters, for example
+  `func(gas.ConfigProvider, gas.Logger) (*Module, error)`, so the container's
+  cycle and lifetime checks see every one. Constructors never take
+  `*gas.ServiceContainer`. The rule covers constructors that cannot fail, and the
+  logger constructors; values an app builds directly, such as `config.New` and
+  `ui.NewEngine`, are out of scope.
+- One-time setup belongs in the constructor, and `Init` must be restartable.
+- Interfaces and data types shared between modules live in core. An interface
+  with a single owner lives in the package that owns it.
+
+## Known issues and changelogs
+
+A defect, test gap, or debt that a change finds but does not fix goes into
+[`KNOWN_ISSUES.md`](https://github.com/gasmod/gas/blob/main/KNOWN_ISSUES.md)
+under a new `KI-NNN` ID, never reused, with its status, area, how it was found,
+the evidence, and the next step. The change that fixes it removes the entry.
+
+Each module keeps a `CHANGELOG.md` in the
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format, with pending
+changes under `[Unreleased]`. A change visible to users gets an entry there,
+marked **BREAKING** when it breaks existing code.
+
+## Working on these docs
+
+The site is [Starlight](https://starlight.astro.build/) and lives in `docs/`. It
+uses npm, with the lock file in `docs/package-lock.json`:
+
+```bash
+cd docs
+npm install
+npm run dev      # local preview
+npm run build    # what CI runs
+```
+
+The build fails when a page imports a snippet region that does not exist, and
+when an internal link does not resolve. Internal links are written with the
+`/gas/` prefix, as in `/gas/modules/queue/`.
+
+### Code samples are compiled Go
+
+Code that shows real wiring is not written in Markdown. It lives in
+`docs/snippets/`, a Go module in the workspace, so `go build ./...` and CI
+catch a sample that drifts from the framework. Each snippet directory is named
+after the page that owns it, `<section>-<slug>` (for example
+`docs/snippets/modules-queue/` for `modules/queue`); the landing page, which
+has no section, uses `docs/snippets/landing/`. A page may also import from
+another page's directory. A page
+shows part of a file by region:
+
+```go
+// #region wiring
+app := gas.NewApp(
+	gas.WithSingletonService[gas.JobQueueProvider](queuesqs.New()),
+)
+// #endregion wiring
+```
+
+```mdx
+import { Code } from '@astrojs/starlight/components';
+import queue from '../../../../snippets/modules-queue/main.go?raw';
+import { region } from '../../../lib/snippet';
+
+<Code code={region(queue, 'wiring')} lang="go" />
+```
+
+`region()` in `docs/src/lib/snippet.ts` returns the lines between the markers,
+dedented, with nested markers dropped. A missing or unclosed region throws, so
+renaming a marker fails the build instead of publishing an empty block. When
+you add a sample, write the Go first, then import it.
+
+### Every claim has a test
+
+Each behavioral statement on a page is backed by a Go test under
+`docs/snippets/claims/<section>-<slug>/`, in a package named
+`<section><slug>_test` with the hyphens dropped (`claims/modules-queue` is
+package `modulesqueue_test`). The test carries a `// Docs:` tag naming the page,
+optionally with a heading anchor, and the comment lines right after it quote
+the claim:
+
+```go
+// Docs: modules/queue.mdx#errors
+// "`queue.ErrClosed` is the only sentinel."
+func TestErrClosedIsTheOnlySentinel(t *testing.T) {
+	// ...
+}
+```
+
+`TestQuotes` in `docs/snippets/claims` reads every tag and checks that the page
+exists, that the anchor is the id of one of its headings, and that the quote
+still appears on the page. A quote may span several comment lines, `...` marks
+a gap between fragments that must appear in order, and ` / ` joins text that is
+on separate lines or table cells on the page. Whitespace, Markdown markup, and
+link targets are ignored, and code imported into a page with `<Code>` counts as
+page text. So editing a sentence that a test quotes fails `TestQuotes` until the
+test is updated to match, and deleting a page lists every claim that pointed at
+it.
+
+```bash
+cd docs/snippets
+go test ./claims -run TestQuotes                       # quotes only, fast
+GAS_TEST_REQUIRE_DOCKER=1 go test -race ./claims/...   # every claim test
+```
+
+Claim tests that need a database or LocalStack start it with testcontainers and
+skip without Docker, unless `GAS_TEST_REQUIRE_DOCKER` is set, in which case they
+fail.
+
+<Aside>
+The docs workflow, `.github/workflows/docs.yml`, runs `TestQuotes` and
+`npm run build` on every pull request that touches `docs/`, and deploys the
+site to GitHub Pages from `main`.
+</Aside>

@@ -1,0 +1,213 @@
+---
+title: Cache
+description: Key-value caching with gas/cache, in process or on Valkey, behind gas.CacheProvider.
+---
+
+import { Code, Aside } from '@astrojs/starlight/components';
+import cch from '../../../../snippets/modules-cache/main.go?raw';
+import cchTest from '../../../../snippets/modules-cache/main_test.go?raw';
+import { region } from '../../../lib/snippet';
+
+## What it is for
+
+`gas/cache` implements `gas.CacheProvider`, the core interface for a
+key-value cache of `[]byte` values with a TTL: `Get`, `Set`, `Delete` and
+`Exists`. It has two backends:
+
+| Package | Backend | Use it for |
+|---|---|---|
+| `cache/memory` | a map in the process | development, tests, and a single instance |
+| `cache/valkey` | a Valkey or other Redis-compatible server, through valkey-go | anything running more than one process |
+
+Services depend on the interface, so which backend runs is a wiring decision.
+The `cache` package itself holds the two sentinel errors both backends
+return, and `cache/cachetest` holds a recording mock.
+
+## Install
+
+```bash
+go get github.com/gasmod/gas/cache
+```
+
+## Wiring
+
+<Code code={region(cch, 'wiring')} lang="go" title="main.go" />
+
+<Code code={region(cch, 'valkey')} lang="go" />
+
+Both `memory.New(opts...)` and `valkey.New(opts...)` return a constructor that
+the container calls with `gas.ConfigProvider` and `gas.Logger`, so both must
+be registered. The constructors never return an error and do no I/O. Register
+them under `gas.CacheProvider`: the container matches by exact type, so a
+backend registered as `*memory.Service` or `*valkey.Service` does not satisfy
+a `gas.CacheProvider` dependency. See [Services and DI](/gas/core/services/).
+
+Each backend takes one option, `WithConfig(cfg)`, which replaces the whole
+configuration and skips binding from the `gas.ConfigProvider`. Start from the
+package's `DefaultConfig()`:
+
+<Code code={region(cch, 'memory-config')} lang="go" />
+
+<Aside type="caution" title="In-memory is per process">
+Two instances behind a load balancer have two separate caches, so an
+invalidation on one is invisible to the other. That is fine for data that
+never changes and wrong for anything a user can change. Once you run more
+than one replica, use Valkey.
+</Aside>
+
+## Usage
+
+### Cache-aside
+
+<Code code={region(cch, 'cache-aside')} lang="go" title="profiles/service.go" />
+
+A miss is `cache.ErrKeyNotFound`, a sentinel error rather than a nil value, so
+an empty value stays distinguishable from an absent one. The example returns
+a cache error that is not a miss rather than falling through, so a broken
+cache surfaces instead of quietly turning into load on the database, and it
+logs a failed `Set` instead of failing a read that succeeded.
+
+### Invalidating
+
+<Code code={region(cch, 'invalidate')} lang="go" />
+
+Prefer deleting over overwriting. If the write to the source of truth succeeds
+and the cache write then fails, an overwrite leaves a stale entry that
+outlives the request; a delete only costs the next reader a miss. `Delete` of
+a missing key succeeds on both backends.
+
+### TTLs
+
+`Set` takes a TTL per entry, and the backends treat a TTL of zero
+differently:
+
+| TTL | memory | valkey |
+|---|---|---|
+| positive | expires after the TTL | expires after the TTL, set in milliseconds on the server |
+| zero | uses `cache.defaultttl`; when that is also zero, never expires | never expires |
+| negative | never expires | never expires |
+
+`cache.defaultttl` is zero by default, so on the in-memory backend an app
+that always passes zero builds an unbounded cache. Set `defaultttl` or
+`maxentries` when keys come from user input.
+
+### The in-memory backend
+
+- Expired entries are invisible to `Get` and `Exists`. `Get` deletes the
+  expired entry it finds; the rest are removed by a background goroutine
+  every `cache.cleanupinterval`, which `Init` starts when the interval is
+  positive and `Close` stops.
+- When `cache.maxentries` is reached, a `Set` of a new key first removes one
+  expired entry, picked in map iteration order rather than by age. When none
+  has expired, the `Set` fails with
+  `gas/cache/memory: max entries (<n>) reached`. Overwriting an existing key
+  always succeeds. There is no LRU eviction.
+- Values are stored and returned as the same slice, not copies. Modifying a
+  slice you passed to `Set` or got from `Get` changes the cached value.
+- `Close` drops every entry. A service started again begins with an empty
+  cache.
+
+### The Valkey backend
+
+`Init` creates the client and pings the server, bounded by
+`cache.dialtimeout`. When that fails and `cache.connretries` is above zero, it
+waits `cache.connretryinterval`, retries, and doubles the wait after each
+failure, for at most `connretries` retries; an interval of zero or less uses
+2 seconds. Each retry is logged at warn level. The ping and the waits run
+under the context `Init` receives, so when that context ends during a wait,
+`Init` stops with an error wrapping both the context's error and the last
+connection error. The context does not cover what comes before the `PING`:
+valkey-go's `NewClient` takes no context, so the dial and handshake it runs
+ignore it. Against a server that accepts the connection and never answers,
+`Init` runs until `cache.dialtimeout` ends the attempt, however soon the
+context ends (KI-052, see [Known issues](/gas/project/known-issues/)). When every retry fails, `Init` returns
+`gas/cache/valkey: connect failed after <n> retries: <last error>`.
+
+For commands `gas.CacheProvider` does not cover, `Client()` on
+`*valkey.Service` returns the underlying `valkey.Client`. It returns nil
+before `Init` first connects, and the closed client after `Close`.
+
+<Code code={region(cch, 'valkey-client')} lang="go" />
+
+## Configuration
+
+Unless `WithConfig` is given, `Init` binds the settings from the
+`gas.ConfigProvider` under the `cache` key, over the backend's
+`DefaultConfig()`, so a key you do not set keeps its default. Both backends
+read the same `cache` key, each its own fields. Keys are case-insensitive; see
+[Config](/gas/modules/config/) for how keys map to environment variables and
+files.
+
+**memory**
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `cache.maxentries` | int | `0` | Maximum entries; 0 is unlimited |
+| `cache.cleanupinterval` | duration | `1m` | How often expired entries are removed; 0 or less disables the cleanup goroutine |
+| `cache.defaultttl` | duration | `0` | TTL for a `Set` with a TTL of 0; 0 never expires |
+
+No memory setting is validated.
+
+**valkey**
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `cache.addr` | string | `localhost:6379` | Server address, `host:port`. Required |
+| `cache.password` | string | | Password; empty means no authentication |
+| `cache.db` | int | `0` | Database number; must not be negative |
+| `cache.dialtimeout` | duration | `5s` | Timeout for new connections, and the bound on the startup ping |
+| `cache.writetimeout` | duration | `3s` | Passed to valkey-go as `ConnWriteTimeout`, its write deadline |
+| `cache.connretries` | int | `0` | Connection retries after the first failed attempt; 0 fails at once |
+| `cache.connretryinterval` | duration | `2s` | Wait before the first retry, doubled after each |
+
+The rules on `addr` and `db` are `validate` tags, checked when the config is
+bound; a configuration given with `WithConfig` is used as given.
+
+## Errors
+
+| Error | When |
+|---|---|
+| `cache.ErrKeyNotFound` | `Get` of a key that is missing or has expired |
+| `cache.ErrClosed` | Any operation before `Init` or after `Close`. On Valkey also an operation that was running when the service closed, or when a restart replaced the client |
+
+Both are returned unwrapped, but match them with `errors.Is`. Other errors
+start with the backend's service name, `gas/cache/memory` or
+`gas/cache/valkey`. A Valkey command error also names the command and the
+key, as in `gas/cache/valkey: get "profile:42": <cause>`, and wraps the
+valkey-go error.
+
+## Health and readiness
+
+The Valkey backend implements `gas.HealthReporter` and `gas.ReadyReporter`.
+`CheckHealth` fails, with `cache.ErrClosed`, only before `Init` or after
+`Close`: the client reconnects on its own, so a network fault is not a reason
+to restart the process. `CheckReady` sends `PING` with the caller's context,
+so while the server is unreachable the instance reports not ready and traffic
+drains off it.
+
+The in-memory backend implements neither. It has no external dependency, so
+there is nothing to report beyond the service lifecycle the app already
+tracks.
+
+## Testing
+
+`cachetest.MockCache` implements `gas.CacheProvider`, `gas.HealthReporter`
+and `gas.ReadyReporter`. Each method records the call in `Calls` and delegates
+to the matching field (`GetFn`, `SetFn`, `DeleteFn`, `ExistsFn`,
+`CheckHealthFn`, `CheckReadyFn`) when it is set. Unset, `Get` returns
+`nil, nil`, which cache-aside code reads as a hit with an empty value;
+`Exists` returns `false, nil`, and the rest return nil. `CallCount(method)`
+counts the calls to one method and `Reset` clears `Calls`.
+
+<Code code={region(cchTest, 'mock')} lang="go" title="profiles/service_test.go" />
+
+To test against real cache behavior with no server, use the in-memory
+backend: build it with `memory.New(...)` and call `Init` yourself, or
+register it in a test app. See [Testing](/gas/production/testing/).
+
+## API reference
+
+- [pkg.go.dev/github.com/gasmod/gas/cache](https://pkg.go.dev/github.com/gasmod/gas/cache)
+- [cache/memory](https://pkg.go.dev/github.com/gasmod/gas/cache/memory)
+- [cache/valkey](https://pkg.go.dev/github.com/gasmod/gas/cache/valkey)
+- [cache/cachetest](https://pkg.go.dev/github.com/gasmod/gas/cache/cachetest)

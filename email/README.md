@@ -30,7 +30,7 @@ only ever call `Send`.
 The full guide, with configuration, testing, and worked examples, is on the docs site.
 This README is deliberately a signpost: keeping a second copy here is how the docs drifted before.
 
-- **Guide:** [Send email](https://gasmod.github.io/gas/guides/email/)
+- **Guide:** [Email](https://gasmod.github.io/gas/modules/email/)
 - **API reference:** [pkg.go.dev/github.com/gasmod/gas/email](https://pkg.go.dev/github.com/gasmod/gas/email)
 - **Contributing:** [CONTRIBUTING.md](../CONTRIBUTING.md)
 

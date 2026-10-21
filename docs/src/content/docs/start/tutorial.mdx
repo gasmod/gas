@@ -1,0 +1,550 @@
+---
+title: 'Tutorial: build a notes API'
+description: Build a small notes JSON API end to end with Gas, SQLite, migrations, API key authentication, and an httptest test.
+---
+
+import { Code, Aside, FileTree } from '@astrojs/starlight/components';
+import appSrc from '../../../../snippets/start-tutorial/app/app.go?raw';
+import testSrc from '../../../../snippets/start-tutorial/app/app_test.go?raw';
+import mainSrc from '../../../../snippets/start-tutorial/cmd/main.go?raw';
+import keysSrc from '../../../../snippets/start-tutorial/keys/service.go?raw';
+import notesSrc from '../../../../snippets/start-tutorial/notes/service.go?raw';
+import handlersSrc from '../../../../snippets/start-tutorial/notes/handlers.go?raw';
+import upSQL from '../../../../snippets/start-tutorial/notes/migrations/20261021001_create_notes.up.sql?raw';
+import downSQL from '../../../../snippets/start-tutorial/notes/migrations/20261021001_create_notes.down.sql?raw';
+import configJSON from '../../../../snippets/start-tutorial/config.json?raw';
+import { region } from '../../../lib/snippet';
+
+export const MODULE = 'github.com/gasmod/gas/docs/snippets/start-tutorial';
+
+export const local = (src) => src.replaceAll(MODULE, 'example.com/notesapi');
+
+export function stage(src, hide, added) {
+	const lines = [];
+	const ins = [];
+	let skipping = null;
+	let inAdded = false;
+	for (const line of src.split('\n')) {
+		const t = line.trim();
+		if (skipping) {
+			if (t === `// #endregion ${skipping}`) skipping = null;
+			continue;
+		}
+		const open = t.match(/^\/\/ #region (\S+)$/);
+		const close = t.match(/^\/\/ #endregion (\S+)$/);
+		if (open && hide.includes(open[1])) {
+			skipping = open[1];
+			continue;
+		}
+		if (open) {
+			if (open[1] === added) inAdded = true;
+			continue;
+		}
+		if (close) {
+			if (close[1] === added) inAdded = false;
+			continue;
+		}
+		if (t === '' && lines.length && lines[lines.length - 1].trim() === '') continue;
+		lines.push(local(line));
+		if (inAdded && t !== '') ins.push(lines.length);
+	}
+	while (lines.length && lines[lines.length - 1].trim() === '') lines.pop();
+	return { code: lines.join('\n'), ins };
+}
+
+export const app1 = stage(appSrc, ['meta', 'step-data', 'step-auth', 'step-notes']);
+export const app2 = stage(appSrc, ['meta', 'step-auth', 'step-notes'], 'step-data');
+export const app3 = stage(appSrc, ['meta', 'step-notes'], 'step-auth');
+export const app4 = stage(appSrc, ['meta'], 'step-notes');
+
+{/*
+  The tutorial code compiles inside the docs snippets module. `local` swaps
+  its import path for the reader's module path, and `stage` returns
+  app/app.go as it stands after one step: the step-* regions in `hide` are
+  dropped, and the lines of the `added` region come back as line numbers to
+  highlight.
+*/}
+
+This tutorial builds a small JSON API for notes, from an empty directory to a
+tested app. Each client authenticates with an API key and sees only its own
+notes. The data lives in a SQLite file, so there is nothing to install beyond
+Go.
+
+Along the way it uses the Gas core (services, routing, handlers, errors) and
+five modules: [config](/gas/modules/config/), [logging](/gas/modules/logging/),
+[database](/gas/modules/database/), [migrations](/gas/modules/migrations/), and
+[auth](/gas/modules/auth/). Each step ends with something to run, and links to
+the page that covers its pieces in depth.
+
+You need Go 1.27.3 or newer (see [Installation](/gas/start/installation/)) and
+`curl`. The finished project looks like this:
+
+<FileTree>
+- notesapi/
+  - go.mod
+  - config.json
+  - cmd/
+    - main.go
+  - app/
+    - app.go wires the modules and services
+    - app_test.go
+  - keys/
+    - service.go issues API keys
+  - notes/
+    - service.go owns the notes table and routes
+    - handlers.go
+    - migrations/
+      - 20261021001_create_notes.up.sql
+      - 20261021001_create_notes.down.sql
+</FileTree>
+
+The layout follows [Project structure](/gas/start/project-structure/): a thin
+`cmd/` that runs the app, an `app/` package that wires it, and one package per
+service.
+
+## Step 1: create the project
+
+Create a module and add the Gas packages this tutorial uses, plus the pure-Go
+SQLite driver:
+
+```bash
+mkdir notesapi && cd notesapi
+go mod init example.com/notesapi
+go get github.com/gasmod/gas \
+  github.com/gasmod/gas/config \
+  github.com/gasmod/gas/log \
+  github.com/gasmod/gas/database \
+  github.com/gasmod/gas/migrate \
+  github.com/gasmod/gas/auth \
+  modernc.org/sqlite
+```
+
+The core and each module are separate Go modules, so an app adds only the ones
+it uses.
+
+## Step 2: an app with config and logging
+
+Create `config.json` in the project root. This is the whole file; the
+`Database` and `Keys` sections are used from step 3 on.
+
+<Code code={configJSON} lang="json" title="config.json" />
+
+Now the `app` package. `LoadConfig` builds the config, and `New` registers
+what the app is made of.
+
+<Code code={app1.code} lang="go" title="app/app.go" />
+
+`LoadConfig` reads `config.json` first and the environment second. A later
+provider overrides the keys it defines, so an environment variable wins over
+the file: `KEYS__ADMINTOKEN` sets `Keys.AdminToken`, with `__` separating the
+levels. Reading from disk, the JSON provider only opens files inside the
+working directory, so run the app from the project root. See [Config](/gas/modules/config/) for the
+providers and the naming rules.
+
+`New` registers two things in the container:
+
+- the loaded config, as a ready-made instance under `gas.ConfigProvider`. The
+  app binds its own settings from it at startup (here `GasEnv`, `Server.Host`,
+  and `Server.Port`), and the modules added in later steps bind their sections
+  from it.
+- a logger under `gas.Logger`. `gaslog.NewSlogLogger()` writes through the
+  standard library's `log/slog`. See [Logging](/gas/modules/logging/).
+
+The request logger middleware logs each request's method, path, status, bytes
+written, duration, and remote address: at error level when the status is 400
+or above, at info level otherwise. Its request ID field is turned off because
+the ID comes from chi's `RequestID` middleware, which this app does not mount.
+
+The entry point loads the config, builds the app, and runs it:
+
+<Code code={local(region(mainSrc, 'main'))} lang="go" title="cmd/main.go" />
+
+`Run` initializes every registered service, applies pending migrations, starts
+the HTTP server, and blocks until the process gets `SIGINT` or `SIGTERM`. Then
+it shuts the server down and closes the services in reverse order. See
+[App lifecycle](/gas/core/lifecycle/).
+
+### Run it
+
+```bash
+go run ./cmd
+```
+
+```text
+... INFO server started environment=development addr=localhost:8080
+```
+
+The app has no routes yet, so every path is a 404:
+
+```bash
+curl -i localhost:8080/
+```
+
+```text
+HTTP/1.1 404 Not Found
+...
+404 page not found
+```
+
+Stop it with Ctrl+C:
+
+```text
+... INFO shutdown signal received signal=interrupt
+... INFO closing service service=gas/router
+... INFO closing service service=gas/eventbus
+... INFO shutdown complete
+```
+
+## Step 3: add the database and migrations
+
+Two modules go into `New`: the database connection and the migration manager.
+The highlighted lines are new.
+
+<Code code={app2.code} ins={app2.ins} lang="go" title="app/app.go" />
+
+`database.New()` reads the `Database` section of the config when it
+initializes. `Driver` is the `database/sql` driver name, and `"sqlite"` is the
+name `modernc.org/sqlite` registers. `gas/database` does not import a SQLite
+driver itself, which is what the blank import is for. `DSN` is the file to
+open, relative to the working directory. The service opens the database and
+pings it, and startup fails if it cannot.
+
+`MaxOpenConns` and `MaxIdleConns` are both `1`: with one connection, queries
+take turns instead of contending for SQLite's write lock. `MaxIdleConns` must
+be between 1 and `MaxOpenConns`. See [Database](/gas/modules/database/) for
+every key and its default.
+
+`migrate.New()` takes the `gas.DatabaseProvider` and, when it initializes,
+creates the `__gas_migrations` table that records what has been applied.
+Services register their migrations with it during their own `Init`; once every
+service is initialized, `Start` applies the pending ones in version order. See
+[Migrations](/gas/modules/migrations/).
+
+<Aside type="caution" title="Register migrate under gas.MigrationManager">
+`Start` looks the migration manager up as `gas.MigrationManager`, and the
+modules that own tables take a `gas.MigrationManager` in their constructors.
+Registered under `*migrate.Service` instead, it is invisible to both: `Start`
+runs no migrations, and the API key service added in step 4 fails to build:
+
+```text
+building apikey.Provider: resolving dep gas.MigrationManager for apikey.Provider: no registration for gas.MigrationManager
+```
+</Aside>
+
+### Run it
+
+```bash
+go run ./cmd
+```
+
+```text
+... INFO SQL database connection initialized service=gas/database
+... INFO applying pending migrations
+... INFO server started environment=development addr=localhost:8080
+```
+
+`notes.db` now exists in the project root. If you have the `sqlite3` command
+line tool, it shows the tracking table:
+
+```bash
+sqlite3 notes.db .tables
+```
+
+```text
+__gas_migrations
+```
+
+## Step 4: issue API keys
+
+Clients will authenticate with API keys, which `gas/auth/apikey` generates,
+stores, and checks. Something has to hand them out, so the first service is a
+small one: `POST /keys` creates a key for a subject, and only callers that
+present the admin token from the config may use it.
+
+<Code code={local(region(keysSrc, 'service'))} lang="go" title="keys/service.go" />
+
+This is the shape of every Gas service. `New` is a plain constructor, and the
+container supplies its parameters: the router, the config, and the API key
+provider. `Name` identifies the service in logs and in the route map, and
+marks it as the owner of its routes. `Init` runs once at startup; this one
+binds its part of the config and registers its route. `Close` runs at shutdown
+and has nothing to release here. See [Services and DI](/gas/core/services/).
+
+`Bind` fills `Config` from the loaded config and checks its `validate` tags. A
+missing admin token, or one shorter than 16 characters, stops startup:
+
+```text
+building *keys.Service: init *keys.Service: keys: config: validate config: Key: 'Config.Keys.AdminToken' Error:Field validation for 'AdminToken' failed on the 'min' tag
+```
+
+The handler completes the file:
+
+<Code code={local(region(keysSrc, 'create'))} lang="go" title="keys/service.go" />
+
+A handler that takes `gas.Context` and returns `error` is a DI-aware handler.
+A returned `*gas.Error`, such as the one `gas.Unauthorized` builds, is written
+as a JSON error at its status. `BindJSON` decodes the body and runs the
+`validate` tags. `Generate` returns the plaintext key once; the database keeps
+its SHA-256 hash and its first 8 characters, not the key. See
+[Handlers and Context](/gas/core/handlers/) and [Errors](/gas/core/errors/).
+
+Register the API key provider and the new service:
+
+<Code code={app3.code} ins={app3.ins} lang="go" title="app/app.go" />
+
+`apikey.New()` takes a `gas.DatabaseProvider`, `gas.Logger`,
+`gas.MigrationManager`, and `gas.ConfigProvider` from the container. In `Init`
+it reads the `APIKey` section of the config (nothing to set here: the header
+defaults to `X-API-Key`) and registers its own migrations for the configured
+driver, which create its table. It is registered under the `apikey.Provider`
+interface, and the services that use it ask for that type. See
+[Auth](/gas/modules/auth/).
+
+### Run it
+
+```bash
+go run ./cmd
+```
+
+`Run` logs the route map at startup. With `GasEnv` set to `development`, it is
+a table:
+
+```text
+... INFO SQL database connection initialized service=gas/database
+... INFO service initialized service=gas/auth/apikey
+... INFO applying pending migrations
+... INFO route map (1 routes across 1 services):
+─────────────────
+  [keys]:
+      POST  /keys
+─────────────────
+... INFO server started environment=development addr=localhost:8080
+```
+
+Create a key for a subject called `alice`:
+
+```bash
+curl -X POST localhost:8080/keys \
+  -H 'X-Admin-Token: change-me-to-a-long-random-string' \
+  -d '{"subject":"alice","name":"laptop"}'
+```
+
+```json
+{"id":"aea43e9f-3da1-435c-861d-ea7ed68aba45","subject":"alice","name":"laptop","key":"1cGmFmGFeQzs9S1W0zfAeCAuY3TdyNN_FUfGknLKFKY"}
+```
+
+Your `id` and `key` will differ. Copy the key into a shell variable for the
+next step:
+
+```bash
+export KEY=1cGmFmGFeQzs9S1W0zfAeCAuY3TdyNN_FUfGknLKFKY
+```
+
+A wrong token gets a JSON error:
+
+```bash
+curl -X POST localhost:8080/keys -H 'X-Admin-Token: wrong' -d '{}'
+```
+
+```json
+{"error":{"status":401,"code":"unauthorized","message":"a valid X-Admin-Token header is required"}}
+```
+
+## Step 5: the notes service
+
+The notes service owns a table and four routes. Start with its schema, as a
+pair of migration files:
+
+<Code code={upSQL} lang="sql" title="notes/migrations/20261021001_create_notes.up.sql" />
+
+<Code code={downSQL} lang="sql" title="notes/migrations/20261021001_create_notes.down.sql" />
+
+A migration file is named `{version}_{description}.up.sql`, and every `.up.sql`
+needs a matching `.down.sql`. The version is everything before the first
+underscore. Versions from every service are applied in one global order, so a
+timestamp keeps them unique.
+
+The service embeds those files and registers them, then registers its routes
+behind the API key middleware:
+
+<Code code={local(region(notesSrc, 'service'))} lang="go" title="notes/service.go" />
+
+Because `New` takes an `apikey.Provider`, the container builds the API key
+service before this one. `RegisterFS` reads the embedded files and registers
+them as migrations owned by this service; `Start` applies them after every
+`Init` has run.
+
+`auth.Middleware` authenticates each request with the API key provider, which
+reads the key from the `X-API-Key` header. On success it puts the principal on
+the request context and calls the handler. On failure it calls the
+`WithOnError` function, which here writes the same JSON error shape the
+handlers produce; without `WithOnError`, the middleware writes a plain-text
+401. The middleware is added inside `Route("/notes", ...)`, so it applies to
+the notes routes and not to `POST /keys`. See [Routing](/gas/core/routing/)
+and [Middleware](/gas/core/middleware/).
+
+The handlers go in a second file, which starts with the types:
+
+<Code code={region(handlersSrc, 'types')} lang="go" title="notes/handlers.go" />
+
+`create` stores a note under the caller's subject:
+
+<Code code={region(handlersSrc, 'create')} lang="go" title="notes/handlers.go" />
+
+`ctx.Principal()` returns the principal the middleware stored. The subject of
+an API key principal is the subject the key was generated for, `alice` in
+step 4. `ctx` is also a `context.Context`, so it goes straight into the query.
+`s.db.DB()` is the `*sql.DB` that `gas/database` opened.
+
+`list` returns the caller's notes:
+
+<Code code={region(handlersSrc, 'list')} lang="go" title="notes/handlers.go" />
+
+`get` and `delete` look a note up by id and by owner, so a note that belongs to
+another subject is a 404, the same as one that does not exist:
+
+<Code code={region(handlersSrc, 'get')} lang="go" title="notes/handlers.go" />
+
+<Code code={region(handlersSrc, 'delete')} lang="go" title="notes/handlers.go" />
+
+A returned error that is not a `*gas.Error`, such as the wrapped database
+errors, becomes a 500 with the message `internal server error`. The real error
+is logged, and never sent to the client.
+
+Last, register the service:
+
+<Code code={app4.code} ins={app4.ins} lang="go" title="app/app.go" />
+
+### Run it
+
+Restart the server (Ctrl+C, then `go run ./cmd`). The route map now lists the
+notes routes:
+
+```text
+... INFO route map (5 routes across 2 services):
+─────────────────────────
+  [keys]:
+      POST    /keys
+  [notes]:
+      POST    /notes/
+      GET     /notes/
+      GET     /notes/{id}
+      DELETE  /notes/{id}
+─────────────────────────
+```
+
+The key from step 4 still works, because it is stored in `notes.db`. Without
+a key, the notes routes answer 401:
+
+```bash
+curl localhost:8080/notes
+```
+
+```json
+{"error":{"status":401,"code":"unauthorized","message":"a valid X-API-Key header is required"}}
+```
+
+Create two notes:
+
+```bash
+curl -X POST localhost:8080/notes -H "X-API-Key: $KEY" \
+  -d '{"title":"First note","body":"Hello from Gas"}'
+curl -X POST localhost:8080/notes -H "X-API-Key: $KEY" \
+  -d '{"title":"Second note","body":"SQLite underneath"}'
+```
+
+```json
+{"id":1,"title":"First note","body":"Hello from Gas","created_at":"2026-10-21T16:05:42.844152Z"}
+{"id":2,"title":"Second note","body":"SQLite underneath","created_at":"2026-10-21T16:05:42.852999Z"}
+```
+
+A note without a title fails validation with a 422 that names the field:
+
+```bash
+curl -X POST localhost:8080/notes -H "X-API-Key: $KEY" -d '{"body":"no title"}'
+```
+
+```json
+{"error":{"status":422,"code":"validation_failed","message":"request validation failed","fields":[{"field":"title","rule":"required","message":"is required"}]}}
+```
+
+List, get, delete, and get again:
+
+```bash
+curl localhost:8080/notes -H "X-API-Key: $KEY"
+curl localhost:8080/notes/1 -H "X-API-Key: $KEY"
+curl -s -o /dev/null -w '%{http_code}\n' -X DELETE localhost:8080/notes/1 -H "X-API-Key: $KEY"
+curl localhost:8080/notes/1 -H "X-API-Key: $KEY"
+```
+
+```text
+[{"id":1,"title":"First note","body":"Hello from Gas","created_at":"2026-10-21T16:05:42.844152Z"},{"id":2,"title":"Second note","body":"SQLite underneath","created_at":"2026-10-21T16:05:42.852999Z"}]
+{"id":1,"title":"First note","body":"Hello from Gas","created_at":"2026-10-21T16:05:42.844152Z"}
+204
+{"error":{"status":404,"code":"not_found","message":"note not found"}}
+```
+
+With `sqlite3`, the tracking table shows the migrations from both services in
+version order:
+
+```bash
+sqlite3 notes.db 'SELECT version, service FROM __gas_migrations ORDER BY version'
+```
+
+```text
+20250323002|gas/auth/apikey
+20260415042824|gas/auth/apikey
+20261021001|notes
+```
+
+## Step 6: test it
+
+The test starts the real app, with its real modules, on a fresh SQLite file in
+a temporary directory, and sends requests to it through `httptest`. Nothing is
+mocked.
+
+<Code code={local(region(testSrc, 'setup'))} lang="go" title="app/app_test.go" />
+
+`Start` does what `Run` does before serving: it initializes the services,
+applies the migrations, and binds the config. It does not listen on a port.
+`Handler` returns the handler the app's own server uses, which
+`httptest.NewServer` serves on a local port. `Stop` closes the services when
+the test ends. The test changes into its temporary directory because the JSON
+provider only opens files inside the working directory, and the database file
+is relative to it too.
+
+A small helper sends JSON and decodes JSON:
+
+<Code code={region(testSrc, 'helper')} lang="go" title="app/app_test.go" />
+
+The test walks the same flow as the curl session, and checks that a second
+subject cannot read the first one's note:
+
+<Code code={region(testSrc, 'test')} lang="go" title="app/app_test.go" />
+
+### Run it
+
+```bash
+go test ./...
+```
+
+```text
+ok  	example.com/notesapi/app	0.368s
+?   	example.com/notesapi/cmd	[no test files]
+?   	example.com/notesapi/keys	[no test files]
+?   	example.com/notesapi/notes	[no test files]
+```
+
+See [Testing](/gas/production/testing/) for the mock packages and for testing
+a service on its own.
+
+## Where to go next
+
+- [Services and DI](/gas/core/services/): lifetimes, constructors, and how the
+  container resolves dependencies.
+- [Routing](/gas/core/routing/) and [Handlers and Context](/gas/core/handlers/):
+  groups, path parameters, and what a handler can return.
+- [Auth](/gas/modules/auth/): JWT, sessions, scopes, and revoking keys.
+- [Database](/gas/modules/database/): transactions and PostgreSQL.
+- [Deployment](/gas/production/deployment/): graceful shutdown, health and
+  readiness, and configuration per environment.

@@ -84,7 +84,7 @@
 // Bind errors start with "bind config:" or "validate config:". A Config is
 // safe for concurrent use: reads take a read lock and writes a write lock.
 //
-// Guides with usage examples are at https://gasmod.github.io/gas.
+// Guides with usage examples are at https://gasmod.github.io/gas/modules/config/.
 //
 // SPDX-License-Identifier: MIT
 package config

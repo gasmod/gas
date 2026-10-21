@@ -1,0 +1,157 @@
+---
+title: Ownership and teardown
+description: Every route, named middleware, and subscription is owned by a service, which is what lets one service be closed and restarted while the app keeps running.
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import own from '../../../../snippets/core-ownership/main.go?raw';
+import { region } from '../../../lib/snippet';
+
+Every route, named middleware, and event subscription in Gas records the service
+that registered it. That bookkeeping is what makes the kill switch possible:
+one service can be closed at runtime, and everything it registered stops
+serving, without restarting the process.
+
+## What a service owns
+
+Ownership is set by the first argument of each registration call, which is the
+service doing the registering; from inside a service's `Init`, that is the
+receiver.
+
+| Registration | Owned by |
+|---|---|
+| `router.Handle(s, method, path, h)`, and `Get`, `Post`, `Put`, `Patch`, `Delete`, `Head` | `s` |
+| `router.Register(s, name, mw)`, a named middleware | `s` |
+| `bus.SubscribeWithOwner[E](s, fn)` | `s` |
+| `bus.Subscribe[E](fn)` | Nobody; no teardown removes it |
+| `gas.MiddlewareFunc(fn)` or `gas.MiddlewareFuncWithName(name, fn)` used inline | Nobody; no teardown disables it |
+
+Ownership is recorded by the service's `Name()`. Passing `nil` as the owner of a
+route or a named middleware makes the router itself (`gas/router`) the owner,
+so closing one of your services never removes it.
+
+<Code code={region(own, 'auth')} lang="go" title="auth.go" />
+
+<Code code={region(own, 'billing')} lang="go" title="billing.go" />
+
+`router.Routes()` returns the registered routes grouped by owning service (the
+`HEAD` route registered alongside each `GET` is left out), and
+`router.NamedMiddleware()` maps each named middleware to its owner. `app.Run()`
+logs the same information at startup: as one table in the development
+environment, and as one `route registered` line per route otherwise.
+
+## Closing a service
+
+<Code code={region(own, 'kill')} lang="go" title="main.go" />
+
+`CloseService[T](ctx)` takes the type the service was registered under, matched
+exactly. It is a method on the Worker, so an App has it too. In order, it:
+
+1. disables everything the service registered on the router (App only; see
+   [below](#what-503-means)),
+2. removes every subscription the service made with `SubscribeWithOwner`,
+3. calls the service's `Close(ctx)`,
+4. removes the service from the active services,
+5. emits `gas.SystemServiceClosed` with the service's name, and waits for its
+   subscribers.
+
+Routes and subscriptions go first, so they are gone even if `Close` fails. An
+error from `Close` is logged as `service close failed` and not returned, since
+the teardown has already happened.
+
+`CloseService` returns an error when `T` has no built instance (it was never
+built, or it is registered under a different type), when the service is not
+active (it was already closed), or once shutdown has begun. Only singletons,
+including instances, have a built instance to close.
+
+A closed service no longer appears in `ActiveServices()`, is left out of
+[health and readiness](/gas/core/lifecycle/#health-and-readiness) checks, and
+is not closed a second time at shutdown.
+
+## What 503 means
+
+After the teardown, every route the closed service owns answers
+`503 Service Unavailable` in the [unified error shape](/gas/core/errors/),
+including the `HEAD` route that came with each `GET`. The body does not name the
+service:
+
+```json
+{"error":{"status":503,"code":"service_unavailable","message":"service unavailable"}}
+```
+
+A client that asks for `text/html` without also accepting `application/json`
+gets the message as plain text instead.
+
+Every **named middleware** the service registered is replaced with a 503 as
+well, **wherever it is referenced**: on routes owned by other services that are
+still running, and inside `Group` and `Route` blocks. In the sample, billing is
+still running, but its route uses auth's `require-auth`:
+
+```
+GET /api/invoices -> 200 invoices
+GET /auth/me -> 503 {"error":{"status":503,"code":"service_unavailable","message":"service unavailable"}}
+GET /api/invoices -> 503 {"error":{"status":503,"code":"service_unavailable","message":"service unavailable"}}
+```
+
+<Aside type="danger" title="Disabled, never skipped">
+A torn-down middleware fails the request rather than letting it through. If
+teardown skipped a missing middleware instead, closing an auth service would
+silently strip authorization from every route that used it and leave them open.
+Failing closed is the only safe behavior.
+
+The consequence is a blast radius to design around: a widely used middleware
+registered by a service that later gets closed takes every route that uses it
+down too. Only names passed to `Register` are owned; an inline
+`gas.MiddlewareFunc` has no owner and survives any teardown.
+</Aside>
+
+The router applies the change by building a new routing tree and swapping it in
+atomically. Requests already in flight finish on the previous tree.
+
+## Restarting a service
+
+<Code code={region(own, 'restart')} lang="go" title="main.go" />
+
+`RestartService[T](ctx)` runs `Init` again on the same instance, under the same
+[init deadline](/gas/core/lifecycle/#init-and-close-contexts) as at startup.
+Because `Init` registers the service's routes, named middleware, and
+subscriptions again, they serve again: in the sample, `GET /api/invoices`
+returns 200 once more. The service rejoins the active services, and
+`gas.SystemServiceInitialized` is emitted with its name.
+
+`RestartService` returns an error when `T` has no built instance, when the
+service is already active, once shutdown has begun, or when `Init` fails; the
+last one is wrapped as `gas: re-init <name>: ...`.
+
+<Aside type="caution" title="Init must be able to run twice">
+A restarted service has had `Close` called on it, and its `Init` runs again on
+the same value. Write `Init` so that it can set the service up again after
+`Close`: reopen what `Close` released rather than assuming fields set by the
+constructor are still usable.
+</Aside>
+
+<Aside type="caution" title="Register every route on every Init (KI-054)">
+A route that the restarted `Init` does not register again does not stay at
+503. It comes back serving the handler from the previous `Init`, and it is
+missing from `router.Routes()`. Have `Init` register the same routes every
+time it runs. See [Known issues](/gas/project/known-issues/).
+</Aside>
+
+## Reacting to a teardown
+
+Other services can respond to `gas.SystemServiceClosed`, which is how a system
+degrades on purpose rather than by accident:
+
+<Code code={region(own, 'react')} lang="go" title="status.go" />
+
+The closed service's own subscriptions are removed before the event is emitted,
+so it does not receive its own `SystemServiceClosed`. All system events are
+listed on [Events](/gas/core/events/#system-events).
+
+## When to use it
+
+Rarely, and that is fine. The kill switch earns its place when one subsystem is
+failing in a way that threatens the rest, when a dependency is down and its
+routes should fail fast instead of piling up requests, or when one feature has
+to be drained ahead of a deploy. If you never call `CloseService`, ownership
+still makes the route map attributable: every route says which service owns it.

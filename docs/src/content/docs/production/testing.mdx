@@ -1,0 +1,134 @@
+---
+title: Testing
+description: Test Gas services with the module mocks, drive the real handler stack with httptest, and catch wiring mistakes at Start.
+---
+
+import { Code, Aside } from '@astrojs/starlight/components';
+import svc from '../../../../snippets/production-testing/service.go?raw';
+import tst from '../../../../snippets/production-testing/service_test.go?raw';
+import { region } from '../../../lib/snippet';
+
+Services depend on provider interfaces such as `gas.CacheProvider`, not on
+backends, so most tests need no database, no AWS account, and no containers.
+This page tests one small service three ways: as a unit with a mock, through
+the app's real handler stack, and by starting its wiring.
+
+<Code code={region(svc, 'service')} lang="go" title="visits/service.go" />
+
+## Mock packages
+
+These modules ship mocks in a `*test` package:
+
+| Module | Package | Mocks |
+|---|---|---|
+| [auth](/gas/modules/auth/) | `github.com/gasmod/gas/auth/authtest` | `MockAuthenticator`, `MockAuthorizer`, `MockRevoker` |
+| [cache](/gas/modules/cache/) | `github.com/gasmod/gas/cache/cachetest` | `MockCache` |
+| [config](/gas/modules/config/) | `github.com/gasmod/gas/config/configtest` | `MockConfig` |
+| [email](/gas/modules/email/) | `github.com/gasmod/gas/email/emailtest` | `MockEmail` |
+| [migrate](/gas/modules/migrations/) | `github.com/gasmod/gas/migrate/migratetest` | `MockMigrationManager` |
+| [queue](/gas/modules/queue/) | `github.com/gasmod/gas/queue/queuetest` | `MockQueue` |
+| [storage](/gas/modules/storage/) | `github.com/gasmod/gas/storage/storagetest` | `MockProvider`, `MockPresigner` |
+| [template](/gas/modules/templates/) | `github.com/gasmod/gas/template/templatetest` | `MockTemplate` |
+| [ui](/gas/modules/ui/) | `github.com/gasmod/gas/ui/uitest` | `MockUI` |
+
+`database` and `log` have no mock package. For a logger, core's
+`gas.NopLogger` discards everything; `&gas.NopLogger{}` is ready to use.
+
+The mocks share one shape. Each has an `Fn` field per method that the method
+calls when it is set, records every call in its `Calls` slice, and has
+`CallCount(method)` and `Reset()`. They are safe for concurrent use, so a test
+that fans out goroutines can still assert on counts. A mock is usable as its
+zero value; set only the `Fn` fields the test exercises. What a method returns
+when its `Fn` is not set differs between mocks and is listed on each module
+page.
+
+`configtest.NewMockConfigWithValues(values)` returns a `MockConfig` whose
+methods delegate to a real configuration seeded with `values`, so `Get`,
+`Find`, and `Bind` behave as they do in production; see
+[Config](/gas/modules/config/).
+
+## Unit tests with a mock
+
+Build the service with a mock and call it directly:
+
+<Code code={region(tst, 'unit')} lang="go" title="visits/service_test.go" />
+
+The service takes the router only to register routes in `Init`, which this test
+never calls, so a bare `gas.NewRouter()` is enough.
+
+## Testing through the app
+
+Unit tests miss routing, middleware, dependency injection, binding, and error
+rendering. To cover those, build an `App` with mocks in place of the real
+providers and send requests through it.
+
+<Code code={region(tst, 'app')} lang="go" title="visits/service_test.go" />
+
+Register each mock with `gas.WithServiceInstance` under the interface the code
+depends on, as the real provider is registered in production. The container
+matches by exact type, so a mock registered under its own type
+(`*cachetest.MockCache`) would not satisfy a `gas.CacheProvider` parameter. A
+mock that implements `gas.Service`, as `migratetest.MockMigrationManager` does,
+gets `Init` at startup and `Close` at shutdown like any registered service, and
+a `MockMigrationManager` registered as `gas.MigrationManager` has its
+`RunPending` called by `Start`.
+
+`Start` runs the same startup as production (services, migrations, ready hooks)
+and returns without serving or waiting for a signal. Pair it with `Shutdown` in
+`t.Cleanup`. Do not use `Run` in a test: it blocks until the process receives
+`SIGINT` or `SIGTERM`.
+
+`App.Handler()` returns the handler the server would serve: the router behind
+[cross-origin protection](/gas/core/middleware/#cross-origin-protection).
+Calling its `ServeHTTP` with an `httptest.ResponseRecorder` sends a request
+through all of it with no listener:
+
+<Code code={region(tst, 'handler')} lang="go" title="visits/service_test.go" />
+
+Error responses decode into `gas.ErrorResponse`:
+
+<Code code={region(tst, 'failure')} lang="go" title="visits/service_test.go" />
+
+When a test needs a real client and network round trip,
+`httptest.NewServer(app.Handler())` serves the same handler on a loopback
+port:
+
+<Code code={region(tst, 'server')} lang="go" title="visits/service_test.go" />
+
+Requests built by `httptest.NewRequest` or a Go `http.Client` carry neither a
+`Sec-Fetch-Site` nor an `Origin` header, so cross-origin protection lets them
+through.
+
+## Wiring tests
+
+`Start` returns an error when the wiring is wrong: a constructor or handler
+dependency that is not registered, a service that fails `Init`, a pending
+migration that fails, a ready hook that fails, or a configuration that does not
+bind. A test that starts the production wiring and expects no error catches all
+of these before deployment.
+
+<Code code={region(tst, 'smoke')} lang="go" title="visits/service_test.go" />
+
+## Scoped services outside a request
+
+Scoped services normally come from the request scope the app creates for each
+request (see [Request scopes](/gas/core/request-scopes/)). In a test, create a
+scope from a container yourself:
+
+<Code code={region(tst, 'scope')} lang="go" title="visits/service_test.go" />
+
+`gas.WithRequestScope(ctx, scope)` attaches a scope to a context, so code that
+calls `gas.ResolveFromRequestScope` or `gas.RequestScope` on a request built
+with that context finds it.
+
+## Testing handlers that need a principal
+
+A handler that calls `ctx.Principal()` reads the principal an authentication
+middleware attached to the request context. In a test, a middleware that
+attaches a fixed principal with `gas.WithPrincipal` stands in for
+authentication:
+
+<Code code={region(tst, 'principal')} lang="go" title="visits/service_test.go" />
+
+To test the authentication middleware itself, see [Auth](/gas/modules/auth/)
+and its `authtest` mocks.

@@ -1,0 +1,16 @@
+{
+  "GasEnv": "development",
+  "Server": {
+    "Host": "localhost",
+    "Port": 8080
+  },
+  "Database": {
+    "Driver": "sqlite",
+    "DSN": "file:notes.db",
+    "MaxOpenConns": 1,
+    "MaxIdleConns": 1
+  },
+  "Keys": {
+    "AdminToken": "change-me-to-a-long-random-string"
+  }
+}

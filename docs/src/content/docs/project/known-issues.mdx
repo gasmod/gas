@@ -1,0 +1,307 @@
+---
+title: Known issues
+description: Open defects in Gas v0.6.0, grouped by module, with workarounds where one exists.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+This page lists the defects that are open in the release these docs describe,
+grouped by module, with a workaround where one exists. Every issue is open: a
+design decision or a fix is pending.
+
+The canonical list is
+[`KNOWN_ISSUES.md`](https://github.com/gasmod/gas/blob/main/KNOWN_ISSUES.md) at
+the repository root. Each entry there has a stable ID (`KI-NNN`, never reused),
+the evidence, and the next step. An entry stays until its fix is merged; the
+fix removes the entry in the same change, and when the fix is visible to users,
+the module's `CHANGELOG.md` records it. If this page and that file disagree,
+the file is right.
+
+## Core
+
+### KI-035: a recovered handler panic is logged without the request ID
+
+When a handler panics, the router recovers and logs the panic through the
+`gas.Logger` registered in the container. `gas.RequestLogger[T]` puts its
+`request_id`-enriched logger on the request context and under `T`, never under
+`gas.Logger`, so the panic line carries no `request_id` even with a request ID
+middleware and `gas.RequestLogger` mounted.
+
+**Workaround:** none in Gas. The stack trace is also written to stderr, so
+correlate by time if you need to.
+
+### KI-039: `gas.WithServiceInstance` with a nil interface panics at Start
+
+Registering a nil interface value, such as a `gas.ConfigProvider` variable that
+holds nil, is accepted at registration and panics at `Start` with
+`reflect: call of reflect.Value.Interface on zero Value`.
+
+**Workaround:** check the value before you register it.
+
+### KI-045: routes inside `Group` and `Route` lose the router's validator and form decoder
+
+A sub-router created by `Group` or `Route` does not copy the parent router's
+validator or form decoder, so its handlers get a fresh decoder and validator
+on each request. Form binding there ignores `form` tags and rejects unknown
+keys, and validation rules registered on the router's validator are absent.
+A field tagged `form:"user_name"` posted as `user_name=bob&extra=1` binds on a
+top-level route and fails with 400 `invalid_form` inside a group.
+
+**Workaround:** register handlers that bind forms or rely on custom validation
+rules directly on the top-level router.
+
+### KI-050: `RequestLogger[T]` silently keeps a concrete scoped `T`
+
+`gas.RequestLogger[T]` puts the per-request logger into the request scope's
+slot for `T` only when the logger's type is assignable to `T`. For a concrete
+`T`, such as `struct{ gas.Logger }`, it keeps the original logger without an
+error or a log line, so code resolving `T` gets no `request_id`. The logger on
+the request context does carry it.
+
+**Workaround:** declare `T` as an interface, for example
+`type RequestLogger interface{ gas.Logger }`, as the examples do.
+
+### KI-054: `RestartService` revives routes the restarted Init did not re-register
+
+When a service is closed with `CloseService`, its routes answer 503. When it
+is restarted, its first route registration lifts the 503 for all of its old
+routes, and every route its first `Init` registered is served again with the
+original handler, even one the new `Init` did not register. `Routes()` lists
+only what the new `Init` registered. A path re-registered with a different
+handler is likely affected too; that case is untested.
+
+**Workaround:** register the same routes on every `Init` of a service that can
+be restarted. See [Ownership and teardown](/gas/core/ownership/).
+
+### KI-056: `Routes()` misreports global named middleware for routes registered before the `Use`
+
+Named middleware added with a top-level `Use` runs on every route, wherever
+the `Use` call sits. But `Routes()`, and the route map logged at startup, list
+it only on top-level routes registered after the `Use` (and on grouped
+routes), so a route registered before it is reported without it. Serving is
+correct; only the report is wrong.
+
+**Workaround:** call `Use` before registering routes when you rely on
+`Routes()` or the route-map log.
+
+## Config
+
+### KI-046: `config.Load` does not apply the Secrets Manager provider's timeout
+
+`Config.Load` loads providers with `context.Background()` through their
+context-aware `LoadContext`, and only the Secrets Manager provider's own
+`Load` applies `DefaultTimeout` or `WithTimeout`. An endpoint that accepts and
+never answers blocks `config.Load` with no deadline from the provider.
+
+**Workaround:** call `cfg.LoadWithContext(ctx)` with a context that has a
+deadline. See [Config](/gas/modules/config/).
+
+### KI-047: the JSON provider accepts a file holding `null`
+
+A JSON config file whose content is `null` loads as no values instead of
+failing with `ErrJSONDecodeFailed`, as a top-level array, string, number, or
+boolean does.
+
+**Workaround:** mark required fields with `validate:"required"`, so binding
+fails when the file supplied nothing.
+
+### KI-055: env and .env separators with uppercase letters never match
+
+The environment and `.env` providers lowercase every variable name before
+splitting it on the separator, but keep the separator as given. A separator
+with an uppercase letter, such as `WithEnvSeparator("_X_")`, never matches, so
+`PROBEA_X_B` loads as the flat key `probea_x_b` instead of nesting.
+
+**Workaround:** use a separator without uppercase letters, such as the default
+`__`.
+
+## Logging
+
+### KI-041: `log.WithEventInitialCapacity` with a negative value panics
+
+The option stores the value as given, and the first log call then panics with
+`makeslice: cap out of range`.
+
+**Workaround:** pass zero or a positive capacity.
+
+### KI-042: `log.Handler` cannot be built outside the package
+
+`log.Handler` is exported, but its fields are unexported and no constructor
+returns one, so it cannot be composed into a custom handler chain as its
+documentation suggests.
+
+**Workaround:** use `log.NewShippingHandler`, which returns a `slog.Handler`.
+See [Logging](/gas/modules/logging/).
+
+## Database
+
+### KI-038: `Close` leaks the pgx pool when closing the `sql.DB` fails
+
+`database.Service.Close` returns as soon as closing the `*sql.DB` fails, before
+it closes the pgx pool, so in pgx mode the pool stays open.
+
+**Workaround:** none. It matters only when closing the `*sql.DB` fails, at
+shutdown.
+
+### KI-043: database health errors use the wrong prefix
+
+`CheckHealth` and `CheckReady` return errors starting with `database:`
+(`database: closed`, `database: not initialized`), while every other error of
+the package starts with the service name, `gas/database`.
+
+**Workaround:** if you match on error text, match these two as they are.
+
+## Migrations
+
+### KI-048: `migrate` on MySQL requires `parseTime=true`
+
+The tracking table's `applied_at` column is scanned into a `time.Time`.
+Without `parseTime=true` in the MySQL DSN, the first `RunPending` succeeds and
+every later read of the tracking table fails with
+`sql: Scan error on column index 5, name "applied_at"`.
+
+**Workaround:** add `parseTime=true` to the MySQL DSN. See
+[Migrations](/gas/modules/migrations/).
+
+## Auth
+
+### KI-040: `apikey` `Generate` panics on a short `KeyLength` from `WithConfig`
+
+`Generate` slices the generated key at the prefix length plus 8 characters.
+With `KeyLength` below 6 bytes the encoded key is shorter than that, and the
+slice panics. A config bound from the `ConfigProvider` is protected by its
+`validate:"min=16"` tag, but a config given with `apikey.WithConfig` is used as
+given.
+
+**Workaround:** keep `KeyLength` at 16 or more in a config passed with
+`WithConfig`, as the bound config requires.
+
+### KI-044: the `apikey` MySQL migration fails on MySQL 8.4
+
+The migration `create api keys` (version `20250323002`) declares
+`scopes TEXT NOT NULL DEFAULT ''`, and MySQL rejects a literal default on a
+`TEXT` column with `Error 1101 (42000)`. The session and token stores migrate
+cleanly.
+
+Separately, each auth MySQL migration file holds several statements and
+`gas/migrate` runs a file in one call, so on MySQL the DSN needs
+`multiStatements=true` for any of them to apply.
+
+**Workaround:** for API keys, use PostgreSQL or SQLite. See
+[Auth](/gas/modules/auth/).
+
+## Cache
+
+### KI-052: `cache/valkey` Init's context does not bound the dial
+
+The Valkey client is created without a context, so against a server that
+accepts the connection and never answers, `Init` runs until
+`cache.dialtimeout` ends the attempt, whatever the deadline of its context.
+Measured: 30s with a 300ms context and a 30s `dialtimeout`.
+
+**Workaround:** keep `cache.dialtimeout` short; it is the bound that applies.
+See [Cache](/gas/modules/cache/).
+
+## Storage
+
+### KI-051: `storage/s3` option comments say a nil client is ignored
+
+`WithClient`, `WithPresignerS3Client`, and `WithPresignClient` store their
+value, nil included, so a nil passed after a real client discards it and the
+constructor builds a client from the configuration. Their doc comments say a
+nil client is ignored.
+
+**Workaround:** do not pass nil to these options. See
+[Storage](/gas/modules/storage/).
+
+## Email
+
+### KI-034: `gas.Email.Headers` is never sent by `email/ses`
+
+`ses.Service.Send` builds the SES request from the recipients, subject, and
+bodies and never reads `Headers`, so custom headers are dropped without an
+error.
+
+**Workaround:** none. Do not rely on custom headers with the SES backend. See
+[Email](/gas/modules/email/).
+
+### KI-036: `ses.Service.Send` panics before `Init`
+
+The SES client is created in `Init`. On a service that was constructed but
+never initialized, `Send` dereferences a nil client and panics instead of
+returning an error.
+
+**Workaround:** let the container build the service, which runs `Init` before
+handing it out. This bites only code that calls the constructor by hand.
+
+## Queue
+
+### KI-036: `sqs.Service` methods panic before `Init`
+
+The same defect as in email: `Enqueue`, `Dequeue`, `Ack`, and `Nack` on an
+`sqs.Service` that was never initialized panic on a nil client.
+
+**Workaround:** as above. See [Queue](/gas/modules/queue/).
+
+## Templates
+
+### KI-033: `template/dir.Store` cannot be registered as `gas.TemplateProvider`
+
+`dir.Store` declares `Close() error` and has no `Name` or `Init`, so the
+container rejects it at `Start` with
+`*dir.Store declares Close but does not implement gas.Service`.
+
+**Workaround:** build the store yourself, wrap it in a `composite.Store`, and
+close it yourself. [Templates](/gas/modules/templates/#directory-store) shows
+the code.
+
+### KI-049: the `template/db` MySQL migration needs `multiStatements=true`
+
+The store's MySQL migration file holds a `CREATE TABLE` and a `CREATE INDEX`,
+and `gas/migrate` runs a file as one statement batch. Without
+`multiStatements=true` in the DSN, the migration fails with `Error 1064` at the
+`CREATE INDEX`. Same mechanism as KI-044.
+
+**Workaround:** add `multiStatements=true` (and `parseTime=true`, for KI-048)
+to the MySQL DSN. See [Templates](/gas/modules/templates/).
+
+## UI
+
+### KI-032: `RenderFragment` renders nothing for a page that only defines `content`
+
+`RenderFragment` executes only the page's text outside its `{{define}}`
+blocks. A page written to the usual convention, with all its markup in
+`{{define "content"}}`, renders an empty fragment, so one template cannot
+serve both `Render` and `RenderFragment` that way.
+
+**Workaround:** put the markup in a partial and call it both from the
+`content` block and from the page's top level.
+[UI](/gas/modules/ui/#htmx-fragments) shows the templates.
+
+### KI-053: `ui` keeps serving errors after a failed recompile
+
+After the templates have compiled once, a failed recompile, such as one that
+`RegisterFuncs` triggers while some page has a parse error, makes every later
+render retry the build and return the error. The previously compiled
+templates stay in memory but are never served, in production as well as in
+development.
+
+**Workaround:** fix the template; the next successful compile restores
+rendering. Compile every template in a test, for example with `ui.NewEngine`
+and `Build`, so a parse error fails before deployment.
+
+## Tests only
+
+### KI-010: suspected flake in the S3 multipart content-length test
+
+One case of `TestProvider_PutObjectContentLength` in `storage/s3` failed once
+in about 31 runs when the in-process fake S3 hit a transport error that masked
+the expected `ErrContentLengthMismatch`. The runtime behavior is correct; only
+the test assertion is fragile.
+
+<Aside>
+Found something that is not here? Open an issue as described in
+[Contributing](/gas/project/contributing/). Security issues go through
+[`SECURITY.md`](https://github.com/gasmod/gas/blob/main/SECURITY.md), never a
+public issue.
+</Aside>

@@ -29,7 +29,7 @@ gas.WithSingletonService[gas.DatabaseProvider](database.New()),
 The full guide, with configuration, testing, and worked examples, is on the docs site.
 This README is deliberately a signpost: keeping a second copy here is how the docs drifted before.
 
-- **Guide:** [Connect a database](https://gasmod.github.io/gas/guides/database/)
+- **Guide:** [Database](https://gasmod.github.io/gas/modules/database/)
 - **API reference:** [pkg.go.dev/github.com/gasmod/gas/database](https://pkg.go.dev/github.com/gasmod/gas/database)
 - **Contributing:** [CONTRIBUTING.md](../CONTRIBUTING.md)
 

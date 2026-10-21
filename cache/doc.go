@@ -11,7 +11,7 @@
 // ErrClosed, returned by every operation on a backend that has not started
 // or has been stopped.
 //
-// Guides with usage examples are at https://gasmod.github.io/gas.
+// Guides with usage examples are at https://gasmod.github.io/gas/modules/cache/.
 //
 // SPDX-License-Identifier: MIT
 package cache

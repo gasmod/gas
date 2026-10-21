@@ -1,0 +1,11 @@
+{{define "base"}}<!doctype html>
+<html>
+<head>
+<title>{{block "title" .}}Gas{{end}}</title>
+<link rel="stylesheet" href="/static/app.css?v={{buildId}}">
+</head>
+<body>
+{{template "nav" .}}
+<main>{{block "content" .}}{{end}}</main>
+</body>
+</html>{{end}}

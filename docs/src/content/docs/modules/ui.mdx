@@ -1,0 +1,285 @@
+---
+title: UI
+description: Server-rendered HTML with gas/ui, with layouts, partials, HTMX fragments, template functions, and static files.
+---
+
+import { Code, Aside, FileTree } from '@astrojs/starlight/components';
+import uiSrc from '../../../../snippets/modules-ui/main.go?raw';
+import uiTest from '../../../../snippets/modules-ui/main_test.go?raw';
+import notesList from '../../../../snippets/modules-ui/templates/notes/list.html?raw';
+import notesPartial from '../../../../snippets/modules-ui/templates/partials/notes.html?raw';
+import baseLayout from '../../../../snippets/modules-ui/templates/layouts/base.html?raw';
+import homePage from '../../../../snippets/modules-ui/templates/home.html?raw';
+import { region } from '../../../lib/snippet';
+
+## What it is for
+
+`gas/ui` renders HTML pages with Go's `html/template` and serves static files.
+It reads template source through `gas.TemplateProvider`, so where templates
+live is the business of [gas/template](/gas/modules/templates/), and it
+implements `gas.UIProvider`, the core interface the app's services render
+through. A service that renders pages takes `gas.UIProvider` and never imports
+this module.
+
+It gives you:
+
+- a page convention with layouts and partials, compiled on first render and
+  cached, or recompiled on every render in development;
+- `Render`, `RenderWithStatus`, and `RenderFragment`, which skips the layout
+  for HTMX swaps;
+- built-in template functions, plus functions any service can add;
+- a static file route, from a directory or an `fs.FS` such as an `embed.FS`.
+
+## Install
+
+```bash
+go get github.com/gasmod/gas/ui github.com/gasmod/gas/template
+```
+
+## Wiring
+
+<Code code={region(uiSrc, 'embed')} lang="go" />
+
+<Code code={region(uiSrc, 'wiring')} lang="go" title="main.go" />
+
+`templates` and `static` are `fs.Sub(assets, "templates")` and
+`fs.Sub(assets, "static")`.
+
+`ui.New[T]()` returns a constructor that resolves `T`, `*gas.Router`,
+`gas.ConfigProvider`, and `gas.Logger` from the container. `T` is the type the
+template store is registered under, so `ui.New[gas.TemplateProvider]()` takes
+whatever store the app registered for that interface. Register the result under
+`gas.UIProvider` so consumers depend on the interface. The constructor never
+fails; its error result is always nil.
+
+Two options:
+
+- `ui.WithStaticFS(fsys)` serves static files from `fsys` instead of
+  `ui.staticdir`.
+- `ui.WithConfig(cfg)` uses `cfg` as the whole configuration and skips the
+  `ConfigProvider`. Start from `ui.DefaultConfig()`. Since nothing is bound,
+  `GasEnv` stays empty unless you set it, which turns development mode off.
+
+When the service starts it binds and validates the configuration, builds the
+template engine, and registers the static route. It does not read any template
+yet.
+
+## Usage
+
+### Template layout
+
+<FileTree>
+- templates/
+  - layouts/
+    - base.html defines "base", the entry point
+  - partials/
+    - nav.html
+    - notes.html
+  - home.html rendered as "home"
+  - 404.html rendered as "404"
+  - notes/
+    - list.html rendered as "notes/list"
+</FileTree>
+
+The engine lists every template in the provider and sorts each into one of
+three kinds by its name:
+
+- Names under `layouts/` and `partials/` are parsed into every page.
+- Every other template is a page, rendered by its name without the `.html`
+  extension: `home.html` is `"home"`, `notes/list.html` is `"notes/list"`.
+- When at least one layout exists, `Render` and `RenderWithStatus` render
+  every page through the template that `ui.layoutname` names, `base` by
+  default. A page fills the layout's
+  blocks with `{{define}}`. With no layouts at all, a page renders on its own.
+
+<Code code={baseLayout} lang="html" title="templates/layouts/base.html" />
+
+<Code code={homePage} lang="html" title="templates/home.html" />
+
+Each page is compiled with all the layouts and partials, so two pages can both
+define `content` without clashing.
+
+### Rendering
+
+<Code code={region(uiSrc, 'pages')} lang="go" title="pages.go" />
+
+- `Render(w, name, data)` writes the page with status 200.
+- `RenderWithStatus(w, status, name, data)` writes it with `status`.
+- Both execute the template into a buffer first. A template error is returned
+  and nothing is written, so a failed render never sends half a page. On
+  success they set `Content-Type: text/html; charset=utf-8`.
+- An unknown name returns `ui: template "<name>" not found`.
+
+Templates are compiled on the first render, not when the service starts, so
+template functions other services add while starting are in place. When
+`GasEnv` is `development` or `testing`, every render recompiles the templates,
+so edits to a store that reads from disk show on the next request. A failed
+compile returns its error, and every later render retries the build and
+returns the error until a compile succeeds; the previously compiled templates
+are not served in the meantime
+([KI-053](/gas/project/known-issues/)).
+
+### HTMX fragments
+
+`RenderFragment(w, name, data)` renders a page without its layout, for an HTMX
+swap. It sets the same `Content-Type` and writes no explicit status.
+
+<Aside type="caution" title="Known issue KI-032">
+`RenderFragment` executes only the page's text outside its `{{define}}` blocks.
+A page that keeps all its markup in `{{define "content"}}`, the usual
+convention, renders an empty fragment. See
+[Known issues](/gas/project/known-issues/).
+</Aside>
+
+Until that changes, put the shared markup in a partial and call it both from
+the `content` block and from the page's top level:
+
+<Code code={notesPartial} lang="html" title="templates/partials/notes.html" />
+
+<Code code={notesList} lang="html" title="templates/notes/list.html" />
+
+<Code code={region(uiSrc, 'fragment')} lang="go" />
+
+`Render` sees the list inside the layout; `RenderFragment` sees only the list.
+
+### Template functions
+
+Every template can call these:
+
+| Function | Does |
+|---|---|
+| `upper`, `lower`, `trimSpace` | `strings.ToUpper`, `strings.ToLower`, `strings.TrimSpace` |
+| `contains`, `hasPrefix`, `hasSuffix`, `join`, `split` | `strings.Contains`, `strings.HasPrefix`, `strings.HasSuffix`, `strings.Join`, `strings.Split` |
+| `replace` | `strings.ReplaceAll` |
+| `title` | `strings.ToTitle`, which upper-cases every letter; it does not capitalize words |
+| `truncate n s` | The first `n` bytes of `s` followed by `...`, or `s` when it is not longer than `n` |
+| `now` | `time.Now()` |
+| `formatTime layout t`, `formatTimePtr layout t` | `t.Format(layout)`; the pointer form returns an empty string for nil |
+| `add a b`, `sub a b` | Integer arithmetic |
+| `dict k1 v1 k2 v2 ...` | A `map[string]any`; pairs whose key is not a string are skipped |
+| `list a b ...` | A `[]any` |
+| `json v` | `v` marshaled to JSON, or nil when it cannot be |
+| `env` | The app's `GasEnv` |
+| `buildId` | An ID fixed for the life of the process; in development or testing, a new `dev-` ID on every call |
+
+`dict` is how a partial gets more than one value:
+`{{template "card" dict "Name" .UserName "Role" "admin"}}`. `buildId` makes a
+cache-busting query parameter for asset URLs, as the layout above uses it.
+
+Two ways to add functions. `Config.FuncMap`, set through `ui.WithConfig`, is
+merged over the built-ins when the service starts, and a name there replaces
+the built-in. And any service can call `RegisterFuncs` from its `Init`:
+
+<Code code={region(uiSrc, 'funcs')} lang="go" />
+
+`RegisterFuncs` merges the functions into the engine and marks the templates
+for recompiling on the next render. A name that already exists is replaced,
+with a warning in the log. Called before the ui service has started, it logs a
+warning and drops the functions; a service that takes `gas.UIProvider` as a
+dependency always starts after it.
+
+### Static files
+
+The service registers a `GET` route for static files when it starts, owned by
+the ui service, on `ui.staticpath` (`/static/*` by default), or on each pattern
+in `ui.staticpaths` when that is set. Files come from the `ui.WithStaticFS`
+filesystem when one was given, otherwise from `ui.staticdir`. With neither, no
+route is registered.
+
+Three settings, three separate jobs:
+
+| Setting | Answers |
+|---|---|
+| `ui.staticdir` or `ui.WithStaticFS` | What to serve |
+| `ui.staticpath` or `ui.staticpaths` | Which URL patterns serve it |
+| `ui.staticstripprefix` | What to strip from the request path before looking up the file |
+
+When `ui.staticstripprefix` is empty, it defaults to `ui.staticpath`'s literal
+part up to its first wildcard or path parameter: `/static/*` strips `/static/`,
+so `/static/app.css` is served from `app.css` at the root of the static
+directory or filesystem. If your files mirror the URLs instead
+(`static/app.css` served at `/static/app.css`), set `ui.staticstripprefix` to
+`/`. With `ui.staticpaths` set and no strip prefix, nothing is stripped:
+
+<Code code={region(uiSrc, 'config')} lang="go" />
+
+A request whose path ends in `/`, or that names the strip prefix itself without
+the slash (`/static`), gets 404, so directory listings are never served. The
+same handler is exported as `ui.StaticHandler(prefix, dir)` and
+`ui.StaticHandlerFS(prefix, fsys)` for routes of your own.
+
+## Configuration
+
+Unless `ui.WithConfig` is given, the service binds its settings from the
+`gas.ConfigProvider` over `ui.DefaultConfig()` when it starts, so a key that is
+not set keeps its default. The service also reads `GasEnv`, the app
+environment; see [Config](/gas/modules/config/).
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `ui.staticdir` | string | `static/` | Directory of static files. Empty disables the directory; ignored when `ui.WithStaticFS` is given |
+| `ui.staticpath` | string | `/static/*` | URL pattern of the static route. Must start with `/` |
+| `ui.staticpaths` | list of strings | empty | URL patterns, one static route each, used instead of `ui.staticpath`. Each must start with `/` |
+| `ui.staticstripprefix` | string | empty | Prefix stripped before the file lookup; empty means the default above. Must start and end with `/` |
+| `ui.layoutname` | string | `base` | The `{{define}}` name of the layout entry point. Must not be empty |
+
+The service validates the configuration when it starts, whether it was bound
+or given with `ui.WithConfig`. Besides the rules in the table, `ui.staticdir`
+must be an existing directory inside the working directory, unless a static
+filesystem was given; that check is skipped when running under `go test`.
+
+<Aside type="caution" title="The default needs a ./static directory">
+With the defaults and no `ui.WithStaticFS`, an app started from a directory
+with no `static` subdirectory fails to start with
+`gas/ui: invalid configuration: UI.StaticDir: "static/" does not exist`. Create
+the directory, pass a static filesystem, or set `ui.staticdir` to empty.
+</Aside>
+
+## Errors
+
+The package defines no sentinel errors. Errors from the service start with
+`gas/ui:`, and errors from the template engine with `ui:`.
+
+| Error | Returned by | When |
+|---|---|---|
+| `gas/ui: config binding: ...` | Startup | The config cannot be bound |
+| `gas/ui: invalid configuration: ...` | Startup | A rule in [Configuration](#configuration) fails |
+| `gas/ui: service is closed` | `Render`, `RenderWithStatus`, `RenderFragment` | After `Close`; the method also writes a 503 response |
+| `gas/ui: no template engine configured` | `Render`, `RenderWithStatus`, `RenderFragment` | Before the service has started; nothing is written |
+| `ui: listing templates: ...`, `ui: loading template ...`, `ui: parsing layout ...`, `ui: parsing partial ...`, `ui: parsing page ...` | The render that compiles | The provider or a template fails |
+| `ui: template "<name>" not found` | The render methods | No page has that name |
+| `ui: executing template ...`, `ui: executing fragment ...` | The render methods | Template execution fails; nothing is written |
+
+The render methods return the error and leave the response to you; a handler
+that returns it hands it to the router's error handler (see
+[Errors](/gas/core/errors/)).
+
+## Health and readiness
+
+`ui.Service` implements `gas.ReadyReporter`, not `gas.HealthReporter`.
+`CheckReady` returns `gas/ui: template engine not initialized` before the
+service has started and `gas/ui: service is closed` after `Close`.
+
+`Close` marks the service closed: the render methods then answer 503 and
+return an error. The static route keeps serving.
+
+## Testing
+
+`uitest.MockUI` implements `gas.UIProvider`. Each method records the call in
+`Calls` and delegates to `RenderFn`, `RenderFragmentFn`, `RenderWithStatusFn`,
+or `RegisterFuncsFn` when set. Unset, a method returns nil and writes nothing to
+the `ResponseWriter`. `CallCount(method)` counts the calls to one method, and
+`Reset` clears them.
+
+<Code code={region(uiTest, 'test')} lang="go" title="pages_test.go" />
+
+To test the templates themselves, build an engine over a store with
+`ui.NewEngine(provider, funcMap, layout, devMode, logger)` and render into an
+`httptest.ResponseRecorder`, or start the app and send requests to
+`App.Handler()`.
+
+## API reference
+
+- [`github.com/gasmod/gas/ui`](https://pkg.go.dev/github.com/gasmod/gas/ui)
+- [`github.com/gasmod/gas/ui/uitest`](https://pkg.go.dev/github.com/gasmod/gas/ui/uitest)
+- [`gas.UIProvider`](https://pkg.go.dev/github.com/gasmod/gas#UIProvider), in core

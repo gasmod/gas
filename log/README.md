@@ -30,7 +30,7 @@ Nothing. The constructors take no dependencies.
 The full guide, with configuration, testing, and worked examples, is on the docs site.
 This README is deliberately a signpost: keeping a second copy here is how the docs drifted before.
 
-- **Guide:** [Structured logging](https://gasmod.github.io/gas/guides/logging/)
+- **Guide:** [Logging](https://gasmod.github.io/gas/modules/logging/)
 - **API reference:** [pkg.go.dev/github.com/gasmod/gas/log](https://pkg.go.dev/github.com/gasmod/gas/log)
 - **Contributing:** [CONTRIBUTING.md](../CONTRIBUTING.md)
 

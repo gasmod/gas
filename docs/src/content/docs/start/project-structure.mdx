@@ -1,0 +1,133 @@
+---
+title: Project structure
+description: A recommended layout for a Gas application, drawn from the example apps in the repository.
+---
+
+import { Code, Aside, FileTree } from '@astrojs/starlight/components';
+import mainSrc from '../../../../snippets/start-tutorial/cmd/main.go?raw';
+import { region } from '../../../lib/snippet';
+
+export const local = (src) =>
+	src.replaceAll('github.com/gasmod/gas/docs/snippets/start-tutorial', 'example.com/notesapi');
+
+Gas does not require any layout: an app is a `gas.App` with services
+registered on it, and the code can live wherever Go allows. This page is a
+recommendation. It is the layout the example apps in
+[`example/`](https://github.com/gasmod/gas/tree/main/example) use, and the one
+the [tutorial](/gas/start/tutorial/) builds.
+
+## The layout
+
+<FileTree>
+- myapp/
+  - go.mod
+  - config.json settings for local runs, or a .env file
+  - cmd/
+    - main.go loads, builds, and runs the app
+  - app/
+    - app.go New wires modules, services, and middleware
+    - errors.go app-wide pieces such as a custom error handler
+    - app_test.go starts the whole app and tests it over HTTP
+  - notes/ one package per service
+    - service.go
+    - handlers.go
+    - migrations/
+      - 20261021001_create_notes.up.sql
+      - 20261021001_create_notes.down.sql
+  - billing/
+    - …
+  - db/ generated query code, if you use sqlc
+</FileTree>
+
+### `cmd/`: the entry point
+
+`main` does as little as possible: load the config, build the app, run it,
+and exit on error. Everything worth testing lives in packages it imports.
+
+<Code code={local(region(mainSrc, 'main'))} lang="go" title="cmd/main.go" />
+
+In `example/api-server`, `main` is shorter still, because its `app.New`
+loads the config itself. `example/lambda-worker/cmd/main.go` builds a
+`gas.Worker` instead of an app and hands its handler to the Lambda runtime;
+see [Workers](/gas/core/workers/).
+
+### `app/`: the wiring
+
+`app.New` returns a `*gas.App` with everything registered and does not run it.
+It is the one place that says what the app is made of:
+
+- the config, registered under `gas.ConfigProvider`;
+- the logger, under `gas.Logger`;
+- the infrastructure modules, each under the interface services ask for, such
+  as `gas.DatabaseProvider` and `gas.MigrationManager`;
+- the app's own services, under their concrete types;
+- the error handler and global middleware.
+
+Returning the app unstarted is what makes the whole app testable. A test calls
+`New`, can register replacements for external dependencies, then calls
+`Start` and serves `Handler()` from `httptest`. The tutorial's test runs the
+app as is; `example/api-server/app/app_test.go` swaps its database, storage,
+queue, email, and cache for in-process doubles first. See
+[Testing](/gas/production/testing/).
+
+App-wide types that are not services also go here:
+`example/api-server/app/errors.go` holds its custom error handler, and
+`request_logger.go` its per-request logger type.
+
+### One package per service
+
+Each feature is a [service](/gas/core/services/) in its own package, named
+after what it does (`notes`, `files`, `shares`). The package holds:
+
+- `service.go`: the `Service` type, its constructor, and `Name`, `Init`, and
+  `Close`. `Init` registers the service's routes, middleware, subscriptions,
+  and migrations, so everything the service owns is declared in one place.
+- the handlers, in the same file or beside it.
+- `migrations/`: the service's `.up.sql` and `.down.sql` files, embedded with
+  `//go:embed migrations/*.sql` and registered in `Init` with
+  `RegisterFS`. The service that owns a table owns its schema. See
+  [Migrations](/gas/modules/migrations/).
+- any other files the service embeds. In `example/api-server`, the `shares`
+  service embeds its notification template from `shares/templates/`.
+
+A service depends on other services and modules through its constructor
+parameters, never through package-level state. A package per service keeps
+those dependencies visible in its imports, and keeps one service from
+reaching into another's internals.
+
+`example/api-server` has three such packages: `auth`, `files`, and `shares`.
+A small app can start with its services as files in `app/`, as
+`example/hello-world-2` does with `greet_module.go` and `notes_module.go`,
+and move each one out when it grows a table or a second file.
+
+### Configuration files
+
+The config file sits in the project root, and the app is run from there:
+reading from disk, the JSON and .env providers only open files inside the
+working directory.
+
+- `example/templates-basic` and `example/hello-world-2` read `config.json`.
+- `example/api-server` reads a `.env` file when there is one, and environment
+  variables on top. It commits `.env.example` instead of `.env`.
+
+The tutorial reads `config.json` and then the environment, so the file holds
+local defaults and the environment overrides them in production. See
+[Config](/gas/modules/config/) for the providers and how keys map to
+environment variables.
+
+### Generated code and assets
+
+- `db/`: `example/api-server` and `example/lambda-worker` generate typed
+  query code with sqlc into a shared `db/` package, configured by `sqlc.yaml`
+  in the project root. The schema is `db/schema.sql`; the queries are
+  `db/queries/*.sql` in api-server and `db/orders.sql` in lambda-worker.
+- `templates/` and `static/`: `example/templates-basic` keeps app-wide HTML
+  templates (with `layouts/` and `partials/`) and static assets at the root,
+  and loads templates with `os.DirFS("templates")`. See
+  [Templates](/gas/modules/templates/) and [UI](/gas/modules/ui/).
+
+<Aside type="tip">
+`example/api-server` also has a `compose.yaml` that starts the services it
+talks to locally (PostgreSQL and LocalStack), and a `Makefile` for build,
+test, and lint. Neither is part of Gas; they are conveniences worth copying.
+</Aside>

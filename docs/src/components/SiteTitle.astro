@@ -1,0 +1,51 @@
+---
+// Replaces Starlight's SiteTitle to show the Gas icon and the documented
+// release. The icon is served from public/ rather than through `logo`, which
+// only accepts files Vite can import.
+import { version } from '../lib/version';
+
+const { siteTitle, siteTitleHref } = Astro.locals.starlightRoute;
+const icon = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/gas-icon.svg`;
+---
+
+<div class="sl-flex title-wrapper">
+	<a href={siteTitleHref} class="site-title sl-flex">
+		<img src={icon} alt="" width="32" height="32" />
+		<span translate="no">{siteTitle}</span>
+	</a>
+	<span class="version" title="Documented release">{version}</span>
+</div>
+
+<style>
+	.title-wrapper {
+		align-items: center;
+		gap: 0.6rem;
+		min-width: 0;
+	}
+	.site-title {
+		align-items: center;
+		gap: var(--sl-nav-gap);
+		font-size: var(--sl-text-h4);
+		font-weight: 600;
+		color: var(--sl-color-text-accent);
+		text-decoration: none;
+		white-space: nowrap;
+		min-width: 0;
+	}
+	.site-title span {
+		overflow: hidden;
+	}
+	img {
+		height: calc(var(--sl-nav-height) - 2 * var(--sl-nav-pad-y));
+		width: auto;
+	}
+	.version {
+		padding: 0.1rem 0.45rem;
+		border: 1px solid var(--sl-color-gray-5);
+		border-radius: 999px;
+		font-family: var(--sl-font-mono);
+		font-size: var(--sl-text-xs);
+		color: var(--sl-color-gray-2);
+		white-space: nowrap;
+	}
+</style>

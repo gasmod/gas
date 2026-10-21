@@ -32,7 +32,7 @@ gas.WithSingletonService[gas.UIProvider](ui.New[gas.TemplateProvider]()),
 The full guide, with configuration, testing, and worked examples, is on the docs site.
 This README is deliberately a signpost: keeping a second copy here is how the docs drifted before.
 
-- **Guide:** [Serve HTML](https://gasmod.github.io/gas/guides/html/)
+- **Guide:** [UI](https://gasmod.github.io/gas/modules/ui/)
 - **API reference:** [pkg.go.dev/github.com/gasmod/gas/ui](https://pkg.go.dev/github.com/gasmod/gas/ui)
 - **Contributing:** [CONTRIBUTING.md](../CONTRIBUTING.md)
 

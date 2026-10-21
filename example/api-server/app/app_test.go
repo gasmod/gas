@@ -18,7 +18,6 @@ import (
 	"github.com/gasmod/gas/config/configtest"
 	"github.com/gasmod/gas/email/emailtest"
 	"github.com/gasmod/gas/example/api-server/app"
-	"github.com/gasmod/gas/migrate/migratetest"
 	"github.com/gasmod/gas/queue/queuetest"
 	"github.com/gasmod/gas/storage"
 	"github.com/gasmod/gas/storage/storagetest"
@@ -30,7 +29,7 @@ func testConfig(t *testing.T) gas.ConfigProvider {
 	t.Helper()
 
 	cfg, err := configtest.NewMockConfigWithValues(map[string]any{
-		"gas_env": "test",
+		"gasenv": "test",
 		// Keys are matched by lowercasing the Go field name (or its json tag).
 		// jwt.Settings carries no json tags, so the key is "signingkey", not
 		// "signing_key".
@@ -50,7 +49,9 @@ func testConfig(t *testing.T) gas.ConfigProvider {
 // newTestApp builds the real app and swaps every external dependency for an
 // in-process double, so the whole DI graph and HTTP stack run with no Postgres,
 // S3, SQS, or SES. The registrations below win because registration is keyed by
-// type and Start has not built anything yet.
+// type and Start has not built anything yet. gas/migrate is not swapped: the
+// app's own registration runs and applies the migrations through the fake
+// connector.
 type testEnv struct {
 	srv   *httptest.Server
 	conn  *fakeConnector
@@ -80,7 +81,6 @@ func newTestApp(t *testing.T) *testEnv {
 
 	c.RegisterServiceInstance[gas.ConfigProvider](testConfig(t))
 	c.RegisterSingletonService[gas.DatabaseProvider](fakeDatabase(conn))
-	c.RegisterServiceInstance[gas.MigrationManager](&migratetest.MockMigrationManager{})
 	c.RegisterServiceInstance[storage.Provider](&storagetest.MockProvider{})
 	c.RegisterServiceInstance[storage.Presigner](&storagetest.MockPresigner{})
 	c.RegisterServiceInstance[gas.JobQueueProvider](&queuetest.MockQueue{})
@@ -112,6 +112,26 @@ func newTestApp(t *testing.T) *testEnv {
 // and tears down cleanly. newTestApp asserts Start, and its cleanup asserts Stop.
 func TestStartAndStop(t *testing.T) {
 	newTestApp(t)
+}
+
+// TestStartAppliesMigrations runs the app's own gas/migrate registration
+// against the fake connector: Start must find the manager under
+// gas.MigrationManager and apply every service's migrations, so each table's
+// CREATE statement reaches the database.
+func TestStartAppliesMigrations(t *testing.T) {
+	env := newTestApp(t)
+
+	executed := make([]string, 0, len(env.conn.execCalls()))
+	for _, call := range env.conn.execCalls() {
+		executed = append(executed, call.query)
+	}
+	all := strings.Join(executed, "\n")
+
+	for _, table := range []string{"users", "files", "shares"} {
+		if !strings.Contains(all, "CREATE TABLE "+table+" (") {
+			t.Errorf("Start did not apply the migration creating %s", table)
+		}
+	}
 }
 
 // protectedRoutes is every route behind the auth middleware.

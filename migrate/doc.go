@@ -69,7 +69,7 @@
 // SQLite under db/; adapters map each dialect's generated types to one
 // internal interface.
 //
-// Guides with usage examples are at https://gasmod.github.io/gas.
+// Guides with usage examples are at https://gasmod.github.io/gas/modules/migrations/.
 //
 // SPDX-License-Identifier: MIT
 package migrate

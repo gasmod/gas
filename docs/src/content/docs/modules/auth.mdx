@@ -1,0 +1,373 @@
+---
+title: Auth
+description: JWTs, server-side sessions, API keys and single-use tokens with gas/auth, the middleware that puts a principal on the request, and the stores on PostgreSQL, SQLite and MySQL.
+---
+
+import { Code, Aside, CardGrid, Card } from '@astrojs/starlight/components';
+import auth from '../../../../snippets/modules-auth/main.go?raw';
+import authTest from '../../../../snippets/modules-auth/main_test.go?raw';
+import { region } from '../../../lib/snippet';
+
+## What it is for
+
+`gas/auth` turns a request into an authenticated identity and manages the
+credentials behind it. It has four services, one per sub-package:
+
+<CardGrid>
+	<Card title="jwt" icon="seti:lock">Stateless bearer tokens, HS256 or RS256. No database. Cannot be revoked.</Card>
+	<Card title="session" icon="seti:db">Server-side sessions behind a cookie. Revocable.</Card>
+	<Card title="apikey" icon="seti:pipeline">Long-lived keys with scopes for machine callers, stored as hashes. Revocable.</Card>
+	<Card title="token" icon="email">Single-use, expiring tokens for magic links, email verification and password resets.</Card>
+</CardGrid>
+
+The root package declares three interfaces:
+
+- `auth.Authenticator` turns an `*http.Request` into a `gas.Principal`. The
+  `jwt`, `session` and `apikey` services implement it, and `auth.Chain`
+  combines several. `token` does not: a token is verified once and consumed,
+  not presented on every request.
+- `auth.PrincipalRevoker` invalidates credentials: `Revoke` one,
+  `RevokeAll` for a subject, `RevokeAllByScheme` for one scheme of a subject.
+  `session` and `apikey` implement it.
+- `auth.Authorizer` decides whether a principal may perform an action on a
+  resource. The module ships no implementation; the app writes one, and
+  `authtest` has a mock.
+
+`gas.Principal` and the helpers that carry it on a context live in core, so a
+handler reads the principal with `ctx.Principal()` without importing this
+module.
+
+## Install
+
+```bash
+go get github.com/gasmod/gas/auth
+```
+
+## Wiring
+
+<Code code={region(auth, 'wiring')} lang="go" title="main.go" />
+
+Each sub-package's `New(opts...)` returns a constructor, and each service
+implements `gas.Service`. Register it under the sub-package's `Provider`
+interface (`jwt.Provider`, `session.Provider`, `apikey.Provider`,
+`token.Provider`) or as its `*Service`. What the constructors resolve from
+the container:
+
+| Constructor | Resolves |
+|---|---|
+| `jwt.New()` | `gas.ConfigProvider`, `gas.Logger` |
+| `session.New()`, `apikey.New()`, `token.New()` | `gas.DatabaseProvider`, `gas.Logger`, `gas.MigrationManager`, `gas.ConfigProvider` |
+
+In `Init`, each service binds its section of the configuration and validates
+it (see [Configuration](#configuration)), unless `WithConfig(cfg)` was passed:
+a config given that way replaces the bound one and is used as given, without
+its `validate` tags. Start from the package's `DefaultConfig()` when you use
+`WithConfig`, because a zero field is taken literally: a zero
+`Expiry` in a `jwt.Config` signs tokens that expire the moment they are
+issued, and a bare `&jwt.Config{}` has no signing method, so `Init` fails with
+`jwt: signing key not configured`. The checks that a tag cannot express run
+for every config, bound or given.
+
+`session`, `apikey` and `token` also pick a SQL dialect from the database
+provider's `Driver()` and register their migrations with the
+`gas.MigrationManager` in `Init`. Core runs the migrations after every
+service's `Init`, before the app starts serving. See
+[Databases](#databases) and [Migrations](/gas/modules/migrations/).
+
+## Usage
+
+### Protecting routes
+
+<Code code={region(auth, 'middleware')} lang="go" title="accounts.go" />
+
+`auth.Middleware(a, opts...)` runs the authenticator on each request. On
+success it stores the principal on the request context with
+`gas.WithPrincipal` and calls the next handler. On failure it calls the
+`WithOnError` handler with the error; without one it answers a plain-text
+`401 Unauthorized`. An authenticator that returns a `nil` principal with a
+`nil` error has failed with `auth.ErrUnauthenticated`; it never counts as a
+success. Passing a `nil` authenticator panics when the middleware is built.
+
+`auth.Chain{...}` tries each authenticator in order and returns the first
+success. When all fail it returns the last one's error, so with
+`Chain{jwt, session, apikey}` the error a handler sees comes from `apikey`.
+An empty chain returns `auth.ErrUnauthenticated`.
+
+`auth.RequireScheme(scheme)` answers a plain-text `403 Forbidden` when the
+request has no principal or one of another scheme. Mount it after
+`Middleware` for routes that must insist on one credential type, such as a
+settings page a long-lived API key should not reach.
+
+### Reading the principal
+
+<Code code={region(auth, 'principal')} lang="go" />
+
+A `gas.Principal` has `Subject()` (the stable user ID), `Scheme()` (`jwt`,
+`session` or `apikey`, also available as `auth.SchemeJWT`,
+`auth.SchemeSession` and `auth.SchemeAPIKey`), `CredentialID()` (the session
+ID, API key ID or JWT `jti`) and `Metadata()`.
+
+`ctx.Principal()` returns the principal, or a 401 `*gas.Error` to return
+directly when there is none. Outside a handler, `gas.PrincipalFromContext(ctx)`
+returns it with a boolean. `gas.MetadataValue[T](p.Metadata(), key)` reads a
+metadata value and reports `false` when the key is missing or holds another
+type, so there is no unchecked type assertion.
+
+### Issuing credentials
+
+<Code code={region(auth, 'issue')} lang="go" />
+
+### JWT
+
+`Authenticate` reads `Authorization: Bearer <token>`; the word `Bearer` is
+matched case-insensitively. A missing or malformed header, a bad signature, a
+token signed with another algorithm, or a wrong issuer or audience fails with
+`auth.ErrUnauthenticated`; an expired token fails with
+`auth.ErrCredentialsExpired`. The principal's subject is the `sub` claim, its
+credential ID the `jti` claim, and its metadata every claim except `sub`,
+`jti`, `iss`, `aud`, `exp`, `iat` and `nbf`.
+
+`Sign(subject, claims)` signs a token that expires after `jwt.expiry`, and
+`SignWithExpiry` takes the lifetime explicitly. Both set `sub`, `iat` and
+`exp`, plus `iss` and `aud` when configured, after your claims, so your claims
+cannot override them. They add no `jti` of their own, so a principal from a
+token signed this way has an empty credential ID unless your claims include
+one. `Verify(token)` checks a token and returns its
+`*jwt.TokenClaims` without building a principal.
+
+HS256, the default, needs a signing key of at least 32 bytes. RS256 reads a
+PEM public key (PKIX) from `jwt.publickeypath` for verification and a PEM
+private key (PKCS #8 or PKCS #1) from `jwt.privatekeypath` for signing. `Init`
+requires a signing key either way, so even a service that only verifies RS256
+tokens needs the private key path.
+
+A JWT cannot be revoked: the service is not an `auth.PrincipalRevoker`, and
+nothing is stored per token. Keep `jwt.expiry` short if that matters.
+
+### Sessions
+
+`Create(ctx, subject, meta, r)` stores a new session with a random ID (32
+random bytes, URL-safe base64), the metadata, the client's address
+(`r.RemoteAddr`) and user agent, and an expiry `session.sessionttl` from now,
+and returns it as a `*session.Session`. Write the cookie with
+`SetCookie(w, sess)`; `ClearCookie(w)` writes an expired one.
+
+`Authenticate` reads the session ID from the cookie. A missing cookie or an
+unknown ID fails with `auth.ErrUnauthenticated`, an expired session with
+`auth.ErrCredentialsExpired`. With `session.extendonaccess` on, the default,
+every authenticated request moves the session's expiry to `sessionttl` from
+now in the database. The cookie's own `Expires` is not rewritten; call
+`SetCookie` again to extend it in the browser.
+
+`Revoke(ctx, p)` deletes the session the principal came from, `RevokeAll`
+deletes every session of a subject, and `RevokeAllByScheme` does that only
+when the scheme is `session` and is a no-op otherwise.
+
+A background goroutine deletes expired sessions every
+`session.cleanupinterval`, bounding each run by `session.cleanuptimeout`;
+`Close` stops it. An interval of zero or less disables it.
+
+The service logs a warning at `Init` and on every `SetCookie` and
+`ClearCookie` when the cookie is not `Secure`, not `HttpOnly`, or has a
+`SameSite` other than `Lax` or `Strict`. It does not refuse to run.
+
+### API keys
+
+`Generate(ctx, subject, name, scopes, opts...)` creates a key of
+`apikey.keylength` random bytes, URL-safe base64, after `apikey.prefix`. It
+returns the full key **exactly once**, with a `*apikey.KeyInfo`; only the
+key's SHA-256 hash is stored, along with a display prefix (`apikey.prefix`
+plus the first 8 characters of the random part). A scope containing a comma
+is rejected. `WithTTL(d)` and `WithExpiresAt(t)` set an expiry (a
+non-positive duration or zero time is ignored, and the last one given wins),
+and `WithMetadata(m)` stores metadata returned with the principal.
+
+`Authenticate` reads the key from the `apikey.headername` header (`X-API-Key`
+by default). A missing, unknown or revoked key fails with
+`auth.ErrUnauthenticated`, an expired one with `auth.ErrCredentialsExpired`.
+On success it records the time as the key's last use. The principal's
+credential ID is the key's ID, and its metadata holds the stored metadata plus
+the key's scopes as a `[]string` under `scopes`
+(`apikey.PrincipalMetadataKeyScopes`).
+
+`Revoke`, `RevokeAll` and `RevokeAllByScheme` soft-delete: the row keeps a
+`deleted_at` time and is excluded from authentication and from `List`.
+`Delete` and `DeleteAll` remove rows permanently. `List(ctx, subject)` returns
+a subject's active keys; with `apikey.WithIncludeRevoked()` it also returns
+revoked ones, whose `DeletedAt` is set.
+
+`WithTx(tx)` returns a provider whose operations run in your `*sql.Tx`, so a
+key can be created in the same transaction as your own writes. You own the
+transaction; do not keep the returned provider after it ends.
+
+<Code code={region(auth, 'tx')} lang="go" />
+
+### Single-use tokens
+
+<Code code={region(auth, 'tokens')} lang="go" />
+
+`Issue(ctx, subject, purpose, ttl)` stores the SHA-256 hash of a random token
+(`token.tokenlength` bytes, URL-safe base64) with its purpose, subject and
+expiry, and returns the raw token. A `ttl` of 0 uses `token.defaultttl`.
+
+`Verify(ctx, raw, purpose)` fetches and deletes the token in one atomic store
+operation, then checks it, and returns the subject. A token is consumed the
+first time it is presented, whatever the outcome: an unknown or already used
+token fails with `token.ErrTokenInvalid`, a wrong purpose also fails with
+`token.ErrTokenInvalid` and burns the token, and an expired one fails with
+`token.ErrTokenExpired`. Of two concurrent `Verify` calls with the same token,
+only one can succeed.
+
+`Revoke(ctx, raw)` deletes one token and returns `token.ErrTokenInvalid` when
+there is none; `RevokeAllByPurpose(ctx, subject, purpose)` deletes a
+subject's tokens for one purpose. Expired tokens are cleaned up in the
+background exactly as sessions are, with the `token.cleanup*` keys.
+
+### Revoking
+
+<Code code={region(auth, 'revoke')} lang="go" />
+
+### Error responses
+
+<Code code={region(auth, 'on-error')} lang="go" />
+
+`WithOnError(fn)` receives the authenticator's error and owns the response.
+The errors are passed through unchanged, so `errors.Is` matches the
+[sentinels](#errors). Return the [unified error shape](/gas/core/errors/) from
+it if your API uses one.
+
+### Databases
+
+`session`, `apikey` and `token` choose their SQL dialect from the
+`gas.DatabaseProvider`'s `Driver()`:
+
+| `Driver()` | Dialect |
+|---|---|
+| `postgres`, `pgx` | PostgreSQL |
+| `sqlite`, `sqlite3` | SQLite |
+| `mysql` | MySQL |
+
+Any other driver fails `Init` with `unsupported driver`. Their tables are
+`__gas_auth_sessions`, `__gas_auth_api_keys` and `__gas_auth_tokens`.
+
+`gas/database` accepts `postgres`, `pgx` and `sqlite` as its own drivers.
+For MySQL, give it a connector with `database.WithConnector` and set
+`database.driver` to `mysql`, or register your own `gas.DatabaseProvider`
+whose `Driver()` returns `mysql`; see [Database](/gas/modules/database/). The
+MySQL DSN needs two parameters: `multiStatements=true`, because each
+migration file holds several statements and runs as one statement batch, and
+`parseTime=true`, because the stores scan `DATETIME` columns into
+`time.Time`.
+
+<Aside type="caution" title="apikey on MySQL">
+With both parameters, `session` and `token` work on MySQL 8.4, but the
+`apikey` migration fails there: its table declares a literal default on a
+`TEXT` column, which MySQL rejects. Registering `apikey` on MySQL therefore
+fails startup when the migrations run. See
+[Known issues](/gas/project/known-issues/).
+</Aside>
+
+## Configuration
+
+Each service binds its own section in `Init`. Keys are listed with their
+defaults from `DefaultConfig()`; the environment variable for each follows
+the [naming rule](/gas/modules/config/#environment-variable-names).
+
+**`jwt`**
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `jwt.signingmethod` | string | `HS256` | `HS256` or `RS256`. |
+| `jwt.signingkey` | string | empty | HMAC key for HS256. Required for HS256, at least 32 bytes. |
+| `jwt.publickeypath` | string | empty | PEM RSA public key file. Required for RS256. |
+| `jwt.privatekeypath` | string | empty | PEM RSA private key file. Needed for RS256, since `Init` requires a signing key. |
+| `jwt.issuer` | string | empty | Set as `iss` when signing and required when verifying, if not empty. |
+| `jwt.audience` | string | empty | Set as `aud` when signing and required when verifying, if not empty. |
+| `jwt.expiry` | duration | `15m` | Lifetime used by `Sign`. Must be greater than zero. |
+
+**`session`**
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `session.cookiename` | string | `session_id` | Cookie that carries the session ID. Required. |
+| `session.cookiepath` | string | `/` | Cookie path. |
+| `session.cookiedomain` | string | empty | Cookie domain. |
+| `session.cookiesecure` | bool | `true` | `Secure` attribute. |
+| `session.cookiehttponly` | bool | `true` | `HttpOnly` attribute. |
+| `session.cookiesamesite` | int (`http.SameSite`) | `2` (Lax) | `1` default, `2` Lax, `3` Strict, `4` None. |
+| `session.sessionttl` | duration | `24h` | Session lifetime. Must be greater than zero. |
+| `session.extendonaccess` | bool | `true` | Move the expiry forward on every authenticated request. |
+| `session.cleanupinterval` | duration | `1h` | How often expired sessions are deleted. Zero or less disables cleanup. |
+| `session.cleanuptimeout` | duration | `30s` | Bound on each cleanup run. Must be positive while cleanup is enabled. |
+
+**`apikey`**
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `apikey.headername` | string | `X-API-Key` | Request header that carries the key. |
+| `apikey.prefix` | string | empty | Prepended to generated keys, for example `sk_live_`. |
+| `apikey.keylength` | int | `32` | Random bytes per key. At least 16. |
+
+**`token`**
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `token.defaultttl` | duration | `15m` | Lifetime when `Issue` gets a `ttl` of 0. Must be greater than zero. |
+| `token.tokenlength` | int | `32` | Random bytes per token. At least 16. |
+| `token.cleanupinterval` | duration | `1h` | How often expired tokens are deleted. Zero or less disables cleanup. |
+| `token.cleanuptimeout` | duration | `30s` | Bound on each cleanup run. Must be positive while cleanup is enabled. |
+
+The minimums and "greater than zero" rules are `validate` tags, checked only
+when the config is bound. The HS256 key, RS256 public key path and
+cleanup-timeout rules are checked for every config, including one given with
+`WithConfig`.
+
+<Aside type="caution">
+`apikey.keylength` below 6 bytes, possible only through `WithConfig`, makes
+`Generate` panic instead of returning an error. See
+[Known issues](/gas/project/known-issues/).
+</Aside>
+
+## Errors
+
+| Error | Returned when |
+|---|---|
+| `auth.ErrUnauthenticated` | No credential, or one that does not check out: a missing header or cookie, an unknown session or key, a revoked key, a bad JWT. Also an empty `Chain`, or an authenticator that returned a `nil` principal and `nil` error. |
+| `auth.ErrCredentialsExpired` | An expired JWT, session or API key. |
+| `auth.ErrForbidden`, `auth.ErrCredentialRevoked` | Declared for your own code, such as an `Authorizer`. No service in the module returns them. |
+| `token.ErrTokenInvalid` | `Verify` with an unknown, used or wrong-purpose token; `Revoke` of a token that does not exist. |
+| `token.ErrTokenExpired` | `Verify` with an expired token. |
+
+The session and API key services wrap store lookups, so check with
+`errors.Is` rather than `==`. Other errors start with the service name
+(`gas/auth/jwt`, `gas/auth/session`, `gas/auth/apikey`, `gas/auth/token`) and
+wrap the underlying database, file or parsing error. The exceptions are the
+JWT service's `Sign` and `Verify` errors and `jwt: signing key not
+configured`, which start with `jwt:`.
+
+## Testing
+
+`authtest` has a recording mock for each interface. Each records its calls in
+`Calls`, has `CallCount(method)` and `Reset()`, and delegates to an `Fn` field
+when set:
+
+| Mock | With no `Fn` |
+|---|---|
+| `MockAuthenticator` | `Authenticate` returns `auth.ErrUnauthenticated`. |
+| `MockAuthorizer` | `Authorize` returns `nil`, allowing everything. |
+| `MockRevoker` | Every method returns `nil`. |
+
+<Code code={region(authTest, 'testing')} lang="go" title="accounts_test.go" />
+
+`auth.NewPrincipal(subject, scheme, credentialID, meta)` builds the principal
+a mock returns; a `nil` metadata becomes an empty map. See
+[Testing](/gas/production/testing/) for testing whole handlers.
+
+## API reference
+
+- [`auth`](https://pkg.go.dev/github.com/gasmod/gas/auth)
+- [`auth/jwt`](https://pkg.go.dev/github.com/gasmod/gas/auth/jwt)
+- [`auth/session`](https://pkg.go.dev/github.com/gasmod/gas/auth/session)
+- [`auth/apikey`](https://pkg.go.dev/github.com/gasmod/gas/auth/apikey)
+- [`auth/token`](https://pkg.go.dev/github.com/gasmod/gas/auth/token)
+- [`auth/authtest`](https://pkg.go.dev/github.com/gasmod/gas/auth/authtest)
