@@ -60,3 +60,5 @@ coverage.*
 *.pem
 *.key
 *.cert
+
+docs/superpowers/
