@@ -352,7 +352,11 @@ type TemplatedEmail struct {
 }
 
 type Migration struct {
-	Version, Service, Description, Up, Down string
+	Version     string
+	Service     Service // owning service; gas/migrate's Register* methods set it
+	Description string
+	Up          string
+	Down        string
 }
 
 type Rows interface {

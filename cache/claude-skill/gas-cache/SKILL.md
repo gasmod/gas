@@ -80,16 +80,17 @@ func receives `gas.ConfigProvider` and `gas.Logger` from the DI container.
 | Method  | Signature   | Description                                           |
 |---------|-------------|-------------------------------------------------------|
 | `Name`  | `() string` | Returns `"gas/cache/memory"`                          |
-| `Init`  | `(context.Context) error` | Validates config, starts background cleanup goroutine (not tied to the Init ctx) |
+| `Init`  | `(context.Context) error` | Binds config (unless `WithConfig`), creates an empty cache, starts background cleanup goroutine (not tied to the Init ctx) |
 | `Close` | `(context.Context) error` | Stops cleanup, clears cache |
 
 ### Behavior
 
 - **TTL:** `Set` with `ttl == 0` uses the configured `DefaultTTL`. If
-  `DefaultTTL` is also 0, the entry never expires.
+  `DefaultTTL` is also 0, the entry never expires. A negative TTL, given or
+  from `DefaultTTL`, also stores the entry without expiry.
 - **Max entries:** When `MaxEntries > 0` and the limit is reached, `Set` for
-  a new key attempts to evict one expired entry first. If none are expired,
-  the set is rejected with an error. Overwriting an existing key always
+  a new key attempts to evict one expired entry first (in map iteration
+  order, not by age). If none are expired, the set is rejected with an error. Overwriting an existing key always
   succeeds.
 - **Background cleanup:** When `CleanupInterval > 0`, a goroutine
   periodically removes all expired entries.
@@ -134,18 +135,19 @@ func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) (*Service, error)
 | Method  | Signature   | Description                                         |
 |---------|-------------|-----------------------------------------------------|
 | `Name`  | `() string` | Returns `"gas/cache/valkey"`                        |
-| `Init`  | `(context.Context) error` | Validates config, connects with retry, pings server |
+| `Init`  | `(context.Context) error` | Binds config (unless `WithConfig`), connects with retry, pings server |
 | `Close` | `(context.Context) error` | Closes the Valkey client |
 
 ### Behavior
 
 - **TTL:** `Set` with `ttl > 0` uses Valkey's `PX` (millisecond precision).
-  `ttl == 0` stores without expiration.
+  `ttl <= 0` stores without expiration; there is no `DefaultTTL`.
 - **Connection retry:** When `ConnRetries > 0`, the service retries the
   initial connection with exponential backoff. The interval starts at
   `ConnRetryInterval` (default 2s) and doubles after each failed attempt.
-  The ping uses the Init context, and retries stop when that context is
-  canceled or its deadline passes (the error wraps `ctx.Err()`).
+  The ping uses the Init context, bounded by `DialTimeout` per attempt, and
+  retries stop when that context is canceled or its deadline passes (the
+  error wraps `ctx.Err()`).
 - **Not open:** `Get`, `Set`, `Delete`, `Exists`, `CheckHealth`, and
   `CheckReady` return `ErrClosed` before `Init` and after `Close`. A command
   that fails because `Close` or a restart happened while it ran also
@@ -204,7 +206,10 @@ func DefaultConfig() *Config
 ```
 
 The rules are `validate` tags, which `ConfigProvider.Bind` checks when `Init`
-binds the config. A config passed with `WithConfig` is used as given. Neither
+binds the config over `DefaultConfig()`. A config passed with `WithConfig` is
+used as given, with no defaults filled in, so build it from `DefaultConfig()`:
+a zero `DialTimeout` gives every connection ping a deadline that has already
+passed. Neither
 cache config has a `Validate` method.
 
 ## Test Mock
@@ -241,11 +246,17 @@ All calls are recorded in `Calls` for assertions. Thread-safe.
 
 ## DI Wiring Patterns
 
+Register the backend under `gas.CacheProvider`: the container resolves a
+dependency by its exact registered type, so a registration under
+`*cachemem.Service` does not satisfy a constructor that takes
+`gas.CacheProvider`. Both constructors also need a registered
+`gas.ConfigProvider` and `gas.Logger`.
+
 ### Memory backend (dev/test)
 
 ```go
 app := gas.NewApp(
-    gas.WithSingletonService[*cachemem.Service](cachemem.New()),
+    gas.WithSingletonService[gas.CacheProvider](cachemem.New()),
 )
 ```
 
@@ -253,25 +264,21 @@ app := gas.NewApp(
 
 ```go
 app := gas.NewApp(
-    gas.WithSingletonService[*cachevk.Service](cachevk.New()),
+    gas.WithSingletonService[gas.CacheProvider](cachevk.New()),
 )
 ```
 
 ### With explicit config
 
 ```go
+cfg := cachevk.DefaultConfig()
+cfg.Cache.Addr = "valkey.internal:6379"
+cfg.Cache.Password = "secret"
+cfg.Cache.DB = 1
+cfg.Cache.ConnRetries = 3
+
 app := gas.NewApp(
-    gas.WithSingletonService[*cachevk.Service](
-        cachevk.New(cachevk.WithConfig(&cachevk.Config{
-            Cache: cachevk.Settings{
-                Addr:              "valkey.internal:6379",
-                Password:          "secret",
-                DB:                1,
-                ConnRetries:       3,
-                ConnRetryInterval: 2 * time.Second,
-            },
-        })),
-    ),
+    gas.WithSingletonService[gas.CacheProvider](cachevk.New(cachevk.WithConfig(cfg))),
 )
 ```
 
@@ -289,9 +296,12 @@ func New(cache gas.CacheProvider) *Service {
     return &Service{cache: cache}
 }
 
-func (s *Service) Init(ctx context.Context) error {
-    // use s.cache.Get, Set, Delete, Exists
-    return nil
+func (s *Service) Profile(ctx context.Context, id string) ([]byte, error) {
+    b, err := s.cache.Get(ctx, "profile:"+id)
+    if errors.Is(err, cache.ErrKeyNotFound) {
+        return nil, nil // miss: load from the source of truth
+    }
+    return b, err
 }
 ```
 
@@ -303,10 +313,10 @@ changes:
 
 ```go
 // Development
-gas.WithSingletonService[*cachemem.Service](cachemem.New())
+gas.WithSingletonService[gas.CacheProvider](cachemem.New())
 
 // Production
-gas.WithSingletonService[*cachevk.Service](cachevk.New())
+gas.WithSingletonService[gas.CacheProvider](cachevk.New())
 ```
 
 ### Testing with MockCache

@@ -85,7 +85,9 @@ func (c *Config) Values() map[string]any                   // deep-cloned snapsh
 ```
 
 `Get` and `Find` support hierarchical dot-notation paths. Keys are
-lowercased internally. Returns deep-cloned values (safe for mutation).
+lowercased internally. Returns deep-cloned values (safe for mutation): maps,
+slices and pointers are copied deeply, but a struct value stored with `Set` or
+`SetDefault` is copied by value, so maps inside it stay shared.
 
 ### Setting values
 
@@ -214,6 +216,13 @@ providers.NewJSONProvider(opts ...JSONOption) *JSONProvider
 | Custom FS | `WithJSONFileFS(fileFS fs.FS)` | e.g. `embed.FS` |
 
 Errors: `ErrJSONFilePathNotSet`, `ErrJSONFileReadFailed`, `ErrJSONDecodeFailed`
+
+Without `WithJSONFileFS` (and `WithDotEnvFileFS` below), the file is read
+through a file system that accepts only paths inside the working directory,
+rejects a path whose last element is a symlink, and rejects files over 1 MB.
+An absolute path such as `/etc/app/config.json` outside the working directory
+fails to load; pass `WithJSONFileFS(os.DirFS("/etc/app"))` with a relative
+path instead. A custom `fs.FS` skips those checks.
 
 ### .env files
 
@@ -386,19 +395,23 @@ import "github.com/gasmod/gas/config/configtest"
 
 `MockConfig` structurally satisfies `gas.ConfigProvider`. Every method records
 the call and delegates to its `Fn` field when set, otherwise returns the zero
-value. `Calls` is guarded by an internal mutex, so the mock is safe to use
-from concurrent tests.
+value. Recording, `CallCount`, and `Reset` are guarded by an internal mutex and
+safe from concurrent tests; the `Calls` field itself is not guarded for
+readers, so read it only after the calls under test have finished, or use
+`CallCount`.
 
 ```go
 type MockConfig struct {
-    SetDefaultFn  func(key string, value any)
-    SetDefaultsFn func(values any) error
-    SetFn         func(key string, value any)
-    BindFn        func(dest any, options ...config.BindOption) error
-    GetFn         func(key string) any
-    FindFn        func(key string) (any, bool)
-    ValuesFn      func() map[string]any
-    Calls         []Call
+    SetDefaultFn          func(key string, value any)
+    SetDefaultsFn         func(values any) error
+    SetFn                 func(key string, value any)
+    BindFn                func(dest any, options ...config.BindOption) error
+    GetFn                 func(key string) any
+    FindFn                func(key string) (any, bool)
+    ValuesFn              func() map[string]any
+    LoadProviderFn        func(p providers.Provider) error
+    LoadProviderContextFn func(ctx context.Context, p providers.Provider) error
+    Calls                 []Call
 }
 
 type Call struct {
@@ -411,8 +424,9 @@ func (m *MockConfig) CallCount(method string) int
 ```
 
 Recorded method names match the Go method names — `"SetDefault"`,
-`"SetDefaults"`, `"Set"`, `"Bind"`, `"Get"`, `"Find"`, `"Values"`. `Bind`
-records only `dest`, not its `BindOption`s.
+`"SetDefaults"`, `"Set"`, `"Bind"`, `"Get"`, `"Find"`, `"Values"`,
+`"LoadProvider"`, `"LoadProviderContext"`. `Bind` records only `dest`, not its
+`BindOption`s; `LoadProviderContext` records only the provider.
 
 ```go
 mock := &configtest.MockConfig{}

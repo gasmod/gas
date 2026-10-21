@@ -189,7 +189,7 @@ w := gas.NewWorker(opts ...Option) *Worker
 | `InitServices`     | `(ctx) error`            | Build singletons, collect services, emit init event                              |
 | `EventBus`         | `() *EventBus`           | The worker's event bus                                                           |
 | `ServiceContainer` | `() *ServiceContainer`   | The DI container                                                                 |
-| `MigrationManager` | `() MigrationManager`    | Resolved from DI, nil if unregistered                                            |
+| `MigrationManager` | `() MigrationManager`    | Resolved from DI as exactly `gas.MigrationManager`, nil if unregistered; `Start` runs migrations only through it |
 | `ConfigProvider`   | `() ConfigProvider`      | Resolved from DI, nil if unregistered                                            |
 | `RegisterService[T]` | `(ctor any, lifetime ServiceLifetime)` | Imperative form of `WithService`; forwards to the container             |
 | `RegisterTransientService[T]` / `RegisterScopedService[T]` / `RegisterSingletonService[T]` | `(ctor any)` | Same, with the lifetime fixed |
@@ -205,7 +205,7 @@ w := gas.NewWorker(opts ...Option) *Worker
 
 ```go
 w := gas.NewWorker(
-    gas.WithSingletonService[*database.Service](database.New()),
+    gas.WithSingletonService[gas.DatabaseProvider](database.New()),
     gas.WithSingletonService[*myservice.Service](myservice.New),
 )
 if err := w.Start(context.Background()); err != nil { log.Fatal(err) }
@@ -266,7 +266,10 @@ the config as it stood then. When `Start` binds the config, the bound `Addr`
 and timeouts are applied to every field the caller has not changed; a field
 the caller set, such as `ReadTimeout = 0` to stream, is kept (a field set to
 the value it already had counts as unchanged). `AppConfigUpdated`
-subscribers run after that, so a field they set stays. `Handler()` builds
+subscribers run after that, so a field they set stays. This happens once: a
+later `Start`, or a `Start` after `Serve` has begun, leaves the server alone.
+Only `Serve` marks the server as serving, so an embedder that serves
+`Server()` itself must call `Start` first. `Handler()` builds
 only the handler and never the server, and does not reflect a handler
 assigned to `Server().Handler`.
 
@@ -399,6 +402,10 @@ registered earlier (see **Kill switch**).
 router.Handle(service Service, method, path string, handler any, middleware ...Middleware)
 router.NotFound(service Service, handler any)
 ```
+
+`Get`, `Post`, `Put`, `Patch`, `Delete`, and `Head` take
+`(service Service, path string, handler any, middleware ...Middleware)` and call
+`Handle` with that method. A GET route also serves HEAD on the same path.
 
 The owner is the `gas.Service` itself, not its name: pass `s` from inside a
 service. Ownership is tracked by `service.Name()`. `nil` means "no owning
@@ -568,6 +575,7 @@ Panics if any of parent, w, or r is nil. Options: `gas.WithValidate(v)`,
 | `BindForm`       | `(dest any) error`             | decode + validate        |
 | `Validator`      | `() *validator.Validate`       | go-playground/validator  |
 | `FormDecoder`    | `() *schema.Decoder`           | gorilla/schema           |
+| `Principal`      | `() (Principal, error)`        | 401 `*gas.Error` if none |
 
 `Context` also mirrors every constructor in the Errors table below, twice:
 `ctx.NotFound(msg)` and `ctx.NotFoundErr(err, msg)`, the second attaching the
@@ -739,7 +747,7 @@ separate modules. See `references/providers.md` for full signatures.
 | `JobQueueProvider` | Async job/message queues               | gas/queue               |
 | `EmailProvider`    | Email sending                          | gas/email               |
 | `ConfigProvider`   | Configuration management               | gas/config              |
-| `TemplateProvider` | Template storage/retrieval             | gas/ui                  |
+| `TemplateProvider` | Template storage/retrieval             | gas/template            |
 | `UIProvider`       | Template rendering                     | gas/ui                  |
 | `Logger`           | Structured logging                     | gas/log                 |
 | `MigrationManager` | Database migrations                    | gas/migrate             |

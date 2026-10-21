@@ -189,7 +189,7 @@ Calls `provider.Authenticate`, sets principal in context via
 `gas.WithPrincipal` on success, invokes the error handler on failure
 (defaults to plain 401 Unauthorized). A nil principal with a nil error is a
 failure with `ErrUnauthenticated`; the next handler never runs without a
-principal.
+principal. Panics if `provider` is nil.
 
 ### MiddlewareOption
 
@@ -289,7 +289,7 @@ type Settings struct {
     SigningKey      string        // HMAC key for HS256
     SigningMethod   string        // "HS256" (default) or "RS256"
     PublicKeyPath   string        // RSA public key PEM path
-    PrivateKeyPath  string        // RSA private key PEM path (optional for verify-only)
+    PrivateKeyPath  string        // RSA private key PEM path (required by Init for RS256)
     Issuer          string        // expected "iss" claim
     Audience        string        // expected "aud" claim
     Expiry          time.Duration // default 15m
@@ -298,12 +298,16 @@ type Settings struct {
 func DefaultConfig() *Config
 ```
 
-Tags: `SigningMethod` `oneof=HS256 RS256`, `Expiry` `gt=0s`. The key material
-the method needs (HS256: `SigningKey` of 32+ bytes; RS256: `PublicKeyPath`) is
-checked in `Init`, since a tag cannot express it.
+Tags: `SigningMethod` `oneof=HS256 RS256`, `Expiry` `gt=0s`. `ConfigProvider.Bind`
+checks them; a config passed with `WithConfig` is not checked against them. The
+key material the method needs (HS256: `SigningKey` of 32+ bytes; RS256:
+`PublicKeyPath`) is checked in `Init` for every config, since a tag cannot
+express it.
 
-Validation: HS256 requires `SigningKey`, RS256 requires `PublicKeyPath`,
-expiry must be positive. Unknown signing methods are rejected.
+Validation: HS256 requires `SigningKey`, RS256 requires `PublicKeyPath`.
+`Init` also fails with `jwt: signing key not configured` when there is no
+signing key: an RS256 config without `PrivateKeyPath` (there is no verify-only
+mode), or an unknown signing method in a `WithConfig` config.
 
 ## Session Service
 
@@ -454,7 +458,8 @@ Optional `GenerateOption` values customize the new key:
 | `WithExpiresAt(time.Time)`        | Sets an explicit `expires_at`; zero time is ignored.                     |
 
 If both `WithTTL` and `WithExpiresAt` are supplied, the last one wins. Expired
-keys fail `Authenticate` with `auth.ErrUnauthenticated`.
+keys fail `Authenticate` with `auth.ErrCredentialsExpired`. A scope containing a
+comma makes `Generate` return an error.
 
 ```go
 key, info, err := svc.Generate(ctx, "user-1", "ci-token", []string{"read"},
@@ -484,7 +489,9 @@ func (s *Service) RevokeAllByScheme(ctx context.Context, subject, scheme string)
 ```
 
 `RevokeAllByScheme` delegates to `RevokeAll` if scheme is `auth.SchemeAPIKey`,
-otherwise no-op.
+otherwise no-op. `Revoke` and `RevokeAll` soft-delete (the row keeps
+`deleted_at` and no longer authenticates); `Delete(ctx, principal)` and
+`DeleteAll(ctx, subject)` remove rows permanently.
 
 ```go
 func (s *Service) WithTx(tx *sql.Tx) Provider
@@ -542,7 +549,8 @@ type Settings struct {
 func DefaultConfig() *Config
 ```
 
-Tag: `KeyLength` `min=16`.
+Tag: `KeyLength` `min=16`, checked by `ConfigProvider.Bind` only; a config
+passed with `WithConfig` is not checked.
 
 ## Token Service
 
@@ -592,6 +600,8 @@ expired.
 func (s *Service) Revoke(ctx context.Context, rawToken string) error
 func (s *Service) RevokeAllByPurpose(ctx context.Context, subject, purpose string) error
 ```
+
+`Revoke` returns `ErrTokenInvalid` when no stored token matches `rawToken`.
 
 ### Config
 
@@ -677,6 +687,11 @@ app := gas.NewApp(
 
 ### Multiple authenticators with Chain
 
+The session, apikey, and token constructors inject `gas.DatabaseProvider`,
+`gas.Logger`, `gas.MigrationManager`, and `gas.ConfigProvider` (jwt only the
+last two), so register gas/database and gas/migrate under those interfaces,
+not as `*database.Service` / `*migrate.Service`.
+
 ```go
 app := gas.NewApp(
     gas.WithSingletonService[*jwt.Service](jwt.New()),
@@ -732,6 +747,16 @@ is selected automatically from `gas.DatabaseProvider.Driver()`:
 | `postgres`, `pgx`   | PostgreSQL |
 | `mysql`             | MySQL      |
 | `sqlite`, `sqlite3` | SQLite     |
+
+MySQL caveats. The MySQL dialect is chosen only when the provider's `Driver()`
+returns `mysql`: gas/database rejects `Database.Driver` `mysql` unless it is
+given `WithConnector`, so use that or your own `gas.DatabaseProvider`. The
+migrations hold several statements, so the DSN needs `multiStatements=true`,
+and the stores scan `DATETIME` columns into `time.Time`, so it also needs
+`parseTime=true`. With both, session and token work on MySQL 8.4; the apikey
+migration fails there (a `TEXT` column with a default,
+`auth/apikey/db/mysql/20250323002_create_api_keys.up.sql:8`; KI-044 in
+KNOWN_ISSUES.md).
 
 Each service registers its own migration with `gas.MigrationManager` during
 `Init`. Tables created:

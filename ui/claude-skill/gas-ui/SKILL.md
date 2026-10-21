@@ -25,6 +25,13 @@ importing gas/ui directly.
 
 ```
 import ui "github.com/gasmod/gas/ui"
+
+// template stores used in the examples below
+import "github.com/gasmod/gas/template/memory"
+import tmpldir "github.com/gasmod/gas/template/dir"
+import "github.com/gasmod/gas/template/composite"
+import tmplfs "github.com/gasmod/gas/template/fs"
+import tmpldb "github.com/gasmod/gas/template/db"
 ```
 
 ## Constructor
@@ -46,11 +53,12 @@ implementation so the DI container resolves the correct concrete type:
 ui.New[gas.TemplateProvider]()
 
 // Using a concrete type for DI resolution:
-ui.New[*fs.Store]()
+ui.New[*tmplfs.Store]()
 ui.New[*MyCustomStore]()
 ```
 
-The service logs structured diagnostics: errors at each `Init` failure point, a
+`Init` returns its config binding, validation (`gas/ui: invalid configuration:
+<cause>`), and static route errors without logging them. The service logs a
 `DEBUG` listing all registered template function names on successful init, and
 `WARN` on function-name collisions (`AddFuncs`) or when `RegisterFuncs` is
 called before the engine is initialised.
@@ -70,8 +78,8 @@ Implements `gas.Service`, `gas.UIProvider`, and `gas.ReadyReporter`.
 
 ```go
 func (s *Service) Name() string                          // "gas/ui"
-func (s *Service) Init(_ context.Context) error          // builds template engine, registers static route
-func (s *Service) Close(_ context.Context) error         // marks closed, subsequent Render returns 503
+func (s *Service) Init(_ context.Context) error          // binds and validates config, builds template engine, registers static route
+func (s *Service) Close(_ context.Context) error         // marks closed: Render* write 503 and return an error; the static route keeps serving
 func (s *Service) CheckReady(ctx context.Context) error  // readiness probe: not-ready pre-Init or post-Close
 ```
 
@@ -89,11 +97,17 @@ func (s *Service) RenderFragment(w http.ResponseWriter, name string, data any) e
 func (s *Service) RegisterFuncs(funcs template.FuncMap)
 ```
 
-`RenderFragment` renders the page template without the layout wrapper. Useful
-for HTMX partial responses.
+`RenderFragment` renders the page's top-level content (the text outside any
+`{{define}}`) without the layout. Useful for HTMX partial responses. A page
+whose content sits only inside `{{define "content"}}` renders an empty
+fragment; to serve one page both ways, put `{{template "content" .}}` at its
+top level next to the `{{define "content"}}` block.
 
 `RegisterFuncs` merges template functions into the engine's funcmap and
-invalidates the cache. Safe to call during `Init(ctx)` from other services.
+invalidates the cache. Safe to call during `Init(ctx)` from other services
+that depend on `gas.UIProvider`, so the ui service has initialized first;
+called before the ui service's `Init`, it logs a warning and drops the
+functions.
 
 ### Engine access
 
@@ -116,10 +130,14 @@ type Service struct {
     tp gas.TemplateProvider
 }
 
+// Init is part of gas.Service: the type also needs Name and Close, or the
+// container rejects it.
 func (s *Service) Init(ctx context.Context) error {
-    sub, _ := fs.Sub(blogTemplates, "templates")
-    s.tp.RegisterFS(sub)
-    return nil
+    sub, err := fs.Sub(blogTemplates, "templates")
+    if err != nil {
+        return err
+    }
+    return s.tp.RegisterFS(ctx, sub)
 }
 ```
 
@@ -140,8 +158,10 @@ templates/
 - **Layouts** define the HTML skeleton with `{{define "base"}}` and declare
   blocks with `{{block "content" .}}`.
 - **Partials** define named templates, usable anywhere with `{{template "nav" .}}`.
-- **Pages** override blocks defined in the layout. Pages without `{{define}}`
-  blocks render standalone (no layout).
+- **Pages** override blocks defined in the layout. When the provider holds
+  any `layouts/` template, `Render` always executes the layout (`LayoutName`),
+  so a page's top-level content outside `{{define}}` blocks is not shown;
+  only with no layouts at all do pages render standalone.
 
 ## Engine
 
@@ -192,7 +212,7 @@ settings:
 |-----------------|-------------------------------|---------------------------------------------|
 | `upper`         | `(string) string`             | Uppercase                                   |
 | `lower`         | `(string) string`             | Lowercase                                   |
-| `title`         | `(string) string`             | Title case                                  |
+| `title`         | `(string) string`             | `strings.ToTitle`: every letter, not just the first (`"hello"` gives `"HELLO"`) |
 | `trimSpace`     | `(string) string`             | Trim whitespace                             |
 | `contains`      | `(s, substr) bool`            | String contains                             |
 | `hasPrefix`     | `(s, prefix) bool`            | Has prefix                                  |
@@ -200,7 +220,7 @@ settings:
 | `replace`       | `(s, old, new) string`        | Replace all                                 |
 | `join`          | `([]string, sep) string`      | Join                                        |
 | `split`         | `(s, sep) []string`           | Split                                       |
-| `truncate`      | `(n int, s string) string`    | Truncate to n chars with `...`              |
+| `truncate`      | `(n int, s string) string`    | Truncate to n bytes (not runes) with `...`  |
 | `now`           | `() time.Time`                | Current time                                |
 | `formatTime`    | `(layout, time) string`       | Format time                                 |
 | `formatTimePtr` | `(layout, *time.Time) string` | Format pointer to time; `""` if nil         |
@@ -208,11 +228,11 @@ settings:
 | `sub`           | `(a, b int) int`              | Subtraction                                 |
 | `dict`          | `(pairs ...any) map`          | Create map from k/v pairs                   |
 | `list`          | `(items ...any) []any`        | Create slice                                |
-| `json`          | `(any) json.RawMessage`       | Marshal to JSON                             |
+| `json`          | `(any) json.RawMessage`       | Marshal to JSON; nil on a marshal error     |
 | `env`           | `() gas.Environment`       | Environment passed to `DefaultFuncMap`      |
 | `buildId`       | `() string`                   | Stable build ID; fresh UUID per call in dev |
 
-`DefaultFuncMap` accepts an `env.Environment` to enable environment-aware
+`DefaultFuncMap` accepts a `gas.Environment` to enable environment-aware
 behaviour (e.g. `buildId` returns a fresh UUID per call in dev mode for
 cache-busting, vs a stable ID in production).
 
@@ -231,7 +251,7 @@ type Config struct {
 }
 
 type Settings struct {
-    StaticDir       string    // root dir for static files (empty = disabled)
+    StaticDir       string    // root dir for static files, default "static/" (must exist under the working dir unless WithStaticFS); empty = disabled
     StaticPath      string    // URL route pattern, default "/static/*"
     StaticPaths     []string  // multiple URL route patterns; overrides StaticPath when non-empty
     StaticStripPrefix string  // URL prefix stripped before file lookup (empty = StaticPath's literal prefix; "/" = no stripping)
@@ -244,17 +264,33 @@ func (c *Config) Validate(hasStaticFS bool) error
 
 ## DI Wiring Patterns
 
+Register the service under `gas.UIProvider`, the type consumers depend on;
+the container resolves a dependency by its exact registered type. `New` also
+needs the `T` registration, a `gas.ConfigProvider`, and a `gas.Logger`.
+`WithConfig` uses the config as given, with no defaults filled in (an empty
+`LayoutName` fails validation), so build it from `DefaultConfig()`.
+
 ### Basic filesystem setup
 
+The container refuses a `*tmpldir.Store` registered directly, by constructor
+or as an instance (`gas.ErrInvalidServiceShape`: it declares `Close() error`
+but is not a `gas.Service`; KI-033). Build it yourself, register it wrapped
+in a `composite.Store`, and close it when the app is done:
+
 ```go
+dirStore, err := tmpldir.NewStore("templates")()
+if err != nil {
+    return err
+}
+defer dirStore.Close()
+
+cfg := ui.DefaultConfig()
+cfg.UI.StaticDir = "static"
+
 app := gas.NewApp(
-    gas.WithSingletonService[gas.TemplateProvider](tmpl.NewStore("templates")),
-    gas.WithSingletonService[*ui.Service](
-        ui.New[gas.TemplateProvider](ui.WithConfig(&ui.Config{
-            UI: ui.Settings{
-                StaticDir: "static",
-            },
-        })),
+    gas.WithServiceInstance[gas.TemplateProvider](composite.NewStore(dirStore)),
+    gas.WithSingletonService[gas.UIProvider](
+        ui.New[gas.TemplateProvider](ui.WithConfig(cfg)),
     ),
 )
 ```
@@ -268,16 +304,24 @@ var templateFiles embed.FS
 //go:embed static
 var staticFiles embed.FS
 
-sub, _ := fs.Sub(templateFiles, "templates")
-staticSub, _ := fs.Sub(staticFiles, "static")
+sub, err := fs.Sub(templateFiles, "templates")
+if err != nil {
+    return err
+}
+staticSub, err := fs.Sub(staticFiles, "static")
+if err != nil {
+    return err
+}
 
 // Register a memory-backed provider and load the embedded FS into it
 memStore := memory.NewStore()
-memStore.RegisterFS(sub)
+if err := memStore.RegisterFS(context.Background(), sub); err != nil {
+    return err
+}
 
 app := gas.NewApp(
     gas.WithServiceInstance[gas.TemplateProvider](memStore),
-    gas.WithSingletonService[*ui.Service](
+    gas.WithSingletonService[gas.UIProvider](
         ui.New[gas.TemplateProvider](ui.WithStaticFS(staticSub)),
     ),
 )
@@ -286,12 +330,8 @@ app := gas.NewApp(
 ### Custom template provider (DB-backed themes)
 
 ```go
-gas.WithSingletonService[*db.Store](db.NewStore),
-gas.WithSingletonService[*ui.Service](
-    ui.New[*db.Store](ui.WithConfig(&ui.Config{
-        UI: ui.Settings{StaticDir: "static", LayoutName: "base"},
-    })),
-),
+gas.WithSingletonService[*tmpldb.Store](tmpldb.NewStore()),
+gas.WithSingletonService[gas.UIProvider](ui.New[*tmpldb.Store]()),
 ```
 
 ### Consuming via gas.UIProvider
@@ -365,9 +405,15 @@ type Service struct {
     ui gas.UIProvider
 }
 
+// Init is part of gas.Service: the type also needs Name and Close.
 func (s *Service) Init(ctx context.Context) error {
-    sub, _ := fs.Sub(blogTemplates, "templates")
-    s.tp.RegisterFS(sub)
+    sub, err := fs.Sub(blogTemplates, "templates")
+    if err != nil {
+        return err
+    }
+    if err := s.tp.RegisterFS(ctx, sub); err != nil {
+        return err
+    }
     s.ui.RegisterFuncs(template.FuncMap{
         "formatDate":    func(t time.Time) string { return t.Format("January 2, 2006") },
         "markdownToHTML": s.renderMarkdown,

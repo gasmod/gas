@@ -7,7 +7,7 @@ description: >
   uses gas/email for sending emails via AWS SES, including templated emails
   with gas.TemplateProvider integration. Covers the ses sub-package, emailtest
   mock, gas.EmailProvider and gas.ReadyReporter implementation, sentinel errors, DI wiring,
-  configuration binding, development mode logging, static and default AWS
+  configuration binding, static and default AWS
   credential chains, custom endpoint support for LocalStack, and template
   rendering with html/template and text/template. Make sure to use this skill
   whenever working with email sending in the Gas ecosystem, even if the user
@@ -32,7 +32,7 @@ import "github.com/gasmod/gas/email/emailtest"
 |---------|------------------|-----------------|-----------------------------------|
 | SES     | `gas/email/ses`  | `gas/email/ses` | Production (AWS SES / LocalStack) |
 
-The SES backend implements `gas.Service` and `gas.EmailProvider`.
+The SES backend implements `gas.Service`, `gas.EmailProvider`, and `gas.ReadyReporter`.
 
 ## EmailProvider Interface
 
@@ -117,7 +117,7 @@ the interface itself. Behaves identically to `New` otherwise.
 | Method  | Signature   | Description                                           |
 |---------|-------------|-------------------------------------------------------|
 | `Name`  | `() string` | Returns `"gas/email/ses"`                             |
-| `Init`  | `(ctx context.Context) error` | Validates config, creates AWS SES client (ctx bounds AWS config loading) |
+| `Init`  | `(ctx context.Context) error` | Binds config (unless `WithConfig`), creates AWS SES client and fetches credentials unless `WithClient` was given (ctx bounds both) |
 | `Close` | `(ctx context.Context) error` | Marks service as closed (ctx unused) |
 
 ### Readiness (gas.ReadyReporter)
@@ -134,23 +134,28 @@ broken-state condition that a process restart would resolve.
 ### Behavior
 
 - **Send:** Calls SES `SendEmail`. Uses `msg.From` if set, otherwise falls
-  back to `cfg.Email.FromEmail`. Supports To, Cc, Bcc, ReplyTo, Subject,
-  HTMLBody, and TextBody. All content is sent as UTF-8.
+  back to `cfg.Email.FromEmail`. Supports To, Cc, Bcc, ReplyTo (one
+  address), Subject, HTMLBody, and TextBody. All content is sent as UTF-8.
+  `Headers` is not sent.
 - **SendFromTemplate:** Fetches raw template content from `gas.TemplateProvider`
-  via `Get(name)`, parses it with `html/template` (for HTML bodies) or
+  via `Get(ctx, name)`, parses it with `html/template` (for HTML bodies) or
   `text/template` (for subject and text bodies), executes with `msg.Data`,
   then delegates to `Send`. Each template field (SubjectTemplate,
   HTMLTemplate, TextTemplate) is optional — if empty, the corresponding
-  field on the embedded `Email` is used directly.
+  field on the embedded `Email` is used directly. Rendered results are
+  written into `msg`'s `Subject`, `HTMLBody`, and `TextBody`, so the caller's
+  message is modified. Templates are fetched and parsed on every call.
 - **Credential chain:** If both `AccessKeyID` and `SecretAccessKey` are set,
   static credentials are used. Otherwise, the default AWS credential chain
   is used (environment variables, shared config, IAM roles, etc.). `Init`
   fetches the credentials under its context, so a setup with no usable
-  credentials fails startup (`retrieve aws credentials` in the error).
+  credentials fails startup (`retrieve aws credentials` in the error). Not
+  applied when `WithClient` supplies the client.
 - **No upfront connection:** The AWS SES client is stateless HTTP — Init
   creates the client but does not verify connectivity. Connection errors
   surface at call time.
-- **All methods return `email.ErrClosed`** when the service has been closed.
+- **`Send`, `SendFromTemplate`, and `CheckReady` return `email.ErrClosed`**
+  when the service has been closed.
 
 ### Client accessor
 
@@ -215,11 +220,17 @@ All calls are recorded in `Calls` for assertions. Thread-safe.
 
 ## DI Wiring Patterns
 
+Register the backend under `gas.EmailProvider`: the container resolves a
+dependency by its exact registered type, so a registration under
+`*emailses.Service` does not satisfy a constructor that takes
+`gas.EmailProvider`. `New` also needs a registered `gas.TemplateProvider`,
+`gas.ConfigProvider`, and `gas.Logger`.
+
 ### SES backend
 
 ```go
 app := gas.NewApp(
-    gas.WithSingletonService[*emailses.Service](emailses.New()),
+    gas.WithSingletonService[gas.EmailProvider](emailses.New()),
 )
 ```
 
@@ -227,7 +238,7 @@ app := gas.NewApp(
 
 ```go
 app := gas.NewApp(
-    gas.WithSingletonService[*emailses.Service](
+    gas.WithSingletonService[gas.EmailProvider](
         emailses.New(emailses.WithConfig(&emailses.Config{
             Email: emailses.Settings{
                 Region:    "eu-west-1",
@@ -253,9 +264,13 @@ func New(email gas.EmailProvider) *Service {
     return &Service{email: email}
 }
 
-func (s *Service) Init(ctx context.Context) error {
-    // use s.email.Send, s.email.SendFromTemplate
-    return nil
+func (s *Service) Welcome(ctx context.Context, to string) error {
+    return s.email.SendFromTemplate(ctx, &gas.TemplatedEmail{
+        SubjectTemplate: "emails/welcome_subject.html",
+        HTMLTemplate:    "emails/welcome.html",
+        Data:            map[string]any{"Email": to},
+        Email:           gas.Email{To: []string{to}},
+    })
 }
 ```
 

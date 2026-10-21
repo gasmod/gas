@@ -32,9 +32,10 @@ import "github.com/gasmod/gas/queue/queuetest"
 | SQS     | `gas/queue/sqs`  | `gas/queue/sqs` | Production (AWS SQS / ElasticMQ) |
 
 The SQS backend implements `gas.Service`, `gas.JobQueueProvider`, and
-`gas.ReadyReporter`. `CheckReady` returns an error before `Init` runs and
-after `Close` is called (wrapping `queue.ErrClosed`); otherwise it returns
-nil. The check is local-only — it does not call AWS — so readiness probes
+`gas.ReadyReporter`. `CheckReady` returns `queue.ErrClosed` after `Close`,
+and an error that wraps no sentinel (`gas/queue/sqs: not initialized`) when
+there is no client yet, before `Init` without `WithClient`; otherwise it
+returns nil. The check is local-only — it does not call AWS — so readiness probes
 remain cheap and independent of regional SQS availability.
 
 ## JobQueueProvider Interface
@@ -105,17 +106,20 @@ func receives `gas.ConfigProvider` and `gas.Logger` from the DI container.
 | Method  | Signature   | Description                                           |
 |---------|-------------|-------------------------------------------------------|
 | `Name`  | `() string` | Returns `"gas/queue/sqs"`                             |
-| `Init`  | `(ctx context.Context) error` | Validates config, creates AWS SQS client, fetches AWS credentials (ctx bounds both); fails when none can be found |
+| `Init`  | `(ctx context.Context) error` | Binds config (unless `WithConfig`), creates AWS SQS client, fetches AWS credentials (ctx bounds both); fails when none can be found. Client and credentials are skipped when `WithClient` was given |
 | `Close` | `(ctx context.Context) error` | Marks service as closed (ctx unused) |
 
 ### Behavior
 
-- **Enqueue:** Calls SQS `SendMessage`. Supports delay, FIFO group ID,
-  deduplication ID, and string message attributes via `EnqueueOption`.
+- **Enqueue:** Calls SQS `SendMessage`. Supports delay (sent as whole
+  seconds, truncated), FIFO group ID, deduplication ID, and string message
+  attributes via `EnqueueOption`.
 - **Dequeue:** Calls SQS `ReceiveMessage` with long-polling. `maxMessages` is
-  clamped to 1-10 (SQS hard limit). When `wait == 0`, uses the configured
-  `WaitTimeSeconds`. Merges SQS system attributes and message attributes
-  into `Job.Attributes`.
+  clamped to 1-10 (SQS hard limit). When `wait` truncates to 0 whole
+  seconds, uses the configured `WaitTimeSeconds`. Every receive applies the
+  configured `VisibilityTimeout`. Merges SQS system attributes and string
+  message attributes into `Job.Attributes`; a message attribute wins on a
+  shared name.
 - **Ack:** Calls SQS `DeleteMessage` using `job.ReceiptHandle`.
 - **Nack:** Calls SQS `ChangeMessageVisibility` with timeout 0, making the
   message immediately available for reprocessing.
@@ -123,6 +127,9 @@ func receives `gas.ConfigProvider` and `gas.Logger` from the DI container.
   creates the client but does not verify connectivity. Connection errors
   surface at call time.
 - **All methods return `queue.ErrClosed`** when the service has been closed.
+- **Client accessor:** `Client() *sqs.Client` returns the underlying SDK
+  client for calls beyond the interface (such as `CreateQueue`), or nil when
+  `WithClient` injected a client of another type.
 
 ### Config
 
@@ -145,8 +152,9 @@ func DefaultConfig() *Config
 ```
 
 The rules are `validate` tags, which `ConfigProvider.Bind` checks when `Init`
-binds the config. A config passed with `WithConfig` is used as given. There is
-no `Validate` method.
+binds the config over `DefaultConfig()`. A config passed with `WithConfig` is
+used as given, with no defaults filled in, so build it from `DefaultConfig()`.
+There is no `Validate` method.
 
 ## Test Mock
 
@@ -179,26 +187,29 @@ All calls are recorded in `Calls` for assertions. Thread-safe.
 
 ## DI Wiring Patterns
 
+Register the backend under `gas.JobQueueProvider`: the container resolves a
+dependency by its exact registered type, so a registration under
+`*queuesqs.Service` does not satisfy a constructor that takes
+`gas.JobQueueProvider`. `New` also needs a registered `gas.ConfigProvider`
+and `gas.Logger`.
+
 ### SQS backend
 
 ```go
 app := gas.NewApp(
-    gas.WithSingletonService[*queuesqs.Service](queuesqs.New()),
+    gas.WithSingletonService[gas.JobQueueProvider](queuesqs.New()),
 )
 ```
 
 ### With explicit config
 
 ```go
+cfg := queuesqs.DefaultConfig()
+cfg.Queue.Region = "eu-west-1"
+cfg.Queue.Endpoint = "http://localhost:9324"
+
 app := gas.NewApp(
-    gas.WithSingletonService[*queuesqs.Service](
-        queuesqs.New(queuesqs.WithConfig(&queuesqs.Config{
-            Queue: queuesqs.Settings{
-                Region:   "eu-west-1",
-                Endpoint: "http://localhost:9324",
-            },
-        })),
-    ),
+    gas.WithSingletonService[gas.JobQueueProvider](queuesqs.New(queuesqs.WithConfig(cfg))),
 )
 ```
 
@@ -216,9 +227,8 @@ func New(queue gas.JobQueueProvider) *Service {
     return &Service{queue: queue}
 }
 
-func (s *Service) Init(ctx context.Context) error {
-    // use s.queue.Enqueue, Dequeue, Ack, Nack
-    return nil
+func (s *Service) Schedule(ctx context.Context, queueURL string, payload []byte) error {
+    return s.queue.Enqueue(ctx, queueURL, payload, gas.WithDelay(30*time.Second))
 }
 ```
 
