@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"os"
 	"testing"
 
@@ -345,7 +344,7 @@ func createPgxTable(t *testing.T, s *database.Service) string {
 		//goland:noinspection SqlNoDataSourceInspection
 		if _, err := s.Exec(
 			context.Background(),
-			fmt.Sprintf("DROP TABLE IF EXISTS \"%s\"", table),
+			"DROP TABLE IF EXISTS "+table,
 		); err != nil {
 			t.Errorf("DROP TABLE: %v", err)
 		}
