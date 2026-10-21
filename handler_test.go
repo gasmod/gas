@@ -12,37 +12,65 @@ import (
 	"github.com/gasmod/gas"
 )
 
-// ---------------------------------------------------------------------------
-// Test helpers
-// ---------------------------------------------------------------------------
+// A handler depending on an interface that only a registered concrete type
+// implements cannot be served, because resolution is by exact type, so boot
+// validation rejects it instead of letting every request fail.
+func TestDIHandler_BootValidation_InterfaceNotRegistered(t *testing.T) {
+	app := gas.NewApp(
+		gas.WithService[*helloGreeter](newHelloGreeter, gas.ServiceLifetimeSingleton),
+	)
 
-// testDep is a simple dependency for DI-aware handler tests.
-type testDep struct {
-	Value string
+	app.Router().Handle(nil, "GET", "/greet", func(ctx gas.Context, g Greeter) error {
+		return nil
+	})
+
+	err := app.InitServices(context.Background())
+	if err == nil {
+		t.Fatal("InitServices() = nil, want an error for the unregistered Greeter")
+	}
+	if !strings.Contains(err.Error(), "Greeter") {
+		t.Errorf("InitServices() error = %v, want it to name Greeter", err)
+	}
 }
 
-func newTestDep() *testDep { return &testDep{Value: "resolved"} }
+// A DI-aware NotFound handler's dependencies are validated at boot like a
+// route handler's.
+func TestDIHandler_BootValidation_NotFound(t *testing.T) {
+	app := gas.NewApp()
 
-// testDepB is a second dependency for multi-dep tests.
-type testDepB struct {
-	Count int
+	app.Router().NotFound(nil, func(ctx gas.Context, dep *testDep) error {
+		return nil
+	})
+
+	err := app.InitServices(context.Background())
+	if err == nil {
+		t.Fatal("InitServices() = nil, want an error for the NotFound handler's missing dependency")
+	}
+	if !strings.Contains(err.Error(), "testDep") {
+		t.Errorf("InitServices() error = %v, want it to name testDep", err)
+	}
+}
+
+// The same holds for a NotFound handler registered on a sub-router.
+func TestDIHandler_BootValidation_NotFoundInRoute(t *testing.T) {
+	app := gas.NewApp()
+
+	app.Router().Route("/api", func(sub *gas.Router) {
+		sub.NotFound(nil, func(ctx gas.Context, dep *testDep) error {
+			return nil
+		})
+	})
+
+	err := app.InitServices(context.Background())
+	if err == nil {
+		t.Fatal("InitServices() = nil, want an error for the NotFound handler's missing dependency")
+	}
+	if !strings.Contains(err.Error(), "testDep") {
+		t.Errorf("InitServices() error = %v, want it to name testDep", err)
+	}
 }
 
 func newTestDepB() *testDepB { return &testDepB{Count: 42} }
-
-// Greeter is an interface dependency for interface resolution tests.
-type Greeter interface {
-	Greet() string
-}
-
-type helloGreeter struct{}
-
-func (h *helloGreeter) Greet() string { return "hello" }
-func newHelloGreeter() *helloGreeter  { return &helloGreeter{} }
-
-// ---------------------------------------------------------------------------
-// DI handler: happy path
-// ---------------------------------------------------------------------------
 
 func TestDIHandler_HappyPath(t *testing.T) {
 	app := gas.NewApp(
@@ -68,10 +96,6 @@ func TestDIHandler_HappyPath(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// DI handler: zero dependencies
-// ---------------------------------------------------------------------------
-
 func TestDIHandler_ZeroDeps(t *testing.T) {
 	app := gas.NewApp()
 
@@ -93,10 +117,6 @@ func TestDIHandler_ZeroDeps(t *testing.T) {
 		t.Fatalf("expected 'no deps', got %q", rr.Body.String())
 	}
 }
-
-// ---------------------------------------------------------------------------
-// DI handler: multiple dependencies
-// ---------------------------------------------------------------------------
 
 func TestDIHandler_MultipleDeps(t *testing.T) {
 	app := gas.NewApp(
@@ -134,10 +154,6 @@ func TestDIHandler_MultipleDeps(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// DI handler: interface dependency
-// ---------------------------------------------------------------------------
-
 func TestDIHandler_InterfaceDep(t *testing.T) {
 	app := gas.NewApp(
 		gas.WithService[Greeter](newHelloGreeter, gas.ServiceLifetimeSingleton),
@@ -161,10 +177,6 @@ func TestDIHandler_InterfaceDep(t *testing.T) {
 		t.Fatalf("expected 'hello', got %q", rr.Body.String())
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Backward compatibility: http.HandlerFunc
-// ---------------------------------------------------------------------------
 
 func TestDIHandler_BackwardCompat_HandlerFunc(t *testing.T) {
 	app := gas.NewApp()
@@ -190,10 +202,6 @@ func TestDIHandler_BackwardCompat_HandlerFunc(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Backward compatibility: func literal
-// ---------------------------------------------------------------------------
-
 func TestDIHandler_BackwardCompat_FuncLiteral(t *testing.T) {
 	app := gas.NewApp()
 
@@ -216,10 +224,6 @@ func TestDIHandler_BackwardCompat_FuncLiteral(t *testing.T) {
 		t.Fatalf("expected 'literal', got %q", rr.Body.String())
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Signature validation: panics
-// ---------------------------------------------------------------------------
 
 func TestDIHandler_Panic_NotAFunc(t *testing.T) {
 	router := gas.NewRouter()
@@ -263,10 +267,6 @@ func TestDIHandler_Panic_TooManyReturns(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// Boot-time validation: missing dependency
-// ---------------------------------------------------------------------------
-
 func TestDIHandler_BootValidation_MissingDep(t *testing.T) {
 	app := gas.NewApp()
 
@@ -283,10 +283,6 @@ func TestDIHandler_BootValidation_MissingDep(t *testing.T) {
 		t.Fatalf("expected error to mention testDep, got: %s", err.Error())
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Boot-time validation: Group/Route handlers are also validated
-// ---------------------------------------------------------------------------
 
 func TestDIHandler_BootValidation_Group(t *testing.T) {
 	app := gas.NewApp()
@@ -324,10 +320,6 @@ func TestDIHandler_BootValidation_Route(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Error handling: default (500)
-// ---------------------------------------------------------------------------
-
 func TestDIHandler_ErrorHandling_Default(t *testing.T) {
 	app := gas.NewApp()
 
@@ -361,10 +353,6 @@ func TestDIHandler_ErrorHandling_Default(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Error handling: custom ErrorHandler
-// ---------------------------------------------------------------------------
-
 func TestDIHandler_ErrorHandling_Custom(t *testing.T) {
 	app := gas.NewApp(
 		gas.WithErrorHandler(func(ctx gas.Context, err error) {
@@ -395,10 +383,6 @@ func TestDIHandler_ErrorHandling_Custom(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Error handling: nil error (no response mutation)
-// ---------------------------------------------------------------------------
-
 func TestDIHandler_NilError(t *testing.T) {
 	app := gas.NewApp()
 
@@ -420,321 +404,6 @@ func TestDIHandler_NilError(t *testing.T) {
 		t.Fatalf("expected 'all good', got %q", rr.Body.String())
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Context helpers
-// ---------------------------------------------------------------------------
-
-func TestContext_JSON(t *testing.T) {
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/", nil)
-	ctx := gas.NewContext(req.Context(), rr, req)
-
-	if err := ctx.JSON(http.StatusCreated, map[string]string{"key": "val"}); err != nil {
-		t.Fatal(err)
-	}
-
-	if rr.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got %d", rr.Code)
-	}
-	if ct := rr.Header().Get("Content-Type"); ct != "application/json" {
-		t.Fatalf("expected application/json, got %q", ct)
-	}
-
-	var result map[string]string
-	if err := json.NewDecoder(rr.Body).Decode(&result); err != nil {
-		t.Fatal(err)
-	}
-	if result["key"] != "val" {
-		t.Fatalf("expected key=val, got %v", result)
-	}
-}
-
-func TestContext_XML(t *testing.T) {
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/", nil)
-	ctx := gas.NewContext(req.Context(), rr, req)
-
-	type data struct {
-		Name string `xml:"name"`
-	}
-	if err := ctx.XML(http.StatusOK, data{Name: "alice"}); err != nil {
-		t.Fatal(err)
-	}
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rr.Code)
-	}
-	if ct := rr.Header().Get("Content-Type"); ct != "application/xml; charset=utf-8" {
-		t.Fatalf("expected application/xml; charset=utf-8, got %q", ct)
-	}
-	expected := `<?xml version="1.0" encoding="UTF-8"?>` + "\n" + `<data><name>alice</name></data>`
-	if rr.Body.String() != expected {
-		t.Fatalf("expected %q, got %q", expected, rr.Body.String())
-	}
-}
-
-func TestContext_RSS(t *testing.T) {
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/", nil)
-	ctx := gas.NewContext(req.Context(), rr, req)
-
-	type data struct {
-		Name string `xml:"name"`
-	}
-	if err := ctx.RSS(http.StatusOK, data{Name: "alice"}); err != nil {
-		t.Fatal(err)
-	}
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rr.Code)
-	}
-	if ct := rr.Header().Get("Content-Type"); ct != "application/rss+xml; charset=utf-8" {
-		t.Fatalf("expected application/rss+xml; charset=utf-8, got %q", ct)
-	}
-	expected := `<?xml version="1.0" encoding="UTF-8"?>` + "\n" + `<data><name>alice</name></data>`
-	if rr.Body.String() != expected {
-		t.Fatalf("expected %q, got %q", expected, rr.Body.String())
-	}
-}
-
-func TestContext_HTML(t *testing.T) {
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/", nil)
-	ctx := gas.NewContext(req.Context(), rr, req)
-
-	if err := ctx.HTML(http.StatusOK, "<h1>hello</h1>"); err != nil {
-		t.Fatal(err)
-	}
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rr.Code)
-	}
-	if ct := rr.Header().Get("Content-Type"); ct != "text/html; charset=utf-8" {
-		t.Fatalf("expected text/html; charset=utf-8, got %q", ct)
-	}
-	if rr.Body.String() != "<h1>hello</h1>" {
-		t.Fatalf("expected '<h1>hello</h1>', got %q", rr.Body.String())
-	}
-}
-
-func TestContext_Redirect(t *testing.T) {
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/", nil)
-	ctx := gas.NewContext(req.Context(), rr, req)
-
-	ctx.Redirect(http.StatusFound, "/new-url")
-
-	if rr.Code != http.StatusFound {
-		t.Fatalf("expected 302, got %d", rr.Code)
-	}
-	if loc := rr.Header().Get("Location"); loc != "/new-url" {
-		t.Fatalf("expected /new-url, got %q", loc)
-	}
-}
-
-func TestContext_Text(t *testing.T) {
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/", nil)
-	ctx := gas.NewContext(req.Context(), rr, req)
-
-	if err := ctx.Text(http.StatusOK, "hello"); err != nil {
-		t.Fatal(err)
-	}
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rr.Code)
-	}
-	if ct := rr.Header().Get("Content-Type"); ct != "text/plain; charset=utf-8" {
-		t.Fatalf("expected text/plain, got %q", ct)
-	}
-	if rr.Body.String() != "hello" {
-		t.Fatalf("expected 'hello', got %q", rr.Body.String())
-	}
-}
-
-func TestContext_NoContent(t *testing.T) {
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/", nil)
-	ctx := gas.NewContext(req.Context(), rr, req)
-
-	if err := ctx.NoContent(); err != nil {
-		t.Fatal(err)
-	}
-
-	if rr.Code != http.StatusNoContent {
-		t.Fatalf("expected 204, got %d", rr.Code)
-	}
-}
-
-func TestContext_BindJSON(t *testing.T) {
-	t.Run("Success", func(t *testing.T) {
-		body := `{"name":"alice"}`
-		req := httptest.NewRequest("POST", "/", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		rr := httptest.NewRecorder()
-		ctx := gas.NewContext(req.Context(), rr, req)
-
-		var dest struct {
-			Name string `json:"name"`
-		}
-		if err := ctx.BindJSON(&dest); err != nil {
-			t.Fatal(err)
-		}
-		if dest.Name != "alice" {
-			t.Fatalf("expected 'alice', got %q", dest.Name)
-		}
-	})
-
-	t.Run("ValidationFailure", func(t *testing.T) {
-		body := `{"name":""}`
-		req := httptest.NewRequest("POST", "/", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		rr := httptest.NewRecorder()
-		ctx := gas.NewContext(req.Context(), rr, req)
-
-		var dest struct {
-			Name string `json:"name" validate:"required"`
-		}
-		err := ctx.BindJSON(&dest)
-		if err == nil {
-			t.Fatal("expected validation error, got nil")
-		}
-		e, ok := gas.AsError(err)
-		if !ok {
-			t.Fatalf("expected *gas.Error, got %T: %v", err, err)
-		}
-		if e.Status != http.StatusUnprocessableEntity {
-			t.Fatalf("expected 422, got %d", e.Status)
-		}
-		if len(e.Fields) != 1 || e.Fields[0].Rule != "required" {
-			t.Fatalf("expected one required-rule field error, got %+v", e.Fields)
-		}
-	})
-}
-
-func TestContext_BindForm(t *testing.T) {
-	t.Run("Success", func(t *testing.T) {
-		form := "name=alice&age=30"
-		req := httptest.NewRequest("POST", "/", strings.NewReader(form))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		rr := httptest.NewRecorder()
-		ctx := gas.NewContext(req.Context(), rr, req)
-
-		var dest struct {
-			Name string `schema:"name"`
-			Age  int    `schema:"age"`
-		}
-		if err := ctx.BindForm(&dest); err != nil {
-			t.Fatal(err)
-		}
-		if dest.Name != "alice" || dest.Age != 30 {
-			t.Fatalf("expected alice/30, got %q/%d", dest.Name, dest.Age)
-		}
-	})
-
-	t.Run("ValidationFailure", func(t *testing.T) {
-		form := "name=&age=30"
-		req := httptest.NewRequest("POST", "/", strings.NewReader(form))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		rr := httptest.NewRecorder()
-		ctx := gas.NewContext(req.Context(), rr, req)
-
-		var dest struct {
-			Name string `schema:"name" validate:"required"`
-			Age  int    `schema:"age"`
-		}
-		err := ctx.BindForm(&dest)
-		if err == nil {
-			t.Fatal("expected validation error, got nil")
-		}
-		e, ok := gas.AsError(err)
-		if !ok {
-			t.Fatalf("expected *gas.Error, got %T: %v", err, err)
-		}
-		if e.Status != http.StatusUnprocessableEntity {
-			t.Fatalf("expected 422, got %d", e.Status)
-		}
-		if len(e.Fields) != 1 || e.Fields[0].Rule != "required" {
-			t.Fatalf("expected one required-rule field error, got %+v", e.Fields)
-		}
-	})
-}
-
-func TestContext_Query(t *testing.T) {
-	req := httptest.NewRequest("GET", "/search?q=hello&page=2", nil)
-	ctx := gas.NewContext(req.Context(), httptest.NewRecorder(), req)
-
-	if ctx.Query("q") != "hello" {
-		t.Fatalf("expected q=hello, got %q", ctx.Query("q"))
-	}
-	if ctx.Query("page") != "2" {
-		t.Fatalf("expected page=2, got %q", ctx.Query("page"))
-	}
-	if ctx.Query("missing") != "" {
-		t.Fatalf("expected empty for missing key, got %q", ctx.Query("missing"))
-	}
-}
-
-func TestContext_Header(t *testing.T) {
-	req := httptest.NewRequest("GET", "/", nil)
-	req.Header.Set("X-Custom", "value")
-	ctx := gas.NewContext(req.Context(), httptest.NewRecorder(), req)
-
-	if ctx.Header("X-Custom") != "value" {
-		t.Fatalf("expected 'value', got %q", ctx.Header("X-Custom"))
-	}
-}
-
-func TestContext_SetHeader(t *testing.T) {
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/", nil)
-	ctx := gas.NewContext(req.Context(), rr, req)
-
-	ctx.SetHeader("X-Out", "set")
-
-	if rr.Header().Get("X-Out") != "set" {
-		t.Fatalf("expected 'set', got %q", rr.Header().Get("X-Out"))
-	}
-}
-
-// ---------------------------------------------------------------------------
-// NotFound with DI-aware handler
-// ---------------------------------------------------------------------------
-
-func TestRouter_NotFound_DIHandler(t *testing.T) {
-	app := gas.NewApp()
-
-	// Register NotFound before InitServices so it's in place before Seal().
-	app.Router().NotFound(nil, func(ctx gas.Context) error {
-		return ctx.Text(http.StatusNotFound, "custom 404")
-	})
-
-	if err := app.InitServices(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	// At least one route must exist so Chi builds the middleware handler
-	// chain. Without any route, Chi's ServeHTTP bypasses middleware for
-	// NotFound — this is a Chi implementation detail.
-	app.Router().Handle(nil, "GET", "/exists", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
-	rr := httptest.NewRecorder()
-	app.Router().ServeHTTP(rr, httptest.NewRequest("GET", "/nonexistent", nil))
-
-	if rr.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d", rr.Code)
-	}
-	if rr.Body.String() != "custom 404" {
-		t.Fatalf("expected 'custom 404', got %q", rr.Body.String())
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Scoped deps: per-request isolation
-// ---------------------------------------------------------------------------
 
 func TestDIHandler_ScopedIsolation(t *testing.T) {
 	var callCount int
@@ -768,10 +437,6 @@ func TestDIHandler_ScopedIsolation(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Singleton dep in DI handler
-// ---------------------------------------------------------------------------
-
 func TestDIHandler_SingletonDep(t *testing.T) {
 	app := gas.NewApp(
 		gas.WithService[*testDep](newTestDep, gas.ServiceLifetimeSingleton),
@@ -793,5 +458,96 @@ func TestDIHandler_SingletonDep(t *testing.T) {
 	}
 	if rr.Body.String() != "resolved" {
 		t.Fatalf("expected 'resolved', got %q", rr.Body.String())
+	}
+}
+
+// A plain http.HandlerFunc that panics gets the same recovery as a DI-aware
+// handler: the error handler answers 500.
+func TestRouter_PlainHandlerPanicRecovered(t *testing.T) {
+	var got error
+	app := gas.NewApp(gas.WithErrorHandler(func(ctx gas.Context, err error) {
+		got = err
+		_ = ctx.Text(http.StatusInternalServerError, "recovered")
+	}))
+	app.Router().Handle(nil, http.MethodGet, "/plain", http.HandlerFunc(panicking))
+	app.Router().Handle(nil, http.MethodGet, "/func", panicking)
+	if err := app.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = app.Shutdown(context.Background()) })
+
+	for _, path := range []string{"/plain", "/func"} {
+		got = nil
+		rr := httptest.NewRecorder()
+		app.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
+		if rr.Code != http.StatusInternalServerError || rr.Body.String() != "recovered" {
+			t.Errorf("GET %s = %d %q, want 500 %q", path, rr.Code, rr.Body.String(), "recovered")
+		}
+		if got == nil {
+			t.Errorf("GET %s: error handler not called", path)
+		}
+	}
+}
+
+// Recovery works on a router used without an App, where there is no
+// request scope to resolve a logger from.
+func TestRouter_PlainHandlerPanicWithoutApp(t *testing.T) {
+	router := gas.NewRouter()
+	router.Handle(nil, http.MethodGet, "/plain", panicking)
+	router.Seal()
+
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/plain", nil))
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("GET /plain = %d, want 500", rr.Code)
+	}
+}
+
+// http.ErrAbortHandler still aborts the request: it is re-panicked for
+// net/http rather than turned into a response.
+func TestRouter_PlainHandlerAbortNotRecovered(t *testing.T) {
+	router := gas.NewRouter()
+	router.Handle(nil, http.MethodGet, "/abort", func(http.ResponseWriter, *http.Request) {
+		panic(http.ErrAbortHandler)
+	})
+	router.Seal()
+
+	defer func() {
+		rec := recover()
+		if err, ok := rec.(error); !ok || !errors.Is(err, http.ErrAbortHandler) {
+			t.Errorf("recovered %v, want http.ErrAbortHandler", rec)
+		}
+	}()
+	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/abort", nil))
+}
+
+func TestDIHandler_PanicRecovery(t *testing.T) {
+	svc := &testService{name: "svc"}
+
+	var capturedErr error
+	app := gas.NewApp(
+		gas.WithErrorHandler(func(ctx gas.Context, err error) {
+			capturedErr = err
+			_ = ctx.Text(http.StatusInternalServerError, "recovered")
+		}),
+	)
+
+	if err := app.InitServices(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	app.Router().Handle(svc, "GET", "/panic", func(ctx gas.Context) error {
+		panic("boom")
+	})
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/panic", nil)
+	app.Router().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", rr.Code)
+	}
+	if capturedErr == nil || !strings.Contains(capturedErr.Error(), "boom") {
+		t.Fatalf("expected error to contain 'boom', got: %v", capturedErr)
 	}
 }

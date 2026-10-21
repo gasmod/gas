@@ -1,9 +1,7 @@
 package gas
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -15,35 +13,6 @@ import (
 
 	"github.com/go-chi/chi/v5/middleware"
 )
-
-// lockedBuffer is a bytes.Buffer safe for concurrent writes from a
-// slog.Handler.
-type lockedBuffer struct {
-	buf bytes.Buffer
-	mu  sync.Mutex
-}
-
-func (b *lockedBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Write(p)
-}
-
-func (b *lockedBuffer) lines() []map[string]any {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	var out []map[string]any
-	for line := range strings.SplitSeq(strings.TrimSpace(b.buf.String()), "\n") {
-		if line == "" {
-			continue
-		}
-		var rec map[string]any
-		if err := json.Unmarshal([]byte(line), &rec); err == nil {
-			out = append(out, rec)
-		}
-	}
-	return out
-}
 
 // countKey reports how many times key appears as a field in one JSON log
 // line. slog's JSON handler writes a repeated attribute twice.
@@ -258,8 +227,10 @@ type closingRequestLogger struct {
 	closed *atomic.Bool
 }
 
-func (l *closingRequestLogger) Name() string                { return "closing-request-logger" }
-func (l *closingRequestLogger) Init(context.Context) error  { return nil }
+func (l *closingRequestLogger) Name() string { return "closing-request-logger" }
+
+func (l *closingRequestLogger) Init(context.Context) error { return nil }
+
 func (l *closingRequestLogger) Close(context.Context) error { l.closed.Store(true); return nil }
 
 // A scoped request logger that is a Service is not replaced, so the scope
