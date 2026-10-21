@@ -4,30 +4,82 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"os"
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/testcontainers/testcontainers-go/modules/postgres"
 
 	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/database"
 )
 
-// postgresDSNEnv names the environment variable holding a live PostgreSQL
-// DSN. The pgx tests below that need a real server skip without it, since
-// neither sqlite nor an in-process fake can stand in for pgxpool.
-const postgresDSNEnv = "GAS_TEST_POSTGRES_DSN"
+// pgxImage is the PostgreSQL image the pgx tests run against, the same one
+// gas/auth's integration tests use.
+const pgxImage = "postgres:16-alpine"
 
-// newPgxService returns a service running in ModePgx against the DSN in
-// postgresDSNEnv, skipping the test when it is not set.
+// The pgx tests share one PostgreSQL container per test run; createPgxTable
+// gives each test its own table so they do not collide. TestMain terminates
+// the container.
+var (
+	pgxOnce      sync.Once
+	pgxDSN       string
+	pgxSetupErr  error
+	pgxTerminate func()
+)
+
+// TestMain terminates the shared PostgreSQL container once every test in the
+// package has finished with it.
+func TestMain(m *testing.M) {
+	m.Run()
+	if pgxTerminate != nil {
+		pgxTerminate()
+	}
+}
+
+// postgresDSN skips under -short, checks Docker with requireDocker, starts
+// the shared PostgreSQL container on first use, and returns its DSN.
+func postgresDSN(t *testing.T) string {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("skipping pgx integration test in short mode")
+	}
+	requireDocker(t)
+
+	pgxOnce.Do(func() {
+		ctx := context.Background()
+		ctr, err := postgres.Run(ctx,
+			pgxImage,
+			postgres.WithDatabase("testdb"),
+			postgres.WithUsername("testuser"),
+			postgres.WithPassword("testpass"),
+			postgres.BasicWaitStrategies(),
+		)
+		if err != nil {
+			pgxSetupErr = fmt.Errorf("start postgres: %w", err)
+			return
+		}
+		pgxTerminate = func() { _ = ctr.Terminate(context.Background()) }
+
+		pgxDSN, err = ctr.ConnectionString(ctx, "sslmode=disable")
+		if err != nil {
+			pgxSetupErr = fmt.Errorf("postgres connection string: %w", err)
+		}
+	})
+	if pgxSetupErr != nil {
+		t.Fatal(pgxSetupErr)
+	}
+	return pgxDSN
+}
+
+// newPgxService returns a service running in ModePgx against the shared
+// PostgreSQL container.
 func newPgxService(t *testing.T) *database.Service {
 	t.Helper()
 
-	dsn := os.Getenv(postgresDSNEnv)
-	if dsn == "" {
-		t.Skipf("set %s to a PostgreSQL DSN to run pgx tests", postgresDSNEnv)
-	}
+	dsn := postgresDSN(t)
 
 	cfg := database.DefaultConfig()
 	cfg.Database.Mode = database.ModePgx

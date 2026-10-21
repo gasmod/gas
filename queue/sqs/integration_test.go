@@ -34,6 +34,7 @@ func setupElasticMQOnce(t *testing.T) string {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
+	requireDocker(t)
 
 	sqsReady.Do(func() {
 		ctx := context.Background()
