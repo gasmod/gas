@@ -1,12 +1,11 @@
 package gas
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -14,35 +13,6 @@ import (
 
 	"github.com/go-chi/chi/v5/middleware"
 )
-
-// lockedBuffer is a bytes.Buffer safe for concurrent writes from a
-// slog.Handler.
-type lockedBuffer struct {
-	buf bytes.Buffer
-	mu  sync.Mutex
-}
-
-func (b *lockedBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Write(p)
-}
-
-func (b *lockedBuffer) lines() []map[string]any {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	var out []map[string]any
-	for line := range strings.SplitSeq(strings.TrimSpace(b.buf.String()), "\n") {
-		if line == "" {
-			continue
-		}
-		var rec map[string]any
-		if err := json.Unmarshal([]byte(line), &rec); err == nil {
-			out = append(out, rec)
-		}
-	}
-	return out
-}
 
 // countKey reports how many times key appears as a field in one JSON log
 // line. slog's JSON handler writes a repeated attribute twice.
@@ -257,8 +227,10 @@ type closingRequestLogger struct {
 	closed *atomic.Bool
 }
 
-func (l *closingRequestLogger) Name() string                { return "closing-request-logger" }
-func (l *closingRequestLogger) Init(context.Context) error  { return nil }
+func (l *closingRequestLogger) Name() string { return "closing-request-logger" }
+
+func (l *closingRequestLogger) Init(context.Context) error { return nil }
+
 func (l *closingRequestLogger) Close(context.Context) error { l.closed.Store(true); return nil }
 
 // A scoped request logger that is a Service is not replaced, so the scope
@@ -293,5 +265,117 @@ func TestRequestLogger_ScopedServiceIsNotReplaced(t *testing.T) {
 	}
 	if !closed.Load() {
 		t.Error("the scoped request logger was not closed at the end of the request")
+	}
+}
+
+// newStatusLoggerApp builds an App with a singleton logger writing JSON to
+// buf, chi's RequestID, and RequestLogger[Logger](opts...), serving
+// GET /status/{code} with that status.
+func newStatusLoggerApp(t *testing.T, buf *lockedBuffer, opts ...RequestLoggerOption) *App {
+	t.Helper()
+
+	shared := Logger(newSlogLogger(slog.New(slog.NewJSONHandler(buf, nil))))
+	app := NewApp(WithServiceInstance[Logger](shared))
+	if err := app.InitServices(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	app.Router().UseMiddlewareFunc(middleware.RequestID)
+	app.Router().UseMiddlewareFunc(RequestLogger[Logger](opts...))
+	app.Router().
+		Handle(nil, http.MethodGet, "/status/{code}", func(w http.ResponseWriter, r *http.Request) {
+			code, err := strconv.Atoi(r.PathValue("code"))
+			if err != nil {
+				t.Errorf("bad status code %q", r.PathValue("code"))
+				return
+			}
+			w.WriteHeader(code)
+		})
+	return app
+}
+
+// The request line is logged at error level for a status >= 400 and at info
+// level below it, with the status field set.
+func TestRequestLogger_LevelByStatus(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		level string
+		code  int
+	}{
+		{"INFO", http.StatusOK},
+		{"INFO", http.StatusFound},
+		{"ERROR", http.StatusBadRequest},
+		{"ERROR", http.StatusNotFound},
+		{"ERROR", http.StatusInternalServerError},
+	}
+	for _, tt := range tests {
+		t.Run(strconv.Itoa(tt.code), func(t *testing.T) {
+			t.Parallel()
+
+			buf := &lockedBuffer{}
+			app := newStatusLoggerApp(t, buf)
+			rr := httptest.NewRecorder()
+			app.Router().
+				ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/status/"+strconv.Itoa(tt.code), nil))
+
+			lines := buf.lines()
+			if len(lines) != 1 {
+				t.Fatalf("log lines = %d, want 1", len(lines))
+			}
+			if got := lines[0]["level"]; got != tt.level {
+				t.Errorf("level = %v, want %s", got, tt.level)
+			}
+			if got := lines[0]["status"]; got != float64(tt.code) {
+				t.Errorf("status = %v, want %d", got, tt.code)
+			}
+		})
+	}
+}
+
+// WithRequestLoggerAppendRequestID(false) leaves request_id off the request
+// line.
+func TestRequestLogger_AppendRequestIDDisabled(t *testing.T) {
+	t.Parallel()
+
+	buf := &lockedBuffer{}
+	app := newStatusLoggerApp(t, buf, WithRequestLoggerAppendRequestID(false))
+	app.Router().
+		ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/status/200", nil))
+
+	lines := buf.lines()
+	if len(lines) != 1 {
+		t.Fatalf("log lines = %d, want 1", len(lines))
+	}
+	if id, ok := lines[0]["request_id"]; ok {
+		t.Errorf("request_id = %v, want absent", id)
+	}
+}
+
+// WithRequestLoggerBuilder runs after request_id is appended and its logger
+// is the one the request line is written through.
+func TestRequestLogger_Builder(t *testing.T) {
+	t.Parallel()
+
+	buf := &lockedBuffer{}
+	app := newStatusLoggerApp(
+		t,
+		buf,
+		WithRequestLoggerBuilder(func(l Logger, r *http.Request) Logger {
+			return l.With().Str("tenant", r.Header.Get("X-Tenant")).Logger()
+		}),
+	)
+	req := httptest.NewRequest(http.MethodGet, "/status/200", nil)
+	req.Header.Set("X-Tenant", "acme")
+	app.Router().ServeHTTP(httptest.NewRecorder(), req)
+
+	lines := buf.lines()
+	if len(lines) != 1 {
+		t.Fatalf("log lines = %d, want 1", len(lines))
+	}
+	if got := lines[0]["tenant"]; got != "acme" {
+		t.Errorf("tenant = %v, want acme", got)
+	}
+	if got := lines[0]["request_id"]; got == nil || got == "" {
+		t.Errorf("request_id = %v, want set alongside the builder's fields", got)
 	}
 }

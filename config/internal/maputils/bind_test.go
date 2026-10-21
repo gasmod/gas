@@ -263,3 +263,100 @@ func TestBind_FixedSizeArrayWithMoreElements(t *testing.T) {
 	assert.ErrorIs(t, err, maputils.ErrArrayTooSmall)
 	assert.Equal(t, [2]int{9, 9}, dest.Ports, "a failed bind must leave the destination untouched")
 }
+
+func TestBind_NumericAndCSVConversions(t *testing.T) {
+	t.Parallel()
+
+	type Struct struct {
+		CSV []string
+		F64 float64
+		F32 float32
+		U16 uint16
+		U8  uint8
+		I8  int8
+	}
+
+	src := map[string]any{
+		"u8":  "200",
+		"u16": 65535,
+		"f32": "1.5",
+		"f64": 2.25,
+		"i8":  -128,
+		"csv": " a , b ,c",
+	}
+
+	var dest Struct
+	require.NoError(t, maputils.Bind(src, &dest))
+
+	assert.Equal(t, uint8(200), dest.U8)
+	assert.Equal(t, uint16(65535), dest.U16)
+	assert.InDelta(t, float32(1.5), dest.F32, 0)
+	assert.InDelta(t, 2.25, dest.F64, 0)
+	assert.Equal(t, int8(-128), dest.I8)
+	assert.Equal(t, []string{"a", "b", "c"}, dest.CSV)
+}
+
+func TestBind_NumericOverflow(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		wantErr error
+		value   any
+		bind    func(src map[string]any) error
+		name    string
+	}{
+		{
+			name:    "int8 above range",
+			value:   200,
+			wantErr: maputils.ErrIntegerOverflow,
+			bind: func(src map[string]any) error {
+				var d struct{ V int8 }
+				return maputils.Bind(src, &d)
+			},
+		},
+		{
+			name:    "int16 below range",
+			value:   "-40000",
+			wantErr: maputils.ErrIntegerOverflow,
+			bind: func(src map[string]any) error {
+				var d struct{ V int16 }
+				return maputils.Bind(src, &d)
+			},
+		},
+		{
+			name:    "uint8 above range",
+			value:   256,
+			wantErr: maputils.ErrUnsignedIntegerOverflow,
+			bind: func(src map[string]any) error {
+				var d struct{ V uint8 }
+				return maputils.Bind(src, &d)
+			},
+		},
+		{
+			name:    "uint16 from string above range",
+			value:   "70000",
+			wantErr: maputils.ErrUnsignedIntegerOverflow,
+			bind: func(src map[string]any) error {
+				var d struct{ V uint16 }
+				return maputils.Bind(src, &d)
+			},
+		},
+		{
+			name:    "uint from negative int",
+			value:   -1,
+			wantErr: maputils.ErrNegativeIntCannotConvert,
+			bind: func(src map[string]any) error {
+				var d struct{ V uint }
+				return maputils.Bind(src, &d)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := tt.bind(map[string]any{"v": tt.value})
+			assert.ErrorIs(t, err, tt.wantErr)
+		})
+	}
+}

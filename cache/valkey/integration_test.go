@@ -22,6 +22,7 @@ import (
 // *vk.Service. Container and service are cleaned up via t.Cleanup.
 func newTestService(t *testing.T) *vk.Service {
 	t.Helper()
+	requireDocker(t)
 
 	ctx := context.Background()
 

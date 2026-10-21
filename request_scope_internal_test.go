@@ -13,8 +13,10 @@ import (
 // failingScoped is a scoped Service whose Close fails.
 type failingScoped struct{}
 
-func (*failingScoped) Name() string               { return "failing-scoped" }
+func (*failingScoped) Name() string { return "failing-scoped" }
+
 func (*failingScoped) Init(context.Context) error { return nil }
+
 func (*failingScoped) Close(context.Context) error {
 	return errors.New("scoped close boom")
 }

@@ -34,14 +34,23 @@ import (
 const localstackImage = "localstack/localstack:4.14.0@sha256:3ebc37595918b8accb852f8048fef2aff047d465167edd655528065b07bc364a"
 
 // The LocalStack container is shared by every test in the package. It is
-// started on first use and reaped by testcontainers when the test binary
-// exits.
+// started on first use and terminated by TestMain once the tests finish.
 var (
-	lsOnce     sync.Once
-	lsEndpoint string
-	lsErr      error
-	lsSeq      atomic.Int64
+	lsOnce      sync.Once
+	lsEndpoint  string
+	lsErr       error
+	lsSeq       atomic.Int64
+	lsTerminate func()
 )
+
+// TestMain terminates the shared LocalStack container once every test in the
+// package has finished with it.
+func TestMain(m *testing.M) {
+	m.Run()
+	if lsTerminate != nil {
+		lsTerminate()
+	}
+}
 
 // localstackEndpoint skips under -short, starts the shared LocalStack
 // container on first use, and returns the endpoint it serves S3 on. Signature
@@ -55,6 +64,7 @@ func localstackEndpoint(t *testing.T) string {
 	if testing.Short() {
 		t.Skip("skipping LocalStack integration test in short mode")
 	}
+	requireDocker(t)
 	lsOnce.Do(func() {
 		ctx := context.Background()
 		ctr, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
@@ -75,6 +85,7 @@ func localstackEndpoint(t *testing.T) string {
 			lsErr = fmt.Errorf("start localstack: %w", err)
 			return
 		}
+		lsTerminate = func() { _ = ctr.Terminate(context.Background()) }
 		host, err := ctr.Host(ctx)
 		if err != nil {
 			lsErr = fmt.Errorf("localstack host: %w", err)
