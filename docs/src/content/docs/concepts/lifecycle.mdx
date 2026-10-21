@@ -15,11 +15,14 @@ every DI registration option works with both; only HTTP-specific options such as
 `Run` is a composition of smaller steps, and knowing the order explains most
 "why didn't my thing happen yet" questions.
 
-1. **Build singletons.** The container topologically sorts registrations,
-   validates lifetimes, and constructs every singleton. `Init` runs on each
-   service as it is built, so a service can rely on its dependencies already
-   being initialized. See [Init and Close contexts](#init-and-close-contexts).
-2. **Validate.** Registered instances are initialized, the router is sealed, and
+1. **Build singletons.** The container validates service shapes and lifetimes,
+   runs `Init` on every registered instance in registration order, then
+   topologically sorts the registrations and constructs every singleton. `Init`
+   runs on each service as it is built, so a service can rely on its
+   dependencies already being initialized. See
+   [Init and Close contexts](#init-and-close-contexts).
+2. **Validate** (App only). The router builds its routing tree from everything
+   registered so far (until then, `Handler()` serves none of the routes), and
    every DI-aware handler's parameters are checked against the container.
 3. **Emit `SystemAllServicesInitialized`.**
 4. **Run migrations.** Everything registered during step 1, in global version

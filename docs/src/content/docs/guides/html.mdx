@@ -5,6 +5,8 @@ description: Layouts, partials, static files, and HTMX fragments.
 
 import { Code, Aside, FileTree } from '@astrojs/starlight/components';
 import htmlui from '../../../../snippets/htmlui/main.go?raw';
+import notesList from '../../../../snippets/htmlui/templates/notes/list.html?raw';
+import notesPartial from '../../../../snippets/htmlui/templates/partials/notes.html?raw';
 import { region } from '../../../lib/snippet';
 
 Two modules, split along one line: `gas/template` decides **where template
@@ -32,7 +34,7 @@ can inject it, and set `T` to whatever your template store is registered as.
 | Backend | Use it for |
 |---|---|
 | `template/fs` | An `fs.FS`. `os.DirFS` in development, `embed.FS` in a release binary |
-| `template/dir` | A directory on disk, with an in-memory overlay for runtime additions |
+| `template/dir` | A directory on disk, with an in-memory overlay for runtime additions. It declares `Close` but does not implement `gas.Service` (no `Name` or `Init`, and its `Close()` takes no context), so the container rejects a `*dir.Store` at startup with `gas.ErrInvalidServiceShape`. Pass it where a `gas.TemplateProvider` value is taken directly, such as inside a `template/composite` store, and close it yourself |
 | `template/memory` | Tests and ephemeral content |
 | `template/db` | Templates users can edit, across multiple instances |
 | `template/composite` | Chain them: write to the first, read through all |
@@ -60,8 +62,9 @@ from a ready function (`gas.WithReadyFunc`), not from another service's `Init`.
 </FileTree>
 
 Everything in `layouts/` and `partials/` is parsed into every render. Everything
-else is a page. A page that defines blocks gets wrapped in the layout; a page
-that defines none renders standalone.
+else is a page. When `layouts/` holds any template, every page renders through
+the layout's entry point (`base` by default), whether or not it defines blocks.
+A page renders standalone only when there are no layouts at all.
 
 ## Rendering
 
@@ -72,8 +75,15 @@ tested against `uitest.MockUI`.
 
 ## HTMX
 
-`RenderFragment` renders a page without the layout wrapper, which is exactly
-what an HTMX swap wants. Same template, two entry points:
+`RenderFragment` renders a page without the layout wrapper, which is what an
+HTMX swap wants. It executes only the page's text outside its `{{define}}`
+blocks, so a page that keeps all its markup in `{{define "content"}}` renders
+an empty fragment. To serve one page both ways, put the markup in a partial
+and call it from both places:
+
+<Code code={notesPartial} lang="html" title="templates/partials/notes.html" />
+
+<Code code={notesList} lang="html" title="templates/notes/list.html" />
 
 <Code code={region(htmlui, 'fragment')} lang="go" />
 

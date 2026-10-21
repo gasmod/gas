@@ -45,7 +45,7 @@ as soon as two services implement the same one.
 <TabItem label="Fails at startup">
 ```go
 // migrate asks for gas.DatabaseProvider, but the database is registered
-// under its concrete type.
+// under its concrete type. Config and logger are registered as usual.
 gas.WithSingletonService[*database.Service](database.New())
 gas.WithSingletonService[*migrate.Service](migrate.New())
 ```
@@ -54,6 +54,11 @@ gas.WithSingletonService[*migrate.Service](migrate.New())
 building *migrate.Service: resolving dep gas.DatabaseProvider for *migrate.Service:
   no registration for gas.DatabaseProvider
 ```
+
+Services are built in dependency order, and independent ones in no fixed
+order, so if another service fails first, `Start` returns that error instead.
+Without a `gas.ConfigProvider`, for example, the database itself fails with
+`resolving dep gas.ConfigProvider for *database.Service`.
 </TabItem>
 <TabItem label="Works">
 ```go
@@ -144,7 +149,7 @@ classify them with `errors.Is`. The message still names the types involved.
 | `gas.ErrCircularDependency` | Registered constructors depend on each other in a cycle, a constructor or `Init` resolves the type being built through a captured container or scope, two goroutines' builds would wait on each other, or constructors nest deeper than 256 |
 | `gas.ErrCaptiveDependency` | A singleton depends on a scoped or transient service |
 | `gas.ErrScopeRequired` | A scoped service is resolved from the container instead of a `Scope` |
-| `gas.ErrInvalidLifetime` | A registration's `ServiceLifetime` is not Singleton, Scoped, or Transient |
+| `gas.ErrInvalidLifetime` | A type whose registered `ServiceLifetime` is not Singleton, Scoped, or Transient is resolved, directly or as a constructor's dependency. `BuildAll` builds only singletons, so it skips such a registration unless a singleton depends on it |
 | `gas.ErrInvalidServiceShape` | A registered type declares `Init` or `Close` but does not implement `Service` |
 | `gas.ErrNoConstructor` | The container is asked to construct a type it has no constructor for. It guards an internal invariant and is not returned through the public API today |
 

@@ -33,7 +33,11 @@ blocking, which is what you want when something else owns the process loop.
 <Code code={region(jobs, 'enqueue')} lang="go" />
 
 The queue argument is the full SQS queue URL. `WithGroupID` and `WithDedupeID`
-map to FIFO ordering and deduplication and are ignored on standard queues.
+set the message's `MessageGroupId` and `MessageDeduplicationId`, which SQS uses
+for FIFO ordering and deduplication. Gas passes them through on any queue and
+leaves the checks to SQS: on a standard queue, SQS (and ElasticMQ) reject a
+deduplication ID with `400 InvalidParameterValue`, so set `WithDedupeID` only
+for FIFO queues.
 
 ## Consuming
 

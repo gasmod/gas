@@ -55,7 +55,10 @@ Go field name:
   "fields":[{"field":"email","rule":"email","message":"must be a valid email address"}]}}
 ```
 
-`BindForm` does the same for form bodies, using the `form` struct tag.
+`BindForm` does the same for form bodies, which it decodes by the `form` struct
+tag. Validation errors name a field by its `json` tag either way, and by its
+`form` tag only when it has no `json` tag, so a field tagged
+`json:"email" form:"user_email"` is reported as `email` from `BindForm` too.
 
 ## Adding detail
 
@@ -84,7 +87,9 @@ deny handler. `gas.WantsJSON(r)` exposes the same negotiation.
 ## Panics
 
 DI-aware handlers recover automatically. The stack trace goes to stderr, the
-error is logged through the request-scoped logger when one is available, and the
+error is logged through the `gas.Logger` resolved from the request scope when
+one is registered (that logger lacks the `request_id` field, even with
+`RequestLogger` mounted), and the
 panic is routed through the error handler as `gas: handler panic: <value>`.
 `http.ErrAbortHandler` is re-panicked so `net/http` can tear the connection down
 the way it expects.

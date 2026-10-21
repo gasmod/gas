@@ -33,19 +33,11 @@ The container matches by exact type. Registering the provider as
 and startup fails. See [Services and DI](/gas/concepts/services-and-di/).
 </Aside>
 
-The directory backend needs an `os.Root`, which you open and close:
+The directory backend needs an `os.Root`, which you open and close. Its
+constructor also binds settings from a `gas.ConfigProvider`, so `Start` fails
+without one:
 
-```go
-root, err := os.OpenRoot("/var/lib/myapp/storage")
-if err != nil {
-	return err
-}
-defer root.Close()
-
-app := gas.NewApp(
-	gas.WithSingletonService[storage.Provider](storagedir.NewProvider(storagedir.WithRoot(root))),
-)
-```
+<Code code={region(storage, 'dir')} lang="go" title="main.go" />
 
 ## Consuming it
 
@@ -78,16 +70,20 @@ optional `Bucket`; a nil `Bucket` means the configured default bucket.
 
 `GetObject` returns an open body the caller must close, and reports a missing
 key as `storage.ErrKeyNotFound`. A `Range` such as `bytes=0-1023` reads part
-of the object in both backends, and `Size` is then the length of that part. A
-header that is not one valid byte range is ignored, and one starting past the
-end is `storage.ErrInvalidRange`.
+of the object in both backends, and `Size` is then the length of that part.
+The directory backend ignores a header that is not one valid byte range and
+returns `storage.ErrInvalidRange` for one starting past the end. The S3
+backend sends the header as given, so the result is S3's, and S3's `416`
+comes back as `storage.ErrInvalidRange`.
 
 <Code code={region(storage, 'download')} lang="go" />
 
 The list methods return one page at a time, with the semantics of S3
 ListObjectsV2 and ListBuckets. A page holds at most `MaxKeys` objects and
-common prefixes together (1000 by default and at most) or `MaxBuckets` buckets
-(10000 by default). To read the next page, pass the page's
+common prefixes together, or `MaxBuckets` buckets. The directory backend
+defaults `MaxKeys` to 1000 and treats a larger value as 1000, and defaults
+`MaxBuckets` to 10000. The S3 backend passes both through as given, so the
+page size is S3's: S3 returns at most 1000 keys per page. To read the next page, pass the page's
 `NextContinuationToken` back in the next input as `ContinuationToken`, and stop
 when it is empty, which happens on the last page only (`ListObjects` also
 reports `IsTruncated`). Each page's `Skipped` counts the entries the backend
@@ -96,8 +92,9 @@ reports where they are to a handler given with `dir.WithSkipHandler`, and S3
 never skips.
 A `Delimiter` such as `/` groups keys under `CommonPrefixes`, the way S3
 consoles show folders. Tokens are opaque and only valid for the backend that
-issued them. The directory backend reads every key in the bucket on each call,
-which is fine in development and on small buckets.
+issued them. The directory backend reads the metadata of every object in the
+bucket on each `ListObjects` call, so a page costs time in proportion to the
+bucket, not the page; it suits development and small buckets.
 
 `PutObjectInput` embeds `ObjectHeaders` (content type, `Cache-Control`,
 `Content-Disposition`, `Content-Encoding`, `Content-Language`, `Expires` and
@@ -155,12 +152,19 @@ Classify failures with `errors.Is` against the sentinels in `storage`:
 | `ErrInvalidKey`, `ErrInvalidBucket`, `ErrInputRequired` | Input rejected before anything is sent |
 | `ErrInvalidTTL` | A presign TTL out of bounds |
 | `ErrInvalidLimit` | A `MaxKeys` under 1, or a `MaxBuckets` outside 1 to 10000 |
-| `ErrInvalidContinuationToken` | A list token that is set but empty, or one the directory backend did not issue |
+| `ErrInvalidContinuationToken` | A list token that is set but empty, or one the directory backend cannot decode. The directory backend cannot tell a well-formed token it did not issue, and resumes after the name it decodes to; S3 may reject a token it did not issue with an error that carries no sentinel |
 | `ErrInvalidRange` | A `Range` whose first byte is at or past the end of the object, or `bytes=-0` |
 | `ErrNotSupported` | A feature the backend does not implement, such as `Version` or `PartNumber` on the directory backend |
 | `ErrContentLengthMismatch` | A `PutObject` whose body does not match its `ContentLength`; nothing is stored |
 | `ErrInvalidOption` | A constructor given a nil option |
 | `ErrNotInitialized` | A provider not built by its constructor |
+
+The directory backend adds two sentinels of its own. `dir.ErrCorrupt` is an
+object it cannot read, from `HeadObject` and `GetObject`; it never means the
+object is missing, and a `PutObject` of the key replaces it.
+`dir.ErrUnnamedBucket` is a bucket whose name record is missing or wrong;
+`ListBuckets` leaves it out, and the skip handler receives an error wrapping
+it.
 
 The [`storagetest`](https://pkg.go.dev/github.com/gasmod/gas/storage/storagetest)
 package provides `MockProvider` and `MockPresigner`, recording mocks of the two

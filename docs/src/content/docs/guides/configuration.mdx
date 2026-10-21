@@ -41,7 +41,7 @@ expects:
 ```bash
 DATABASE__DSN=postgres://localhost/app   # database.dsn
 STORAGE__BUCKET=uploads                  # storage.bucket
-JWT__SIGNING_KEY=...                     # jwt.signing_key
+JWT__SIGNINGKEY=...                      # jwt.signingkey
 ```
 
 A prefix is stripped literally, so include the trailing separator:
@@ -51,10 +51,14 @@ leaves you with `_host`.
 <Code code={region(cfg, 'env')} lang="go" />
 
 <Aside type="note" title="Some variables never reach your config">
-A denylist drops session and security-sensitive names before they are read:
-`PATH`, `HOME`, `SHELL`, `USER`, the `LD_*` and `DYLD_*` loader variables,
-`SSH_*`, `SUDO_*`, `TERM`, `LANG`, `TMPDIR`, `EDITOR`, `HOST`, `HOSTNAME`, `CI`,
-`GITHUB_TOKEN`, and similar. `HOST` and `CI` are the ones that catch people out.
+A fixed denylist of names drops session and security-sensitive variables
+before they are read: `PATH`, `HOME`, `SHELL`, `USER`, the loader variables
+`LD_PRELOAD`, `LD_LIBRARY_PATH`, `DYLD_INSERT_LIBRARIES`, and
+`DYLD_LIBRARY_PATH`, session names such as `SSH_AUTH_SOCK` and `SUDO_USER`,
+`TERM`, `LANG`, `TMPDIR`, `EDITOR`, `HOST`, `HOSTNAME`, `CI`, `GITHUB_TOKEN`, and
+similar. It lists exact names, not prefixes, so a variable such as `LD_AUDIT`
+or `SSH_ASKPASS` is read like any other. `HOST` and `CI` are the ones that
+catch people out.
 Matching happens on the full variable name before any prefix is stripped, so
 prefixed variables are never filtered.
 </Aside>
@@ -113,11 +117,16 @@ Core reads its own `gas.Config` for the HTTP server.
 | `Server.Host` | `0.0.0.0` |
 | `Server.Port` | `8080` |
 | `Server.ReadTimeout` | `5s` |
-| `Server.ReadHeaderTimeout` | `5s`; `0` falls back to `ReadTimeout` |
+| `Server.ReadHeaderTimeout` | `5s`; passed to `http.Server`, where `0` means `ReadTimeout` applies |
 | `Server.WriteTimeout` | `10s` |
 | `Server.IdleTimeout` | `2m` |
 | `Server.ShutdownTimeout` | `30s` |
 | `Server.MaxJSONBodyBytes` | `1048576` (1 MiB); `0` or negative means no limit |
+
+`App.Server()` may be called before `Start`, for example from a service's
+`Init` to set a `ReadTimeout` of zero for streaming uploads. When `Start` binds
+the config, it applies the bound address and timeouts to every field the
+caller has not changed and keeps those it did.
 
 ## Testing
 

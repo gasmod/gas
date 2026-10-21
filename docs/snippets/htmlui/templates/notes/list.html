@@ -1,0 +1,5 @@
+{{/* Render fills the layout's "content" block. */}}
+{{define "content"}}{{template "notes" .}}{{end}}
+
+{{/* RenderFragment executes only what is outside the define blocks. */}}
+{{template "notes" .}}

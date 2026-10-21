@@ -90,7 +90,7 @@ lives until the process exits.
 | Event | Fired when |
 |---|---|
 | `gas.SystemServiceClosed` | A service is closed via `CloseService` |
-| `gas.SystemServiceInitialized` | A service finishes `Init`, including on restart |
+| `gas.SystemServiceInitialized` | `RestartService` re-initializes a service; not emitted during startup |
 | `gas.SystemAllServicesInitialized` | Every service has initialized successfully |
 | `gas.SystemShuttingDown` | A Worker or App begins shutdown; always fires |
 | `gas.SystemServerShuttingDown` | The HTTP server begins graceful shutdown; App only |

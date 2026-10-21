@@ -7,10 +7,14 @@ import { Code, Aside, CardGrid, Card } from '@astrojs/starlight/components';
 import auth from '../../../../snippets/auth/main.go?raw';
 import { region } from '../../../lib/snippet';
 
-`gas/auth` provides four credential types behind one interface. The module
+`gas/auth` provides four credential types. `jwt`, `session`, and `apikey` sit
+behind one interface, `auth.Authenticator`; `token` issues single-use tokens
+that are verified once and consumed, so it is not an authenticator. The module
 declares `auth.Authenticator`, `auth.Authorizer`, and `auth.PrincipalRevoker`,
-implements them, and adds middleware. Core owns only the `gas.Principal` the
-middleware stores on the request, which a handler reads with `ctx.Principal()`.
+implements the first and the last, and adds middleware. `auth.Authorizer` is
+for the application to implement; the module ships only a mock of it, in
+`authtest`. Core owns only the `gas.Principal` the middleware stores on the
+request, which a handler reads with `ctx.Principal()`.
 
 ```bash
 go get github.com/gasmod/gas/auth
@@ -28,14 +32,19 @@ go get github.com/gasmod/gas/auth
 <Code code={region(auth, 'wiring')} lang="go" title="main.go" />
 
 <Aside type="caution">
-`jwt` is stateless and needs nothing but config. `session`, `apikey`, and
+`jwt` is stateless: it needs a `gas.ConfigProvider` and a `gas.Logger`, and no
+database. `session`, `apikey`, and
 `token` persist credentials and register their own migrations, so they need
 `gas.DatabaseProvider` and `gas.MigrationManager`. See
 [Connect a database](/gas/guides/database/).
 </Aside>
 
 Build configs from `DefaultConfig()`. A bare `&jwt.Config{}` literal leaves
-`Expiry` at zero, which fails validation at startup.
+`SigningMethod` empty, so no signing key is set up and startup fails with
+`jwt: signing key not configured`. A config passed with `jwt.WithConfig` is
+used as given, without its validate tags, so a zero `Expiry` there signs tokens
+that expire the moment they are issued. A zero `Expiry` fails validation at
+startup only when the config is bound from the `gas.ConfigProvider`.
 
 ## Protecting routes
 
@@ -89,8 +98,15 @@ first key either both happen or neither does.
 
 ## Databases
 
-`session`, `apikey`, and `token` support PostgreSQL, MySQL, and SQLite. The
-dialect is chosen automatically from the driver name.
+`session`, `apikey`, and `token` support PostgreSQL and SQLite, and pick the
+dialect from the `gas.DatabaseProvider`'s `Driver()`. They also carry a MySQL
+dialect, chosen when `Driver()` returns `mysql`. MySQL needs a
+`gas.DatabaseProvider` whose `Driver()` is `mysql`: `gas/database` with
+`WithConnector` and `Database.Driver` set to `mysql`, or your own provider. Their
+migrations hold several statements, so the MySQL DSN needs
+`multiStatements=true`, and the stores scan `DATETIME` columns into
+`time.Time`, so it also needs `parseTime=true`. With both, `session` and
+`token` work on MySQL 8.4; the `apikey` migration fails there.
 
 ## Testing
 

@@ -34,7 +34,8 @@ If your container resolves a concrete store type rather than the interface, use
 <Code code={region(email, 'send')} lang="go" title="orders/service.go" />
 
 `From` defaults to `Email.FromEmail` from config and can be overridden per
-message. `Cc`, `Bcc`, `ReplyTo`, and arbitrary `Headers` are available.
+message. `Cc`, `Bcc`, and `ReplyTo` are available. The `Headers` field is
+accepted but the SES backend does not send it.
 
 ## Templated sends
 
@@ -51,7 +52,7 @@ Point `Email.Endpoint` at LocalStack and nothing else changes:
 
 ```bash
 EMAIL__REGION=us-east-1
-EMAIL__FROM_EMAIL=noreply@example.com
+EMAIL__FROMEMAIL=noreply@example.com
 EMAIL__ENDPOINT=http://localhost:4566
 ```
 
