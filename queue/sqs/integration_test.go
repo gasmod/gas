@@ -34,6 +34,7 @@ func setupElasticMQOnce(t *testing.T) string {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
+	requireDocker(t)
 
 	sqsReady.Do(func() {
 		ctx := context.Background()
@@ -75,10 +76,16 @@ func setupElasticMQOnce(t *testing.T) string {
 	if sqsSetupErr != nil {
 		t.Fatalf("elasticmq: %v", sqsSetupErr)
 	}
-	t.Cleanup(func() {
-		// sqsCleanup is called only once, managed externally
-	})
 	return sqsEndpoint
+}
+
+// TestMain terminates the shared ElasticMQ container once every test in the
+// package has finished with it.
+func TestMain(m *testing.M) {
+	m.Run()
+	if sqsCleanup != nil {
+		sqsCleanup()
+	}
 }
 
 // newSQSClient creates an SQS client pointed at the given endpoint with

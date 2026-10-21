@@ -10,8 +10,10 @@ import (
 // raceSvc is a Service the kill-switch tests close and restart.
 type raceSvc struct{}
 
-func (*raceSvc) Name() string                { return "race-svc" }
-func (*raceSvc) Init(context.Context) error  { return nil }
+func (*raceSvc) Name() string { return "race-svc" }
+
+func (*raceSvc) Init(context.Context) error { return nil }
+
 func (*raceSvc) Close(context.Context) error { return nil }
 
 // With no Logger registered, the Worker's fallback logger is resolved on
