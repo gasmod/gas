@@ -81,6 +81,7 @@ type PostgresContainer struct {
 // and migrate service backed by it.
 func SetupPostgres(t *testing.T) *PostgresContainer {
 	t.Helper()
+	requireDocker(t)
 	ctx := context.Background()
 
 	pgContainer, err := postgres.Run(ctx,

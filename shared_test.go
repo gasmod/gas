@@ -2,11 +2,126 @@ package gas_test
 
 import (
 	"context"
+	"net/http"
+	"sync"
 	"sync/atomic"
-	"time"
+	"testing"
+
+	"github.com/go-playground/validator/v10"
 
 	"github.com/gasmod/gas"
 )
+
+// hostConfig returns a ConfigProvider whose Bind sets only Server.Host and
+// then validates with a real validator, as the config module does. Core does
+// not depend on config, so its tests fake the provider.
+func hostConfig(t *testing.T, host string) gas.ConfigProvider {
+	t.Helper()
+	return &hostProvider{host: host}
+}
+
+type hostProvider struct {
+	gas.ConfigProvider // methods other than Bind are unused; calling one panics
+
+	host string
+}
+
+func (p *hostProvider) Bind(dest any, options ...gas.BindOption) error {
+	opts := gas.BindOptions{Validate: true}
+	for _, opt := range options {
+		opt(&opts)
+	}
+	if cfg, ok := dest.(*gas.Config); ok {
+		cfg.Server.Host = p.host
+	}
+	if !opts.Validate {
+		return nil
+	}
+	return validator.New().Struct(dest) //nolint:wrapcheck // the test reads it as is
+}
+
+// recordingLogger records which level each log call used. Everything it does
+// not override is handled by the embedded NopLogger.
+type recordingLogger struct {
+	gas.Logger
+
+	levels []string
+	mu     sync.Mutex
+}
+
+func newRecordingLogger() *recordingLogger {
+	return &recordingLogger{Logger: &gas.NopLogger{}}
+}
+
+func (l *recordingLogger) record(level string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.levels = append(l.levels, level)
+}
+
+func (l *recordingLogger) seen() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.levels...)
+}
+
+func (l *recordingLogger) Warn(msg string) gas.LogEvent {
+	l.record("warn")
+	return l.Logger.Warn(msg)
+}
+
+func (l *recordingLogger) Error(msg string) gas.LogEvent {
+	l.record("error")
+	return l.Logger.Error(msg)
+}
+
+// assertPanics fails the test if fn does not panic.
+func assertPanics(t *testing.T, name string, fn func()) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("expected panic for %s", name)
+		}
+	}()
+	fn()
+}
+
+// testDep is a simple dependency for DI-aware handler tests.
+type testDep struct {
+	Value string
+}
+
+func newTestDep() *testDep { return &testDep{Value: "resolved"} }
+
+// testDepB is a second dependency for multi-dep tests.
+type testDepB struct {
+	Count int
+}
+
+// Greeter is an interface dependency for interface resolution tests.
+type Greeter interface {
+	Greet() string
+}
+
+type helloGreeter struct{}
+
+func (h *helloGreeter) Greet() string { return "hello" }
+
+func newHelloGreeter() *helloGreeter { return &helloGreeter{} }
+
+func panicking(w http.ResponseWriter, r *http.Request) { panic("plain boom") }
+
+// A type that carries an Init method but does not fully implement gas.Service
+// used to register fine and then do nothing: the container's auto-Init only
+// fires for a complete Service, so Init was never called, Close was never
+// called at shutdown, and the kill switch could not see it. Forgetting Name or
+// Close while writing a service is the easy way to land there, so registration
+// now rejects the type instead.
+
+// initOnly implements Init and nothing else — the reported failure mode.
+type initOnly struct{ inited bool }
+
+func (s *initOnly) Init(context.Context) error { s.inited = true; return nil }
 
 // testService is a minimal Service implementation for testing App lifecycle.
 type testService struct {
@@ -32,103 +147,127 @@ func (s *testService) Close(context.Context) error {
 
 var _ gas.Service = (*testService)(nil)
 
-// reporterService is a Service that optionally reports health and readiness.
-// The phantom type parameter K lets tests register several instances under
-// distinct container types (e.g. *reporterService[tagA], *reporterService[tagB]).
-type reporterService[K any] struct {
-	healthErr error
-	readyErr  error
-	name      string
-}
-
-func (s *reporterService[K]) Name() string                        { return s.name }
-func (s *reporterService[K]) Init(context.Context) error          { return nil }
-func (s *reporterService[K]) Close(context.Context) error         { return nil }
-func (s *reporterService[K]) CheckHealth(_ context.Context) error { return s.healthErr }
-func (s *reporterService[K]) CheckReady(_ context.Context) error  { return s.readyErr }
-
-type (
-	tagA struct{}
-	tagB struct{}
-	tagC struct{}
-)
-
-// healthOnlyService implements HealthReporter but not ReadyReporter.
-type healthOnlyService[K any] struct {
-	err  error
-	name string
-}
-
-func (s *healthOnlyService[K]) Name() string                        { return s.name }
-func (s *healthOnlyService[K]) Init(context.Context) error          { return nil }
-func (s *healthOnlyService[K]) Close(context.Context) error         { return nil }
-func (s *healthOnlyService[K]) CheckHealth(_ context.Context) error { return s.err }
-
-// readyOnlyService implements ReadyReporter but not HealthReporter.
-type readyOnlyService[K any] struct {
-	err  error
-	name string
-}
-
-func (s *readyOnlyService[K]) Name() string                       { return s.name }
-func (s *readyOnlyService[K]) Init(context.Context) error         { return nil }
-func (s *readyOnlyService[K]) Close(context.Context) error        { return nil }
-func (s *readyOnlyService[K]) CheckReady(_ context.Context) error { return s.err }
-
-// slowReporter blocks inside CheckHealth for the given delay. Used to verify
-// that CheckHealth runs reporters concurrently.
-type slowReporter[K any] struct {
-	started chan struct{}
+// startProbe records its lifecycle calls into a shared log.
+type startProbe struct {
+	initErr error
+	log     *startLog
 	name    string
-	delay   time.Duration
 }
 
-func (s *slowReporter[K]) Name() string                { return s.name }
-func (s *slowReporter[K]) Init(context.Context) error  { return nil }
-func (s *slowReporter[K]) Close(context.Context) error { return nil }
-func (s *slowReporter[K]) CheckHealth(ctx context.Context) error {
-	if s.started != nil {
-		select {
-		case s.started <- struct{}{}:
-		default:
-		}
-	}
-	select {
-	case <-time.After(s.delay):
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+type startLog struct {
+	calls []string
+	ctxs  []error // ctx.Err() seen by each Close
+	mu    sync.Mutex
 }
 
-// panicReporter panics inside CheckHealth. Used to verify that
-// a misbehaving reporter cannot crash the aggregator.
-type panicReporter[K any] struct {
-	name    string
-	message string
+func (l *startLog) add(call string) {
+	l.mu.Lock()
+	l.calls = append(l.calls, call)
+	l.mu.Unlock()
 }
 
-func (s *panicReporter[K]) Name() string                        { return s.name }
-func (s *panicReporter[K]) Init(context.Context) error          { return nil }
-func (s *panicReporter[K]) Close(context.Context) error         { return nil }
-func (s *panicReporter[K]) CheckHealth(_ context.Context) error { panic(s.message) }
-
-// ctxObservingReporter records the context it was called with.
-type ctxObservingReporter[K any] struct {
-	seen chan context.Context
-	name string
+func (l *startLog) snapshot() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.calls...)
 }
 
-func (s *ctxObservingReporter[K]) Name() string                { return s.name }
-func (s *ctxObservingReporter[K]) Init(context.Context) error  { return nil }
-func (s *ctxObservingReporter[K]) Close(context.Context) error { return nil }
-func (s *ctxObservingReporter[K]) CheckHealth(ctx context.Context) error {
-	s.seen <- ctx
+func (p *startProbe) Name() string { return p.name }
+
+func (p *startProbe) Init(context.Context) error {
+	p.log.add("init " + p.name)
+	return p.initErr
+}
+
+func (p *startProbe) Close(ctx context.Context) error {
+	p.log.add("close " + p.name)
+	p.log.mu.Lock()
+	p.log.ctxs = append(p.log.ctxs, ctx.Err())
+	p.log.mu.Unlock()
 	return nil
 }
 
-var (
-	_ gas.Service        = (*reporterService[tagA])(nil)
-	_ gas.HealthReporter = (*reporterService[tagA])(nil)
-	_ gas.ReadyReporter  = (*reporterService[tagA])(nil)
+type (
+	probeA struct{ *startProbe }
+	probeB struct{ *startProbe }
+	probeC struct{ *startProbe }
 )
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// Worker.Shutdown documents that it "closes all services in reverse
+// initialization order", which is what makes it safe for a service to use its
+// dependencies during Close. It does not do that.
+//
+// InitServices builds w.serviceOrder by iterating EachInstance, which ranges
+// over ServiceContainer.instances — a map[reflect.Type]reflect.Value. Go
+// randomizes map iteration order, so serviceOrder is a random permutation of
+// the services rather than the order they were initialized in, and reversing a
+// random permutation is still random. Construction order is correct (BuildAll
+// walks the topological sort); only the close order is lost.
+//
+// Consequence: a service can be closed AFTER a dependency it uses inside
+// Close, so Close runs against an already-torn-down dependency. Which
+// services are affected changes from process to process, so this surfaces as
+// an intermittent shutdown failure in production rather than a reproducible
+// one.
+//
+// The chain below is S0 <- S1 <- ... <- S5 (each depends on the previous), so
+// the only correct close order is S5, S4, S3, S2, S1, S0.
+
+type (
+	ordTag0 struct{}
+	ordTag1 struct{}
+	ordTag2 struct{}
+	ordTag3 struct{}
+	ordTag4 struct{}
+	ordTag5 struct{}
+)
+
+// ordLog records init and close calls in the order they happen.
+type ordLog struct {
+	inits  []string
+	closes []string
+	mu     sync.Mutex
+}
+
+func (l *ordLog) init(name string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.inits = append(l.inits, name)
+}
+
+func (l *ordLog) close(name string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.closes = append(l.closes, name)
+}
+
+func (l *ordLog) snapshot() (inits, closes []string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.inits...), append([]string(nil), l.closes...)
+}
+
+// ordService is a complete gas.Service. The phantom type parameter K gives each
+// link in the chain a distinct type for the container to key on.
+type ordService[K any] struct {
+	log  *ordLog
+	name string
+}
+
+func (s *ordService[K]) Name() string { return s.name }
+
+func (s *ordService[K]) Init(context.Context) error { s.log.init(s.name); return nil }
+
+func (s *ordService[K]) Close(context.Context) error { s.log.close(s.name); return nil }

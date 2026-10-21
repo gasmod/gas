@@ -2,45 +2,12 @@ package gas_test
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync"
-	"sync/atomic"
 	"testing"
 
 	"github.com/gasmod/gas"
 )
-
-// assertPanics fails the test if fn does not panic.
-func assertPanics(t *testing.T, name string, fn func()) {
-	t.Helper()
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatalf("expected panic for %s", name)
-		}
-	}()
-	fn()
-}
-
-// ---------------------------------------------------------------------------
-// Typed Event helpers for tests
-// ---------------------------------------------------------------------------
-
-type testUserCreated struct{ gas.Event[testUserPayload] }
-
-type testUserPayload struct {
-	Email string
-}
-
-type (
-	testEvent struct{ gas.Event[struct{}] }
-	testInc   struct{ gas.Event[struct{}] }
-)
-
-// ---------------------------------------------------------------------------
-// Router.Register (middleware registry) tests
-// ---------------------------------------------------------------------------
 
 func TestRouter_RegisterAndResolve(t *testing.T) {
 	router := gas.NewRouter()
@@ -121,115 +88,6 @@ func TestRouter_RemoveByService_RemovesMiddleware(t *testing.T) {
 	)
 	router.Seal()
 }
-
-// ---------------------------------------------------------------------------
-// EventBus tests
-// ---------------------------------------------------------------------------
-
-func TestEventBus_EmitAndSubscribe(t *testing.T) {
-	bus := gas.NewEventBus()
-
-	var received string
-	bus.Subscribe[testUserCreated](func(data testUserPayload) {
-		received = data.Email
-	})
-
-	bus.Emit[testUserCreated](testUserPayload{Email: "test@example.com"}).Wait()
-
-	if received != "test@example.com" {
-		t.Fatalf("expected test@example.com, got %q", received)
-	}
-}
-
-func TestEventBus_SubscribeWithOwner(t *testing.T) {
-	bus := gas.NewEventBus()
-
-	auth := &testService{name: "testEventBusAuthService"}
-	billing := &testService{name: "testEventBusBillingService"}
-
-	var mu sync.Mutex
-	count := 0
-	bus.SubscribeWithOwner[testUserCreated](auth, func(data testUserPayload) {
-		mu.Lock()
-		count++
-		mu.Unlock()
-	})
-	bus.SubscribeWithOwner[testUserCreated](billing, func(data testUserPayload) {
-		mu.Lock()
-		count++
-		mu.Unlock()
-	})
-
-	bus.Emit[testUserCreated](testUserPayload{}).Wait()
-	if count != 2 {
-		t.Fatalf("expected 2 handlers called, got %d", count)
-	}
-}
-
-func TestEventBus_RemoveByService(t *testing.T) {
-	bus := gas.NewEventBus()
-
-	var mu sync.Mutex
-	authCalled := false
-	billingCalled := false
-
-	auth := &testService{name: "testEventBusAuthService"}
-	billing := &testService{name: "testEventBusBillingService"}
-
-	bus.SubscribeWithOwner[testEvent](auth, func(data struct{}) {
-		mu.Lock()
-		authCalled = true
-		mu.Unlock()
-	})
-	bus.SubscribeWithOwner[testEvent](billing, func(data struct{}) {
-		mu.Lock()
-		billingCalled = true
-		mu.Unlock()
-	})
-
-	bus.RemoveByService(auth)
-	bus.Emit[testEvent](struct{}{}).Wait()
-
-	if authCalled {
-		t.Fatal("auth handler should not have been called after removal")
-	}
-	if !billingCalled {
-		t.Fatal("billing handler should still be called")
-	}
-}
-
-func TestEventBus_EmitNoSubscribers(t *testing.T) {
-	bus := gas.NewEventBus()
-	// Should not panic.
-	bus.Emit[testEvent](struct{}{}).Wait()
-}
-
-func TestEventBus_ConcurrentEmit(t *testing.T) {
-	bus := gas.NewEventBus()
-
-	var count atomic.Int64
-	bus.Subscribe[testInc](func(data struct{}) {
-		count.Add(1)
-	})
-
-	var wg sync.WaitGroup
-	for i := 0; i < 100; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			bus.Emit[testInc](struct{}{}).Wait()
-		}()
-	}
-	wg.Wait()
-
-	if count.Load() != 100 {
-		t.Fatalf("expected 100, got %d", count.Load())
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Router tests
-// ---------------------------------------------------------------------------
 
 func TestRouter_HandleAndServe(t *testing.T) {
 	router := gas.NewRouter()
@@ -385,10 +243,6 @@ func TestRouter_MultipleModules(t *testing.T) {
 		t.Fatalf("expected 'billing', got %q", rr.Body.String())
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Router Use/Group/Route tests
-// ---------------------------------------------------------------------------
 
 func TestRouter_Use(t *testing.T) {
 	router := gas.NewRouter()
@@ -719,10 +573,6 @@ func TestRouter_Route_DuplicatePattern_NestedRoute(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Router HEAD auto-registration tests
-// ---------------------------------------------------------------------------
-
 func TestRouter_HeadAutoRegistered(t *testing.T) {
 	router := gas.NewRouter()
 
@@ -918,425 +768,153 @@ func TestRouter_HeadInSubRoute(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// App tests
-// ---------------------------------------------------------------------------
+func TestRouter_NotFound_DIHandler(t *testing.T) {
+	app := gas.NewApp()
 
-func TestApp_CloseService(t *testing.T) {
-	svc := &testService{name: "test-svc"}
-
-	app := gas.NewApp(
-		gas.WithServiceInstance[*testService](svc),
-	)
+	// Register NotFound before InitServices so it's in place before Seal().
+	app.Router().NotFound(nil, func(ctx gas.Context) error {
+		return ctx.Text(http.StatusNotFound, "custom 404")
+	})
 
 	if err := app.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
-	router := app.Router()
-
-	// Register a route owned by this service.
-	router.Handle(svc, "GET", "/test", func(w http.ResponseWriter, r *http.Request) {
+	// At least one route must exist so Chi builds the middleware handler
+	// chain. Without any route, Chi's ServeHTTP bypasses middleware for
+	// NotFound — this is a Chi implementation detail.
+	app.Router().Handle(nil, "GET", "/exists", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	// Track service-closed event.
-	var closedName string
-	app.EventBus().Subscribe[gas.SystemServiceClosed](func(data gas.SystemServiceClosedPayload) {
-		closedName = data.ServiceName
-	})
-
-	// Kill-switch.
-	if err := app.CloseService[*testService](context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	// Service should be closed.
-	if !svc.closed.Load() {
-		t.Fatal("expected service to be closed")
-	}
-
-	// Route should return 503.
-	req := httptest.NewRequest("GET", "/test", nil)
 	rr := httptest.NewRecorder()
-	router.ServeHTTP(rr, req)
-	if rr.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503, got %d", rr.Code)
-	}
+	app.Router().ServeHTTP(rr, httptest.NewRequest("GET", "/nonexistent", nil))
 
-	// Event should have been emitted.
-	if closedName != "test-svc" {
-		t.Fatalf("expected service-closed event for test-svc, got %q", closedName)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rr.Code)
 	}
-
-	// Should not be in active services.
-	names := app.ActiveServices()
-	for _, n := range names {
-		if n == "test-svc" {
-			t.Fatal("test-svc should not be active")
-		}
+	if rr.Body.String() != "custom 404" {
+		t.Fatalf("expected 'custom 404', got %q", rr.Body.String())
 	}
 }
 
-func TestApp_RestartService(t *testing.T) {
-	svc := &testService{name: "test-svc"}
-
-	app := gas.NewApp(
-		gas.WithServiceInstance[*testService](svc),
-	)
-
-	if err := app.InitServices(context.Background()); err != nil {
+// A plain NotFound handler that panics is recovered too.
+func TestRouter_PlainNotFoundPanicRecovered(t *testing.T) {
+	app := gas.NewApp()
+	// chi runs middleware, including the request scope, only once a route
+	// exists, so register one as a real app would.
+	app.Router().Handle(nil, http.MethodGet, "/", func(http.ResponseWriter, *http.Request) {})
+	app.Router().NotFound(nil, http.HandlerFunc(panicking))
+	if err := app.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = app.Shutdown(context.Background()) })
 
-	if err := app.CloseService[*testService](context.Background()); err != nil {
-		t.Fatal(err)
+	rr := httptest.NewRecorder()
+	app.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/nowhere", nil))
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("GET /nowhere = %d, want 500", rr.Code)
 	}
+}
 
-	// Track restart event.
-	var restartedName string
-	app.EventBus().Subscribe[gas.SystemServiceInitialized](
-		func(data gas.SystemServiceInitializedPayload) {
-			restartedName = data.ServiceName
+// Each method helper registers its path for that method only.
+func TestRouter_MethodHelpers(t *testing.T) {
+	t.Parallel()
+
+	type register func(r *gas.Router, path string, h any)
+	helpers := map[string]register{
+		http.MethodGet: func(r *gas.Router, p string, h any) { r.Get(nil, p, h) },
+		http.MethodHead: func(r *gas.Router, p string, h any) {
+			r.Head(nil, p, h)
 		},
-	)
-
-	// Restart.
-	if err := app.RestartService[*testService](context.Background()); err != nil {
-		t.Fatal(err)
+		http.MethodPost:   func(r *gas.Router, p string, h any) { r.Post(nil, p, h) },
+		http.MethodPut:    func(r *gas.Router, p string, h any) { r.Put(nil, p, h) },
+		http.MethodPatch:  func(r *gas.Router, p string, h any) { r.Patch(nil, p, h) },
+		http.MethodDelete: func(r *gas.Router, p string, h any) { r.Delete(nil, p, h) },
 	}
+	for method, reg := range helpers {
+		t.Run(method, func(t *testing.T) {
+			t.Parallel()
 
-	// The container initializes a pre-registered instance like any other
-	// service, so Init has run once at boot and once more on restart.
-	if svc.initCount.Load() != 2 {
-		t.Fatalf("expected Init called twice (boot + restart), got %d", svc.initCount.Load())
-	}
-	if svc.closed.Load() {
-		t.Fatal("service should not be closed after restart")
-	}
-	if restartedName != "test-svc" {
-		t.Fatalf("expected service-initialized event for test-svc, got %q", restartedName)
-	}
-}
+			router := gas.NewRouter()
+			reg(router, "/r", func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusTeapot)
+			})
+			router.Seal()
 
-func TestApp_CloseService_NotActive(t *testing.T) {
-	app := gas.NewApp()
-	err := app.CloseService[*testService](context.Background())
-	if err == nil {
-		t.Fatal("expected error for non-active service")
-	}
-}
-
-func TestApp_RestartService_AlreadyActive(t *testing.T) {
-	svc := &testService{name: "test-svc"}
-	app := gas.NewApp(gas.WithServiceInstance[*testService](svc))
-
-	if err := app.InitServices(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	err := app.RestartService[*testService](context.Background())
-	if err == nil {
-		t.Fatal("expected error for already-active service")
-	}
-}
-
-func TestApp_RestartService_NotFound(t *testing.T) {
-	app := gas.NewApp()
-	if err := app.InitServices(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	err := app.RestartService[*testService](context.Background())
-	if err == nil {
-		t.Fatal("expected error for unknown service")
-	}
-}
-
-func TestApp_InitFailure(t *testing.T) {
-	failing := &testService{name: "bad-svc", initErr: fmt.Errorf("init failed")}
-
-	app := gas.NewApp(
-		gas.WithService[*testService](
-			func() *testService { return failing },
-			gas.ServiceLifetimeSingleton,
-		),
-	)
-
-	err := app.InitServices(context.Background())
-	if err == nil {
-		t.Fatal("expected error from failing service init")
-	}
-}
-
-func TestApp_ActiveServices(t *testing.T) {
-	svc1 := &testService{name: "svc-a"}
-
-	app := gas.NewApp(
-		gas.WithServiceInstance[*testService](svc1),
-	)
-
-	if err := app.InitServices(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	names := app.ActiveServices()
-	if len(names) != 3 { // 2 built-in services (gas/router, gas/eventbus) + "svc-a"
-		t.Fatalf("expected 3 active service, got %d", len(names))
-	}
-}
-
-func TestApp_TransientServiceRejected(t *testing.T) {
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Fatal("expected panic when registering transient Service")
-		}
-	}()
-
-	gas.NewApp(
-		gas.WithService[*testService](func() *testService {
-			return &testService{name: "bad"}
-		}, gas.ServiceLifetimeTransient),
-	)
-}
-
-// ---------------------------------------------------------------------------
-// Scoped service tests — demonstrates per-HTTP-request scoping
-// ---------------------------------------------------------------------------
-
-// requestLogger is a scoped Service that captures log lines for a single
-// HTTP request. A new instance is created per scope (i.e. per request),
-// Init prepares it, and Close flushes or discards the buffer.
-type requestLogger struct {
-	lines  []string
-	closed bool
-}
-
-func newRequestLogger() *requestLogger { return &requestLogger{} }
-
-func (r *requestLogger) Name() string { return "request-logger" }
-
-func (r *requestLogger) Init(context.Context) error {
-	r.lines = nil
-	r.closed = false
-	return nil
-}
-
-func (r *requestLogger) Log(msg string) { r.lines = append(r.lines, msg) }
-
-func (r *requestLogger) Close(context.Context) error {
-	r.closed = true
-	return nil
-}
-
-// TestScopedService_PerRequestLifecycle shows the full flow:
-//  1. Register a singleton (Router) and a scoped service (requestLogger).
-//  2. BuildAll — singletons are constructed, scoped services are not.
-//  3. For each "request", create a Scope, resolve the scoped service,
-//     use it, then Close the scope — which calls Close on scoped Services.
-//  4. Each scope gets its own instance; resolving twice in the same scope
-//     returns the same instance.
-func TestScopedService_PerRequestLifecycle(t *testing.T) {
-	c := gas.NewServiceContainer()
-	c.RegisterService[*requestLogger](newRequestLogger, gas.ServiceLifetimeScoped)
-
-	// BuildAll validates lifetimes and builds singletons (none here besides
-	// whatever is pre-registered). Scoped ctors are validated but not called.
-	if err := c.BuildAll(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	// --- simulate two HTTP requests ---
-
-	// Request 1
-	scope1 := c.NewScope(context.Background())
-
-	rl1, err := scope1.Resolve[*requestLogger]()
-	if err != nil {
-		t.Fatal("expected to resolve requestLogger in scope1")
-	}
-	rl1.Log("request 1: start")
-	rl1.Log("request 1: end")
-
-	// Resolving again in the same scope returns the same instance.
-	rl1Again, _ := scope1.Resolve[*requestLogger]()
-	if rl1Again != rl1 {
-		t.Fatal("expected same instance within a single scope")
-	}
-
-	if s1Err := scope1.Close(context.Background()); s1Err != nil {
-		t.Fatal(s1Err)
-	}
-	if !rl1.closed {
-		t.Fatal("expected requestLogger to be closed after scope1.Close()")
-	}
-	if len(rl1.lines) != 2 {
-		t.Fatalf("expected 2 log lines, got %d", len(rl1.lines))
-	}
-
-	// Request 2 — gets a completely fresh instance.
-	scope2 := c.NewScope(context.Background())
-
-	rl2, err := scope2.Resolve[*requestLogger]()
-	if err != nil {
-		t.Fatal("expected to resolve requestLogger in scope2")
-	}
-	if rl2 == rl1 {
-		t.Fatal("expected different instance in a new scope")
-	}
-	rl2.Log("request 2: only line")
-
-	if s2Err := scope2.Close(context.Background()); s2Err != nil {
-		t.Fatal(s2Err)
-	}
-	if len(rl2.lines) != 1 {
-		t.Fatalf("expected 1 log line in scope2, got %d", len(rl2.lines))
-	}
-}
-
-// TestScopedService_HTTPMiddleware demonstrates how you'd wire scoped
-// services into real HTTP handlers using middleware that creates and
-// closes a scope per request.
-func TestScopedService_HTTPMiddleware(t *testing.T) {
-	c := gas.NewServiceContainer()
-	c.RegisterService[*requestLogger](newRequestLogger, gas.ServiceLifetimeScoped)
-
-	if err := c.BuildAll(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	// Middleware that creates a per-request scope, stores it in context,
-	// and closes it when the request is done.
-	type scopeKey struct{}
-	scopeMiddleware := func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			scope := c.NewScope(r.Context())
-			defer func() { _ = scope.Close(context.WithoutCancel(r.Context())) }() //nolint:contextcheck // detached on purpose
-			ctx := context.WithValue(r.Context(), scopeKey{}, scope)
-			next.ServeHTTP(w, r.WithContext(ctx))
+			for other := range helpers {
+				rr := httptest.NewRecorder()
+				router.ServeHTTP(rr, httptest.NewRequest(other, "/r", nil))
+				// Get also serves HEAD.
+				served := other == method || (method == http.MethodGet && other == http.MethodHead)
+				if got := rr.Code == http.StatusTeapot; got != served {
+					t.Errorf("%s /r served = %v (status %d), want %v", other, got, rr.Code, served)
+				}
+			}
 		})
 	}
-
-	// Handler that resolves the scoped requestLogger and uses it.
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		scope := r.Context().Value(scopeKey{}).(*gas.Scope)
-		rl := scope.MustResolve[*requestLogger]()
-		rl.Log("handled")
-		_, _ = fmt.Fprintf(w, "lines:%d", len(rl.lines))
-	})
-
-	srv := scopeMiddleware(handler)
-
-	// First request.
-	rr := httptest.NewRecorder()
-	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/", nil))
-	if rr.Body.String() != "lines:1" {
-		t.Fatalf("expected 'lines:1', got %q", rr.Body.String())
-	}
-
-	// Second request — independent scope, fresh instance.
-	rr = httptest.NewRecorder()
-	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/", nil))
-	if rr.Body.String() != "lines:1" {
-		t.Fatalf("expected 'lines:1' (fresh scope), got %q", rr.Body.String())
-	}
 }
 
-// TestApp_RequestScopeMiddleware verifies that App automatically installs
-// per-request scope middleware and that scoped services get a fresh instance
-// per request with Close called after each request completes.
-func TestApp_RequestScopeMiddleware(t *testing.T) {
-	app := gas.NewApp(
-		gas.WithService[*requestLogger](newRequestLogger, gas.ServiceLifetimeScoped),
-	)
+// NamedMiddleware maps each registered name to its owning service.
+func TestRouter_NamedMiddleware(t *testing.T) {
+	t.Parallel()
 
-	if err := app.InitServices(context.Background()); err != nil {
-		t.Fatal(err)
+	router := gas.NewRouter()
+	pass := func(next http.Handler) http.Handler { return next }
+	router.Register(&testService{name: "auth"}, "require-auth", pass)
+	router.Register(&testService{name: "limits"}, "rate-limit", pass)
+
+	got := router.NamedMiddleware()
+	want := map[string]string{"require-auth": "auth", "rate-limit": "limits"}
+	if len(got) != len(want) {
+		t.Fatalf("NamedMiddleware() = %v, want %v", got, want)
 	}
-
-	var closedAfterHandler atomic.Bool
-
-	app.Router().Handle(nil, "GET", "/log", func(w http.ResponseWriter, r *http.Request) {
-		scope := gas.RequestScope(r)
-		rl := scope.MustResolve[*requestLogger]()
-		rl.Log("hello")
-
-		// Resolve again — same scope, same instance.
-		rl2 := scope.MustResolve[*requestLogger]()
-		if rl2 != rl {
-			t.Error("expected same instance within a single request scope")
+	for name, svc := range want {
+		if got[name] != svc {
+			t.Errorf("NamedMiddleware()[%q] = %q, want %q", name, got[name], svc)
 		}
-
-		_, _ = fmt.Fprintf(w, "lines:%d", len(rl.lines))
-	})
-
-	// Request 1
-	rr := httptest.NewRecorder()
-	app.Router().ServeHTTP(rr, httptest.NewRequest("GET", "/log", nil))
-	if rr.Body.String() != "lines:1" {
-		t.Fatalf("request 1: expected 'lines:1', got %q", rr.Body.String())
 	}
 
-	// Request 2 — fresh scope, fresh instance, count resets.
-	rr = httptest.NewRecorder()
-	app.Router().ServeHTTP(rr, httptest.NewRequest("GET", "/log", nil))
-	if rr.Body.String() != "lines:1" {
-		t.Fatalf("request 2: expected 'lines:1' (fresh scope), got %q", rr.Body.String())
-	}
-
-	_ = closedAfterHandler.Load() // keep the compiler happy
-}
-
-// TestApp_RequestScopeClose verifies that scoped services are closed
-// after the HTTP handler returns.
-func TestApp_RequestScopeClose(t *testing.T) {
-	app := gas.NewApp(
-		gas.WithService[*requestLogger](newRequestLogger, gas.ServiceLifetimeScoped),
-	)
-
-	if err := app.InitServices(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	var captured *requestLogger
-
-	app.Router().Handle(nil, "GET", "/close-check", func(w http.ResponseWriter, r *http.Request) {
-		scope := gas.RequestScope(r)
-		captured = scope.MustResolve[*requestLogger]()
-		w.WriteHeader(http.StatusOK)
-	})
-
-	rr := httptest.NewRecorder()
-	app.Router().ServeHTTP(rr, httptest.NewRequest("GET", "/close-check", nil))
-
-	// After ServeHTTP returns, the scope middleware's defer has run.
-	if captured == nil {
-		t.Fatal("handler was not called")
-	}
-	if !captured.closed {
-		t.Fatal("expected scoped service to be closed after request completed")
+	// The result is a snapshot, not the live registry.
+	delete(got, "require-auth")
+	if _, ok := router.NamedMiddleware()["require-auth"]; !ok {
+		t.Error("deleting from the returned map changed the registry")
 	}
 }
 
-// TestRequestScope_PanicOutsideMiddleware verifies RequestScope panics
-// when called on a request without the scope middleware.
-func TestRequestScope_PanicOutsideMiddleware(t *testing.T) {
+func TestRouter_NotFound_PanicOnDoubleRegistration(t *testing.T) {
+	svc1 := &testService{name: "svc1"}
+	svc2 := &testService{name: "svc2"}
+
+	router := gas.NewRouter()
+	router.NotFound(svc1, func(ctx gas.Context) error { return nil })
+
 	defer func() {
 		if r := recover(); r == nil {
-			t.Fatal("expected panic from RequestScope outside middleware")
+			t.Fatal("expected panic on double NotFound registration")
 		}
 	}()
 
-	r := httptest.NewRequest("GET", "/", nil)
-	gas.RequestScope(r) // should panic
+	router.NotFound(svc2, func(ctx gas.Context) error { return nil })
 }
 
-func TestApp_RouterAndEventBusGetters(t *testing.T) {
-	app := gas.NewApp()
-	if app.Router() == nil {
-		t.Fatal("expected non-nil Router")
-	}
-	if app.EventBus() == nil {
-		t.Fatal("expected non-nil EventBus")
-	}
+func TestRouter_Handle_PanicOnMissingNamedMiddleware(t *testing.T) {
+	svc := &testService{name: "svc"}
+
+	router := gas.NewRouter()
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic when registering route with missing named middleware")
+		}
+	}()
+
+	// Handle calls resolveMiddleware immediately, even if unsealed
+	router.Handle(
+		svc,
+		"GET",
+		"/",
+		func(ctx gas.Context) error { return nil },
+		gas.MiddlewareByName("missing"),
+	)
 }

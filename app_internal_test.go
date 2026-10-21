@@ -1,6 +1,8 @@
 package gas
 
-import "testing"
+import (
+	"testing"
+)
 
 // TestHandler_LeavesTheServerUnbuilt pins that Handler never builds the
 // server: after it, the server is still unbuilt, so Start's bind is free to

@@ -44,6 +44,7 @@ const sesLocalImage = "node:25.8.1-alpine3.23@sha256:5209bcaca9836eb3448b6503962
 // the base URL (e.g. "http://localhost:<port>") along with a cleanup function.
 func startSESContainer(t *testing.T) string {
 	t.Helper()
+	requireDocker(t)
 	ctx := context.Background()
 
 	ctr, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{

@@ -3,7 +3,7 @@
 // fail when the docs drift from the framework.
 module github.com/gasmod/gas/docs/snippets
 
-go 1.27
+go 1.27.3
 
 require (
 	github.com/gasmod/gas v0.6.0
