@@ -7,6 +7,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/go-playground/validator/v10"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -131,6 +132,61 @@ func TestConfig_Bind_WithValidate(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "MyKey")
 	assert.Contains(t, err.Error(), "max")
+}
+
+// TestConfig_WithValidator checks that Bind validates with the validator
+// passed to WithValidator, so custom tags registered on it apply, and that a
+// nil validator is ignored in favor of the default.
+func TestConfig_WithValidator(t *testing.T) {
+	t.Parallel()
+
+	type dest struct {
+		N int `validate:"even"`
+	}
+
+	v := validator.New()
+	require.NoError(t, v.RegisterValidation("even", func(fl validator.FieldLevel) bool {
+		return fl.Field().Int()%2 == 0
+	}))
+
+	t.Run("custom tag applies", func(t *testing.T) {
+		t.Parallel()
+
+		odd := config.New(
+			config.WithProvider(&mockProvider{name: "odd", data: map[string]any{"n": 3}}),
+			config.WithValidator(v),
+		)
+		require.NoError(t, odd.Load())
+		var d dest
+		err := odd.Bind(&d)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "even")
+
+		even := config.New(
+			config.WithProvider(&mockProvider{name: "even", data: map[string]any{"n": 4}}),
+			config.WithValidator(v),
+		)
+		require.NoError(t, even.Load())
+		require.NoError(t, even.Bind(&d))
+		assert.Equal(t, 4, d.N)
+	})
+
+	t.Run("nil validator keeps the default", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := config.New(
+			config.WithProvider(&mockProvider{name: "empty", data: map[string]any{}}),
+			config.WithValidator(nil),
+		)
+		require.NoError(t, cfg.Load())
+
+		var d struct {
+			Name string `validate:"required"`
+		}
+		err := cfg.Bind(&d)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "required")
+	})
 }
 
 func TestConfig_Get(t *testing.T) {
