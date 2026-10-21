@@ -21,7 +21,7 @@
 // recognize only files ending in .html, and name templates by their
 // slash-separated path relative to the root, such as "layouts/base.html".
 //
-// See the module README for usage examples and design rationale.
+// Guides with usage examples are at https://gasmod.github.io/gas.
 //
 // SPDX-License-Identifier: MIT
 package template

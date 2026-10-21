@@ -3,7 +3,8 @@
 // a backend.
 //
 // Each mock method records the call in Calls and then delegates to the
-// matching Fn field when it is set, or returns nil, nil when it is not:
+// matching Fn field when it is set, or returns nil values (nil, nil, or nil
+// for DeleteBucket) when it is not:
 //
 //	mock := &storagetest.MockProvider{
 //		GetObjectFn: func(ctx context.Context, in *storage.GetObjectInput) (*storage.Object, error) {

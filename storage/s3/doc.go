@@ -28,9 +28,9 @@
 // Options replace the clients built from configuration: WithClient and
 // WithUploaderClient for the Provider, WithPresignerS3Client and
 // WithPresignClient for the Presigner. Configuration is still bound and the
-// configured bucket still applies when a client is injected. An option given
-// a nil client is ignored, and the constructor builds that client as if the
-// option were absent. A nil option itself makes the constructor return an
+// configured bucket still applies when a client is injected. A nil client
+// leaves that client unset, so the constructor builds it from configuration
+// unless a later option supplies one. A nil option itself makes the constructor return an
 // error wrapping storage.ErrInvalidOption that names its zero-based position,
 // for example "gas/storage/s3/provider: storage: invalid option: option 1 is
 // nil".
@@ -102,8 +102,10 @@
 //	gas/storage/s3/provider: <op>: <cause>
 //	gas/storage/s3/presigner: <op>: <cause>
 //
-// where <op> is one of "create bucket", "list buckets", "head", "put", "get",
-// "delete", "list", "presign upload", or "presign download". A list page
+// where <op> is one of "create bucket", "head bucket", "delete bucket",
+// "list buckets", "head", "put", "get", "delete", "list", "presign upload",
+// or "presign download". Constructor errors and storage.ErrNotInitialized
+// carry no <op>. A list page
 // size out of range is storage.ErrInvalidLimit and an empty continuation
 // token storage.ErrInvalidContinuationToken, before any request is sent; a
 // token S3 did not issue may be rejected with an error that carries no

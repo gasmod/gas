@@ -61,7 +61,7 @@ beside it as a separate Go module, so `go get` pulls in only what you use.
 | [**log**](log/README.md) | `github.com/gasmod/gas/log` | Structured logging (zerolog or slog) and HTTP/OTLP log shipping |
 | [**migrate**](migrate/README.md) | `github.com/gasmod/gas/migrate` | Service-owned database migrations with dirty-state detection and rollback |
 | [**queue**](queue/README.md) | `github.com/gasmod/gas/queue` | Job queues backed by AWS SQS |
-| [**storage**](storage/README.md) | `github.com/gasmod/gas/storage` | Object storage on S3 and S3-compatible services |
+| [**storage**](storage/README.md) | `github.com/gasmod/gas/storage` | Object storage on S3, S3-compatible services, or a local directory |
 | [**template**](template/README.md) | `github.com/gasmod/gas/template` | Template storage: memory, directory, embedded FS, database, or composite |
 | [**ui**](ui/README.md) | `github.com/gasmod/gas/ui` | HTML rendering with layouts and partials, static files, HTMX fragments |
 

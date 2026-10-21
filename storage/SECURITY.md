@@ -8,13 +8,12 @@ The Gas ecosystem is pre-1.0. Only the latest released minor version of each mod
 
 **Do not** file a public GitHub issue for security vulnerabilities.
 
-Please
-use [GitHub's private vulnerability reporting](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability)
+Please use [GitHub's private vulnerability reporting](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability)
 on this repository to report the issue, or email **contact@ahmedkamal.io** with:
 
 - A description of the vulnerability and its impact.
 - Steps to reproduce, or a proof-of-concept.
-- The affected version (s) and module (s).
+- The affected version(s) and module(s).
 - Any suggested mitigations, if known.
 
 You can expect:

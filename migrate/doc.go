@@ -6,10 +6,9 @@
 // # Wiring
 //
 // New returns a DI constructor that takes a gas.DatabaseProvider and
-// returns *Service; register it under gas.MigrationManager, which is the type
-// the Worker looks for. The constructor does not return an error, so it is
-// not yet on the shape in CONVENTIONS.md (KI-004 in KNOWN_ISSUES.md). The
-// package reads no configuration.
+// returns *Service and an error, which is always nil; register it under
+// gas.MigrationManager, which is the type the Worker looks for. The package
+// reads no configuration.
 //
 // # Lifecycle
 //
@@ -17,8 +16,8 @@
 // ("postgres" and "pgx", "mysql", or "sqlite" and "sqlite3"; any other
 // driver fails) and creates the __gas_migrations tracking table if it does
 // not exist, under the start context, so the container's init deadline
-// bounds it. Stopping it makes RunPending, Down, and CheckReady return an
-// error.
+// bounds it. Before it starts and after it stops, RunPending, Down,
+// ClearDirty, and CheckReady return an error.
 //
 // # Registering
 //
@@ -70,7 +69,7 @@
 // SQLite under db/; adapters map each dialect's generated types to one
 // internal interface.
 //
-// See the module README for usage examples and design rationale.
+// Guides with usage examples are at https://gasmod.github.io/gas.
 //
 // SPDX-License-Identifier: MIT
 package migrate

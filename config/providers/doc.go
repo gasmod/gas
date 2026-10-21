@@ -4,8 +4,8 @@
 //
 // # Role in the framework
 //
-// Provider is the interface config.New and Config.LoadProvider accept; core's
-// gas.ConfigProvider names it too. A source that can honor cancellation also
+// Provider is the interface config.New and Config.LoadProvider accept. A
+// source that can honor cancellation also
 // implements ContextProvider, which Config.LoadWithContext prefers. Each
 // source returns a nested map; gas/config lowercases its keys and merges it
 // with the others.
@@ -17,8 +17,9 @@
 // database.dsn; an empty separator keeps names flat. WithEnvPrefix keeps only
 // variables with the prefix and strips it, literally, so include the
 // trailing separator ("APP_"). Variables that describe the user, shell or
-// session (PATH, HOME, USER, SHELL, LD_PRELOAD, the SSH_ and SUDO_ variables,
-// GITHUB_TOKEN, CI and others) are always skipped.
+// session (PATH, HOME, USER, SHELL, LD_PRELOAD, the common SSH_ and SUDO_
+// session variables such as SSH_AUTH_SOCK and SUDO_USER, GITHUB_TOKEN, CI and
+// others) are always skipped.
 //
 // JSONProvider reads one JSON object from the file set with WithJSONFilePath;
 // there is no default path, and Load without one returns
@@ -53,8 +54,9 @@
 //
 // JSONProvider returns ErrJSONFilePathNotSet, ErrJSONFileReadFailed or
 // ErrJSONDecodeFailed; DotEnvProvider returns ErrDotEnvFilePathNotSet,
-// ErrDotEnvFileReadFailed, ErrDotEnvParseFailed or ErrSetEnv. Each wraps the
-// underlying error and names the file or variable. EnvProvider never fails.
+// ErrDotEnvFileReadFailed, ErrDotEnvParseFailed or ErrSetEnv. The read,
+// decode, parse and set errors wrap the underlying error and name the file
+// or variable. EnvProvider never fails.
 //
 // SPDX-License-Identifier: MIT
 package providers

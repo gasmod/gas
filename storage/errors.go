@@ -124,7 +124,8 @@ var (
 
 	// ErrInvalidContinuationToken is returned by ListObjects and ListBuckets
 	// for a ContinuationToken that is set but empty, and by the dir backend
-	// for one it did not issue. S3 may reject a token it did not issue with
+	// for one that is not unpadded base64url or that decodes to an empty
+	// name. S3 may reject a token it did not issue with
 	// an error that carries no sentinel.
 	ErrInvalidContinuationToken = errors.New("storage: invalid continuation token")
 

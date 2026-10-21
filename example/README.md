@@ -3,7 +3,7 @@
 Part of the [Gas](../README.md) monorepo · [All modules](../README.md#modules)
 
 Five runnable applications, ordered by how much of the framework they use. Each is its own Go module and each
-has a `Makefile` with `test`, `build`, `lint`, `fmt`, and `vet` targets.
+has a `Makefile` with `test`, `build`, `lint`, and `fmt` targets.
 
 | Example                                    | Runs with          | What it shows                                                                  |
 |--------------------------------------------|--------------------|--------------------------------------------------------------------------------|
@@ -15,7 +15,7 @@ has a `Makefile` with `test`, `build`, `lint`, `fmt`, and `vet` targets.
 
 ## hello-world
 
-An entire Gas app in about ten lines. Start here to see the shape of `NewApp` → `Router().Handle` → `Run`.
+An entire Gas app in about ten lines. Start here to see the shape of `NewApp` → `Router().Get` → `Run`.
 
 ```bash
 cd hello-world

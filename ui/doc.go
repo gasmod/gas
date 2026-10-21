@@ -6,12 +6,11 @@
 // # Wiring
 //
 // New[T] returns a DI constructor that takes the TemplateProvider T, the
-// *gas.Router, a gas.ConfigProvider, and a gas.Logger, and returns *Service.
-// T is the type the template store is registered under, so
-// New[gas.TemplateProvider]() resolves whatever store the app registered for
-// that interface. Register the result under gas.UIProvider so consumers
-// depend on the interface. The constructor does not return an error, so it is
-// not yet on the shape in CONVENTIONS.md (KI-004 in KNOWN_ISSUES.md).
+// *gas.Router, a gas.ConfigProvider, and a gas.Logger, and returns *Service
+// and an error, which is always nil. T is the type the template store is
+// registered under, so New[gas.TemplateProvider]() resolves whatever store
+// the app registered for that interface. Register the result under
+// gas.UIProvider so consumers depend on the interface.
 //
 // WithConfig supplies the configuration directly and skips binding it from
 // the ConfigProvider. WithStaticFS serves static files from an fs.FS, for
@@ -43,10 +42,10 @@
 // The static handler strips StaticStripPrefix from the request path and
 // serves the rest from the static directory or FS; directory listings answer
 // 404. An empty StaticStripPrefix defaults to StaticPath's literal part up to
-// its first wildcard, so with the defaults a request for /static/app.css is
-// served from app.css at the root of the static directory or FS. With
-// StaticPaths set and no StaticStripPrefix nothing is stripped, so /css/app.css
-// is served from css/app.css.
+// its first wildcard or path parameter, so with the defaults a request for
+// /static/app.css is served from app.css at the root of the static directory
+// or FS. With StaticPaths set and no StaticStripPrefix nothing is stripped,
+// so /css/app.css is served from css/app.css.
 //
 // # Templates
 //
@@ -64,7 +63,7 @@
 // errors start with "ui:", and the Service's own render and readiness errors
 // with "gas/ui:"; the package defines no sentinel errors.
 //
-// See the module README for usage examples and design rationale.
+// Guides with usage examples are at https://gasmod.github.io/gas.
 //
 // SPDX-License-Identifier: MIT
 package ui

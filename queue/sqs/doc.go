@@ -25,8 +25,10 @@
 // otherwise the default AWS credential chain applies), visibilitytimeout
 // (30s; must not be negative) and waittimeseconds (20; 0 to 20). WithConfig
 // replaces the whole Config and skips the provider, so start from
-// DefaultConfig. Config.Validate enforces these rules, and an invalid Config
-// fails Init, even when WithClient supplies the client.
+// DefaultConfig. When Config is bound from the provider, Bind enforces these
+// rules through the validate tags, and a failure fails Init, even when
+// WithClient supplies the client. A Config given with WithConfig is used as
+// given, without validation.
 //
 // # Lifecycle
 //
@@ -54,7 +56,8 @@
 // wait it is given truncates to zero whole seconds, and applies
 // visibilitytimeout to every message it receives. Each gas.Job carries the
 // message ID, receipt handle and body, and its Attributes merge the system
-// attributes with the String message attributes, the latter winning on a
+// attributes with the message attributes that have a string value (String
+// and Number), the latter winning on a
 // shared name. Ack deletes the message; Nack sets its visibility timeout to
 // zero, so it can be received again at once. Delivery, ordering and
 // retries are SQS's: a message that is neither acked nor nacked becomes
@@ -63,8 +66,9 @@
 // # Errors
 //
 // queue.ErrClosed is the only sentinel. Errors from SQS calls start with the
-// service name, "gas/queue/sqs", and wrap the SDK's error with %w. Errors
-// from Validate name the offending field instead, for example Queue.Region,
+// service name, "gas/queue/sqs", and wrap the SDK's error with %w.
+// Validation errors from Bind also name the offending field, for example
+// Queue.Region,
 // and a Dequeue argument that overflows int32 returns an error that names
 // the argument.
 //

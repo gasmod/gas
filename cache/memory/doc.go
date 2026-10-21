@@ -5,10 +5,9 @@
 // # Wiring
 //
 // New returns a DI constructor that takes a gas.ConfigProvider and a
-// gas.Logger and returns *Service; register it under gas.CacheProvider. The
-// constructor does not return an error, so it is not yet on the shape in
-// CONVENTIONS.md (KI-004 in KNOWN_ISSUES.md). WithConfig supplies the
-// configuration directly and skips binding it from the ConfigProvider.
+// gas.Logger and returns *Service and an error, which is always nil; register
+// it under gas.CacheProvider. WithConfig supplies the configuration directly
+// and skips binding it from the ConfigProvider.
 //
 // # Configuration
 //
@@ -16,7 +15,7 @@
 // over DefaultConfig when it starts. The cache settings are MaxEntries
 // (default 0, unlimited), CleanupInterval (default one minute; 0 or less
 // disables background cleanup), and DefaultTTL (default 0, no expiry).
-// Validate accepts any values.
+// No setting is validated.
 //
 // # Lifecycle
 //

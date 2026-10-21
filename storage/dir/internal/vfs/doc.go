@@ -12,6 +12,7 @@
 //	│   │   └── <bucket-hash>/
 //	│   │       └── <key-hash>_<uuid>     data file
 //	│   ├── locks/
+//	│   │   ├── <bucket-hash>.bucket      bucket lifecycle lock
 //	│   │   └── <bucket-hash>/
 //	│   │       └── <key-hash>            lock file
 //	│   └── buckets/
@@ -22,7 +23,7 @@
 // A bucket exists when its metadata directory does; CreateBucket makes it
 // last, so a half-created bucket reads as missing and is completed by the
 // next CreateBucket. Before it, CreateBucket writes the bucket's name record
-// if there is none, which ListBuckets reads the name from: names are not
+// unless one holding its name is already there, which ListBuckets reads the name from: names are not
 // recoverable from their hashes. Keys lists a bucket's keys from the
 // metadata files.
 //
@@ -50,8 +51,9 @@
 //
 // # Errors
 //
-// ErrBucketNotFound, ErrBucketExists, ErrObjectNotFound, ErrCorrupt and
-// ErrStaleData classify errors, each wrapped only where its condition holds.
+// ErrBucketNotFound, ErrBucketExists, ErrUnnamed, ErrBucketNotEmpty,
+// ErrPreconditionFailed, ErrObjectNotFound, ErrCorrupt and ErrStaleData
+// classify errors, each wrapped only where its condition holds.
 // Corruption is never reported as ErrObjectNotFound. Errors name files by
 // their hashed names and never quote a key, a bucket name or metadata.
 package vfs
