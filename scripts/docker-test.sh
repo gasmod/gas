@@ -17,6 +17,9 @@
 # The Docker socket is mounted because integration tests start their
 # dependencies with testcontainers. TESTCONTAINERS_HOST_OVERRIDE points them
 # at the host, where the dependency containers publish their ports.
+#
+# GAS_TEST_REQUIRE_DOCKER makes integration tests fail rather than skip if
+# Docker turns out to be unreachable, since this script always provides it.
 
 set -euo pipefail
 
@@ -51,4 +54,5 @@ exec docker run --rm ${tty[@]+"${tty[@]}"} \
 	-v /var/run/docker.sock:/var/run/docker.sock \
 	--add-host host.docker.internal:host-gateway \
 	-e TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal \
+	-e GAS_TEST_REQUIRE_DOCKER=1 \
 	"$image" "$@"

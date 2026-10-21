@@ -65,6 +65,8 @@ jobs:
       - name: go test ${{ matrix.modules }}
         run: go test -v -race ./...
         working-directory: ${{ matrix.modules }}
+        env:
+          GAS_TEST_REQUIRE_DOCKER: '1'
 
   go-vet:
     needs: detect-modules
