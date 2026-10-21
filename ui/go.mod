@@ -1,6 +1,6 @@
 module github.com/gasmod/gas/ui
 
-go 1.27
+go 1.27.3
 
 require (
 	github.com/gasmod/gas v0.6.0
