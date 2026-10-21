@@ -59,6 +59,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ErrDuplicateVersion`, wrapped by `RunPending`, `Down`, and `CheckReady`
   when two different migrations share a version.
 
+### Security
+
+- **Requires Go 1.27.3.** The `go` directive moves from 1.27 to 1.27.3,
+  the first 1.27 release with the fix for GO-2026-6809 (CVE-2026-111943):
+  `crypto/x509` now rejects intermediate certificates known to be
+  compromised. A build with an older toolchain switches to 1.27.3 under
+  `GOTOOLCHAIN=auto` and fails under `GOTOOLCHAIN=local`.
+
 ## [0.3.0] - 2026-07-03
 
 First open source release. Versions prior to 0.3.0 were developed in a private
