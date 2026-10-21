@@ -1034,3 +1034,50 @@ func TestConfig_WithProvider_SameNameOverrides(t *testing.T) {
 	assert.Equal(t, "second", cfg.Get("key"))
 	assert.Equal(t, "yes", cfg.Get("kept"))
 }
+
+// hookExtension is an Extension whose hooks return the configured errors.
+type hookExtension struct {
+	preErr  error
+	postErr error
+}
+
+func (e *hookExtension) Name() string { return "hooks" }
+
+func (e *hookExtension) PreLoad(context.Context, *config.Config) error { return e.preErr }
+
+func (e *hookExtension) PostLoad(context.Context, *config.Config) error { return e.postErr }
+
+func TestConfig_Load_ExtensionHookErrors(t *testing.T) {
+	t.Parallel()
+
+	errHook := errors.New("hook failed")
+
+	t.Run("PreLoad error stops the load", func(t *testing.T) {
+		t.Parallel()
+
+		p := &mockProvider{name: "p", data: map[string]any{"key": "value"}}
+		cfg := config.New(
+			config.WithProvider(p),
+			config.WithExtension(&hookExtension{preErr: errHook}),
+		)
+
+		err := cfg.Load()
+		require.ErrorIs(t, err, config.ErrExtensionPreLoadHookFailed)
+		require.ErrorIs(t, err, errHook)
+		assert.Nil(t, cfg.Get("key"), "providers must not load after a PreLoad failure")
+	})
+
+	t.Run("PostLoad error is returned", func(t *testing.T) {
+		t.Parallel()
+
+		p := &mockProvider{name: "p", data: map[string]any{"key": "value"}}
+		cfg := config.New(
+			config.WithProvider(p),
+			config.WithExtension(&hookExtension{postErr: errHook}),
+		)
+
+		err := cfg.Load()
+		require.ErrorIs(t, err, config.ErrExtensionPostLoadHookFailed)
+		require.ErrorIs(t, err, errHook)
+	})
+}

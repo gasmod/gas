@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -283,5 +284,70 @@ func TestSlogLogger_SubLoggerFlushIsNoop(t *testing.T) {
 
 	if !strings.Contains(buf.String(), "k=v") {
 		t.Errorf("log output %q missing the sub-logger field", buf.String())
+	}
+}
+
+// TestNewShippingHandler_WithLevel checks that WithLevel sets the minimum
+// level shipped, that the default is Info, and that a nil level is ignored.
+func TestNewShippingHandler_WithLevel(t *testing.T) {
+	tests := []struct {
+		name string
+		opts []ShippingOption
+		want []slog.Level
+	}{
+		{
+			name: "default ships Info and above",
+			want: []slog.Level{slog.LevelInfo, slog.LevelWarn, slog.LevelError},
+		},
+		{
+			name: "Warn drops Info",
+			opts: []ShippingOption{WithLevel(slog.LevelWarn)},
+			want: []slog.Level{slog.LevelWarn, slog.LevelError},
+		},
+		{
+			name: "Debug ships everything",
+			opts: []ShippingOption{WithLevel(slog.LevelDebug)},
+			want: []slog.Level{slog.LevelDebug, slog.LevelInfo, slog.LevelWarn, slog.LevelError},
+		},
+		{
+			name: "nil level is ignored",
+			opts: []ShippingOption{WithLevel(nil)},
+			want: []slog.Level{slog.LevelInfo, slog.LevelWarn, slog.LevelError},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(
+				http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(http.StatusOK)
+				}),
+			)
+			defer srv.Close()
+
+			m := &captureMarshaler{}
+			opts := append(
+				[]ShippingOption{WithoutLocalHandler(), WithFlushInterval(time.Hour)},
+				tt.opts...)
+			h, closer := NewShippingHandler(srv.URL, m, opts...)
+
+			logger := slog.New(h)
+			logger.Debug("debug")
+			logger.Info("info")
+			logger.Warn("warn")
+			logger.Error("error")
+			if err := closer.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			records := m.records()
+			got := make([]slog.Level, 0, len(records))
+			for _, r := range records {
+				got = append(got, r.Level)
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("shipped levels = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 env:
-  GO_VERSION: '1.27.2'
+  GO_VERSION: '1.27.3'
   GOLANGCI_LINT_VERSION: v2.14.0
   GOVULNCHECK_VERSION: v1.8.0
 
@@ -72,6 +72,10 @@ jobs:
           version: ${{ env.GOLANGCI_LINT_VERSION }}
           working-directory: ${{ matrix.modules }}
 
+  # Runs every test of the selected modules, the Docker-backed integration
+  # tests included. GAS_TEST_REQUIRE_DOCKER makes those tests fail when
+  # Docker is unreachable instead of skipping, so a broken runner cannot pass
+  # as green skips.
   go-test:
     needs: detect-modules
     runs-on: ubuntu-latest
@@ -80,6 +84,7 @@ jobs:
         modules: ${{ fromJSON(needs.detect-modules.outputs.all) }}
     env:
       SELECTED: ${{ contains(fromJSON(needs.detect-modules.outputs.modules), matrix.modules) }}
+      GAS_TEST_REQUIRE_DOCKER: '1'
     steps:
       - uses: actions/checkout@v7
         if: env.SELECTED == 'true'
@@ -89,7 +94,7 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
       - name: go test ${{ matrix.modules }}
         if: env.SELECTED == 'true'
-        run: go test -v -race -short ./...
+        run: go test -v -race ./...
         working-directory: ${{ matrix.modules }}
 
   # Runs the storage module's tests on Windows, where the dir backend locks

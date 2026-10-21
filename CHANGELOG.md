@@ -39,6 +39,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   builds only the handler, once; a handler assigned to `Server().Handler`
   is no longer what it returns.
 
+### Removed
+
+- **`Worker.ActiveServicesMap`.** It was a test helper compiled into the
+  library. Tests now get it from `export_test.go`; use `ActiveServices` for
+  the names of the active services.
+
+### Security
+
+- **Requires Go 1.27.3.** The `go` directive moves from 1.27 to 1.27.3,
+  the first 1.27 release with the fix for GO-2026-6809 (CVE-2026-111943):
+  `crypto/x509` now rejects intermediate certificates known to be
+  compromised. A build with an older toolchain switches to 1.27.3 under
+  `GOTOOLCHAIN=auto` and fails under `GOTOOLCHAIN=local`.
+
 ## [0.5.6] - 2026-10-19
 
 No change to this module's code. The release pinned every internal module

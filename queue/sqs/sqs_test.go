@@ -289,6 +289,78 @@ func TestAck(t *testing.T) {
 	}
 }
 
+// --- client error tests ---
+
+// TestClientErrorsPropagate checks that each operation returns the SQS
+// client's error wrapped, rather than dropping it.
+func TestClientErrorsPropagate(t *testing.T) {
+	t.Parallel()
+	errSQS := errors.New("sqs unavailable")
+	job := gas.Job{ID: "id-1", ReceiptHandle: "rh-1"}
+
+	tests := []struct {
+		mock *mockSQSClient
+		call func(*Service) error
+		name string
+	}{
+		{
+			name: "Enqueue",
+			mock: &mockSQSClient{
+				sendMessageFn: func(context.Context, *awssqs.SendMessageInput, ...func(*awssqs.Options)) (*awssqs.SendMessageOutput, error) {
+					return nil, errSQS
+				},
+			},
+			call: func(s *Service) error {
+				return s.Enqueue(context.Background(), "https://sqs/q", []byte("x"))
+			},
+		},
+		{
+			name: "Dequeue",
+			mock: &mockSQSClient{
+				receiveMessageFn: func(context.Context, *awssqs.ReceiveMessageInput, ...func(*awssqs.Options)) (*awssqs.ReceiveMessageOutput, error) {
+					return nil, errSQS
+				},
+			},
+			call: func(s *Service) error {
+				_, err := s.Dequeue(context.Background(), "https://sqs/q", 1, time.Second)
+				return err
+			},
+		},
+		{
+			name: "Ack",
+			mock: &mockSQSClient{
+				deleteMessageFn: func(context.Context, *awssqs.DeleteMessageInput, ...func(*awssqs.Options)) (*awssqs.DeleteMessageOutput, error) {
+					return nil, errSQS
+				},
+			},
+			call: func(s *Service) error {
+				return s.Ack(context.Background(), "https://sqs/q", job)
+			},
+		},
+		{
+			name: "Nack",
+			mock: &mockSQSClient{
+				changeMessageVisibilityFn: func(context.Context, *awssqs.ChangeMessageVisibilityInput, ...func(*awssqs.Options)) (*awssqs.ChangeMessageVisibilityOutput, error) {
+					return nil, errSQS
+				},
+			},
+			call: func(s *Service) error {
+				return s.Nack(context.Background(), "https://sqs/q", job)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := tt.call(newTestService(t, tt.mock))
+			if !errors.Is(err, errSQS) {
+				t.Errorf("%s() error = %v, want it to wrap %v", tt.name, err, errSQS)
+			}
+		})
+	}
+}
+
 // --- nack tests ---
 
 func TestNack(t *testing.T) {

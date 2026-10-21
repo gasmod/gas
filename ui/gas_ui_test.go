@@ -525,6 +525,36 @@ func TestService_RegisterFuncs(t *testing.T) {
 	}
 }
 
+// TestService_ConfigFuncMap checks that Config.FuncMap adds functions on top
+// of the built-in defaults and overrides a default on a name collision.
+func TestService_ConfigFuncMap(t *testing.T) {
+	tp := newTestProvider(map[string]string{
+		"page.html": `{{greet "World"}} {{upper "x"}} {{lower "Y"}}`,
+	})
+
+	cfg := ui.DefaultConfig()
+	cfg.FuncMap = template.FuncMap{
+		"greet": func(name string) string { return "Hi, " + name + "!" },
+		"upper": func(string) string { return "overridden" },
+	}
+
+	svc, err := ui.New[*testProvider](ui.WithConfig(cfg))(tp, nil, nil, &gas.NopLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Init(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	w := httptest.NewRecorder()
+	if err := svc.Render(w, "page", nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := w.Body.String(), "Hi, World! overridden y"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
 func TestService_CheckReady(t *testing.T) {
 	tp := newTestProvider(map[string]string{"home.html": "ok"})
 

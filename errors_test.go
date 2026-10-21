@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/go-playground/validator/v10"
@@ -488,41 +487,6 @@ func TestDefaultErrorHandler_CollapsesResolutionFailure(t *testing.T) {
 	if got.Error.Code != gas.CodeInternal {
 		t.Fatalf("code = %q, want %q", got.Error.Code, gas.CodeInternal)
 	}
-}
-
-// recordingLogger records which level each log call used. Everything it does
-// not override is handled by the embedded NopLogger.
-type recordingLogger struct {
-	gas.Logger
-
-	levels []string
-	mu     sync.Mutex
-}
-
-func newRecordingLogger() *recordingLogger {
-	return &recordingLogger{Logger: &gas.NopLogger{}}
-}
-
-func (l *recordingLogger) record(level string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.levels = append(l.levels, level)
-}
-
-func (l *recordingLogger) seen() []string {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return append([]string(nil), l.levels...)
-}
-
-func (l *recordingLogger) Warn(msg string) gas.LogEvent {
-	l.record("warn")
-	return l.Logger.Warn(msg)
-}
-
-func (l *recordingLogger) Error(msg string) gas.LogEvent {
-	l.record("error")
-	return l.Logger.Error(msg)
 }
 
 func TestDefaultErrorHandler_LogSeverityByStatus(t *testing.T) {
