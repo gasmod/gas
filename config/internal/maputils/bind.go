@@ -3,8 +3,10 @@ package maputils
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -101,21 +103,73 @@ func Bind(src map[string]any, dest any) error {
 
 	typeInfo := buildStructFieldMap(rv.Type())
 
-	for k, v := range src {
-		if fi, ok := typeInfo[k]; ok {
-			fv := getFieldByPath(rv, fi.Path)
-			if !fv.CanSet() {
-				// unexported field
-				continue
-			}
+	for _, fm := range matchFields(src, typeInfo, false) {
+		fv := getFieldByPath(rv, fm.info.Path)
+		if !fv.CanSet() {
+			// unexported field
+			continue
+		}
 
-			if err := setValue(fv, v); err != nil {
-				return fmt.Errorf("field %s: %w", fi.Name, err)
-			}
+		if err := setValue(fv, src[fm.key]); err != nil {
+			return fmt.Errorf("field %s: %w", fm.info.Name, err)
 		}
 	}
 
 	return nil
+}
+
+// fieldMatch pairs a source key with the struct field its value binds to.
+type fieldMatch struct {
+	key  string
+	info fieldInfo
+	rank int
+}
+
+// matchFields picks, for each struct field, the one source key whose value binds to it.
+// A key matching the field's json tag beats a key matching its name, an exact key beats
+// a case-folded one (only tried when foldCase is set), and any remaining tie goes to the
+// lexicographically smallest key, so the result does not depend on map iteration order.
+// Matches are returned in sorted key order.
+func matchFields(src map[string]any, fieldMap map[string]fieldInfo, foldCase bool) []fieldMatch {
+	var matches []fieldMatch
+
+	byField := map[string]int{} // field path -> index in matches
+
+	for _, key := range slices.Sorted(maps.Keys(src)) {
+		rank := 0
+
+		fi, ok := fieldMap[key]
+		if !ok && foldCase {
+			fi, ok = fieldMap[strings.ToLower(key)]
+			rank = 1
+		}
+
+		if !ok {
+			continue
+		}
+
+		if fi.Tag == "" {
+			// matched by field name, not json tag
+			rank += 2
+		}
+
+		match := fieldMatch{key: key, info: fi, rank: rank}
+
+		id := fmt.Sprint(fi.Path)
+		if i, seen := byField[id]; seen {
+			// keys are visited in ascending order, so only a strictly better rank replaces
+			if rank < matches[i].rank {
+				matches[i] = match
+			}
+
+			continue
+		}
+
+		byField[id] = len(matches)
+		matches = append(matches, match)
+	}
+
+	return matches
 }
 
 // getFieldByPath retrieves a field value following a path through embedded structs.
@@ -442,23 +496,14 @@ func setStructValue(dst reflect.Value, v any, srcVal reflect.Value) error {
 
 func setStructFromMap(dst reflect.Value, m map[string]any) error {
 	fieldMap := buildStructFieldMap(dst.Type())
-	for key, val := range m {
-		fi, ok := fieldMap[key]
-		if !ok {
-			fi, ok = fieldMap[strings.ToLower(key)]
-		}
-
-		if !ok {
-			continue
-		}
-
-		fv := getFieldByPath(dst, fi.Path)
+	for _, fm := range matchFields(m, fieldMap, true) {
+		fv := getFieldByPath(dst, fm.info.Path)
 		if !fv.CanSet() {
 			continue
 		}
 
-		if err := setValue(fv, val); err != nil {
-			return fmt.Errorf("struct field %s: %w", fi.Name, err)
+		if err := setValue(fv, m[fm.key]); err != nil {
+			return fmt.Errorf("struct field %s: %w", fm.info.Name, err)
 		}
 	}
 

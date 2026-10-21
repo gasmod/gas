@@ -360,3 +360,71 @@ func TestBind_NumericOverflow(t *testing.T) {
 		})
 	}
 }
+
+func TestBind_TagMatchBeatsNameMatchDeterministically(t *testing.T) {
+	t.Parallel()
+
+	type Inner struct {
+		Precedent string `json:"other"`
+		Plain     string
+	}
+
+	type Outer struct {
+		Precedent string `json:"other"`
+		Inner     Inner  `json:"inner"`
+	}
+
+	tests := []struct {
+		name      string
+		src       map[string]any
+		wantOuter string
+		wantInner string
+		wantPlain string
+	}{
+		{
+			name: "tag beats name at top level and nested",
+			src: map[string]any{
+				"precedent": "by-name",
+				"other":     "by-tag",
+				"inner":     map[string]any{"precedent": "by-name", "other": "by-tag"},
+			},
+			wantOuter: "by-tag",
+			wantInner: "by-tag",
+		},
+		{
+			name: "case-folded tag beats exact name in nested struct",
+			src: map[string]any{
+				"inner": map[string]any{"precedent": "by-name", "OTHER": "by-tag"},
+			},
+			wantInner: "by-tag",
+		},
+		{
+			name: "exact name beats case-folded name in nested struct",
+			src: map[string]any{
+				"inner": map[string]any{"PLAIN": "folded", "plain": "exact", "Plain": "folded"},
+			},
+			wantPlain: "exact",
+		},
+		{
+			name: "smallest key wins among case-folded names in nested struct",
+			src: map[string]any{
+				"inner": map[string]any{"Plain": "second", "PLAIN": "first"},
+			},
+			wantPlain: "first",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			for range 100 {
+				var got Outer
+				require.NoError(t, maputils.Bind(tt.src, &got))
+				assert.Equal(t, tt.wantOuter, got.Precedent)
+				assert.Equal(t, tt.wantInner, got.Inner.Precedent)
+				assert.Equal(t, tt.wantPlain, got.Inner.Plain)
+			}
+		})
+	}
+}
