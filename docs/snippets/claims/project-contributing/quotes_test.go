@@ -154,7 +154,7 @@ func TestClaimTestsSkipOrFailWithoutDocker(t *testing.T) {
 
 // Docs: project/contributing.mdx#every-claim-has-a-test
 // "The docs workflow, `.github/workflows/docs.yml`, runs `TestQuotes` and
-// `npm run build` on every pull request that touches `docs/`, and deploys the
+// `pnpm build` on every pull request that touches `docs/`, and deploys the
 // site to GitHub Pages from `main`."
 func TestDocsWorkflow(t *testing.T) {
 	t.Parallel()
@@ -169,7 +169,7 @@ func TestDocsWorkflow(t *testing.T) {
 		t.Errorf("docs.yml push trigger is not main:\n%s", push)
 	}
 	build := job(t, wf, "build")
-	for _, want := range []string{"run: go test ./claims -run TestQuotes", "working-directory: docs/snippets", "run: npm run build"} {
+	for _, want := range []string{"run: go test ./claims -run TestQuotes", "working-directory: docs/snippets", "run: pnpm build"} {
 		if !strings.Contains(build, want) {
 			t.Errorf("docs.yml build job lacks %q", want)
 		}

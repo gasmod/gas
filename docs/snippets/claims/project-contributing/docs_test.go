@@ -13,25 +13,24 @@ import (
 
 // Docs: project/contributing.mdx#working-on-these-docs
 // "The site is [Starlight](https://starlight.astro.build/) and lives in `docs/`. It
-// uses npm, with the lock file in `docs/package-lock.json`:"
-// and "npm run dev # local preview
-// npm run build # what CI runs"
-func TestStarlightSiteWithNpm(t *testing.T) {
+// uses pnpm, with the lock file in `docs/pnpm-lock.yaml`:"
+// and "pnpm dev # local preview
+// pnpm build # what CI runs"
+func TestStarlightSiteWithPnpm(t *testing.T) {
 	t.Parallel()
 	docs := filepath.Join(repoRoot(t), "docs")
 	cfg := readFile(t, filepath.Join(docs, "astro.config.mjs"))
 	if !strings.Contains(cfg, "from '@astrojs/starlight'") || !strings.Contains(cfg, "starlight({") {
 		t.Error("docs/astro.config.mjs does not build a Starlight site")
 	}
-	var lock struct {
-		Name            string `json:"name"`
-		LockfileVersion int    `json:"lockfileVersion"`
-	}
-	if err := json.Unmarshal([]byte(readFile(t, filepath.Join(docs, "package-lock.json"))), &lock); err != nil || lock.LockfileVersion == 0 {
-		t.Errorf("docs/package-lock.json is not an npm lock file: %v", err)
+	lock := readFile(t, filepath.Join(docs, "pnpm-lock.yaml"))
+	if !regexp.MustCompile(`(?m)^lockfileVersion: '\d+(\.\d+)?'$`).MatchString(lock) ||
+		!regexp.MustCompile(`(?m)^importers:$`).MatchString(lock) {
+		t.Error("docs/pnpm-lock.yaml is not a pnpm lock file")
 	}
 	var pkg struct {
-		Scripts map[string]string `json:"scripts"`
+		PackageManager string            `json:"packageManager"`
+		Scripts        map[string]string `json:"scripts"`
 	}
 	if err := json.Unmarshal([]byte(readFile(t, filepath.Join(docs, "package.json"))), &pkg); err != nil {
 		t.Fatal(err)
@@ -39,9 +38,12 @@ func TestStarlightSiteWithNpm(t *testing.T) {
 	if pkg.Scripts["dev"] != "astro dev" || pkg.Scripts["build"] != "astro build" {
 		t.Errorf("docs/package.json scripts dev=%q build=%q, want astro dev and astro build", pkg.Scripts["dev"], pkg.Scripts["build"])
 	}
+	if !strings.HasPrefix(pkg.PackageManager, "pnpm@") {
+		t.Errorf("docs/package.json packageManager = %q, want pnpm", pkg.PackageManager)
+	}
 	wf := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "docs.yml"))
-	if !strings.Contains(job(t, wf, "build"), "run: npm run build") {
-		t.Error("the docs workflow does not run npm run build")
+	if !strings.Contains(job(t, wf, "build"), "run: pnpm build") {
+		t.Error("the docs workflow does not run pnpm build")
 	}
 }
 

@@ -119,13 +119,13 @@ marked **BREAKING** when it breaks existing code.
 ## Working on these docs
 
 The site is [Starlight](https://starlight.astro.build/) and lives in `docs/`. It
-uses npm, with the lock file in `docs/package-lock.json`:
+uses pnpm, with the lock file in `docs/pnpm-lock.yaml`:
 
 ```bash
 cd docs
-npm install
-npm run dev      # local preview
-npm run build    # what CI runs
+pnpm install
+pnpm dev      # local preview
+pnpm build    # what CI runs
 ```
 
 The build fails when a page imports a snippet region that does not exist, and
@@ -203,6 +203,6 @@ fail.
 
 <Aside>
 The docs workflow, `.github/workflows/docs.yml`, runs `TestQuotes` and
-`npm run build` on every pull request that touches `docs/`, and deploys the
+`pnpm build` on every pull request that touches `docs/`, and deploys the
 site to GitHub Pages from `main`.
 </Aside>
