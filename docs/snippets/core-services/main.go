@@ -126,7 +126,7 @@ func NewSettings() (*Settings, error) {
 
 // #endregion ctors
 
-// #region mismatch
+// #region interface
 // Mailer is what the signup service asks for.
 type Mailer interface {
 	Send(to, body string) error
@@ -144,7 +144,17 @@ type Signup struct{ mailer Mailer }
 
 func NewSignup(m Mailer) *Signup { return &Signup{mailer: m} }
 
-func mismatch() error {
+func underInterface() error {
+	c := gas.NewServiceContainer()
+	c.RegisterSingletonService[Mailer](NewSMTPMailer)
+	c.RegisterSingletonService[*Signup](NewSignup)
+	return c.BuildAll(context.Background())
+}
+
+// #endregion interface
+
+// #region concrete
+func underConcrete() error {
 	c := gas.NewServiceContainer()
 	// Registered under its concrete type, so nothing is registered as Mailer.
 	c.RegisterSingletonService[*SMTPMailer](NewSMTPMailer)
@@ -152,17 +162,7 @@ func mismatch() error {
 	return c.BuildAll(context.Background())
 }
 
-// #endregion mismatch
-
-// #region fixed
-func fixed() error {
-	c := gas.NewServiceContainer()
-	c.RegisterSingletonService[Mailer](NewSMTPMailer)
-	c.RegisterSingletonService[*Signup](NewSignup)
-	return c.BuildAll(context.Background())
-}
-
-// #endregion fixed
+// #endregion concrete
 
 // #region override
 // FakeMailer records what it would have sent.
@@ -216,10 +216,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-	err = mismatch()
+	fmt.Println(underInterface())
+	err = underConcrete()
 	fmt.Println(err)
 	fmt.Println(errors.Is(err, gas.ErrNotRegistered))
-	fmt.Println(fixed())
 
 	w := gas.NewWorker(testOptions()...)
 	if err := w.Start(context.Background()); err != nil {

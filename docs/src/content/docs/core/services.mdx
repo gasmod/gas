@@ -167,18 +167,21 @@ constructor never runs. To replace an instance, register another instance.
 
 ## Register under the type consumers ask for
 
-Because lookups are by exact type, a value registered under its concrete type is
-not found by a constructor that asks for an interface it implements:
+Lookups are by exact type, so register a service under the type its consumers
+ask for. Here `Signup` asks for the `Mailer` interface, so `SMTPMailer` is
+registered under `Mailer`:
 
-<Code code={region(svc, 'mismatch')} lang="go" title="main.go" />
+<Code code={region(svc, 'interface')} lang="go" title="main.go" />
+
+The mistake to avoid is registering it under its concrete type: a constructor
+that asks for an interface does not find a value registered under a concrete
+type that implements it, and the build fails:
+
+<Code code={region(svc, 'concrete')} lang="go" title="main.go" />
 
 ```
 building *main.Signup: resolving dep main.Mailer for *main.Signup: no registration for main.Mailer
 ```
-
-Register it under the interface instead:
-
-<Code code={region(svc, 'fixed')} lang="go" title="main.go" />
 
 The container deliberately does not fall back to "the one registration that
 implements `Mailer`": that search is ambiguous as soon as two registrations

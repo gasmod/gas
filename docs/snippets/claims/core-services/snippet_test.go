@@ -21,28 +21,31 @@ func runSample(t *testing.T) []string {
 }
 
 // Docs: core/services.mdx#register-under-the-type-consumers-ask-for
-// "Because lookups are by exact type, a value registered under its concrete type is
-// not found by a constructor that asks for an interface it implements"
+// "Here `Signup` asks for the `Mailer` interface, so `SMTPMailer` is
+// registered under `Mailer`"
+// Docs: core/services.mdx#register-under-the-type-consumers-ask-for
+// "a constructor
+// that asks for an interface does not find a value registered under a concrete
+// type that implements it, and the build fails"
 // Docs: core/services.mdx#register-under-the-type-consumers-ask-for
 // "building *main.Signup: resolving dep main.Mailer for *main.Signup: no registration for main.Mailer"
-// Docs: core/services.mdx#register-under-the-type-consumers-ask-for
-// "Register it under the interface instead"
 // Docs: core/services.mdx#resolving
 // "if _, err := c.Resolve[*Nonce](); errors.Is(err, gas.ErrNotRegistered) {"
 // Docs: core/services.mdx#overriding-a-registration
 // "Registering a type again replaces its earlier registration: the last one
 // wins."
-// The sample prints mismatch()'s error, whether it wraps ErrNotRegistered,
-// fixed()'s error, and the Mailer a worker built from testOptions() resolves.
+// The sample prints underInterface()'s error, underConcrete()'s error and
+// whether it wraps ErrNotRegistered, and the Mailer a worker built from
+// testOptions() resolves.
 func TestSampleOutput(t *testing.T) {
 	t.Parallel()
 	lines := runSample(t)
 	want := []string{
 		"no *Nonce registered on this app",
 		"notes 0",
+		"<nil>",
 		"building *main.Signup: resolving dep main.Mailer for *main.Signup: no registration for main.Mailer",
 		"true",
-		"<nil>",
 		"*main.FakeMailer",
 	}
 	if !slices.Equal(lines, want) {
