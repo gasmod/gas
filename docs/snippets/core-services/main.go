@@ -164,6 +164,33 @@ func fixed() error {
 
 // #endregion fixed
 
+// #region override
+// FakeMailer records what it would have sent.
+type FakeMailer struct{ sent []string }
+
+func NewFakeMailer() *FakeMailer { return &FakeMailer{} }
+
+func (m *FakeMailer) Send(to, _ string) error {
+	m.sent = append(m.sent, to)
+	return nil
+}
+
+// appOptions is the production wiring.
+func appOptions() []gas.Option {
+	return []gas.Option{
+		gas.WithSingletonService[Mailer](NewSMTPMailer),
+		gas.WithSingletonService[*Signup](NewSignup),
+	}
+}
+
+// testOptions registers Mailer again after the production wiring, so the
+// fake replaces the SMTP mailer.
+func testOptions() []gas.Option {
+	return append(appOptions(), gas.WithSingletonService[Mailer](NewFakeMailer))
+}
+
+// #endregion override
+
 func main() {
 	app := newApp()
 	if err := app.Start(context.Background()); err != nil {
@@ -193,4 +220,13 @@ func main() {
 	fmt.Println(err)
 	fmt.Println(errors.Is(err, gas.ErrNotRegistered))
 	fmt.Println(fixed())
+
+	w := gas.NewWorker(testOptions()...)
+	if err := w.Start(context.Background()); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("%T\n", w.ServiceContainer().MustResolve[Mailer]())
+	if err := w.Shutdown(context.Background()); err != nil {
+		log.Fatal(err)
+	}
 }

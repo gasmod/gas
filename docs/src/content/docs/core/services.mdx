@@ -106,8 +106,6 @@ interface type, not implementing it), or returns a second value that is not an
 is only known once everything is registered; a parameter with no registration
 fails the build.
 
-Registering the same type twice replaces the earlier registration.
-
 ### Lifetimes
 
 <Code code={region(svc, 'lifetimes')} lang="go" title="main.go" />
@@ -152,6 +150,20 @@ captive dependency: singleton *main.Cache depends on scoped *main.RequestLog
 The check looks at constructor parameters. A scoped service may depend on
 singletons and on other scoped services. A dependency registered with
 `WithServiceInstance` is a singleton and is always allowed.
+
+### Overriding a registration
+
+Registering a type again replaces its earlier registration: the last one
+wins. This is by design. It is how you replace a module's default, or swap in
+a fake for a test, without editing the wiring you are overriding. Register the
+replacement after the options it overrides:
+
+<Code code={region(svc, 'override')} lang="go" title="options.go" />
+
+There is one exception to that order: a value registered with
+`WithServiceInstance` wins over a constructor registration for the same type,
+whichever was registered last and whatever the constructor's lifetime. The
+constructor never runs. To replace an instance, register another instance.
 
 ## Register under the type consumers ask for
 

@@ -29,8 +29,11 @@ func runSample(t *testing.T) []string {
 // "Register it under the interface instead"
 // Docs: core/services.mdx#resolving
 // "if _, err := c.Resolve[*Nonce](); errors.Is(err, gas.ErrNotRegistered) {"
+// Docs: core/services.mdx#overriding-a-registration
+// "Registering a type again replaces its earlier registration: the last one
+// wins."
 // The sample prints mismatch()'s error, whether it wraps ErrNotRegistered,
-// and fixed()'s error.
+// fixed()'s error, and the Mailer a worker built from testOptions() resolves.
 func TestSampleOutput(t *testing.T) {
 	t.Parallel()
 	lines := runSample(t)
@@ -40,6 +43,7 @@ func TestSampleOutput(t *testing.T) {
 		"building *main.Signup: resolving dep main.Mailer for *main.Signup: no registration for main.Mailer",
 		"true",
 		"<nil>",
+		"*main.FakeMailer",
 	}
 	if !slices.Equal(lines, want) {
 		t.Fatalf("sample output:\n%s\nwant:\n%s", strings.Join(lines, "\n"), strings.Join(want, "\n"))

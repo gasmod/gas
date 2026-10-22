@@ -470,8 +470,9 @@ func TestParametersCheckedAtBuild(t *testing.T) {
 	}
 }
 
-// Docs: core/services.mdx#constructors
-// "Registering the same type twice replaces the earlier registration."
+// Docs: core/services.mdx#overriding-a-registration
+// "Registering a type again replaces its earlier registration: the last one
+// wins."
 func TestRegisteringTwiceReplaces(t *testing.T) {
 	t.Parallel()
 	w := gas.NewWorker(
@@ -486,6 +487,78 @@ func TestRegisteringTwiceReplaces(t *testing.T) {
 	t.Cleanup(func() { _ = w.Shutdown(context.Background()) })
 	if got := w.ServiceContainer().MustResolve[*holder]().id; got != 2 {
 		t.Fatalf("resolved holder %d, want the second registration", got)
+	}
+}
+
+// Docs: core/services.mdx#overriding-a-registration
+// "a value registered with `WithServiceInstance` wins over a constructor
+// registration for the same type, whichever was registered last and whatever
+// the constructor's lifetime. The constructor never runs."
+func TestInstanceWinsOverConstructor(t *testing.T) {
+	t.Parallel()
+	ctor := func(t *testing.T) func() *holder {
+		return func() *holder { t.Error("the constructor ran"); return &holder{id: 1} }
+	}
+	cases := map[string]func(t *testing.T) []gas.Option{
+		"instance last": func(t *testing.T) []gas.Option {
+			return []gas.Option{
+				gas.WithSingletonService[*holder](ctor(t)),
+				gas.WithServiceInstance(&holder{id: 2}),
+			}
+		},
+		"instance first": func(t *testing.T) []gas.Option {
+			return []gas.Option{
+				gas.WithServiceInstance(&holder{id: 2}),
+				gas.WithSingletonService[*holder](ctor(t)),
+			}
+		},
+		"instance first, scoped constructor": func(t *testing.T) []gas.Option {
+			return []gas.Option{
+				gas.WithServiceInstance(&holder{id: 2}),
+				gas.WithScopedService[*holder](ctor(t)),
+			}
+		},
+		"instance first, transient constructor": func(t *testing.T) []gas.Option {
+			return []gas.Option{
+				gas.WithServiceInstance(&holder{id: 2}),
+				gas.WithTransientService[*holder](ctor(t)),
+			}
+		},
+	}
+	for name, opts := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			w := gas.NewWorker(opts(t)...)
+			if err := w.Start(t.Context()); err != nil {
+				t.Fatalf("start: %v", err)
+			}
+			t.Cleanup(func() { _ = w.Shutdown(context.Background()) })
+			if got := w.ServiceContainer().MustResolve[*holder]().id; got != 2 {
+				t.Fatalf("container resolved holder %d, want the instance", got)
+			}
+			scope := w.ServiceContainer().NewScope(t.Context())
+			defer func() { _ = scope.Close(context.Background()) }()
+			if got := scope.MustResolve[*holder]().id; got != 2 {
+				t.Fatalf("scope resolved holder %d, want the instance", got)
+			}
+		})
+	}
+}
+
+// Docs: core/services.mdx#overriding-a-registration
+// "To replace an instance, register another instance."
+func TestInstanceReplacesInstance(t *testing.T) {
+	t.Parallel()
+	w := gas.NewWorker(
+		gas.WithServiceInstance(&holder{id: 1}),
+		gas.WithServiceInstance(&holder{id: 2}),
+	)
+	if err := w.Start(t.Context()); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	t.Cleanup(func() { _ = w.Shutdown(context.Background()) })
+	if got := w.ServiceContainer().MustResolve[*holder]().id; got != 2 {
+		t.Fatalf("resolved holder %d, want the second instance", got)
 	}
 }
 

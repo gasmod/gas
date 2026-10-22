@@ -164,7 +164,10 @@ func NewServiceContainer(opts ...ServiceContainerOption) *ServiceContainer {
 // A type that declares Init or Close but does not fully implement Service is
 // rejected by BuildAll; see validateServiceShape.
 //
-// Registering a type twice replaces the earlier registration.
+// Registering a type twice replaces the earlier registration. An instance
+// registered for the same type with RegisterServiceInstance takes precedence
+// over a constructor registration, whichever was registered last, and the
+// constructor never runs.
 func (c *ServiceContainer) RegisterService[T any](ctor any, lifetime ServiceLifetime) {
 	t := reflect.TypeFor[T]()
 
@@ -216,6 +219,10 @@ func (c *ServiceContainer) RegisterSingletonService[T any](ctor any) {
 //
 // The value is treated as a singleton. The container owns its lifecycle from
 // here on, so do not call Init yourself before registering, or it runs twice.
+//
+// An instance wins over a constructor registration for the same type,
+// whichever was registered last. Registering another instance for the same
+// type replaces the earlier one.
 func (c *ServiceContainer) RegisterServiceInstance[T any](val T) {
 	c.setInstance(reflect.TypeFor[T](), reflect.ValueOf(val))
 }
