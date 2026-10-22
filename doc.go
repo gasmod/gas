@@ -45,10 +45,10 @@
 // start. An Init that ignores the cancellation and returns nil late is
 // closed again. When an init deadline applies, Init's context is canceled
 // when Init returns, so background work a service starts in Init must not
-// derive from it. Scoped services get
-// the scope's context with no added deadline; in an App that is the request
-// context, and Close gets it without its cancellation, so scoped services
-// clean up even after the client has gone.
+// derive from it. A scoped service's Init gets the scope's context with the
+// same init deadline; in an App that is the request context, and Close gets
+// it without its cancellation, so scoped services clean up even after the
+// client has gone.
 //
 // A Start that fails closes, in reverse order, every service it had
 // initialized, with its context stripped of cancellation, and returns the

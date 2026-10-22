@@ -55,9 +55,9 @@ func TestScopedInstancePerRequest(t *testing.T) {
 }
 
 // Docs: core/request-scopes.mdx#a-scoped-service
-// "Its `Init` runs on its first resolution in the scope, with
-// no deadline added (in an App its context is the request's), and its `Close`
-// runs when the scope closes."
+// "Its `Init` runs on its first resolution in the scope, under
+// the same init deadline as a singleton's (in an App its context is the
+// request's), and its `Close` runs when the scope closes."
 func TestScopedInitContextAndClose(t *testing.T) {
 	t.Parallel()
 	tr := &tracker{}
@@ -81,8 +81,8 @@ func TestScopedInitContextAndClose(t *testing.T) {
 		t.Fatalf("Init ran %d times before resolution and %d after, want 0 and 1", initsBefore, tr.inits.Load())
 	}
 	initCtx, _ := tr.ctxs()
-	if _, has := initCtx.Deadline(); has {
-		t.Error("scoped Init context has a deadline; want none added")
+	if _, has := initCtx.Deadline(); !has {
+		t.Error("scoped Init context doesn't have a deadline; want one added")
 	}
 	if initCtx.Value(ctxKey{}) != "req-7f1" {
 		t.Error("scoped Init context is not derived from the request's context")

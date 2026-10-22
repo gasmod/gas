@@ -54,7 +54,8 @@ func NewAudit(sink *Sink) *Audit { return &Audit{sink: sink} }
 
 func (a *Audit) Name() string { return "audit" }
 
-// Init runs on first resolution in the scope, with the scope's context.
+// Init runs on first resolution in the scope, with the scope's context and
+// the container's init deadline.
 func (a *Audit) Init(_ context.Context) error { return nil }
 
 // Close runs when the scope closes: in an App, after the response is written.

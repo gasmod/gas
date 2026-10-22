@@ -443,8 +443,10 @@ func WithReadyFunc(fn func(*ServiceContainer) error) WorkerOption {
 }
 
 // WithServiceInitTimeout sets the deadline the Worker's service container
-// gives each singleton service's Init, at startup and on RestartService. When
-// it passes, Init's context is canceled and startup fails once Init returns.
+// gives each service's Init: a singleton's at startup and on RestartService,
+// and a scoped service's on its first resolution in a scope. When it passes,
+// Init's context is canceled and startup, or the resolution, fails once Init
+// returns.
 // The default is 15 seconds, and 0 disables the deadline so only the caller's
 // context applies. A service that implements ServiceInitTimeout overrides it
 // for itself.

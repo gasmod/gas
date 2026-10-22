@@ -750,8 +750,9 @@ func TestInitContextCanceledWhenInitReturns(t *testing.T) {
 }
 
 // Docs: core/lifecycle.mdx#init-and-close-contexts
-// "**Init of a scoped service** gets the scope's context, with no deadline added.
-// In an App that is the request's context."
+// "**Init of a scoped service** gets the scope's context with the same deadline
+// added, the default or the service's own `InitTimeout`, and the same timeout
+// handling. In an App that is the request's context."
 func TestScopedInitContext(t *testing.T) {
 	t.Parallel()
 	var scopeCtx context.Context
@@ -761,8 +762,8 @@ func TestScopedInitContext(t *testing.T) {
 	})
 	scope := c.NewScope(context.WithValue(context.Background(), ctxKey{}, "scope"))
 	scope.MustResolve[*svc[kSc]]()
-	if _, ok := scopeCtx.Deadline(); ok || scopeCtx.Value(ctxKey{}) != "scope" {
-		t.Errorf("scoped Init context: value %v, deadline set=%v; want the scope's context with no deadline", scopeCtx.Value(ctxKey{}), ok)
+	if _, ok := scopeCtx.Deadline(); !ok || scopeCtx.Value(ctxKey{}) != "scope" {
+		t.Errorf("scoped Init context: value %v, deadline set=%v; want the scope's context with deadline", scopeCtx.Value(ctxKey{}), ok)
 	}
 
 	var reqVal any
@@ -779,6 +780,72 @@ func TestScopedInitContext(t *testing.T) {
 	if reqVal != "request" {
 		t.Fatalf("scoped Init in an App saw %v, want the request's context", reqVal)
 	}
+}
+
+// blockingScoped is a scoped service whose Init blocks until its context ends.
+type blockingScoped struct{ timeout time.Duration }
+
+func (s *blockingScoped) Name() string                   { return "blocking-scoped" }
+func (s *blockingScoped) Close(context.Context) error    { return nil }
+func (s *blockingScoped) Init(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
+
+// ownScopedTimeout is a blockingScoped that implements gas.ServiceInitTimeout,
+// so its timeout field sets its own Init deadline.
+type ownScopedTimeout struct{ blockingScoped }
+
+func (s *ownScopedTimeout) InitTimeout() time.Duration { return s.timeout }
+
+// Docs: core/lifecycle.mdx#init-and-close-contexts
+// "A scoped `Init` that times out fails the resolution."
+func TestScopedInitTimeoutFailsResolution(t *testing.T) {
+	t.Parallel()
+	const short = 50 * time.Millisecond
+	check := func(t *testing.T, c *gas.ServiceContainer, resolve func(*gas.Scope) error) {
+		t.Helper()
+		scope := c.NewScope(t.Context())
+		t.Cleanup(func() { _ = scope.Close(context.Background()) })
+		start := time.Now()
+		err := resolve(scope)
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("resolve: %v, want an error wrapping context.DeadlineExceeded", err)
+		}
+		if d := time.Since(start); d > 5*time.Second {
+			t.Fatalf("resolve took %v, want about %v", d, short)
+		}
+	}
+	t.Run("own InitTimeout", func(t *testing.T) {
+		t.Parallel()
+		c := gas.NewServiceContainer()
+		c.RegisterScopedService[*ownScopedTimeout](func() *ownScopedTimeout {
+			return &ownScopedTimeout{blockingScoped{timeout: short}}
+		})
+		check(t, c, func(s *gas.Scope) error { _, err := s.Resolve[*ownScopedTimeout](); return err })
+	})
+	t.Run("container default", func(t *testing.T) {
+		t.Parallel()
+		c := gas.NewServiceContainer(gas.WithServiceContainerServiceTimeout(short))
+		c.RegisterScopedService[*blockingScoped](func() *blockingScoped { return &blockingScoped{} })
+		check(t, c, func(s *gas.Scope) error { _, err := s.Resolve[*blockingScoped](); return err })
+	})
+	t.Run("App WithServiceInitTimeout", func(t *testing.T) {
+		t.Parallel()
+		app := gas.NewApp(gas.WithServiceInitTimeout(short),
+			gas.WithScopedService[*blockingScoped](func() *blockingScoped { return &blockingScoped{} }))
+		app.Router().Get(nil, "/scoped", func(ctx gas.Context, _ *blockingScoped) error { return ctx.NoContent() })
+		if err := app.Start(t.Context()); err != nil {
+			t.Fatalf("start: %v", err)
+		}
+		t.Cleanup(func() { _ = app.Stop(context.Background()) })
+		rec := httptest.NewRecorder()
+		start := time.Now()
+		app.Handler().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/scoped", nil))
+		if rec.Code < 500 {
+			t.Fatalf("status %d, want a server error from the failed resolution", rec.Code)
+		}
+		if d := time.Since(start); d > 5*time.Second {
+			t.Fatalf("request took %v, want about %v", d, short)
+		}
+	})
 }
 
 // Docs: core/lifecycle.mdx#init-and-close-contexts

@@ -43,6 +43,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING: a scoped service's `Init` runs under the init deadline.** It
+  got the scope's context with no deadline added, and `InitTimeout` was
+  ignored. It now runs like a singleton's: under the container's init
+  timeout (15s by default, `WithServiceInitTimeout` or
+  `WithServiceContainerServiceTimeout`) or the service's own `InitTimeout`,
+  added to the scope's context. A scoped `Init` that takes longer fails the
+  resolution with `init <T>: timed out after ...`, wrapping
+  `context.DeadlineExceeded`, and one that returns nil after its deadline is
+  closed again. Implement `InitTimeout` (0 for no deadline) to change it.
 - **BREAKING: `App.Stop`, and so `App.Run`, return the server's shutdown
   error.** When `http.Server.Shutdown` failed, for example because in-flight
   requests outlived `Server.ShutdownTimeout`, `Stop` only logged

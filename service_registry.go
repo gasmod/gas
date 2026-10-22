@@ -90,8 +90,8 @@ type ServiceContainerOptions struct {
 type ServiceContainerOption func(*ServiceContainerOptions)
 
 // WithServiceContainerServiceTimeout sets the deadline the container gives
-// each singleton service's Init. The default is 15 seconds, and 0 disables
-// the deadline so only the caller's context applies. A service that
+// each service's Init, singleton or scoped. The default is 15 seconds, and 0
+// disables the deadline so only the caller's context applies. A service that
 // implements ServiceInitTimeout overrides it for itself.
 //
 // Panics if timeout is negative.
@@ -777,52 +777,39 @@ func (c *ServiceContainer) invoke(
 	results := ctorVal.Call(args)
 
 	// convention: last return is error
-	if ctorType.NumOut() == 2 {
-		if errVal := results[1]; !errVal.IsNil() {
-			return reflect.Value{}, errVal.Interface().(error)
-		}
+	if ctorType.NumOut() == 2 && !results[1].IsNil() {
+		return reflect.Value{}, results[1].Interface().(error)
 	}
 
-	result := results[0]
+	return c.initInstance(ctx, t, results[0])
+}
 
+func (c *ServiceContainer) initInstance(
+	ctx context.Context,
+	t reflect.Type,
+	v reflect.Value,
+) (reflect.Value, error) {
 	// The registered type may be an interface, so the concrete type is only
 	// knowable here. Reject a half-written service before it silently skips
 	// its own Init.
-	if vErr := validateServiceShape(concreteType(result)); vErr != nil {
+	if vErr := validateServiceShape(concreteType(v)); vErr != nil {
 		return reflect.Value{}, vErr
 	}
 
-	if t.Kind() == reflect.Interface && result.Type().Implements(t) {
-		result = result.Convert(t)
+	if t.Kind() == reflect.Interface && v.Type().Implements(t) {
+		v = v.Convert(t)
 	}
 
-	if initErr := c.initConstructed(ctx, t, reg.lifetime, result); initErr != nil {
+	svc, svcOK := v.Interface().(Service)
+	if !svcOK {
+		return v, nil
+	}
+
+	if initErr := c.initService(ctx, t, svc); initErr != nil {
 		return reflect.Value{}, initErr
 	}
 
-	return result, nil
-}
-
-// initConstructed calls Init(ctx) on a freshly constructed value that
-// implements Service. A singleton gets the container's init deadline through
-// initService; a scoped service gets the scope's context as is.
-func (c *ServiceContainer) initConstructed(
-	ctx context.Context,
-	t reflect.Type,
-	lifetime ServiceLifetime,
-	result reflect.Value,
-) error {
-	svc, ok := result.Interface().(Service)
-	if !ok {
-		return nil
-	}
-	if lifetime == ServiceLifetimeSingleton {
-		return c.initService(ctx, t, svc)
-	}
-	if err := svc.Init(ctx); err != nil {
-		return fmt.Errorf("init %v: %w", t, err)
-	}
-	return nil
+	return v, nil
 }
 
 func (c *ServiceContainer) resolveCtorArgs(

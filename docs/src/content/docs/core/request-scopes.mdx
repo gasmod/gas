@@ -24,9 +24,9 @@ the handler having to remember it.
 <Code code={region(rs, 'register')} lang="go" title="main.go" />
 
 A scoped service implements `Service` like any other when it has something to
-set up or release. Its `Init` runs on its first resolution in the scope, with
-no deadline added (in an App its context is the request's), and its `Close`
-runs when the scope closes.
+set up or release. Its `Init` runs on its first resolution in the scope, under
+the same init deadline as a singleton's (in an App its context is the
+request's), and its `Close` runs when the scope closes.
 A scoped type that declares neither method is simply built once per scope.
 
 A scoped constructor can depend on singletons and on other scoped services. The

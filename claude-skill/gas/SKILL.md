@@ -70,8 +70,9 @@ returns nil late is closed again. So:
 - Do synchronous startup work (dial, ping, retry loops, migrations) with ctx.
 - Never derive a background goroutine from Init's ctx: it is canceled as soon
   as Init returns. Give the goroutine its own context and cancel it in Close.
-- A scoped service's Init gets the scope's context (the request's, in an App),
-  with no added deadline.
+- A scoped service's Init gets the scope's context (the request's, in an App)
+  with the same init deadline and timeout handling as a singleton's; a scoped
+  Init that times out fails the resolution.
 
 Close gets the caller's shutdown context (`Shutdown(ctx)` / `Stop(ctx)` /
 `CloseService(ctx)`; a request scope passes the request context without its

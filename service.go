@@ -34,13 +34,13 @@ type Service interface {
 	// after construction. Services register routes, middleware, migrations,
 	// and event subscriptions here.
 	//
-	// For a singleton, ctx is the caller's startup context (or RestartService
-	// context) with the service's init deadline added; for a scoped service it
-	// is the scope's context. Init must honor ctx: when the deadline passes
-	// the container cancels ctx and waits for Init to return, so an Init that
-	// ignores it holds up startup. ctx is canceled as soon as Init returns,
-	// so work that outlives Init, such as a background goroutine, must not
-	// derive from it.
+	// ctx carries the service's init deadline. For a singleton it is added to
+	// the caller's startup context (or RestartService context); for a scoped
+	// service, to the scope's context. Init must honor ctx: when the deadline
+	// passes the container cancels ctx and waits for Init to return, so an
+	// Init that ignores it holds up startup or the resolution. ctx is
+	// canceled as soon as Init returns, so work that outlives Init, such as a
+	// background goroutine, must not derive from it.
 	Init(ctx context.Context) error
 
 	// Close gracefully shuts down the service. Called at App shutdown
@@ -49,14 +49,15 @@ type Service interface {
 	Close(ctx context.Context) error
 }
 
-// ServiceInitTimeout is implemented by a singleton Service that needs a
-// different Init deadline than the container default (see
-// WithServiceInitTimeout). It applies at startup and on RestartService. When
-// the deadline passes, Init's context is canceled and, once Init returns,
-// the call fails with an error that wraps context.DeadlineExceeded. If Init
-// ignored the cancellation and returned nil, the service is closed again
-// before the error is returned. 0 means no deadline; a negative value fails
-// Init without running it.
+// ServiceInitTimeout is implemented by a Service that needs a different Init
+// deadline than the container default (see WithServiceInitTimeout). It
+// applies to a singleton at startup and on RestartService, and to a scoped
+// service on its first resolution in each scope. When the deadline passes,
+// Init's context is canceled and, once Init returns, the call fails with an
+// error that wraps context.DeadlineExceeded. If Init ignored the
+// cancellation and returned nil, the service is closed again before the
+// error is returned. 0 means no deadline; a negative value fails Init
+// without running it.
 type ServiceInitTimeout interface {
 	// InitTimeout returns how long the container waits for Init.
 	InitTimeout() time.Duration

@@ -392,8 +392,9 @@ func TestRestartServiceInitDeadlineCancelsAndWaits(t *testing.T) {
 	}
 }
 
-// Scoped services get the scope's context, not a startup deadline.
-func TestScopedInitGetsScopeContext(t *testing.T) {
+// A scoped service's Init gets the scope's context with the init deadline
+// added.
+func TestScopedInitGetsScopeContextWithDeadline(t *testing.T) {
 	c := gas.NewServiceContainer()
 	c.RegisterScopedService[*lcProbe[lcTag0]](func() *lcProbe[lcTag0] {
 		return &lcProbe[lcTag0]{name: "scoped"}
@@ -410,8 +411,8 @@ func TestScopedInitGetsScopeContext(t *testing.T) {
 	if got, _ := p.values(); got != "request" {
 		t.Errorf("scoped Init saw context value %v, want request", got)
 	}
-	if _, ok := p.deadline(); ok {
-		t.Error("scoped Init context has a deadline")
+	if _, ok := p.deadline(); !ok {
+		t.Error("scoped Init context didn't get a deadline")
 	}
 
 	if err := scope.Close(context.WithValue(context.Background(), ctxKey{}, "close")); err != nil {
