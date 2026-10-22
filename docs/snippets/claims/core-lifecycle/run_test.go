@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -122,22 +123,29 @@ func TestRunClosesServicesWhenServeFails(t *testing.T) {
 // Docs: core/lifecycle.mdx#shutdown
 // "2. Shut the HTTP server down gracefully, giving in-flight requests up to
 // `Server.ShutdownTimeout` (30 seconds by default), or less if `ctx` ends
-// first (App only). An error here is logged as `server shutdown error`, not
-// returned."
+// first (App only). An error here, including the timeout, is logged as
+// `server shutdown error` and returned, and the sequence continues."
+// Docs: core/lifecycle.mdx#shutdown
+// "An App's `Stop` returns the server
+// shutdown error and those errors joined, prefixed with `gas: shutdown error:`,
+// or nil when both steps succeed."
 func TestServerShutdownTimeout(t *testing.T) {
 	t.Parallel()
 	if got := gas.NewApp().Config().Server.ShutdownTimeout; got != 30*time.Second {
 		t.Errorf("default ShutdownTimeout = %v, want 30s", got)
 	}
 
-	stuckApp := func(t *testing.T, extra map[string]any) (*gas.App, *logSink) {
+	stuckApp := func(t *testing.T, extra map[string]any, opts ...gas.Option) (*gas.App, *logSink) {
 		t.Helper()
 		port := freePort(t)
 		sink, logger := newSink()
 		started := make(chan struct{})
 		release := make(chan struct{})
 		t.Cleanup(func() { close(release) })
-		app := gas.NewApp(gas.WithServiceInstance(serverConfig(t, port, extra)), gas.WithSingletonService[gas.Logger](logger))
+		app := gas.NewApp(append([]gas.Option{
+			gas.WithServiceInstance(serverConfig(t, port, extra)),
+			gas.WithSingletonService[gas.Logger](logger),
+		}, opts...)...)
 		app.Router().Get(nil, "/up", func(w http.ResponseWriter, _ *http.Request) {})
 		app.Router().Get(nil, "/stuck", func(w http.ResponseWriter, _ *http.Request) {
 			close(started)
@@ -158,19 +166,26 @@ func TestServerShutdownTimeout(t *testing.T) {
 		return app, sink
 	}
 
-	t.Run("ShutdownTimeout bounds the wait and the error is logged", func(t *testing.T) {
+	t.Run("ShutdownTimeout bounds the wait and the error is logged and returned", func(t *testing.T) {
 		t.Parallel()
-		app, sink := stuckApp(t, map[string]any{"shutdowntimeout": "200ms"})
+		a := &svc[kA]{}
+		app, sink := stuckApp(t, map[string]any{"shutdowntimeout": "200ms"}, gas.WithServiceInstance(a))
 		begin := time.Now()
 		err := app.Stop(context.Background())
 		if took := time.Since(begin); took < 150*time.Millisecond || took > 2*time.Second {
 			t.Errorf("Stop took %v with a 200ms ShutdownTimeout", took)
 		}
-		if err != nil {
-			t.Errorf("Stop = %v, want the server shutdown error logged, not returned", err)
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("Stop = %v, want the server shutdown error, wrapping context.DeadlineExceeded", err)
+		}
+		if err == nil || !strings.HasPrefix(err.Error(), "gas: shutdown error: ") {
+			t.Errorf("Stop = %v, want it prefixed with \"gas: shutdown error: \"", err)
 		}
 		if indexOf(sink.records(t), "server shutdown error") < 0 {
 			t.Error("no \"server shutdown error\" log record")
+		}
+		if a.closes() != 1 {
+			t.Errorf("Close ran %d times after the server shutdown error, want 1", a.closes())
 		}
 	})
 	t.Run("ctx ending first", func(t *testing.T) {
@@ -179,9 +194,22 @@ func TestServerShutdownTimeout(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 		defer cancel()
 		begin := time.Now()
-		_ = app.Stop(ctx)
+		err := app.Stop(ctx)
 		if took := time.Since(begin); took > 2*time.Second {
 			t.Errorf("Stop took %v with a 200ms ctx and the 30s default ShutdownTimeout", took)
+		}
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("Stop = %v, want the server shutdown error, wrapping context.DeadlineExceeded", err)
+		}
+	})
+	t.Run("joined with Close errors", func(t *testing.T) {
+		t.Parallel()
+		errBoom := errors.New("boom")
+		app, _ := stuckApp(t, map[string]any{"shutdowntimeout": "200ms"},
+			gas.WithServiceInstance(&svc[kA]{onClose: func(context.Context) error { return errBoom }}))
+		err := app.Stop(context.Background())
+		if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, errBoom) {
+			t.Errorf("Stop = %v, want the server shutdown error joined with the Close error", err)
 		}
 	})
 }
@@ -189,6 +217,8 @@ func TestServerShutdownTimeout(t *testing.T) {
 // Docs: core/lifecycle.mdx#shutdown
 // "giving in-flight requests up to
 // `Server.ShutdownTimeout`"
+// Docs: core/lifecycle.mdx#shutdown
+// "or nil when both steps succeed."
 func TestStopLetsInFlightRequestsFinish(t *testing.T) {
 	t.Parallel()
 	port := freePort(t)

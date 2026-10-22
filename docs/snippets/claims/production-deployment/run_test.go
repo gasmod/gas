@@ -291,7 +291,8 @@ func TestStopDrainsInFlightRequests(t *testing.T) {
 // Docs: production/deployment.mdx#graceful-shutdown
 // "for at most `Server.ShutdownTimeout` (default `30s`) or until `ctx` ends,
 // whichever is first. A shutdown error, including the timeout, is logged as
-// `server shutdown error` and does not stop the sequence."
+// `server shutdown error` and does not stop the
+// sequence; `Stop` returns it at the end, joined with any errors from step 3."
 func TestStopDrainIsBounded(t *testing.T) {
 	if got := gas.DefaultConfig().Server.ShutdownTimeout; got != 30*time.Second {
 		t.Errorf("default ShutdownTimeout %v, want 30s", got)
@@ -326,9 +327,12 @@ func TestStopDrainIsBounded(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), c.ctx)
 			defer cancel()
 			began := time.Now()
-			_ = a.Stop(ctx)
+			err := a.Stop(ctx)
 			if took := time.Since(began); took > time.Second {
 				t.Errorf("Stop took %v with a request held for 2s, want the drain cut at about 100ms", took)
+			}
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Errorf("Stop = %v, want the shutdown error returned at the end", err)
 			}
 			if len(sink.find(t, "server shutdown error", nil)) != 1 {
 				t.Error("no server shutdown error record")

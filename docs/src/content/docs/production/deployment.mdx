@@ -44,7 +44,7 @@ Shutdown is `App.Stop(ctx)`, which `Run` calls with `context.Background()`:
    in-flight requests to finish, for at most `Server.ShutdownTimeout` (default
    `30s`) or until `ctx` ends, whichever is first. A shutdown error, including
    the timeout, is logged as `server shutdown error` and does not stop the
-   sequence.
+   sequence; `Stop` returns it at the end, joined with any errors from step 3.
 3. Calls `Shutdown(ctx)`: emits `gas.SystemShuttingDown`, waits for its
    subscribers, then calls `Close(ctx)` on every active service in reverse
    initialization order. A failing `Close` does not stop the others; the

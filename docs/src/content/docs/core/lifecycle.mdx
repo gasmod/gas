@@ -141,8 +141,8 @@ never run.
 
 2. Shut the HTTP server down gracefully, giving in-flight requests up to
    `Server.ShutdownTimeout` (30 seconds by default), or less if `ctx` ends
-   first (App only). An error here is logged as `server shutdown error`, not
-   returned.
+   first (App only). An error here, including the timeout, is logged as
+   `server shutdown error` and returned, and the sequence continues.
 
 3. Emit `gas.SystemShuttingDown` and wait for its subscribers.
 
@@ -154,7 +154,9 @@ never run.
 
 Steps 3 and 4 are `Worker.Shutdown`, which is all a Worker does. A failing
 `Close` does not stop the others; every `Close` error is returned, joined, each
-prefixed with `gas: close <name>:`.
+prefixed with `gas: close <name>:`. An App's `Stop` returns the server
+shutdown error and those errors joined, prefixed with `gas: shutdown error:`,
+or nil when both steps succeed.
 
 `Shutdown` runs once. Later calls, including concurrent ones, wait for the first
 to finish and return nil. Once it has begun, `CloseService` and

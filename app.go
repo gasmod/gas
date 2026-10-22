@@ -285,6 +285,12 @@ func (a *App) Serve() error {
 // Stop emits the server-shutting-down event, gracefully shuts down the HTTP
 // server within ShutdownTimeout (or sooner, if ctx ends first), and then
 // shuts down the underlying Worker, passing ctx to each service's Close.
+//
+// The Worker is shut down, and the services closed, even when the server
+// shutdown fails, for example because in-flight requests outlive
+// ShutdownTimeout. That error is logged as "server shutdown error" and
+// returned, joined with any error from the Worker shutdown. A clean Stop
+// returns nil.
 func (a *App) Stop(ctx context.Context) error {
 	srv := a.Server()
 
@@ -292,18 +298,29 @@ func (a *App) Stop(ctx context.Context) error {
 
 	srvCtx, cancel := context.WithTimeout(ctx, a.cfg.Server.ShutdownTimeout)
 	defer cancel()
+
+	var shErr error
 	if srvErr := srv.Shutdown(srvCtx); srvErr != nil {
 		//nolint:contextcheck // getLogger resolves the logger, which needs no caller ctx
 		a.getLogger().Error("server shutdown error").Err("error", srvErr).Send()
+		shErr = fmt.Errorf("server shutdown error: %w", srvErr)
 	}
 
-	return a.Shutdown(ctx)
+	if err := a.Shutdown(ctx); err != nil {
+		shErr = errors.Join(shErr, fmt.Errorf("worker shutdown error: %w", err))
+	}
+
+	if shErr == nil {
+		return nil
+	}
+	return fmt.Errorf("gas: shutdown error: %w", shErr)
 }
 
 // Run initializes all services, runs pending migrations, starts the HTTP
-// server, and blocks until a shutdown signal is received. Startup and
-// shutdown use context.Background(). If the server fails, Run stops the App
-// and returns the server error joined with any error from Stop.
+// server, and blocks until a shutdown signal is received, then stops the App
+// and returns Stop's error. Startup and shutdown use context.Background(). If
+// the server fails, Run stops the App and returns the server error joined
+// with any error from Stop.
 func (a *App) Run() error {
 	ctx := context.Background()
 	if err := a.Start(ctx); err != nil {

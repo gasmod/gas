@@ -43,6 +43,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING: `App.Stop`, and so `App.Run`, return the server's shutdown
+  error.** When `http.Server.Shutdown` failed, for example because in-flight
+  requests outlived `Server.ShutdownTimeout`, `Stop` only logged
+  `server shutdown error` and returned whatever the Worker shutdown
+  returned, usually nil. It still logs it and still closes the services,
+  and now returns it, as `gas: shutdown error: server shutdown error: ...`,
+  joined with any Worker shutdown error. A Worker shutdown error on its own
+  is now wrapped the same way, as
+  `gas: shutdown error: worker shutdown error: ...`; `errors.Is` and
+  `errors.As` still reach the underlying errors. A clean `Stop` returns nil.
 - **`App.Handler` no longer builds the server.** It used to return
   `Server().Handler`, so calling it before `Start`, as tests and embedders
   do, built the `*http.Server` from the config as it stood then. It now
