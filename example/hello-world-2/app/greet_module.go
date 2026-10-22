@@ -35,7 +35,7 @@ func (m *GreetModule) Name() string {
 }
 
 // Init registers this module's middleware, routes, and event subscriptions.
-func (m *GreetModule) Init(_ context.Context) error {
+func (m *GreetModule) Init(context.Context) error {
 	// Register a named middleware so other modules can reference it by name.
 	m.router.Register(m, "request-logger", func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -84,7 +84,7 @@ func (m *GreetModule) Init(_ context.Context) error {
 }
 
 // Close releases module resources at shutdown. This module holds none.
-func (m *GreetModule) Close(_ context.Context) error { return nil }
+func (m *GreetModule) Close(context.Context) error { return nil }
 
 // handleIndex — plain DI-aware handler with scoped logger.
 func (m *GreetModule) handleIndex(ctx gas.Context, logger RequestLogger) error {

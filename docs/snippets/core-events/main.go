@@ -44,7 +44,7 @@ func NewBilling(bus *gas.EventBus) *Billing { return &Billing{bus: bus} }
 
 func (s *Billing) Name() string { return "billing" }
 
-func (s *Billing) Init(_ context.Context) error {
+func (s *Billing) Init(context.Context) error {
 	// Owned by s, so closing billing removes the subscription.
 	s.bus.SubscribeWithOwner[UserCreated](s, func(p UserCreatedPayload) {
 		s.mu.Lock()
@@ -54,7 +54,7 @@ func (s *Billing) Init(_ context.Context) error {
 	return nil
 }
 
-func (s *Billing) Close(_ context.Context) error { return nil }
+func (s *Billing) Close(context.Context) error { return nil }
 
 // #endregion subscribe
 
@@ -72,9 +72,9 @@ func NewUsers(bus *gas.EventBus) *Users { return &Users{bus: bus} }
 
 func (s *Users) Name() string { return "users" }
 
-func (s *Users) Init(_ context.Context) error { return nil }
+func (s *Users) Init(context.Context) error { return nil }
 
-func (s *Users) Close(_ context.Context) error { return nil }
+func (s *Users) Close(context.Context) error { return nil }
 
 func (s *Users) Create(email string) {
 	// ... store the user ...

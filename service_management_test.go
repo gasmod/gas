@@ -201,9 +201,9 @@ func (s *reporterService[K]) Init(context.Context) error { return nil }
 
 func (s *reporterService[K]) Close(context.Context) error { return nil }
 
-func (s *reporterService[K]) CheckHealth(_ context.Context) error { return s.healthErr }
+func (s *reporterService[K]) CheckHealth(context.Context) error { return s.healthErr }
 
-func (s *reporterService[K]) CheckReady(_ context.Context) error { return s.readyErr }
+func (s *reporterService[K]) CheckReady(context.Context) error { return s.readyErr }
 
 type (
 	tagA struct{}
@@ -223,7 +223,7 @@ func (s *healthOnlyService[K]) Init(context.Context) error { return nil }
 
 func (s *healthOnlyService[K]) Close(context.Context) error { return nil }
 
-func (s *healthOnlyService[K]) CheckHealth(_ context.Context) error { return s.err }
+func (s *healthOnlyService[K]) CheckHealth(context.Context) error { return s.err }
 
 // readyOnlyService implements ReadyReporter but not HealthReporter.
 type readyOnlyService[K any] struct {
@@ -237,7 +237,7 @@ func (s *readyOnlyService[K]) Init(context.Context) error { return nil }
 
 func (s *readyOnlyService[K]) Close(context.Context) error { return nil }
 
-func (s *readyOnlyService[K]) CheckReady(_ context.Context) error { return s.err }
+func (s *readyOnlyService[K]) CheckReady(context.Context) error { return s.err }
 
 // slowReporter blocks inside CheckHealth for the given delay. Used to verify
 // that CheckHealth runs reporters concurrently.
@@ -281,7 +281,7 @@ func (s *panicReporter[K]) Init(context.Context) error { return nil }
 
 func (s *panicReporter[K]) Close(context.Context) error { return nil }
 
-func (s *panicReporter[K]) CheckHealth(_ context.Context) error { panic(s.message) }
+func (s *panicReporter[K]) CheckHealth(context.Context) error { panic(s.message) }
 
 // ctxObservingReporter records the context it was called with.
 type ctxObservingReporter[K any] struct {

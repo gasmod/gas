@@ -103,7 +103,7 @@ func (s *Service) Init(ctx context.Context) error {
 }
 
 // Close releases service resources at shutdown. This service holds none.
-func (s *Service) Close(_ context.Context) error { return nil }
+func (s *Service) Close(context.Context) error { return nil }
 
 // --- Request/Response types ---
 

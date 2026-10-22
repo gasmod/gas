@@ -22,10 +22,10 @@ type Auth struct {
 
 func NewAuth(router *gas.Router) *Auth { return &Auth{router: router} }
 
-func (a *Auth) Name() string                  { return "auth" }
-func (a *Auth) Close(_ context.Context) error { return nil }
+func (a *Auth) Name() string                { return "auth" }
+func (a *Auth) Close(context.Context) error { return nil }
 
-func (a *Auth) Init(_ context.Context) error {
+func (a *Auth) Init(context.Context) error {
 	a.router.Register(a, "require-auth", func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Header.Get("Authorization") == "" {
@@ -50,10 +50,10 @@ type Admin struct {
 
 func NewAdmin(router *gas.Router, _ *Auth) *Admin { return &Admin{router: router} }
 
-func (a *Admin) Name() string                  { return "admin" }
-func (a *Admin) Close(_ context.Context) error { return nil }
+func (a *Admin) Name() string                { return "admin" }
+func (a *Admin) Close(context.Context) error { return nil }
 
-func (a *Admin) Init(_ context.Context) error {
+func (a *Admin) Init(context.Context) error {
 	// Per route.
 	a.router.Get(a, "/admin/stats", a.stats, gas.MiddlewareByName("require-auth"))
 

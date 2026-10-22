@@ -117,7 +117,7 @@ func (s *Store) Get(_ context.Context, name string) ([]byte, error) {
 // List returns all available template names from both disk and the
 // overlay, sorted and deduplicated. It returns template.ErrClosed after
 // Close.
-func (s *Store) List(_ context.Context) ([]string, error) {
+func (s *Store) List(context.Context) ([]string, error) {
 	seen := make(map[string]struct{})
 
 	err := s.withRoot(func(root *os.Root) error {

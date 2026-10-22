@@ -92,7 +92,7 @@ func (s *Service) Name() string { return serviceName }
 
 // Init validates configuration and prepares signing keys. It does no I/O
 // beyond reading key files, so the context is unused.
-func (s *Service) Init(_ context.Context) error {
+func (s *Service) Init(context.Context) error {
 	if !s.customConfigProvided && s.cfgProvider != nil {
 		// Bind checks the validate tags.
 		if err := s.cfgProvider.Bind(s.cfg); err != nil {
@@ -146,7 +146,7 @@ func (s *Service) initKeys() error {
 
 // Close performs cleanup. JWT is stateless so this is a no-op and the
 // context is unused.
-func (s *Service) Close(_ context.Context) error { return nil }
+func (s *Service) Close(context.Context) error { return nil }
 
 // Authenticate reads a Bearer token from the Authorization header, verifies
 // it, and returns a principal with scheme "jwt".

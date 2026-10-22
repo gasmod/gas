@@ -829,7 +829,7 @@ func New(router *gas.Router, bus *gas.EventBus) *Service {
 
 func (s *Service) Name() string { return "myservice" }
 
-func (s *Service) Init(_ context.Context) error {
+func (s *Service) Init(context.Context) error {
 	// DI-aware handler — db is resolved per-request from the scoped container.
 	s.router.Handle(s, "GET", "/hello", s.handleHello)
 
@@ -852,7 +852,7 @@ func (s *Service) handleHello(ctx gas.Context, db gas.DatabaseProvider) error {
 	return ctx.JSON(http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func (s *Service) Close(_ context.Context) error { return nil }
+func (s *Service) Close(context.Context) error { return nil }
 ```
 
 ```go

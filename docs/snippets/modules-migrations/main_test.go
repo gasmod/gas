@@ -44,7 +44,7 @@ type broken struct {
 
 func (b *broken) Name() string { return "broken" }
 
-func (b *broken) Init(_ context.Context) error {
+func (b *broken) Init(context.Context) error {
 	b.migrations.Register(b, gas.Migration{
 		Version:     "20260103001",
 		Description: "create widgets",
@@ -54,7 +54,7 @@ func (b *broken) Init(_ context.Context) error {
 	return nil
 }
 
-func (b *broken) Close(_ context.Context) error { return nil }
+func (b *broken) Close(context.Context) error { return nil }
 
 func newConfig(t *testing.T, dsn string) gas.ConfigProvider {
 	t.Helper()

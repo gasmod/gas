@@ -838,7 +838,7 @@ func (p *failingContextProvider) Load() (map[string]any, error) {
 	return nil, errors.New("Load must not be called")
 }
 
-func (p *failingContextProvider) LoadContext(_ context.Context) (map[string]any, error) {
+func (p *failingContextProvider) LoadContext(context.Context) (map[string]any, error) {
 	return nil, errors.New("boom")
 }
 

@@ -43,7 +43,7 @@ func (c *Consumer) Name() string { return "consumer" }
 
 // Init starts the loop. Its context is canceled as soon as Init returns, so
 // the loop gets a context of its own, which Close cancels.
-func (c *Consumer) Init(_ context.Context) error {
+func (c *Consumer) Init(context.Context) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	c.cancel = cancel
 	c.done = make(chan struct{})

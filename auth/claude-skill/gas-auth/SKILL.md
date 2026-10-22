@@ -704,7 +704,7 @@ app := gas.NewApp(
 Wire into a chain in your service's `Init`:
 
 ```go
-func (s *MyService) Init(_ context.Context) error {
+func (s *MyService) Init(context.Context) error {
     chain := auth.Chain{s.jwt, s.session, s.apikey}
     s.router.Group(func(sub *gas.Router) {
         sub.UseMiddlewareFunc(auth.Middleware(chain))

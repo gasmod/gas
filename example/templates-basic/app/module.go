@@ -26,7 +26,7 @@ func (m *Module) Name() string {
 }
 
 // Init registers the index route and the custom NotFound handler.
-func (m *Module) Init(_ context.Context) error {
+func (m *Module) Init(context.Context) error {
 	m.router.Get(m, "/", m.handleIndex)
 	m.router.NotFound(m, m.handleNotFound)
 
@@ -34,7 +34,7 @@ func (m *Module) Init(_ context.Context) error {
 }
 
 // Close releases module resources at shutdown. This module holds none.
-func (m *Module) Close(_ context.Context) error {
+func (m *Module) Close(context.Context) error {
 	return nil
 }
 

@@ -56,10 +56,10 @@ func (a *Audit) Name() string { return "audit" }
 
 // Init runs on first resolution in the scope, with the scope's context and
 // the container's init deadline.
-func (a *Audit) Init(_ context.Context) error { return nil }
+func (a *Audit) Init(context.Context) error { return nil }
 
 // Close runs when the scope closes: in an App, after the response is written.
-func (a *Audit) Close(_ context.Context) error {
+func (a *Audit) Close(context.Context) error {
 	a.sink.Write(a.lines)
 	return nil
 }
@@ -75,13 +75,13 @@ func NewOrders(router *gas.Router) *Orders { return &Orders{router: router} }
 
 func (s *Orders) Name() string { return "orders" }
 
-func (s *Orders) Init(_ context.Context) error {
+func (s *Orders) Init(context.Context) error {
 	s.router.Post(s, "/orders", s.create)
 	s.router.Post(s, "/refunds", s.refund)
 	return nil
 }
 
-func (s *Orders) Close(_ context.Context) error { return nil }
+func (s *Orders) Close(context.Context) error { return nil }
 
 // #region typed
 // A DI-aware handler declares the scoped service as a parameter, and the

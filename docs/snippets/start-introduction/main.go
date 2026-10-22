@@ -27,7 +27,7 @@ func NewGreeter(router *gas.Router, logger gas.Logger) *Greeter {
 
 func (g *Greeter) Name() string { return "greeter" }
 
-func (g *Greeter) Init(_ context.Context) error {
+func (g *Greeter) Init(context.Context) error {
 	g.router.Get(g, "/hello/{name}", func(ctx gas.Context) error {
 		g.logger.Info("greeting").Str("name", ctx.Param("name")).Send()
 		return ctx.Text(http.StatusOK, "Hello, "+ctx.Param("name"))
@@ -35,7 +35,7 @@ func (g *Greeter) Init(_ context.Context) error {
 	return nil
 }
 
-func (g *Greeter) Close(_ context.Context) error { return nil }
+func (g *Greeter) Close(context.Context) error { return nil }
 
 func main() {
 	app := gas.NewApp(

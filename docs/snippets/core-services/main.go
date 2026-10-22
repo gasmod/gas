@@ -56,13 +56,13 @@ func (s *Notes) Name() string { return "notes" }
 
 // Init claims what the service owns. Everything registered here is tagged
 // with the service passed as the first argument.
-func (s *Notes) Init(_ context.Context) error {
+func (s *Notes) Init(context.Context) error {
 	s.router.Handle(s, http.MethodGet, "/notes", s.list)
 	return nil
 }
 
 // Close releases what the service holds. Notes holds nothing.
-func (s *Notes) Close(_ context.Context) error { return nil }
+func (s *Notes) Close(context.Context) error { return nil }
 
 func (s *Notes) list(ctx gas.Context) error {
 	return ctx.JSON(http.StatusOK, s.store.All())

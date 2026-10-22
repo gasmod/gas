@@ -47,7 +47,7 @@ func (s *Service) Name() string { return "notes" }
 
 // Init registers the service's migrations and routes. Migrations run after
 // every service's Init, before the server accepts requests.
-func (s *Service) Init(_ context.Context) error {
+func (s *Service) Init(context.Context) error {
 	if err := s.migrations.RegisterFS(s, migrations); err != nil {
 		return fmt.Errorf("notes: migrations: %w", err)
 	}
@@ -63,7 +63,7 @@ func (s *Service) Init(_ context.Context) error {
 	return nil
 }
 
-func (s *Service) Close(_ context.Context) error { return nil }
+func (s *Service) Close(context.Context) error { return nil }
 
 // unauthorized answers a request without a valid key in the same JSON
 // error shape the handlers use.

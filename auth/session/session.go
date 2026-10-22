@@ -80,7 +80,7 @@ func (s *Service) Name() string { return serviceName }
 // background cleanup goroutine. The context is unused: the cleanup goroutine
 // runs until Close and deliberately does not derive from the Init context,
 // which the framework cancels as soon as Init returns.
-func (s *Service) Init(_ context.Context) error {
+func (s *Service) Init(context.Context) error {
 	if !s.customConfigProvided && s.cfgProvider != nil {
 		// Bind checks the validate tags.
 		if err := s.cfgProvider.Bind(s.cfg); err != nil {
@@ -108,7 +108,7 @@ func (s *Service) Init(_ context.Context) error {
 
 // Close stops the background cleanup goroutine. It does not wait for the
 // goroutine to exit, so the context is unused.
-func (s *Service) Close(_ context.Context) error {
+func (s *Service) Close(context.Context) error {
 	s.doneOnce.Do(func() { close(s.done) })
 	return nil
 }

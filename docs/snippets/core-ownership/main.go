@@ -29,7 +29,7 @@ func NewAuth(router *gas.Router) *Auth { return &Auth{router: router} }
 
 func (s *Auth) Name() string { return "auth" }
 
-func (s *Auth) Init(_ context.Context) error {
+func (s *Auth) Init(context.Context) error {
 	// Register ties the name "require-auth" to this service.
 	s.router.Register(s, "require-auth", requireAuth)
 	s.router.Get(s, "/auth/me", func(ctx gas.Context) error {
@@ -38,7 +38,7 @@ func (s *Auth) Init(_ context.Context) error {
 	return nil
 }
 
-func (s *Auth) Close(_ context.Context) error { return nil }
+func (s *Auth) Close(context.Context) error { return nil }
 
 // #endregion auth
 
@@ -57,7 +57,7 @@ func NewBilling(router *gas.Router) *Billing { return &Billing{router: router} }
 
 func (s *Billing) Name() string { return "billing" }
 
-func (s *Billing) Init(_ context.Context) error {
+func (s *Billing) Init(context.Context) error {
 	s.router.Route("/api", func(sub *gas.Router) {
 		sub.Use(gas.MiddlewareByName("require-auth"))
 		sub.Get(s, "/invoices", func(ctx gas.Context) error {
@@ -67,7 +67,7 @@ func (s *Billing) Init(_ context.Context) error {
 	return nil
 }
 
-func (s *Billing) Close(_ context.Context) error { return nil }
+func (s *Billing) Close(context.Context) error { return nil }
 
 // #endregion billing
 
@@ -84,7 +84,7 @@ func NewStatus(bus *gas.EventBus, logger gas.Logger) *Status {
 
 func (s *Status) Name() string { return "status" }
 
-func (s *Status) Init(_ context.Context) error {
+func (s *Status) Init(context.Context) error {
 	s.bus.SubscribeWithOwner[gas.SystemServiceClosed](s,
 		func(p gas.SystemServiceClosedPayload) {
 			if p.ServiceName == "auth" {
@@ -94,7 +94,7 @@ func (s *Status) Init(_ context.Context) error {
 	return nil
 }
 
-func (s *Status) Close(_ context.Context) error { return nil }
+func (s *Status) Close(context.Context) error { return nil }
 
 // #endregion react
 

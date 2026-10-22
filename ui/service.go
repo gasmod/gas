@@ -80,7 +80,7 @@ func New[T gas.TemplateProvider](
 func (s *Service) Name() string { return "gas/ui" }
 
 // Init initializes the template engine and registers the static file route.
-func (s *Service) Init(_ context.Context) error {
+func (s *Service) Init(context.Context) error {
 	if err := s.bindConfig(); err != nil {
 		return err
 	}
@@ -183,7 +183,7 @@ func (s *Service) initStaticRoute() error {
 }
 
 // Close marks the service as closed. Subsequent Render calls return 503.
-func (s *Service) Close(_ context.Context) error {
+func (s *Service) Close(context.Context) error {
 	s.closed.Store(true)
 	return nil
 }
@@ -246,7 +246,7 @@ func (s *Service) Engine() *Engine { return s.engine }
 // CheckReady reports whether the service is ready to serve render requests.
 // Returns an error if the service has been closed (shutdown draining) or has
 // not yet completed Init.
-func (s *Service) CheckReady(_ context.Context) error {
+func (s *Service) CheckReady(context.Context) error {
 	if s.closed.Load() {
 		return errors.New("gas/ui: service is closed")
 	}

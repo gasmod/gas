@@ -78,8 +78,8 @@ Implements `gas.Service`, `gas.UIProvider`, and `gas.ReadyReporter`.
 
 ```go
 func (s *Service) Name() string                          // "gas/ui"
-func (s *Service) Init(_ context.Context) error          // binds and validates config, builds template engine, registers static route
-func (s *Service) Close(_ context.Context) error         // marks closed: Render* write 503 and return an error; the static route keeps serving
+func (s *Service) Init(context.Context) error          // binds and validates config, builds template engine, registers static route
+func (s *Service) Close(context.Context) error         // marks closed: Render* write 503 and return an error; the static route keeps serving
 func (s *Service) CheckReady(ctx context.Context) error  // readiness probe: not-ready pre-Init or post-Close
 ```
 

@@ -33,9 +33,9 @@ func NewDB(t *trace) *DB { return &DB{t: t} }
 
 func (d *DB) Name() string { return "db" }
 
-func (d *DB) Init(_ context.Context) error { d.t.add("init db"); return nil }
+func (d *DB) Init(context.Context) error { d.t.add("init db"); return nil }
 
-func (d *DB) Close(_ context.Context) error { d.t.add("close db"); return nil }
+func (d *DB) Close(context.Context) error { d.t.add("close db"); return nil }
 
 // Cache depends on DB, so DB's Init has run before NewCache is called.
 type Cache struct{ t *trace }
@@ -44,9 +44,9 @@ func NewCache(t *trace, _ *DB) *Cache { return &Cache{t: t} }
 
 func (c *Cache) Name() string { return "cache" }
 
-func (c *Cache) Init(_ context.Context) error { c.t.add("init cache"); return nil }
+func (c *Cache) Init(context.Context) error { c.t.add("init cache"); return nil }
 
-func (c *Cache) Close(_ context.Context) error { c.t.add("close cache"); return nil }
+func (c *Cache) Close(context.Context) error { c.t.add("close cache"); return nil }
 
 // #region timeout
 // Search needs longer than the default 15 seconds to warm up, so it sets its
@@ -65,7 +65,7 @@ func (s *Search) Init(ctx context.Context) error {
 	return warmIndex(ctx)
 }
 
-func (s *Search) Close(_ context.Context) error { return nil }
+func (s *Search) Close(context.Context) error { return nil }
 
 // #endregion timeout
 
@@ -86,7 +86,7 @@ func NewProbes(router *gas.Router, health gas.HealthProvider, ready gas.ReadyPro
 
 func (p *Probes) Name() string { return "probes" }
 
-func (p *Probes) Init(_ context.Context) error {
+func (p *Probes) Init(context.Context) error {
 	p.router.Get(p, "/livez", func(ctx gas.Context) error {
 		return report(ctx, p.health.CheckHealth(ctx))
 	})
@@ -96,7 +96,7 @@ func (p *Probes) Init(_ context.Context) error {
 	return nil
 }
 
-func (p *Probes) Close(_ context.Context) error { return nil }
+func (p *Probes) Close(context.Context) error { return nil }
 
 // report answers 200 when every reporter returned nil, and 503 with the
 // failing services otherwise.

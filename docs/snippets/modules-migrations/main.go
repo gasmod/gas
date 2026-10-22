@@ -63,11 +63,11 @@ func NewNotes(migrations gas.MigrationManager) *Notes {
 
 func (n *Notes) Name() string { return "notes" }
 
-func (n *Notes) Init(_ context.Context) error {
+func (n *Notes) Init(context.Context) error {
 	return n.migrations.RegisterFS(n, migrationFiles)
 }
 
-func (n *Notes) Close(_ context.Context) error { return nil }
+func (n *Notes) Close(context.Context) error { return nil }
 
 // #endregion register-fs
 
@@ -82,7 +82,7 @@ func NewTags(migrations gas.MigrationManager) *Tags {
 
 func (t *Tags) Name() string { return "tags" }
 
-func (t *Tags) Init(_ context.Context) error {
+func (t *Tags) Init(context.Context) error {
 	t.migrations.Register(t, gas.Migration{
 		Version:     "20260102001",
 		Description: "create tags table",
@@ -92,7 +92,7 @@ func (t *Tags) Init(_ context.Context) error {
 	return nil
 }
 
-func (t *Tags) Close(_ context.Context) error { return nil }
+func (t *Tags) Close(context.Context) error { return nil }
 
 // #endregion register
 

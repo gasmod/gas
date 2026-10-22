@@ -83,7 +83,7 @@ func (s *Service) Name() string { return serviceName }
 
 // Init validates configuration and initializes the store. The store only
 // selects its query adapter and registers migrations, so the context is unused.
-func (s *Service) Init(_ context.Context) error {
+func (s *Service) Init(context.Context) error {
 	if !s.customConfigProvided && s.cfgProvider != nil {
 		if err := s.cfgProvider.Bind(s.cfg); err != nil {
 			return fmt.Errorf("%s: config binding: %w", s.Name(), err)
@@ -100,7 +100,7 @@ func (s *Service) Init(_ context.Context) error {
 
 // Close performs cleanup. API key service is stateless so this is a no-op
 // and the context is unused.
-func (s *Service) Close(_ context.Context) error { return nil }
+func (s *Service) Close(context.Context) error { return nil }
 
 // Authenticate reads the API key from the configured header, hashes it,
 // looks it up in the database, validates expiry, updates last_used, and

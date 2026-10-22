@@ -50,7 +50,7 @@ func (tp *testProvider) Get(_ context.Context, name string) ([]byte, error) {
 	return data, nil
 }
 
-func (tp *testProvider) List(_ context.Context) ([]string, error) {
+func (tp *testProvider) List(context.Context) ([]string, error) {
 	tp.mu.RLock()
 	defer tp.mu.RUnlock()
 	names := make([]string, 0, len(tp.templates))

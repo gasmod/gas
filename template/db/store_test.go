@@ -29,7 +29,7 @@ type mockDB struct {
 func (m *mockDB) DB() *sql.DB    { return m.db }
 func (m *mockDB) Driver() string { return m.driver }
 
-func (m *mockDB) Ping(_ context.Context) error { return nil }
+func (m *mockDB) Ping(context.Context) error { return nil }
 
 func (m *mockDB) Query(_ context.Context, _ string, _ ...any) (gas.Rows, error) {
 	return nil, nil

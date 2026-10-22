@@ -100,10 +100,10 @@ type Health struct {
 
 func NewHealth(router *gas.Router) *Health { return &Health{router: router} }
 
-func (h *Health) Name() string                  { return "health" }
-func (h *Health) Close(_ context.Context) error { return nil }
+func (h *Health) Name() string                { return "health" }
+func (h *Health) Close(context.Context) error { return nil }
 
-func (h *Health) Init(_ context.Context) error {
+func (h *Health) Init(context.Context) error {
 	h.router.Get(h, "/healthz", func(ctx gas.Context, p gas.HealthProvider) error {
 		return report(ctx, p.CheckHealth(ctx))
 	})

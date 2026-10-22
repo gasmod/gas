@@ -175,7 +175,7 @@ func (s *Service) createClient(ctx context.Context) error {
 
 // CheckReady reports whether the service is ready to accept traffic.
 // Returns an error before Init has run or after Close has been called.
-func (s *Service) CheckReady(_ context.Context) error {
+func (s *Service) CheckReady(context.Context) error {
 	if s.client == nil {
 		return fmt.Errorf("%s: not initialized", s.Name())
 	}
@@ -186,7 +186,7 @@ func (s *Service) CheckReady(_ context.Context) error {
 }
 
 // Close marks the service as closed.
-func (s *Service) Close(_ context.Context) error {
+func (s *Service) Close(context.Context) error {
 	s.closed.Store(true)
 	s.logger.Info("sqs queue closed").Send()
 	return nil

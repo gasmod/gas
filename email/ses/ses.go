@@ -183,7 +183,7 @@ func (s *Service) createClient(ctx context.Context) error {
 // CheckReady reports whether the service can accept Send calls. Returns
 // email.ErrClosed once Close has been invoked so probes depool the pod
 // during shutdown/drain.
-func (s *Service) CheckReady(_ context.Context) error {
+func (s *Service) CheckReady(context.Context) error {
 	if s.closed.Load() {
 		return email.ErrClosed
 	}
@@ -191,7 +191,7 @@ func (s *Service) CheckReady(_ context.Context) error {
 }
 
 // Close marks the service as closed.
-func (s *Service) Close(_ context.Context) error {
+func (s *Service) Close(context.Context) error {
 	s.closed.Store(true)
 	s.logger.Info("ses email service closed").Send()
 	return nil

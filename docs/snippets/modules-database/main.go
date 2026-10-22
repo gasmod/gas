@@ -108,9 +108,9 @@ func NewNotes(db gas.DatabaseProvider) *Notes {
 	return &Notes{db: db}
 }
 
-func (n *Notes) Name() string                  { return "notes" }
-func (n *Notes) Init(_ context.Context) error  { return nil }
-func (n *Notes) Close(_ context.Context) error { return nil }
+func (n *Notes) Name() string                { return "notes" }
+func (n *Notes) Init(context.Context) error  { return nil }
+func (n *Notes) Close(context.Context) error { return nil }
 
 func (n *Notes) Titles(ctx context.Context) (titles []string, err error) {
 	rows, err := n.db.Query(ctx, "SELECT title FROM notes ORDER BY id")

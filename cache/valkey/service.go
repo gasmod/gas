@@ -307,7 +307,7 @@ func (s *Service) Exists(ctx context.Context, key string) (bool, error) {
 // internally, so a transient network failure is not a liveness failure;
 // only a service that was never started or has been closed is, and it
 // reports cache.ErrClosed.
-func (s *Service) CheckHealth(_ context.Context) error {
+func (s *Service) CheckHealth(context.Context) error {
 	_, err := s.acquire()
 	return err
 }

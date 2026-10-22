@@ -38,7 +38,7 @@ func (s *Service) Name() string { return "keys" }
 
 // Init binds the config, so a missing or short admin token stops startup,
 // and registers the route.
-func (s *Service) Init(_ context.Context) error {
+func (s *Service) Init(context.Context) error {
 	if err := s.cfgProvider.Bind(&s.cfg); err != nil {
 		return fmt.Errorf("keys: config: %w", err)
 	}
@@ -46,7 +46,7 @@ func (s *Service) Init(_ context.Context) error {
 	return nil
 }
 
-func (s *Service) Close(_ context.Context) error { return nil }
+func (s *Service) Close(context.Context) error { return nil }
 
 // #endregion service
 

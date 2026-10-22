@@ -22,15 +22,15 @@ func New(router *gas.Router) *Service {
 	return &Service{router: router}
 }
 
-func (s *Service) Name() string                  { return "notes" }
-func (s *Service) Close(_ context.Context) error { return nil }
+func (s *Service) Name() string                { return "notes" }
+func (s *Service) Close(context.Context) error { return nil }
 
 // #endregion service
 
 // #region register
 // Init registers the routes. The first argument of every registration is the
 // owning service, so the router records which service each route belongs to.
-func (s *Service) Init(_ context.Context) error {
+func (s *Service) Init(context.Context) error {
 	s.router.Handle(s, http.MethodGet, "/notes", s.list)
 
 	// The method shorthands call Handle. Get also serves HEAD on the same path.
