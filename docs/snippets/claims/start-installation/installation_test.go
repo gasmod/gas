@@ -98,13 +98,22 @@ func TestCoreHoldsTheBasicsAndIsEnough(t *testing.T) {
 			t.Errorf("%s is not in the core package", pkg)
 		}
 	}
-	out, err := exec.CommandContext(t.Context(), "go", "list", "-deps", "-f", "{{.ImportPath}}", helloPkg).CombinedOutput()
+	// The app may depend on packages inside the core module, such as
+	// github.com/gasmod/gas/internal, but on no other Gas module apart from
+	// its own.
+	out, err := exec.CommandContext(t.Context(), "go", "list", "-deps",
+		"-f", "{{.ImportPath}} {{if .Module}}{{.Module.Path}}{{end}}", helloPkg).CombinedOutput()
 	if err != nil {
 		t.Fatalf("go list: %v\n%s", err, out)
 	}
-	for _, pkg := range strings.Fields(string(out)) {
-		if strings.HasPrefix(pkg, "github.com/gasmod/") && pkg != helloPkg && pkg != "github.com/gasmod/gas" {
-			t.Errorf("the page's HTTP app imports %s, want only the core", pkg)
+	mods := map[string]string{} // import path -> module path
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
+		pkg, mod, _ := strings.Cut(line, " ")
+		mods[pkg] = mod
+	}
+	for pkg, mod := range mods {
+		if strings.HasPrefix(mod, "github.com/gasmod/") && mod != mods[helloPkg] && mod != "github.com/gasmod/gas" {
+			t.Errorf("the page's HTTP app imports %s from module %s, want only the core module", pkg, mod)
 		}
 	}
 }

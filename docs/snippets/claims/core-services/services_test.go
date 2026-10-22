@@ -952,6 +952,120 @@ func TestConstructorRunsAfterDependencyInitialized(t *testing.T) {
 }
 
 // Docs: core/services.mdx#build-order
+// "The order is the same on every run: singletons with no registered
+// dependencies come first, in the order they were registered, and each of the
+// others follows once everything it depends on has been built."
+// kA is registered first but depends on kD, registered last; kC and kB have no
+// dependencies and are registered in that order.
+func TestBuildOrderIsFixed(t *testing.T) {
+	t.Parallel()
+	want := []string{"build kC", "build kB", "build kD", "build kA"}
+	for range 50 {
+		rec := &recorder{}
+		c := gas.NewServiceContainer()
+		c.RegisterSingletonService[*svc[kA]](func(*svc[kD]) *svc[kA] { rec.add("build kA"); return &svc[kA]{} })
+		c.RegisterSingletonService[*svc[kC]](func() *svc[kC] { rec.add("build kC"); return &svc[kC]{} })
+		c.RegisterSingletonService[*svc[kB]](func() *svc[kB] { rec.add("build kB"); return &svc[kB]{} })
+		c.RegisterSingletonService[*svc[kD]](func() *svc[kD] { rec.add("build kD"); return &svc[kD]{} })
+		if err := c.BuildAll(t.Context()); err != nil {
+			t.Fatalf("BuildAll: %v", err)
+		}
+		if got := rec.list(); !slices.Equal(got, want) {
+			t.Fatalf("build order %v, want %v", got, want)
+		}
+	}
+}
+
+// Docs: core/services.mdx#build-order
+// "Because the order is fixed, so is the error startup reports when several
+// registrations are broken. A captive dependency is reported before any build
+// error, and of several, the one in the singleton registered first. Of several
+// build errors, startup reports the first broken singleton in build order, which
+// for singletons that wait on the same dependencies, or on none, is the one
+// registered first. Fix it and the next one surfaces."
+// Each case registers the Y types before the X types, so registration order
+// is not alphabetical, and runs 50 fresh containers.
+func TestBrokenRegistrationReportedIsFixed(t *testing.T) {
+	t.Parallel()
+	type (
+		root     struct{}
+		missingX struct{}
+		missingY struct{}
+		needsX   struct{}
+		needsY   struct{}
+		scopedX  struct{}
+		scopedY  struct{}
+		captiveX struct{}
+		captiveY struct{}
+	)
+	newNeedsY := func(*missingY) *needsY { return &needsY{} }
+	newNeedsX := func(*missingX) *needsX { return &needsX{} }
+	cases := []struct {
+		register func(c *gas.ServiceContainer)
+		name     string
+		want     string
+	}{
+		{
+			register: func(c *gas.ServiceContainer) {
+				c.RegisterSingletonService[*needsY](newNeedsY)
+				c.RegisterSingletonService[*needsX](newNeedsX)
+			},
+			name: "no dependencies",
+			want: "building *coreservices_test.needsY: ",
+		},
+		{
+			register: func(c *gas.ServiceContainer) {
+				c.RegisterSingletonService[*root](func() *root { return &root{} })
+				c.RegisterSingletonService[*needsY](func(*root, *missingY) *needsY { return &needsY{} })
+				c.RegisterSingletonService[*needsX](func(*root, *missingX) *needsX { return &needsX{} })
+			},
+			name: "same dependencies",
+			want: "building *coreservices_test.needsY: ",
+		},
+		{
+			register: func(c *gas.ServiceContainer) {
+				c.RegisterSingletonService[*needsY](func(*root, *missingY) *needsY { return &needsY{} })
+				c.RegisterSingletonService[*needsX](newNeedsX)
+				c.RegisterSingletonService[*root](func() *root { return &root{} })
+			},
+			name: "first in build order, not registration order",
+			want: "building *coreservices_test.needsX: ",
+		},
+		{
+			register: func(c *gas.ServiceContainer) {
+				c.RegisterScopedService[*scopedY](func() *scopedY { return &scopedY{} })
+				c.RegisterScopedService[*scopedX](func() *scopedX { return &scopedX{} })
+				c.RegisterSingletonService[*needsY](newNeedsY)
+				c.RegisterSingletonService[*captiveY](func(*scopedY) *captiveY { return &captiveY{} })
+				c.RegisterSingletonService[*captiveX](func(*scopedX) *captiveX { return &captiveX{} })
+			},
+			name: "captive before build error",
+			want: "captive dependency: singleton *coreservices_test.captiveY depends on scoped",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			for range 50 {
+				c := gas.NewServiceContainer()
+				tc.register(c)
+				err := c.BuildAll(t.Context())
+				if err == nil || !strings.HasPrefix(err.Error(), tc.want) {
+					t.Fatalf("BuildAll() = %v, want an error starting %q", err, tc.want)
+				}
+			}
+		})
+	}
+	// Fixing the reported registration surfaces the next one.
+	c := gas.NewServiceContainer()
+	c.RegisterSingletonService[*needsY](func() *needsY { return &needsY{} })
+	c.RegisterSingletonService[*needsX](newNeedsX)
+	if err := c.BuildAll(t.Context()); err == nil || !strings.HasPrefix(err.Error(), "building *coreservices_test.needsX: ") {
+		t.Fatalf("after fixing needsY, BuildAll() = %v, want the needsX error", err)
+	}
+}
+
+// Docs: core/services.mdx#build-order
 // "Shutdown closes services in the reverse of the order they were initialized, so
 // a service's dependencies are still open while it closes."
 func TestShutdownReverseOfInit(t *testing.T) {

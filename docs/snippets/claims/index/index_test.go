@@ -207,23 +207,31 @@ func goListDeps(t *testing.T, mod string) []string {
 
 // Docs: index.mdx#why-gas
 // "An app that just serves HTTP depends on the core package alone."
-// The Quickstart app, which only serves HTTP, imports no Gas package but
-// github.com/gasmod/gas itself.
+// The Quickstart app, which only serves HTTP, depends on no Gas module but
+// the core module, github.com/gasmod/gas, apart from its own. Packages inside
+// the core module, such as github.com/gasmod/gas/internal, are part of the
+// core.
 func TestHTTPOnlyAppDependsOnCoreAlone(t *testing.T) {
 	t.Parallel()
 	out, err := exec.CommandContext(t.Context(), "go", "list", "-deps",
-		"-f", "{{.ImportPath}}", landingPkg).CombinedOutput()
+		"-f", "{{.ImportPath}} {{if .Module}}{{.Module.Path}}{{end}}", landingPkg).CombinedOutput()
 	if err != nil {
 		t.Fatalf("go list: %v\n%s", err, out)
 	}
-	var gasPkgs []string
-	for _, pkg := range strings.Fields(string(out)) {
-		if strings.HasPrefix(pkg, "github.com/gasmod/") && pkg != landingPkg {
-			gasPkgs = append(gasPkgs, pkg)
+	mods := map[string]string{} // import path -> module path
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
+		pkg, mod, _ := strings.Cut(line, " ")
+		mods[pkg] = mod
+	}
+	var gasMods []string
+	for _, mod := range mods {
+		if strings.HasPrefix(mod, "github.com/gasmod/") && mod != mods[landingPkg] && !slices.Contains(gasMods, mod) {
+			gasMods = append(gasMods, mod)
 		}
 	}
-	if want := []string{"github.com/gasmod/gas"}; !slices.Equal(gasPkgs, want) {
-		t.Fatalf("the Quickstart app imports Gas packages %v, want only %v", gasPkgs, want)
+	slices.Sort(gasMods)
+	if want := []string{"github.com/gasmod/gas"}; !slices.Equal(gasMods, want) {
+		t.Fatalf("the Quickstart app depends on Gas modules %v, want only %v", gasMods, want)
 	}
 }
 

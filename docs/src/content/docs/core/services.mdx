@@ -200,11 +200,16 @@ registered as an instance, in the order they were registered, then builds the
 singletons in dependency order. A constructor runs only after every dependency
 it names has been constructed and, if that dependency is a service,
 initialized, so a service can use its dependencies from its constructor and
-from `Init`. Singletons that do not depend on each other are built in no fixed
-order.
+from `Init`. The order is the same on every run: singletons with no registered
+dependencies come first, in the order they were registered, and each of the
+others follows once everything it depends on has been built.
 
-Because of that, when two registrations are broken, which error startup reports
-is not fixed. Fix the one you see and the next one surfaces.
+Because the order is fixed, so is the error startup reports when several
+registrations are broken. A captive dependency is reported before any build
+error, and of several, the one in the singleton registered first. Of several
+build errors, startup reports the first broken singleton in build order, which
+for singletons that wait on the same dependencies, or on none, is the one
+registered first. Fix it and the next one surfaces.
 
 Shutdown closes services in the reverse of the order they were initialized, so
 a service's dependencies are still open while it closes. The full startup and

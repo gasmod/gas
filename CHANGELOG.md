@@ -30,6 +30,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   subscribers run after that and have the last word. This happens once:
   a later `Start`, or one after `Serve` has begun, leaves the server's
   fields alone, since net/http is reading them.
+- **Startup is deterministic.** The container kept its registrations and
+  instances in maps and ranged over them, so the order independent
+  singletons were built in, and which error startup reported when several
+  registrations were broken, changed from run to run. Singletons are now
+  built in an order fixed by their dependencies and the order they were
+  registered in: those with no registered dependencies first, in
+  registration order, then each of the others once its dependencies are
+  built. Captive-dependency errors and shape-validation errors for
+  registered instances are reported in registration order, so the same
+  broken setup reports the same error every time.
 
 ### Changed
 

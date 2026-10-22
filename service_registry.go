@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"net/http"
 	"reflect"
 	"slices"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gasmod/gas/internal"
 )
 
 // ServiceLifetime controls how a service instance is created and cached.
@@ -56,8 +57,8 @@ type Resolver interface {
 type ServiceContainer struct {
 	opt *ServiceContainerOptions
 
-	registrations map[reflect.Type]registration
-	instances     map[reflect.Type]reflect.Value // singletons + pre-registered instances
+	registrations *internal.OrderedMap[reflect.Type, registration]
+	instances     *internal.OrderedMap[reflect.Type, reflect.Value] // singletons + pre-registered instances
 
 	// initedInstances tracks pre-registered instances whose Init is running or
 	// has succeeded, so a repeated BuildAll does not initialize them twice. An
@@ -73,15 +74,7 @@ type ServiceContainer struct {
 	stacks  map[uint64][]reflect.Type
 	waiting map[uint64]*singletonBuild
 
-	// instanceOrder records the order instances became available: registered
-	// values first, then singletons in construction order. Ranging over the
-	// instances map instead would be randomized by Go, which is what made
-	// Worker.Shutdown close services in an arbitrary order rather than the
-	// documented reverse-initialization order. Kept after the maps: it carries inline
-	// len/cap, which govet fieldalignment wants after the pure-pointer fields.
-	instanceOrder []reflect.Type
-
-	// mu guards registrations, instances, initedInstances, instanceOrder,
+	// mu guards registrations, instances, initedInstances,
 	// builds, stacks, and waiting. Constructors and Init run without it held.
 	mu sync.Mutex
 }
@@ -132,8 +125,8 @@ func NewServiceContainer(opts ...ServiceContainerOption) *ServiceContainer {
 	}
 
 	return &ServiceContainer{
-		registrations:   make(map[reflect.Type]registration),
-		instances:       make(map[reflect.Type]reflect.Value),
+		registrations:   &internal.OrderedMap[reflect.Type, registration]{},
+		instances:       &internal.OrderedMap[reflect.Type, reflect.Value]{},
 		initedInstances: make(map[reflect.Type]struct{}),
 		builds:          make(map[reflect.Type]*singletonBuild),
 		stacks:          make(map[uint64][]reflect.Type),
@@ -185,7 +178,7 @@ func (c *ServiceContainer) RegisterService[T any](ctor any, lifetime ServiceLife
 		}
 	}
 	c.mu.Lock()
-	c.registrations[t] = registration{ctor: ctor, lifetime: lifetime}
+	c.registrations.Set(t, registration{ctor: ctor, lifetime: lifetime})
 	c.mu.Unlock()
 }
 
@@ -233,15 +226,7 @@ func (c *ServiceContainer) RegisterServiceInstance[T any](val T) {
 func (c *ServiceContainer) setInstance(t reflect.Type, v reflect.Value) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.setInstanceLocked(t, v)
-}
-
-// setInstanceLocked is setInstance for a caller that holds c.mu.
-func (c *ServiceContainer) setInstanceLocked(t reflect.Type, v reflect.Value) {
-	if _, exists := c.instances[t]; !exists {
-		c.instanceOrder = append(c.instanceOrder, t)
-	}
-	c.instances[t] = v
+	c.instances.Set(t, v)
 }
 
 // BuildAll initializes pre-registered Service instances, then eagerly resolves
@@ -278,8 +263,8 @@ func (c *ServiceContainer) BuildAll(ctx context.Context) error {
 		if reg.lifetime != ServiceLifetimeSingleton {
 			continue
 		}
-		if _, err := c.resolveSingleton(ctx, t); err != nil {
-			return fmt.Errorf("building %v: %w", t, err)
+		if _, resErr := c.resolveSingleton(ctx, t); resErr != nil {
+			return fmt.Errorf("building %v: %w", t, resErr)
 		}
 	}
 	return nil
@@ -291,10 +276,10 @@ func (c *ServiceContainer) BuildAll(ctx context.Context) error {
 // only place their Init can run.
 func (c *ServiceContainer) initInstances(ctx context.Context) error {
 	c.mu.Lock()
-	order := slices.Clone(c.instanceOrder)
+	instances := c.instances.Clone()
 	c.mu.Unlock()
 
-	for _, t := range order {
+	for t := range instances.All() {
 		if svc, ok := c.claimInstanceInit(t); ok {
 			if err := c.initService(ctx, t, svc); err != nil {
 				// Unmarked so initializedServices never reports an
@@ -320,17 +305,13 @@ func (c *ServiceContainer) initializedServices() []Service {
 
 	var out []Service
 	seen := make(map[Service]struct{})
-	for _, t := range c.instanceOrder {
-		v, ok := c.instances[t]
-		if !ok {
-			continue
-		}
+	for t, v := range c.instances.All() {
 		svc, ok := v.Interface().(Service)
 		if !ok {
 			continue
 		}
 		_, inited := c.initedInstances[t]
-		reg, registered := c.registrations[t]
+		reg, registered := c.registrations.Get(t)
 		built := registered && reg.lifetime == ServiceLifetimeSingleton
 		if !inited && !built {
 			continue
@@ -354,7 +335,7 @@ func (c *ServiceContainer) claimInstanceInit(t reflect.Type) (Service, bool) {
 	if _, done := c.initedInstances[t]; done {
 		return nil, false
 	}
-	v, ok := c.instances[t]
+	v, ok := c.instances.Get(t)
 	if !ok {
 		return nil, false
 	}
@@ -553,7 +534,7 @@ func (c *ServiceContainer) resolveSingleton(
 	t reflect.Type,
 ) (reflect.Value, error) {
 	c.mu.Lock()
-	if v, ok := c.instances[t]; ok {
+	if v, ok := c.instances.Get(t); ok {
 		c.mu.Unlock()
 		return v, nil
 	}
@@ -571,7 +552,7 @@ func (c *ServiceContainer) resolveSingleton(
 
 	c.mu.Lock()
 	if err == nil {
-		c.setInstanceLocked(t, val)
+		c.instances.Set(t, val)
 	}
 	delete(c.builds, t)
 	b.val, b.err = val, err
@@ -624,7 +605,7 @@ func (c *ServiceContainer) awaitBuild(
 func (c *ServiceContainer) lookupInstance(t reflect.Type) (reflect.Value, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if v, ok := c.instances[t]; ok {
+	if v, ok := c.instances.Get(t); ok {
 		return v, true
 	}
 	// DO NOT try to resolve by interface satisfaction!
@@ -638,15 +619,10 @@ func (c *ServiceContainer) lookupInstance(t reflect.Type) (reflect.Value, bool) 
 func (c *ServiceContainer) EachInstance(fn func(reflect.Value)) {
 	// Snapshot under the lock and call fn without it, so fn may resolve.
 	c.mu.Lock()
-	vals := make([]reflect.Value, 0, len(c.instanceOrder))
-	for _, t := range c.instanceOrder {
-		if v, ok := c.instances[t]; ok {
-			vals = append(vals, v)
-		}
-	}
+	instances := c.instances.Clone()
 	c.mu.Unlock()
 
-	for _, v := range vals {
+	for _, v := range instances.All() {
 		fn(v)
 	}
 }
@@ -663,7 +639,7 @@ type Scope struct {
 	resolved  map[reflect.Type]reflect.Value
 
 	// order records resolution order so Close can tear scoped services down in
-	// reverse, for the same reason the container tracks instanceOrder.
+	// reverse, for the same reason the container tracks.
 	order []reflect.Type
 }
 
@@ -724,12 +700,12 @@ func (s *Scope) resolveType(ctx context.Context, t reflect.Type) (reflect.Value,
 // scoped dependencies it was built from.
 func (s *Scope) Close(ctx context.Context) error {
 	var errs []error
-	for i := len(s.order) - 1; i >= 0; i-- {
-		v, ok := s.resolved[s.order[i]]
+	for _, t := range slices.Backward(s.order) {
+		v, ok := s.resolved[t]
 		if !ok {
 			continue
 		}
-		if svc, ok := v.Interface().(Service); ok {
+		if svc, svcOk := v.Interface().(Service); svcOk {
 			if err := svc.Close(ctx); err != nil {
 				errs = append(errs, err)
 			}
@@ -793,9 +769,9 @@ func (c *ServiceContainer) invoke(
 	ctorVal := reflect.ValueOf(reg.ctor)
 	ctorType := ctorVal.Type()
 
-	args, err := c.resolveCtorArgs(ctx, ctorType, t, r)
-	if err != nil {
-		return reflect.Value{}, err
+	args, argsErr := c.resolveCtorArgs(ctx, ctorType, t, r)
+	if argsErr != nil {
+		return reflect.Value{}, argsErr
 	}
 
 	results := ctorVal.Call(args)
@@ -812,16 +788,16 @@ func (c *ServiceContainer) invoke(
 	// The registered type may be an interface, so the concrete type is only
 	// knowable here. Reject a half-written service before it silently skips
 	// its own Init.
-	if err := validateServiceShape(concreteType(result)); err != nil {
-		return reflect.Value{}, err
+	if vErr := validateServiceShape(concreteType(result)); vErr != nil {
+		return reflect.Value{}, vErr
 	}
 
 	if t.Kind() == reflect.Interface && result.Type().Implements(t) {
 		result = result.Convert(t)
 	}
 
-	if err := c.initConstructed(ctx, t, reg.lifetime, result); err != nil {
-		return reflect.Value{}, err
+	if initErr := c.initConstructed(ctx, t, reg.lifetime, result); initErr != nil {
+		return reflect.Value{}, initErr
 	}
 
 	return result, nil
@@ -872,17 +848,15 @@ func (c *ServiceContainer) resolveCtorArgs(
 // a singleton must not depend on a scoped or transient service.
 func (c *ServiceContainer) validateLifetimes() error {
 	regs := c.registrationsSnapshot()
-	for t, reg := range regs {
+	for t, reg := range regs.All() {
 		ctorType := reflect.TypeOf(reg.ctor)
-		for i := 0; i < ctorType.NumIn(); i++ {
-			dep := ctorType.In(i)
-
+		for dep := range ctorType.Ins() {
 			// skip pre-registered instances
 			if _, ok := c.lookupInstance(dep); ok {
 				continue
 			}
 
-			depReg, ok := regs[dep]
+			depReg, ok := regs.Get(dep)
 			if !ok {
 				continue // will fail at build time with a clearer message
 			}
@@ -910,16 +884,16 @@ func (c *ServiceContainer) validateLifetimes() error {
 func (c *ServiceContainer) findRegistration(t reflect.Type) (registration, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	reg, ok := c.registrations[t]
+	reg, ok := c.registrations.Get(t)
 	return reg, ok
 }
 
 // registrationsSnapshot returns a copy of the registrations, for callers that
 // range over them without holding c.mu.
-func (c *ServiceContainer) registrationsSnapshot() map[reflect.Type]registration {
+func (c *ServiceContainer) registrationsSnapshot() internal.OrderedMap[reflect.Type, registration] {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return maps.Clone(c.registrations)
+	return *c.registrations.Clone()
 }
 
 func (c *ServiceContainer) canResolveType(t reflect.Type) bool {
@@ -944,29 +918,32 @@ func (c *ServiceContainer) CanResolve[T any]() bool {
 
 func (c *ServiceContainer) topoSort() ([]reflect.Type, error) {
 	regs := c.registrationsSnapshot()
-	deps := make(map[reflect.Type][]reflect.Type)
-	for t, reg := range regs {
+	deps := internal.OrderedMap[reflect.Type, []reflect.Type]{}
+	for t, reg := range regs.All() {
 		ctorType := reflect.TypeOf(reg.ctor)
 		for in := range ctorType.Ins() {
-			deps[t] = append(deps[t], in)
+			v, _ := deps.Get(t)
+			deps.Set(t, append(v, in))
 		}
 	}
 
 	// Kahn's algorithm
-	inDegree := make(map[reflect.Type]int)
-	for t := range regs {
-		if _, ok := inDegree[t]; !ok {
-			inDegree[t] = 0
+	inDegree := internal.OrderedMap[reflect.Type, int]{}
+	for t := range regs.Keys() {
+		if !inDegree.Has(t) {
+			inDegree.Set(t, 0)
 		}
-		for _, d := range deps[t] {
-			if _, hasCtor := regs[d]; hasCtor {
-				inDegree[t]++
+		a, _ := deps.Get(t)
+		for _, d := range a {
+			if _, hasCtor := regs.Get(d); hasCtor {
+				v, _ := inDegree.Get(t)
+				inDegree.Set(t, v+1)
 			}
 		}
 	}
 
 	var queue []reflect.Type
-	for t, deg := range inDegree {
+	for t, deg := range inDegree.All() {
 		if deg == 0 {
 			queue = append(queue, t)
 		}
@@ -974,7 +951,7 @@ func (c *ServiceContainer) topoSort() ([]reflect.Type, error) {
 
 	order := c.topoSortOrder(queue, deps, inDegree)
 
-	if len(order) != len(regs) {
+	if len(order) != regs.Len() {
 		return nil, newDIError(ErrCircularDependency, "circular dependency detected")
 	}
 	return order, nil
@@ -982,8 +959,8 @@ func (c *ServiceContainer) topoSort() ([]reflect.Type, error) {
 
 func (c *ServiceContainer) topoSortOrder(
 	queue []reflect.Type,
-	deps map[reflect.Type][]reflect.Type,
-	inDegree map[reflect.Type]int,
+	deps internal.OrderedMap[reflect.Type, []reflect.Type],
+	inDegree internal.OrderedMap[reflect.Type, int],
 ) []reflect.Type {
 	var order []reflect.Type
 	for len(queue) > 0 {
@@ -991,11 +968,12 @@ func (c *ServiceContainer) topoSortOrder(
 		queue = queue[1:]
 		order = append(order, curr)
 
-		for t, d := range deps {
+		for t, d := range deps.All() {
 			for _, dep := range d {
 				if dep == curr {
-					inDegree[t]--
-					if inDegree[t] == 0 {
+					v, _ := inDegree.Get(t)
+					inDegree.Set(t, v-1)
+					if i, _ := inDegree.Get(t); i == 0 {
 						queue = append(queue, t)
 					}
 				}
@@ -1246,18 +1224,18 @@ func validateServiceShape(t reflect.Type) error {
 
 // validateServiceShapes checks every registered type and pre-built instance.
 func (c *ServiceContainer) validateServiceShapes() error {
-	for t := range c.registrationsSnapshot() {
+	regs := c.registrationsSnapshot()
+	for t := range regs.Keys() {
 		if err := validateServiceShape(t); err != nil {
 			return err
 		}
 	}
+
 	c.mu.Lock()
-	instances := make([]reflect.Value, 0, len(c.instances))
-	for _, v := range c.instances {
-		instances = append(instances, v)
-	}
+	instances := c.instances.Clone()
 	c.mu.Unlock()
-	for _, v := range instances {
+
+	for _, v := range instances.All() {
 		if err := validateServiceShape(concreteType(v)); err != nil {
 			return err
 		}

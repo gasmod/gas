@@ -1051,10 +1051,10 @@ func newOrdWorker(log *ordLog) *gas.Worker {
 }
 
 // TestShutdownClosesServicesInReverseInitOrder is the contract Shutdown
-// documents. It is repeated because the failure is driven by Go's randomized
-// map iteration: a single run can land on the correct permutation by chance
-// (1 in 720 for six services), so a one-shot test would be flaky. Every
-// repetition must satisfy the contract.
+// documents. It is repeated because the regression it guards against came
+// from randomized map iteration: a single run could land on the correct
+// permutation by chance (1 in 720 for six services). Every repetition must
+// satisfy the contract.
 func TestShutdownClosesServicesInReverseInitOrder(t *testing.T) {
 	const repeats = 20
 

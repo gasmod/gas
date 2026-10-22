@@ -3,11 +3,14 @@ package gas_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gasmod/gas"
 )
@@ -172,6 +175,141 @@ func TestServiceContainer_CaptiveDependency(t *testing.T) {
 			t.Fatalf("expected ErrCaptiveDependency, got: %v", err)
 		}
 	})
+}
+
+// closeOnlyA and closeOnlyB declare Close without the rest of Service, so a
+// registered instance of either fails shape validation.
+type (
+	closeOnlyA struct{}
+	closeOnlyB struct{}
+)
+
+func (*closeOnlyA) Close(context.Context) error { return nil }
+func (*closeOnlyB) Close(context.Context) error { return nil }
+
+// With two independent broken registrations, BuildAll reports the same one
+// on every run: the one registered first. Each case registers the B types
+// before the A types, so registration order differs from alphabetical order.
+func TestStartupErrorIsDeterministic(t *testing.T) {
+	type (
+		Root     struct{}
+		MissingA struct{}
+		MissingB struct{}
+		NeedsA   struct{}
+		NeedsB   struct{}
+		ScopedA  struct{}
+		ScopedB  struct{}
+		CaptiveA struct{}
+		CaptiveB struct{}
+	)
+	const runs = 100
+
+	cases := []struct {
+		register func(c *gas.ServiceContainer)
+		name     string
+		want     string
+	}{
+		{
+			register: func(c *gas.ServiceContainer) {
+				c.RegisterSingletonService[*NeedsB](func(*MissingB) *NeedsB { return &NeedsB{} })
+				c.RegisterSingletonService[*NeedsA](func(*MissingA) *NeedsA { return &NeedsA{} })
+			},
+			name: "UnregisteredDependencies",
+			want: "building *gas_test.NeedsB: ",
+		},
+		{
+			register: func(c *gas.ServiceContainer) {
+				c.RegisterSingletonService[*Root](func() *Root { return &Root{} })
+				c.RegisterSingletonService[*NeedsB](
+					func(*Root, *MissingB) *NeedsB { return &NeedsB{} },
+				)
+				c.RegisterSingletonService[*NeedsA](
+					func(*Root, *MissingA) *NeedsA { return &NeedsA{} },
+				)
+			},
+			name: "UnregisteredDependenciesBelowRoot",
+			want: "building *gas_test.NeedsB: ",
+		},
+		{
+			register: func(c *gas.ServiceContainer) {
+				c.RegisterScopedService[*ScopedB](func() *ScopedB { return &ScopedB{} })
+				c.RegisterScopedService[*ScopedA](func() *ScopedA { return &ScopedA{} })
+				c.RegisterSingletonService[*CaptiveB](
+					func(*ScopedB) *CaptiveB { return &CaptiveB{} },
+				)
+				c.RegisterSingletonService[*CaptiveA](
+					func(*ScopedA) *CaptiveA { return &CaptiveA{} },
+				)
+			},
+			name: "CaptiveDependencies",
+			want: "singleton *gas_test.CaptiveB depends on",
+		},
+		{
+			register: func(c *gas.ServiceContainer) {
+				c.RegisterServiceInstance(&closeOnlyB{})
+				c.RegisterServiceInstance(&closeOnlyA{})
+			},
+			name: "InstanceShapes",
+			want: "gas: *gas_test.closeOnlyB declares Close",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			seen := map[string]int{}
+			for range runs {
+				c := gas.NewServiceContainer()
+				tc.register(c)
+				err := c.BuildAll(context.Background())
+				if err == nil {
+					t.Fatal("BuildAll succeeded with two broken registrations")
+				}
+				seen[err.Error()]++
+			}
+			if len(seen) != 1 {
+				var b strings.Builder
+				for msg, n := range seen {
+					_, _ = fmt.Fprintf(&b, "\n  %d/%d: %s", n, runs, msg)
+				}
+				t.Fatalf(
+					"BuildAll returned %d distinct errors over %d runs:%s",
+					len(seen),
+					runs,
+					b.String(),
+				)
+			}
+			for msg := range seen {
+				if !strings.Contains(msg, tc.want) {
+					t.Fatalf("BuildAll() = %q, want the first registered (%q)", msg, tc.want)
+				}
+			}
+		})
+	}
+}
+
+// EachInstance calls fn without holding the container's lock, so fn may
+// resolve from the container. Holding the lock across fn deadlocks here.
+func TestEachInstance_FnMayResolve(t *testing.T) {
+	c := gas.NewServiceContainer()
+	c.RegisterServiceInstance(&testDep{})
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		c.EachInstance(func(reflect.Value) {
+			if !c.CanResolve[*testDep]() {
+				t.Error("CanResolve[*testDep]() = false inside EachInstance")
+			}
+			if _, err := c.Resolve[*testDep](); err != nil {
+				t.Errorf("Resolve[*testDep]() inside EachInstance = %v", err)
+			}
+		})
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("EachInstance did not return: fn resolving from the container deadlocked")
+	}
 }
 
 func TestServiceContainer_ConstructorError(t *testing.T) {
