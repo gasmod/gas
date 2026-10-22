@@ -403,3 +403,20 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
 - **Next step**: compute a route's middleware names when the tree is
   built, after every pending `Use` is known, rather than at the `Handle`
   call.
+
+## KI-057: `migrate` keeps a duplicate of a service's migrations on every restart
+
+- **Status**: open
+- **Area**: `migrate`, `migrate/manager.go`.
+- **Found**: 2026-10-22, docs review.
+- **Detail**: services register their migrations in `Init`, and
+  `RestartService` re-runs `Init` on the same instance. `Register` and
+  `RegisterSlice` append to `s.migrations[service.Name()]` without
+  checking for an identical entry (`migrate/manager.go:16-31`), so each
+  restart adds another copy. `registeredMigrations` collapses identical
+  copies when it reads them (`migrate/manager.go:371-377`), so nothing
+  runs twice, but the slice grows by one copy per restart for the life of
+  the process.
+- **Next step**: skip an identical migration (same service, version,
+  description, up and down) at registration time, and keep the
+  read-time check for conflicting content.
