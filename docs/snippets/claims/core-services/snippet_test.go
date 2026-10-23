@@ -29,14 +29,18 @@ func runSample(t *testing.T) []string {
 // type that implements it, and the build fails"
 // Docs: core/services.mdx#register-under-the-type-consumers-ask-for
 // "building *main.Signup: resolving dep main.Mailer for *main.Signup: no registration for main.Mailer"
+// Docs: core/services.mdx#one-service-under-several-types
+// "Register the service once, then add an alias for each
+// interface"
 // Docs: core/services.mdx#resolving
 // "if _, err := c.Resolve[*Nonce](); errors.Is(err, gas.ErrNotRegistered) {"
 // Docs: core/services.mdx#overriding-a-registration
 // "Registering a type again replaces its earlier registration: the last one
 // wins."
 // The sample prints underInterface()'s error, underConcrete()'s error and
-// whether it wraps ErrNotRegistered, and the Mailer a worker built from
-// testOptions() resolves.
+// whether it wraps ErrNotRegistered, the types aliasOptions() resolves
+// Mailer and Outbox to, and the Mailer a worker built from testOptions()
+// resolves.
 func TestSampleOutput(t *testing.T) {
 	t.Parallel()
 	lines := runSample(t)
@@ -46,6 +50,7 @@ func TestSampleOutput(t *testing.T) {
 		"<nil>",
 		"building *main.Signup: resolving dep main.Mailer for *main.Signup: no registration for main.Mailer",
 		"true",
+		"*main.SMTPMailer *main.SMTPMailer",
 		"*main.FakeMailer",
 	}
 	if !slices.Equal(lines, want) {

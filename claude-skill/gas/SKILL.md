@@ -147,6 +147,7 @@ gas.WithScopedService[T any](ctor any) WorkerOption
 gas.WithTransientService[T any](ctor any) WorkerOption
 gas.WithService[T any](ctor any, lifetime ServiceLifetime) WorkerOption
 gas.WithServiceInstance[T any](val T) WorkerOption
+gas.WithServiceAlias[Target, Alias any]() WorkerOption // Alias resolves Target
 gas.WithReadyFunc(fn func(*ServiceContainer) error) WorkerOption
 ```
 
@@ -195,6 +196,7 @@ w := gas.NewWorker(opts ...Option) *Worker
 | `RegisterService[T]` | `(ctor any, lifetime ServiceLifetime)` | Imperative form of `WithService`; forwards to the container             |
 | `RegisterTransientService[T]` / `RegisterScopedService[T]` / `RegisterSingletonService[T]` | `(ctor any)` | Same, with the lifetime fixed |
 | `RegisterServiceInstance[T]` | `(val T)`      | Registers a pre-built value under `T`, the static type at the call site          |
+| `RegisterServiceAlias[Target, Alias]` | `()` | Imperative form of `WithServiceAlias`; forwards to the container |
 | `ReadyFunc`        | `(fn func(*ServiceContainer) error)` | Imperative form of `WithReadyFunc`; panics if called after the ready hooks ran |
 | `ActiveServices`   | `() []string`            | Names of active services, including the framework ones (`gas/worker`, `gas/eventbus`, `gas/router` in an App) |
 | `CloseService[T Service]`   | `(ctx) error`   | Kill switch: 503 the service's routes and middleware, remove subs, `Close(ctx)`, emit event |
@@ -292,6 +294,7 @@ c.RegisterSingletonService[T any](ctor any)
 c.RegisterScopedService[T any](ctor any)
 c.RegisterTransientService[T any](ctor any)
 c.RegisterServiceInstance[T any](val T)
+c.RegisterServiceAlias[Target, Alias any]()
 ```
 
 ```go
@@ -302,6 +305,19 @@ c.RegisterSingletonService[*myservice.Service](myservice.New)
 site, not the dynamic type of `val`. Passing an interface-typed variable makes
 the value resolvable as that interface only; name `T` explicitly to control it.
 Registering a type twice replaces the earlier registration.
+
+`RegisterServiceAlias[Target, Alias]()` makes the registration under `Target`
+resolvable as the interface `Alias` too: the same instance, `Target`'s
+lifetime, one `Init` and one `Close`. Use it when consumers ask for one
+service under several interfaces, instead of a second constructor, which
+builds a second instance. Either order works; a missing target fails
+`BuildAll` with `ErrNotRegistered`, and the captive-dependency check looks
+through the alias. It panics if `Alias` is not an interface, `Target` does
+not implement it, `Alias` is already registered, or `Target` is itself an
+alias; registering a service under an existing alias panics too. Registering
+the same alias again replaces its target. `RequestLogger[Alias]` stores the
+per-request logger on the context but does not replace the target's scoped
+instance.
 
 Constructor signature: `func(DepA, DepB, ...) T` or `func(DepA, DepB, ...) (T, error)`
 

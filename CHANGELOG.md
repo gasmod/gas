@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Service aliases.** `RegisterServiceAlias[Target, Alias]()` on the
+  `ServiceContainer` and the `Worker`, and the `WithServiceAlias[Target,
+  Alias]()` option, make one registration resolvable under an interface it
+  implements as well. Resolving the alias resolves the target: the same
+  instance, the target's lifetime, one `Init` and one `Close`. The alias and
+  its target can be registered in either order; a target still missing at
+  startup fails `BuildAll` with an error wrapping `ErrNotRegistered`, and a
+  singleton that depends on an alias of a scoped or transient service fails
+  with `ErrCaptiveDependency`. `CanResolve` reports true for an alias whose
+  target is registered. Registration panics if the alias is not an
+  interface, the target does not implement it, the alias is already a
+  registration or instance, or the target is itself an alias, and
+  registering a service under an existing alias panics too.
 - **`ServerSettings.ReadHeaderTimeout`**, which `App.Server` sets on the
   `*http.Server`. It bounds how long a client may take to send its request
   headers. net/http falls back to `ReadTimeout` only when it is zero, so a

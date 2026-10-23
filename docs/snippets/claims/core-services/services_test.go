@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"reflect"
 	"slices"
@@ -836,7 +837,7 @@ func TestAllowedLifetimeDependencies(t *testing.T) {
 
 // Docs: core/services.mdx#register-under-the-type-consumers-ask-for
 // "To reach a backend feature that the interface does not expose, type-assert the provider
-// you were given rather than registering the concrete type as well."
+// you were given"
 func TestTypeAssertProvider(t *testing.T) {
 	t.Parallel()
 	w := gas.NewWorker(
@@ -1148,7 +1149,8 @@ func TestResolveAndMustResolve(t *testing.T) {
 
 // Docs: core/services.mdx#resolving
 // "`CanResolve[T]()` on the container reports whether `T` has a
-// registration or instance, without building anything."
+// registration or instance, or is an alias whose target has one, without
+// building anything."
 func TestCanResolve(t *testing.T) {
 	t.Parallel()
 	var built atomic.Bool
@@ -1160,6 +1162,14 @@ func TestCanResolve(t *testing.T) {
 	}
 	if c.CanResolve[*missing]() {
 		t.Error("CanResolve is true for an unregistered type")
+	}
+	c.RegisterServiceAlias[*holder, fmt.Stringer]()
+	if !c.CanResolve[fmt.Stringer]() {
+		t.Error("CanResolve is false for an alias whose target is registered")
+	}
+	c.RegisterServiceAlias[*svc[kC], named]()
+	if c.CanResolve[named]() {
+		t.Error("CanResolve is true for an alias whose target is missing")
 	}
 	if built.Load() {
 		t.Error("CanResolve built the singleton")
@@ -1221,8 +1231,9 @@ func TestConcurrentResolutionBuildsOnce(t *testing.T) {
 // Docs: core/services.mdx#resolving
 // "Registration also has imperative forms, for wiring done after the App or Worker
 // exists: `RegisterSingletonService`, `RegisterScopedService`,
-// `RegisterTransientService`, `RegisterService`, and `RegisterServiceInstance`, on
-// the `ServiceContainer` and forwarded on the `Worker`. They share the
+// `RegisterTransientService`, `RegisterService`, `RegisterServiceInstance`, and
+// `RegisterServiceAlias`, on the `ServiceContainer` and forwarded on the
+// `Worker`. They share the
 // container's registrations with the options and return the same instances."
 func TestImperativeRegistrationShared(t *testing.T) {
 	t.Parallel()
@@ -1239,6 +1250,8 @@ func TestImperativeRegistrationShared(t *testing.T) {
 	c.RegisterTransientService[*holder2](func() *holder2 { return &holder2{} })
 	c.RegisterService[*cache](func() *cache { return &cache{} }, gas.ServiceLifetimeSingleton)
 	c.RegisterServiceInstance(&smtpMailer{})
+	w.RegisterServiceAlias[*holder, fmt.Stringer]()
+	c.RegisterServiceAlias[*svc[kA], named]()
 	if err := w.Start(t.Context()); err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -1256,6 +1269,8 @@ func TestImperativeRegistrationShared(t *testing.T) {
 		"ServiceContainer.RegisterTransientService": errOf(c.Resolve[*holder2]()),
 		"ServiceContainer.RegisterService":          errOf(c.Resolve[*cache]()),
 		"ServiceContainer.RegisterServiceInstance":  errOf(c.Resolve[*smtpMailer]()),
+		"Worker.RegisterServiceAlias":               errOf(c.Resolve[fmt.Stringer]()),
+		"ServiceContainer.RegisterServiceAlias":     errOf(c.Resolve[named]()),
 	} {
 		if err != nil {
 			t.Errorf("%s registration not visible on the container: %v", name, err)
@@ -1282,7 +1297,7 @@ type (
 // "Errors from the container wrap one of these sentinels, so classify them with
 // `errors.Is`."
 // Docs: core/services.mdx#resolution-errors
-// "| `gas.ErrNotRegistered` | A type, or a dependency of one, has no registration or instance |"
+// "| `gas.ErrNotRegistered` | A type, or a dependency of one, has no registration or instance; or an alias's target has none |"
 // Docs: core/services.mdx#resolution-errors
 // "| `gas.ErrCircularDependency` | Constructors depend on each other in a cycle; a constructor or `Init` resolves the type being built through a container or scope it captured; two goroutines' singleton builds would wait on each other"
 // Docs: core/services.mdx#resolution-errors
@@ -1310,6 +1325,14 @@ func TestResolutionSentinels(t *testing.T) {
 			run: func(t *testing.T) error {
 				c := gas.NewServiceContainer()
 				c.RegisterSingletonService[*holder](func(*missing) *holder { return &holder{} })
+				return c.BuildAll(t.Context())
+			},
+			want: gas.ErrNotRegistered,
+		},
+		"ErrNotRegistered: an alias's target": {
+			run: func(t *testing.T) error {
+				c := gas.NewServiceContainer()
+				c.RegisterServiceAlias[*holder, fmt.Stringer]()
 				return c.BuildAll(t.Context())
 			},
 			want: gas.ErrNotRegistered,

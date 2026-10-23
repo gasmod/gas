@@ -400,6 +400,15 @@ func (w *Worker) RegisterServiceInstance[T any](val T) {
 	w.serviceContainer.RegisterServiceInstance[T](val)
 }
 
+// RegisterServiceAlias makes the service registered under Target on the
+// worker's service container resolvable as the interface Alias too. It is the
+// imperative form of WithServiceAlias. See
+// ServiceContainer.RegisterServiceAlias for what an alias resolves to and the
+// panics on a bad one.
+func (w *Worker) RegisterServiceAlias[Target, Alias any]() {
+	w.serviceContainer.RegisterServiceAlias[Target, Alias]()
+}
+
 // --- WorkerOption functions ---
 
 // WithService registers a constructor-based service with the given lifetime.
@@ -432,6 +441,14 @@ func WithScopedService[T any](ctor any) WorkerOption {
 // WithSingletonService registers a singleton service constructor.
 func WithSingletonService[T any](ctor any) WorkerOption {
 	return func(w *Worker) { w.serviceContainer.RegisterSingletonService[T](ctor) }
+}
+
+// WithServiceAlias makes the service registered under Target resolvable as
+// the interface Alias too, sharing Target's instance and lifetime. Target may
+// be registered by an earlier or a later option. See
+// ServiceContainer.RegisterServiceAlias.
+func WithServiceAlias[Target, Alias any]() WorkerOption {
+	return func(w *Worker) { w.serviceContainer.RegisterServiceAlias[Target, Alias]() }
 }
 
 // WithReadyFunc registers a function that runs after all services are

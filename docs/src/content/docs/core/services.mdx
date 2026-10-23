@@ -192,8 +192,38 @@ interfaces declared in core (`gas.ConfigProvider`, `gas.Logger`,
 `gas.DatabaseProvider`, and so on), so infrastructure goes in under those
 interfaces, and your own services under their concrete types. To reach a
 backend feature that the interface does not expose, type-assert the provider
-you were given rather than registering the concrete type as well. The
+you were given, or register the backend under its concrete type and
+[alias](#one-service-under-several-types) the interface to it. Registering the
+concrete type with a second constructor builds a second instance. The
 [module pages](/gas/modules/overview/) list what each constructor resolves.
+
+### One service under several types
+
+Sometimes consumers ask for one service under different types. `Signup` asks
+for `Mailer`, and an admin page asks for `Outbox`, another interface the same
+mailer implements. Register the service once, then add an alias for each
+interface:
+
+<Code code={region(svc, 'alias')} lang="go" title="main.go" />
+
+An alias makes one registration reachable under an interface. Resolving the
+alias resolves its target, so both return the same instance, with the target's
+lifetime. The target's `Init` and `Close` run once, however many aliases it
+has. `gas.WithServiceAlias[Target, Alias]()` is the option, and
+`RegisterServiceAlias[Target, Alias]()` on the `ServiceContainer` or the
+`Worker` is the imperative form.
+
+The alias and its target can be registered in either order. The target is
+checked at startup: if it has no registration or instance, `Start` fails with
+an error that wraps `gas.ErrNotRegistered`, and so does resolving the alias.
+The captive-dependency rule looks through an alias: a singleton that depends
+on an alias of a scoped or transient service fails startup with
+`gas.ErrCaptiveDependency`.
+
+Registration panics if the alias is not an interface, the target does not
+implement it, the alias is already registered as a service or instance, or the
+target is itself an alias. Registering a service under a type that is already
+an alias panics too. Registering the same alias again replaces its target.
 
 ## Build order
 
@@ -230,7 +260,8 @@ hook, or a test, resolve it by type:
 `Resolve` and `MustResolve` are generic methods on `*ServiceContainer` and on
 `*Scope`. `MustResolve` panics with a message that includes the same error
 text. `CanResolve[T]()` on the container reports whether `T` has a
-registration or instance, without building anything.
+registration or instance, or is an alias whose target has one, without
+building anything.
 
 Resolving a singleton that has not been built yet builds it, and its
 dependencies, on the spot. The container is safe for concurrent resolution: a
@@ -239,8 +270,9 @@ it while it is being built waits and gets the same instance.
 
 Registration also has imperative forms, for wiring done after the App or Worker
 exists: `RegisterSingletonService`, `RegisterScopedService`,
-`RegisterTransientService`, `RegisterService`, and `RegisterServiceInstance`, on
-the `ServiceContainer` and forwarded on the `Worker`. They share the
+`RegisterTransientService`, `RegisterService`, `RegisterServiceInstance`, and
+`RegisterServiceAlias`, on the `ServiceContainer` and forwarded on the
+`Worker`. They share the
 container's registrations with the options and return the same instances.
 
 ## Resolution errors
@@ -250,7 +282,7 @@ Errors from the container wrap one of these sentinels, so classify them with
 
 | Sentinel | Returned when |
 |---|---|
-| `gas.ErrNotRegistered` | A type, or a dependency of one, has no registration or instance |
+| `gas.ErrNotRegistered` | A type, or a dependency of one, has no registration or instance; or an alias's target has none |
 | `gas.ErrCircularDependency` | Constructors depend on each other in a cycle; a constructor or `Init` resolves the type being built through a container or scope it captured; two goroutines' singleton builds would wait on each other; or constructors nest more than 256 deep |
 | `gas.ErrCaptiveDependency` | A singleton's constructor depends on a scoped or transient service |
 | `gas.ErrScopeRequired` | A scoped service is resolved from the container instead of a `Scope` |

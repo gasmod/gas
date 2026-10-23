@@ -164,6 +164,27 @@ func underConcrete() error {
 
 // #endregion concrete
 
+// #region alias
+// Outbox is what the admin page asks for: the mail still waiting to go out.
+type Outbox interface {
+	Pending() int
+}
+
+func (m *SMTPMailer) Pending() int { return 0 }
+
+// aliasOptions registers SMTPMailer once and makes it reachable as both
+// interfaces its consumers ask for.
+func aliasOptions() []gas.Option {
+	return []gas.Option{
+		gas.WithSingletonService[*SMTPMailer](NewSMTPMailer),
+		gas.WithServiceAlias[*SMTPMailer, Mailer](),
+		gas.WithServiceAlias[*SMTPMailer, Outbox](),
+		gas.WithSingletonService[*Signup](NewSignup),
+	}
+}
+
+// #endregion alias
+
 // #region override
 // FakeMailer records what it would have sent.
 type FakeMailer struct{ sent []string }
@@ -220,6 +241,16 @@ func main() {
 	err = underConcrete()
 	fmt.Println(err)
 	fmt.Println(errors.Is(err, gas.ErrNotRegistered))
+
+	aw := gas.NewWorker(aliasOptions()...)
+	if err := aw.Start(context.Background()); err != nil {
+		log.Fatal(err)
+	}
+	ac := aw.ServiceContainer()
+	fmt.Printf("%T %T\n", ac.MustResolve[Mailer](), ac.MustResolve[Outbox]())
+	if err := aw.Shutdown(context.Background()); err != nil {
+		log.Fatal(err)
+	}
 
 	w := gas.NewWorker(testOptions()...)
 	if err := w.Start(context.Background()); err != nil {
