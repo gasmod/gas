@@ -580,9 +580,9 @@ Panics if any of parent, w, or r is nil. Options: `gas.WithValidate(v)`,
 | `Request`        | `() *http.Request`             |                          |
 | `JSON`           | `(status int, v any) error`    | application/json         |
 | `XML`            | `(status int, v any) error`    | application/xml          |
-| `RSS`            | `(status int, v any) error`    | application/rss+xml      |
 | `HTML`           | `(status int, s string) error` | text/html                |
 | `Text`           | `(status int, s string) error` | text/plain               |
+| `Blob`           | `(status int, contentType string, b []byte) error` | given type; sniffed if empty |
 | `NoContent`      | `() error`                     | 204                      |
 | `WriteError`     | `(err error) error`            | unified error response   |
 | `WriteErrorJSON` | `(err error) error`            | forces the JSON envelope |

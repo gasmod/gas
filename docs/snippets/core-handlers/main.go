@@ -49,7 +49,11 @@ func (s *Pages) Init(context.Context) error {
 		return ctx.JSON(http.StatusOK, map[string]int{"count": 3})
 	})
 	s.router.Get(s, "/feed.xml", func(ctx gas.Context) error {
-		return ctx.RSS(http.StatusOK, feed{Version: "2.0"})
+		body, err := xml.Marshal(feed{Version: "2.0"})
+		if err != nil {
+			return err
+		}
+		return ctx.Blob(http.StatusOK, "application/rss+xml; charset=utf-8", append([]byte(xml.Header), body...))
 	})
 	s.router.Get(s, "/page", func(ctx gas.Context) error {
 		return ctx.HTML(http.StatusOK, "<h1>Notes</h1>")

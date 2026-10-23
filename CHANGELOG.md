@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deadline at all. The default is 5s, the header deadline a default config
   already got from `ReadTimeout`, so default behaviour is unchanged.
   Closes #144.
+- **`Context.Blob(status, contentType, b)`** writes bytes the handler has
+  already encoded, under the given content type. An empty `contentType`
+  leaves `Content-Type` as it is, and when none is set net/http detects one
+  from the body. A write error is returned wrapped, as `HTML` and `Text` do.
 
 ### Fixed
 
@@ -86,6 +90,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING: `Worker.ActiveServicesMap`.** It was a test helper compiled
   into the library. Tests now get it from `export_test.go`; use
   `ActiveServices` for the names of the active services.
+- **BREAKING: `Context.RSS`.** Encode the feed and write it with `Blob`:
+  `body, err := xml.Marshal(feed)`, then `ctx.Blob(status,
+  "application/rss+xml; charset=utf-8", append([]byte(xml.Header), body...))`.
+  A type that implements `gas.Context` itself must drop `RSS` and add `Blob`.
 
 ### Security
 

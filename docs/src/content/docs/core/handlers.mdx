@@ -101,15 +101,18 @@ response.
 |---|---|---|
 | `JSON(status, v)` | `status` | `application/json` |
 | `XML(status, v)` | `status` | `application/xml; charset=utf-8` |
-| `RSS(status, v)` | `status` | `application/rss+xml; charset=utf-8` |
 | `HTML(status, s)` | `status` | `text/html; charset=utf-8` |
 | `Text(status, s)` | `status` | `text/plain; charset=utf-8` |
+| `Blob(status, contentType, b)` | `status` | `contentType` |
 | `NoContent()` | `204` | none |
 | `Redirect(status, url)` | `status` | set by `http.Redirect` |
 
-`XML` and `RSS` write the standard `<?xml ...?>` header line before the encoded
-value. The helpers write the status line immediately and return an error only
-when encoding or writing the body fails.
+`XML` writes the standard `<?xml ...?>` header line before the encoded value.
+`Blob` writes bytes you have already encoded, such as the RSS feed above. With
+an empty `contentType` it leaves `Content-Type` as it is, and when none is set,
+`net/http` detects one from the start of the body. The helpers write the
+status line immediately and return an error only when encoding or writing the
+body fails.
 
 <Aside type="caution" title="Write once, then return nil">
 After a helper has written the response, return `nil`. Returning an error at

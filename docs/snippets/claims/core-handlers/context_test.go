@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -142,20 +143,21 @@ type feed struct {
 // Docs: core/handlers.mdx#writing-responses
 // "| `JSON(status, v)` | `status` | `application/json` |
 // | `XML(status, v)` | `status` | `application/xml; charset=utf-8` |
-// | `RSS(status, v)` | `status` | `application/rss+xml; charset=utf-8` |
 // | `HTML(status, s)` | `status` | `text/html; charset=utf-8` |
 // | `Text(status, s)` | `status` | `text/plain; charset=utf-8` |
+// | `Blob(status, contentType, b)` | `status` | `contentType` |
 // | `NoContent()` | `204` | none |
 // | `Redirect(status, url)` | `status` | set by `http.Redirect` |
-// `XML` and `RSS` write the standard `<?xml ...?>` header line before the encoded
-// value."
+// `XML` writes the standard `<?xml ...?>` header line before the encoded value."
 func TestResponseHelpers(t *testing.T) {
 	t.Parallel()
 	app := gas.NewApp()
 	r := app.Router()
 	r.Get(nil, "/json", func(ctx gas.Context) error { return ctx.JSON(201, map[string]int{"n": 3}) })
 	r.Get(nil, "/xml", func(ctx gas.Context) error { return ctx.XML(202, feed{Version: "2.0"}) })
-	r.Get(nil, "/rss", func(ctx gas.Context) error { return ctx.RSS(203, feed{Version: "2.0"}) })
+	r.Get(nil, "/blob", func(ctx gas.Context) error {
+		return ctx.Blob(203, "application/rss+xml; charset=utf-8", []byte(xml.Header+`<rss version="2.0"></rss>`))
+	})
 	r.Get(nil, "/html", func(ctx gas.Context) error { return ctx.HTML(206, "<h1>x</h1>") })
 	r.Get(nil, "/text", func(ctx gas.Context) error { return ctx.Text(207, "hi") })
 	r.Get(nil, "/none", func(ctx gas.Context) error { return ctx.NoContent() })
@@ -169,7 +171,7 @@ func TestResponseHelpers(t *testing.T) {
 	}{
 		{"/json", "application/json", 201, `{"n":3}` + "\n"},
 		{"/xml", "application/xml; charset=utf-8", 202, xml.Header + `<rss version="2.0"></rss>`},
-		{"/rss", "application/rss+xml; charset=utf-8", 203, xml.Header + `<rss version="2.0"></rss>`},
+		{"/blob", "application/rss+xml; charset=utf-8", 203, xml.Header + `<rss version="2.0"></rss>`},
 		{"/html", "text/html; charset=utf-8", 206, "<h1>x</h1>"},
 		{"/text", "text/plain; charset=utf-8", 207, "hi"},
 		{"/none", "", 204, ""},
@@ -186,6 +188,40 @@ func TestResponseHelpers(t *testing.T) {
 	if rr.Code != http.StatusSeeOther || rr.Header().Get("Location") != "/new" ||
 		rr.Header().Get("Content-Type") != want.Header().Get("Content-Type") {
 		t.Errorf("redirect = %d %q %q, want 303 /new %q", rr.Code, rr.Header().Get("Location"), rr.Header().Get("Content-Type"), want.Header().Get("Content-Type"))
+	}
+}
+
+// Docs: core/handlers.mdx#writing-responses
+// "`Blob` writes bytes you have already encoded, such as the RSS feed above. With
+// an empty `contentType` it leaves `Content-Type` as it is, and when none is set,
+// `net/http` detects one from the start of the body."
+func TestBlobEmptyContentType(t *testing.T) {
+	t.Parallel()
+	app := gas.NewApp()
+	r := app.Router()
+	page := []byte("<html><body>notes</body></html>")
+	r.Get(nil, "/sniffed", func(ctx gas.Context) error { return ctx.Blob(200, "", page) })
+	r.Get(nil, "/preset", func(ctx gas.Context) error {
+		ctx.SetHeader("Content-Type", "application/vnd.notes+json")
+		return ctx.Blob(200, "", page)
+	})
+	start(t, app)
+	srv := httptest.NewServer(app.Handler())
+	t.Cleanup(srv.Close)
+
+	for path, want := range map[string]string{
+		"/sniffed": "text/html; charset=utf-8",
+		"/preset":  "application/vnd.notes+json",
+	} {
+		resp, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if ct := resp.Header.Get("Content-Type"); ct != want || string(body) != string(page) {
+			t.Errorf("GET %s = %q %q, want %q and the bytes unchanged", path, ct, body, want)
+		}
 	}
 }
 
@@ -221,7 +257,7 @@ func TestHelpersWriteStatusThenReportErrors(t *testing.T) {
 		"HTML": func(c gas.Context) error { return c.HTML(200, "x") },
 		"JSON": func(c gas.Context) error { return c.JSON(200, "x") },
 		"XML":  func(c gas.Context) error { return c.XML(200, feed{}) },
-		"RSS":  func(c gas.Context) error { return c.RSS(200, feed{}) },
+		"Blob": func(c gas.Context) error { return c.Blob(200, "text/plain", []byte("x")) },
 	} {
 		fw := failingWriter{httptest.NewRecorder()}
 		if err := write(newCtx(fw)); err == nil {

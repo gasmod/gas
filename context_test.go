@@ -260,27 +260,74 @@ func TestContext_XML(t *testing.T) {
 	}
 }
 
-func TestContext_RSS(t *testing.T) {
+func TestContext_Blob(t *testing.T) {
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/", nil)
 	ctx := gas.NewContext(req.Context(), rr, req)
 
-	type data struct {
-		Name string `xml:"name"`
-	}
-	if err := ctx.RSS(http.StatusOK, data{Name: "alice"}); err != nil {
+	body := []byte{0x89, 'P', 'N', 'G'}
+	if err := ctx.Blob(http.StatusCreated, "image/png", body); err != nil {
 		t.Fatal(err)
 	}
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rr.Code)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", rr.Code)
 	}
-	if ct := rr.Header().Get("Content-Type"); ct != "application/rss+xml; charset=utf-8" {
-		t.Fatalf("expected application/rss+xml; charset=utf-8, got %q", ct)
+	if ct := rr.Header().Get("Content-Type"); ct != "image/png" {
+		t.Fatalf("expected image/png, got %q", ct)
 	}
-	expected := `<?xml version="1.0" encoding="UTF-8"?>` + "\n" + `<data><name>alice</name></data>`
-	if rr.Body.String() != expected {
-		t.Fatalf("expected %q, got %q", expected, rr.Body.String())
+	if rr.Body.String() != string(body) {
+		t.Fatalf("expected %q, got %q", body, rr.Body.String())
+	}
+}
+
+func TestContext_BlobEmptyContentType(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := gas.NewContext(r.Context(), w, r)
+		if r.URL.Path == "/preset" {
+			ctx.SetHeader("Content-Type", "application/vnd.notes+json")
+		}
+		if err := ctx.Blob(http.StatusOK, "", []byte("<html><body>hi</body></html>")); err != nil {
+			t.Error(err)
+		}
+	}))
+	defer srv.Close()
+
+	for path, want := range map[string]string{
+		"/sniff":  "text/html; charset=utf-8",
+		"/preset": "application/vnd.notes+json",
+	} {
+		resp, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if ct := resp.Header.Get("Content-Type"); ct != want {
+			t.Errorf("GET %s: expected Content-Type %q, got %q", path, want, ct)
+		}
+	}
+}
+
+var errBodyWrite = errors.New("write failed")
+
+// failingBodyWriter fails every body write with errBodyWrite.
+type failingBodyWriter struct {
+	*httptest.ResponseRecorder
+}
+
+func (failingBodyWriter) Write([]byte) (int, error) { return 0, errBodyWrite }
+
+func TestContext_BlobWriteError(t *testing.T) {
+	w := failingBodyWriter{httptest.NewRecorder()}
+	req := httptest.NewRequest("GET", "/", nil)
+	ctx := gas.NewContext(req.Context(), w, req)
+
+	err := ctx.Blob(http.StatusAccepted, "application/octet-stream", []byte("x"))
+	if !errors.Is(err, errBodyWrite) {
+		t.Fatalf("expected the write error wrapped, got %v", err)
+	}
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 written before the body, got %d", w.Code)
 	}
 }
 
