@@ -4,6 +4,7 @@ package main
 // #region imports
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log"
 	"log/slog"
@@ -30,9 +31,8 @@ func main() {
 		gas.WithScopedService[RequestLogger](func(l gas.Logger) RequestLogger {
 			return l.With().Logger()
 		}),
+		gas.WithSingletonService[*Notes](NewNotes),
 	)
-
-	routes(app.Router())
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
@@ -72,19 +72,33 @@ func fluent(logger gas.Logger) {
 
 // #endregion fluent
 
-// #region request-logger
-// chi's RequestID runs first, so the request logger can add request_id.
-// RequestLogger[T] resolves T from the request scope, derives a logger with
-// the request ID, puts it on the request context and, because T is scoped,
-// in the scope too.
-func routes(router *gas.Router) {
-	router.UseMiddlewareFunc(middleware.RequestID)
-	router.UseMiddlewareFunc(gas.RequestLogger[RequestLogger]())
-	router.UseMiddlewareFunc(attachUser)
-
-	router.Get(nil, "/notes", listNotes)
+// Notes installs the request logging middleware and serves the notes routes.
+type Notes struct {
+	router *gas.Router
 }
 
+func NewNotes(router *gas.Router) *Notes { return &Notes{router: router} }
+
+func (s *Notes) Name() string                { return "notes" }
+func (s *Notes) Close(context.Context) error { return nil }
+
+func (s *Notes) Init(context.Context) error {
+	// #region request-logger
+	// chi's RequestID runs first, so the request logger can add request_id.
+	// RequestLogger[T] resolves T from the request scope, derives a logger with
+	// the request ID, puts it on the request context and, because T is scoped,
+	// in the scope too.
+	s.router.UseMiddlewareFunc(middleware.RequestID)
+	s.router.UseMiddlewareFunc(gas.RequestLogger[RequestLogger]())
+	s.router.UseMiddlewareFunc(attachUser)
+
+	s.router.Get(s, "/notes", listNotes)
+	// #endregion request-logger
+
+	return nil
+}
+
+// #region list-notes
 // listNotes takes the request's logger as a dependency; it carries
 // request_id.
 func listNotes(ctx gas.Context, logger RequestLogger) error {
@@ -92,7 +106,7 @@ func listNotes(ctx gas.Context, logger RequestLogger) error {
 	return ctx.JSON(http.StatusOK, []string{})
 }
 
-// #endregion request-logger
+// #endregion list-notes
 
 // #region request-fields
 // attachUser adds a field for everything downstream that logs through

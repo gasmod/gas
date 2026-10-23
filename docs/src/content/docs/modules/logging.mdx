@@ -84,7 +84,7 @@ and waits.
 
 ### Request logging
 
-<Code code={region(lg, 'request-logger')} lang="go" />
+<Code code={[region(lg, 'request-logger'), region(lg, 'list-notes')].join('\n\n')} lang="go" />
 
 `gas.RequestLogger[T]()` is core middleware. For each request it resolves `T`
 from the request scope and derives a per-request logger from it with `With`,

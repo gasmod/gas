@@ -59,7 +59,7 @@ Patterns use chi's syntax: `{name}` matches one path segment,
 `{name:regexp}` adds a regular expression, and a trailing `*` matches the rest
 of the path.
 
-<Code code={region(rt, 'params')} lang="go" />
+<Code code={[region(rt, 'params'), region(rt, 'param-handlers')].join('\n\n')} lang="go" />
 
 `ctx.Param(name)` returns a path parameter, and `ctx.Param("*")` the part
 matched by the wildcard. A plain handler reads the same values with

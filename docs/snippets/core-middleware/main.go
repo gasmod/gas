@@ -70,14 +70,26 @@ func (a *Admin) stats(ctx gas.Context) error { return ctx.NoContent() }
 
 // #endregion reference
 
-// #region global
-// Global middleware wraps every route on the router.
-func global(router *gas.Router) {
+// Site applies middleware to every route on the router. It refers to
+// "require-auth", so like Admin it depends on Auth.
+type Site struct {
+	router *gas.Router
+}
+
+func NewSite(router *gas.Router, _ *Auth) *Site { return &Site{router: router} }
+
+func (s *Site) Name() string                { return "site" }
+func (s *Site) Close(context.Context) error { return nil }
+
+func (s *Site) Init(context.Context) error {
+	// #region global
+	// Global middleware wraps every route on the router.
+
 	// By name, from the registry.
-	router.UseMiddlewareByName("require-auth")
+	s.router.UseMiddlewareByName("require-auth")
 
 	// Inline. It has no owner, so no teardown disables it.
-	router.UseMiddlewareFunc(func(next http.Handler) http.Handler {
+	s.router.UseMiddlewareFunc(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("X-Served-By", "notes")
 			next.ServeHTTP(w, r)
@@ -85,16 +97,17 @@ func global(router *gas.Router) {
 	})
 
 	// Inline with a display name, which shows in the route map.
-	router.Use(gas.MiddlewareFuncWithName("timing", func(next http.Handler) http.Handler {
+	s.router.Use(gas.MiddlewareFuncWithName("timing", func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 			next.ServeHTTP(w, r)
 			log.Printf("%s took %s", r.URL.Path, time.Since(start))
 		})
 	}))
-}
+	// #endregion global
 
-// #endregion global
+	return nil
+}
 
 // #region logging
 // RequestLogger is a scoped logger type built from the singleton gas.Logger.
@@ -123,37 +136,6 @@ func logging() *gas.App {
 
 // #endregion logging
 
-// #region security
-// Secure defaults out of the box; override individually, or pass an empty
-// string to drop a header entirely.
-func security(router *gas.Router) {
-	router.UseMiddlewareFunc(gas.SecurityHeaders(
-		gas.WithSecurityHeadersFrameOptions("SAMEORIGIN"),
-		gas.WithSecurityHeadersContentSecurityPolicy("default-src 'self'"),
-	))
-}
-
-// #endregion security
-
-// #region cachecontrol
-func caching(router *gas.Router) {
-	// Fingerprinted assets: cache hard.
-	router.UseMiddlewareFunc(gas.CacheControl(
-		gas.WithCacheControlPathPrefix("/static/"),
-		gas.WithCacheControlPublic(),
-		gas.WithCacheControlMaxAge(365*24*time.Hour),
-		gas.WithCacheControlImmutable(),
-	))
-
-	// API responses: never store.
-	router.UseMiddlewareFunc(gas.CacheControl(
-		gas.WithCacheControlPathPrefix("/api/"),
-		gas.WithCacheControlNoStore(),
-	))
-}
-
-// #endregion cachecontrol
-
 // #region csrf
 // Cross-origin protection is on by default. These options configure it.
 func csrf() []gas.Option {
@@ -177,8 +159,32 @@ func main() {
 		gas.WithSingletonService[*Admin](NewAdmin),
 	)
 	app := gas.NewApp(opts...)
-	security(app.Router())
-	caching(app.Router())
+	router := app.Router()
+
+	// #region security
+	// Secure defaults out of the box; override individually, or pass an empty
+	// string to drop a header entirely.
+	router.UseMiddlewareFunc(gas.SecurityHeaders(
+		gas.WithSecurityHeadersFrameOptions("SAMEORIGIN"),
+		gas.WithSecurityHeadersContentSecurityPolicy("default-src 'self'"),
+	))
+	// #endregion security
+
+	// #region cachecontrol
+	// Fingerprinted assets: cache hard.
+	router.UseMiddlewareFunc(gas.CacheControl(
+		gas.WithCacheControlPathPrefix("/static/"),
+		gas.WithCacheControlPublic(),
+		gas.WithCacheControlMaxAge(365*24*time.Hour),
+		gas.WithCacheControlImmutable(),
+	))
+
+	// API responses: never store.
+	router.UseMiddlewareFunc(gas.CacheControl(
+		gas.WithCacheControlPathPrefix("/api/"),
+		gas.WithCacheControlNoStore(),
+	))
+	// #endregion cachecontrol
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)

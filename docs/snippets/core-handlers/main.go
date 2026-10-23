@@ -11,21 +11,60 @@ import (
 	"github.com/gasmod/gas"
 )
 
-// #region forms
-// Both handler forms register on the same router.
-func forms(router *gas.Router) {
+// Pages owns the routes the handler examples register.
+type Pages struct {
+	router *gas.Router
+}
+
+func NewPages(router *gas.Router) *Pages { return &Pages{router: router} }
+
+func (s *Pages) Name() string                { return "pages" }
+func (s *Pages) Close(context.Context) error { return nil }
+
+// #region feed
+type feed struct {
+	XMLName xml.Name `xml:"rss"`
+	Version string   `xml:"version,attr"`
+}
+
+// #endregion feed
+
+func (s *Pages) Init(context.Context) error {
+	// #region forms
+	// Both handler forms register on the same router.
+
 	// Plain: the standard library signature, passed through as is.
-	router.Get(nil, "/ping", func(w http.ResponseWriter, _ *http.Request) {
+	s.router.Get(s, "/ping", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
 	// DI-aware: gas.Context first, dependencies after, one error result.
-	router.Get(nil, "/hello", func(ctx gas.Context) error {
+	s.router.Get(s, "/hello", func(ctx gas.Context) error {
 		return ctx.Text(http.StatusOK, "hello")
 	})
-}
+	// #endregion forms
 
-// #endregion forms
+	// #region responses
+	s.router.Get(s, "/json", func(ctx gas.Context) error {
+		return ctx.JSON(http.StatusOK, map[string]int{"count": 3})
+	})
+	s.router.Get(s, "/feed.xml", func(ctx gas.Context) error {
+		return ctx.RSS(http.StatusOK, feed{Version: "2.0"})
+	})
+	s.router.Get(s, "/page", func(ctx gas.Context) error {
+		return ctx.HTML(http.StatusOK, "<h1>Notes</h1>")
+	})
+	s.router.Delete(s, "/notes/{id}", func(ctx gas.Context) error {
+		return ctx.NoContent()
+	})
+	s.router.Get(s, "/old", func(ctx gas.Context) error {
+		ctx.Redirect(http.StatusMovedPermanently, "/new")
+		return nil
+	})
+	// #endregion responses
+
+	return nil
+}
 
 // NoteStore is a singleton: one instance shared by every request.
 type NoteStore struct {
@@ -86,33 +125,6 @@ func search(ctx gas.Context) error {
 }
 
 // #endregion request
-
-// #region responses
-type feed struct {
-	XMLName xml.Name `xml:"rss"`
-	Version string   `xml:"version,attr"`
-}
-
-func responses(router *gas.Router) {
-	router.Get(nil, "/json", func(ctx gas.Context) error {
-		return ctx.JSON(http.StatusOK, map[string]int{"count": 3})
-	})
-	router.Get(nil, "/feed.xml", func(ctx gas.Context) error {
-		return ctx.RSS(http.StatusOK, feed{Version: "2.0"})
-	})
-	router.Get(nil, "/page", func(ctx gas.Context) error {
-		return ctx.HTML(http.StatusOK, "<h1>Notes</h1>")
-	})
-	router.Delete(nil, "/notes/{id}", func(ctx gas.Context) error {
-		return ctx.NoContent()
-	})
-	router.Get(nil, "/old", func(ctx gas.Context) error {
-		ctx.Redirect(http.StatusMovedPermanently, "/new")
-		return nil
-	})
-}
-
-// #endregion responses
 
 // #region bind
 // CreateNote is decoded from a JSON body and validated by its validate tags.
@@ -185,7 +197,7 @@ func plainWithDeps(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	app := wire()
-	forms(app.Router())
+	app.RegisterSingletonService[*Pages](NewPages)
 	if err := app.Start(context.Background()); err != nil {
 		log.Fatal(err)
 	}
