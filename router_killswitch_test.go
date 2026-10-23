@@ -253,3 +253,56 @@ func TestKillSwitchLeavesAnonymousMiddlewareAlone(t *testing.T) {
 		t.Errorf("inline middleware ran %d times, want 1", ran)
 	}
 }
+
+// TestKillSwitchOnSharedRoutePrefix covers two services that each mount their
+// own block on the same prefix. Tearing one down 503s only its routes, and its
+// named middleware never runs on the other service's routes, before the
+// teardown, during it, or after a restart re-registers it.
+func TestKillSwitchOnSharedRoutePrefix(t *testing.T) {
+	notes := &testService{name: "notes"}
+	billing := &testService{name: "billing"}
+
+	ran := 0
+	notesOnly := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ran++
+			next.ServeHTTP(w, r)
+		})
+	}
+	mountNotes := func(router *gas.Router) {
+		router.Register(notes, "notes-only", notesOnly)
+		router.Route("/api", func(sub *gas.Router) {
+			sub.Use(gas.MiddlewareByName("notes-only"))
+			sub.Handle(notes, http.MethodGet, "/notes", ksHandler)
+		})
+	}
+
+	router := gas.NewRouter()
+	mountNotes(router)
+	router.Route("/api", func(sub *gas.Router) {
+		sub.Handle(billing, http.MethodGet, "/plans", ksHandler)
+	})
+	router.Seal()
+
+	check := func(stage string, wantNotes, wantRan int) {
+		t.Helper()
+		if got := ksStatus(t, router, "/api/notes"); got != wantNotes {
+			t.Errorf("%s: /api/notes = %d, want %d", stage, got, wantNotes)
+		}
+		if got := ksStatus(t, router, "/api/plans"); got != http.StatusOK {
+			t.Errorf("%s: /api/plans = %d, want 200", stage, got)
+		}
+		if ran != wantRan {
+			t.Errorf("%s: notes-only ran %d times in total, want %d", stage, ran, wantRan)
+		}
+	}
+
+	check("after seal", http.StatusOK, 1)
+
+	router.RemoveByService(notes)
+	check("after kill-switch", http.StatusServiceUnavailable, 1)
+
+	// RestartService -> svc.Init(ctx) re-registers the middleware, then the routes.
+	mountNotes(router)
+	check("after restart", http.StatusOK, 2)
+}
