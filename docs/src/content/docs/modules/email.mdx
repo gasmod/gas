@@ -1,0 +1,160 @@
+---
+title: Email
+description: Send email through AWS SES with gas/email, as literal messages or rendered from templates held by a gas.TemplateProvider.
+---
+
+import { Code, Aside } from '@astrojs/starlight/components';
+import email from '../../../../snippets/modules-email/main.go?raw';
+import emailTest from '../../../../snippets/modules-email/main_test.go?raw';
+import { region } from '../../../lib/snippet';
+
+## What it is for
+
+`gas/email/ses` implements core's `gas.EmailProvider` on AWS SES. A message is
+either written by the caller (`Send`) or rendered from named templates that a
+`gas.TemplateProvider` holds (`SendFromTemplate`). That is the same interface
+[UI](/gas/modules/ui/) renders pages from, so one
+[template store](/gas/modules/templates/) can serve both.
+
+Services depend on `gas.EmailProvider` and never import this module, so a
+test can swap in the mock from `emailtest`.
+
+## Install
+
+```bash
+go get github.com/gasmod/gas/email
+```
+
+## Wiring
+
+<Code code={region(email, 'wiring')} lang="go" title="main.go" />
+
+`ses.New()` returns a constructor that the container calls with a
+`gas.TemplateProvider`, a `gas.ConfigProvider` and a `gas.Logger`. All three
+must be registered, even if the app only ever calls `Send`; without a template
+provider, startup fails with `no registration for gas.TemplateProvider`.
+
+If the container holds a concrete store type rather than the interface,
+`NewWithCustomProvider[T]()` resolves `T` instead:
+
+<Code code={region(email, 'custom-provider')} lang="go" />
+
+`Init` runs at startup. It binds and validates the configuration, then, unless
+`WithClient` supplied a client, builds the SES client from the AWS default
+configuration (environment variables and shared config files) and fetches the
+credentials under `Init`'s context, so a missing or broken credential setup
+fails startup. It does not contact SES: an unreachable endpoint or rejected
+credentials surface on the first send.
+
+`WithClient(c)` injects any client with SES's `SendEmail` method, for example a
+fake in tests. `Client()` returns the underlying `*ses.Client` for calls beyond
+`gas.EmailProvider`, or `nil` when the injected client is of another type.
+
+## Usage
+
+### Sending
+
+<Code code={region(email, 'send')} lang="go" title="orders.go" />
+
+`Send` passes the message to SES `SendEmail`: `To`, `Cc` and `Bcc` as the
+destination, `Subject`, `TextBody` and `HTMLBody` as UTF-8 content, and
+`ReplyTo` as the single reply-to address. An empty `From` uses
+`email.fromemail` from the configuration.
+
+<Aside type="caution">
+`gas.Email.Headers` is accepted but never sent: the SES backend drops it
+without an error. See [Known issues](/gas/project/known-issues/).
+</Aside>
+
+### Templated sends
+
+<Code code={region(email, 'templated')} lang="go" />
+
+For each template name that is set, `SendFromTemplate` fetches the template
+from the `gas.TemplateProvider` and executes it with `Data`. The subject and
+text templates render with `text/template`; the HTML template renders with
+`html/template`, so values are escaped there. The results are written into the
+message's `Subject`, `TextBody` and `HTMLBody` fields, so the message you pass
+is modified, and then it is sent as `Send` sends it. A template field left
+empty keeps the literal field of the embedded `Email`, so you can render the
+body and write the subject yourself. Templates are fetched and parsed on every
+call; nothing is cached.
+
+<Code code={region(email, 'templates')} lang="go" />
+
+### Local development
+
+Point the endpoint at LocalStack and nothing else changes. With the
+[environment provider](/gas/modules/config/#environment-variable-names):
+
+```bash
+EMAIL__REGION=us-east-1
+EMAIL__FROMEMAIL=noreply@example.com
+EMAIL__ENDPOINT=http://localhost:4566
+EMAIL__ACCESSKEYID=test
+EMAIL__SECRETACCESSKEY=test
+```
+
+## Configuration
+
+Bound from the `gas.ConfigProvider` in `Init`. There are no defaults.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `email.region` | string | none, required | AWS region of the SES service. |
+| `email.fromemail` | string | none, required | Sender address for messages with no `From`. |
+| `email.endpoint` | string | empty | Custom endpoint URL, for example LocalStack. Empty uses the AWS endpoint. |
+| `email.accesskeyid` | string | empty | Static access key ID. Used only when `email.secretaccesskey` is also set; otherwise the default AWS credential chain applies. |
+| `email.secretaccesskey` | string | empty | Static secret access key, paired with `email.accesskeyid`. |
+
+A missing `email.region` or `email.fromemail` fails `Init`, even when
+`WithClient` supplies the client. `ses.WithConfig(cfg)` replaces the whole
+configuration and skips the provider; a config given that way is used as
+given, without validation.
+
+## Errors
+
+| Error | Returned when |
+|---|---|
+| `email.ErrClosed` | `Send`, `SendFromTemplate` or `CheckReady` after `Close`. `email.IsErrClosed(err)` checks for it. |
+
+Every other error starts with the service name, `gas/email/ses`, and wraps
+the underlying SDK, template provider or template error with `%w`:
+`gas/email/ses: config binding: ...`, `gas/email/ses: retrieve aws
+credentials: ...`, `gas/email/ses: failed to send email: ...`, and
+`gas/email/ses: render html template "welcome-html": ...` for a template that
+cannot be fetched, parsed or executed. Validation errors name the field, for
+example `Email.Region`.
+
+<Aside type="caution">
+`Send` and `SendFromTemplate` on a service whose `Init` has not run panic with
+a nil pointer dereference instead of returning an error. See [Known issues](/gas/project/known-issues/).
+</Aside>
+
+## Health and readiness
+
+The service implements `gas.ReadyReporter`. `CheckReady` returns `nil` until
+`Close` runs and `email.ErrClosed` after, so a readiness probe takes the
+instance out of rotation while it drains. `Close` only marks the service
+closed; the service starts no goroutines.
+
+It does not implement `gas.HealthReporter`: the SES client holds no state that
+a restart would repair. See [Deployment](/gas/production/deployment/) for how
+the probes use these.
+
+## Testing
+
+`emailtest.MockEmail` implements `gas.EmailProvider` and `gas.ReadyReporter`.
+Each method records the call in `Calls` and delegates to `SendFn`,
+`SendFromTemplateFn` or `CheckReadyFn` when set; otherwise it returns `nil`.
+`CallCount(method)` and `Reset()` help with assertions.
+
+<Code code={region(emailTest, 'testing')} lang="go" title="orders_test.go" />
+
+The mock records the `*gas.TemplatedEmail` as given; it renders nothing.
+
+## API reference
+
+- [`email`](https://pkg.go.dev/github.com/gasmod/gas/email)
+- [`email/ses`](https://pkg.go.dev/github.com/gasmod/gas/email/ses)
+- [`email/emailtest`](https://pkg.go.dev/github.com/gasmod/gas/email/emailtest)

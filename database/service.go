@@ -268,7 +268,7 @@ func (s *Service) Pool() *pgxpool.Pool {
 // would resolve (uninitialized or closed). Transient connectivity
 // issues are surfaced via CheckReady instead, since database/sql and
 // pgxpool both auto-reconnect.
-func (s *Service) CheckHealth(_ context.Context) error {
+func (s *Service) CheckHealth(context.Context) error {
 	if s.closed.Load() {
 		return errors.New("database: closed")
 	}

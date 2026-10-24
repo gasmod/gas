@@ -32,7 +32,7 @@
 // The services are registered with the DI container by the app; see each
 // sub-package for its constructor and configuration.
 //
-// Guides with usage examples are at https://gasmod.github.io/gas.
+// Guides with usage examples are at https://gasmod.github.io/gas/modules/auth/.
 //
 // SPDX-License-Identifier: MIT
 package auth

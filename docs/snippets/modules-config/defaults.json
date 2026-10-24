@@ -1,0 +1,7 @@
+{
+  "notes": {
+    "pagesize": 50,
+    "timeout": "5s",
+    "tags": ["inbox", "archive"]
+  }
+}

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -201,9 +202,9 @@ func (s *reporterService[K]) Init(context.Context) error { return nil }
 
 func (s *reporterService[K]) Close(context.Context) error { return nil }
 
-func (s *reporterService[K]) CheckHealth(_ context.Context) error { return s.healthErr }
+func (s *reporterService[K]) CheckHealth(context.Context) error { return s.healthErr }
 
-func (s *reporterService[K]) CheckReady(_ context.Context) error { return s.readyErr }
+func (s *reporterService[K]) CheckReady(context.Context) error { return s.readyErr }
 
 type (
 	tagA struct{}
@@ -223,7 +224,7 @@ func (s *healthOnlyService[K]) Init(context.Context) error { return nil }
 
 func (s *healthOnlyService[K]) Close(context.Context) error { return nil }
 
-func (s *healthOnlyService[K]) CheckHealth(_ context.Context) error { return s.err }
+func (s *healthOnlyService[K]) CheckHealth(context.Context) error { return s.err }
 
 // readyOnlyService implements ReadyReporter but not HealthReporter.
 type readyOnlyService[K any] struct {
@@ -237,7 +238,7 @@ func (s *readyOnlyService[K]) Init(context.Context) error { return nil }
 
 func (s *readyOnlyService[K]) Close(context.Context) error { return nil }
 
-func (s *readyOnlyService[K]) CheckReady(_ context.Context) error { return s.err }
+func (s *readyOnlyService[K]) CheckReady(context.Context) error { return s.err }
 
 // slowReporter blocks inside CheckHealth for the given delay. Used to verify
 // that CheckHealth runs reporters concurrently.
@@ -281,7 +282,7 @@ func (s *panicReporter[K]) Init(context.Context) error { return nil }
 
 func (s *panicReporter[K]) Close(context.Context) error { return nil }
 
-func (s *panicReporter[K]) CheckHealth(_ context.Context) error { panic(s.message) }
+func (s *panicReporter[K]) CheckHealth(context.Context) error { panic(s.message) }
 
 // ctxObservingReporter records the context it was called with.
 type ctxObservingReporter[K any] struct {
@@ -589,4 +590,103 @@ func TestWorker_CheckHealth_Concurrent(t *testing.T) {
 			t.Fatalf("missing result for %q: %v", name, results)
 		}
 	}
+}
+
+// mountService mounts one route under /api in its own Route block from Init,
+// so two of them share the prefix. With middleware set, it also registers a
+// named middleware that only its own block uses. K keeps the types distinct
+// for CloseService and RestartService.
+type mountService[K any] struct {
+	router     *gas.Router
+	ran        *atomic.Int32 // counts runs of the named middleware
+	name, path string
+	middleware string
+}
+
+func (s *mountService[K]) Name() string { return s.name }
+
+func (s *mountService[K]) Init(context.Context) error {
+	if s.middleware != "" {
+		s.router.Register(s, s.middleware, func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				s.ran.Add(1)
+				next.ServeHTTP(w, r)
+			})
+		})
+	}
+	s.router.Route("/api", func(sub *gas.Router) {
+		if s.middleware != "" {
+			sub.Use(gas.MiddlewareByName(s.middleware))
+		}
+		sub.Handle(s, http.MethodGet, s.path, func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+	})
+	return nil
+}
+
+func (s *mountService[K]) Close(context.Context) error { return nil }
+
+type (
+	notesMount   struct{}
+	billingMount struct{}
+)
+
+// On an App, two services that mount blocks on the same prefix are torn down
+// and restarted independently: closing one 503s only its route, restarting it
+// brings the route back, and its middleware never runs on the other's route.
+func TestApp_KillSwitchOnSharedRoutePrefix(t *testing.T) {
+	var ran atomic.Int32
+	app := gas.NewApp(
+		gas.WithSingletonService[*mountService[notesMount]](
+			func(r *gas.Router) *mountService[notesMount] {
+				return &mountService[notesMount]{
+					router:     r,
+					name:       "notes",
+					path:       "/notes",
+					middleware: "notes-only",
+					ran:        &ran,
+				}
+			},
+		),
+		gas.WithSingletonService[*mountService[billingMount]](
+			func(r *gas.Router) *mountService[billingMount] {
+				return &mountService[billingMount]{router: r, name: "billing", path: "/plans"}
+			},
+		),
+	)
+	if err := app.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = app.Stop(context.Background()) })
+
+	check := func(stage string, wantNotes, wantPlans int, wantRan int32) {
+		t.Helper()
+		if got := ksStatus(t, app.Handler(), "/api/notes"); got != wantNotes {
+			t.Errorf("%s: /api/notes = %d, want %d", stage, got, wantNotes)
+		}
+		if got := ksStatus(t, app.Handler(), "/api/plans"); got != wantPlans {
+			t.Errorf("%s: /api/plans = %d, want %d", stage, got, wantPlans)
+		}
+		if got := ran.Load(); got != wantRan {
+			t.Errorf("%s: notes-only ran %d times in total, want %d", stage, got, wantRan)
+		}
+	}
+
+	check("after start", http.StatusOK, http.StatusOK, 1)
+
+	if err := app.CloseService[*mountService[notesMount]](context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	check("notes closed", http.StatusServiceUnavailable, http.StatusOK, 1)
+
+	if err := app.RestartService[*mountService[notesMount]](context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	check("notes restarted", http.StatusOK, http.StatusOK, 2)
+
+	if err := app.CloseService[*mountService[billingMount]](context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	check("billing closed", http.StatusOK, http.StatusServiceUnavailable, 3)
 }

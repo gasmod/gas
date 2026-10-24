@@ -2,12 +2,15 @@ package gas_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gasmod/gas"
 )
@@ -40,6 +43,117 @@ func TestApp_Run_ServeErrorStopsApp(t *testing.T) {
 	}
 	if !svc.closed.Load() {
 		t.Error("Run() returned without closing the started service")
+	}
+}
+
+// errCloseFailed is what failingCloser's Close returns.
+var errCloseFailed = errors.New("close failed")
+
+// failingCloser is a Service whose Close fails.
+type failingCloser struct{}
+
+func (*failingCloser) Name() string { return "failing-closer" }
+
+func (*failingCloser) Init(context.Context) error { return nil }
+
+func (*failingCloser) Close(context.Context) error { return errCloseFailed }
+
+// servingApp starts an App built from opts on a free local port, serves it,
+// and returns it once it answers. With stuck set, it also holds one request
+// in flight until the test ends.
+func servingApp(t *testing.T, timeout time.Duration, stuck bool, opts ...gas.Option) *gas.App {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	app := gas.NewApp(opts...)
+	app.Config().Server.Host = "127.0.0.1"
+	app.Config().Server.Port = port
+	app.Config().Server.ShutdownTimeout = timeout
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	app.Router().Handle(nil, http.MethodGet, "/up", func(http.ResponseWriter, *http.Request) {})
+	app.Router().Handle(nil, http.MethodGet, "/stuck", func(http.ResponseWriter, *http.Request) {
+		close(entered)
+		<-release
+	})
+	if err := app.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = app.Serve() }()
+
+	base := "http://127.0.0.1:" + strconv.Itoa(port)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		resp, gErr := http.Get(base + "/up") //nolint:noctx,gosec // a local test server
+		if gErr == nil {
+			_ = resp.Body.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("server never answered: %v", gErr)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if stuck {
+		go func() {
+			resp, gErr := http.Get(base + "/stuck") //nolint:noctx,gosec // a local test server
+			if gErr == nil {
+				_ = resp.Body.Close()
+			}
+		}()
+		<-entered
+	}
+	return app
+}
+
+// A Stop with nothing in flight and no failing Close returns nil.
+func TestApp_Stop_CleanReturnsNil(t *testing.T) {
+	t.Parallel()
+	svc := &runCloser{}
+	app := servingApp(t, time.Second, false, gas.WithServiceInstance[*runCloser](svc))
+	if err := app.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop() = %v, want nil", err)
+	}
+	if !svc.closed.Load() {
+		t.Error("Stop() did not close the service")
+	}
+}
+
+// A request that outlives ShutdownTimeout makes Stop return the server
+// shutdown error, and the services are still closed.
+func TestApp_Stop_ReturnsServerShutdownError(t *testing.T) {
+	t.Parallel()
+	svc := &runCloser{}
+	app := servingApp(t, 100*time.Millisecond, true, gas.WithServiceInstance[*runCloser](svc))
+	err := app.Stop(context.Background())
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Stop() = %v, want an error wrapping context.DeadlineExceeded", err)
+	}
+	if !svc.closed.Load() {
+		t.Error("Stop() returned the server shutdown error without closing the service")
+	}
+}
+
+// A server shutdown error and a failing Close are both returned, joined.
+func TestApp_Stop_JoinsServerAndWorkerErrors(t *testing.T) {
+	t.Parallel()
+	app := servingApp(
+		t,
+		100*time.Millisecond,
+		true,
+		gas.WithServiceInstance[*failingCloser](&failingCloser{}),
+	)
+	err := app.Stop(context.Background())
+	if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, errCloseFailed) {
+		t.Fatalf("Stop() = %v, want the server shutdown error joined with the Close error", err)
 	}
 }
 

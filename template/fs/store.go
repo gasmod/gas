@@ -39,7 +39,7 @@ func (s *Store) Get(_ context.Context, name string) ([]byte, error) {
 }
 
 // List returns all template names from the fs.FS in sorted order.
-func (s *Store) List(_ context.Context) ([]string, error) {
+func (s *Store) List(context.Context) ([]string, error) {
 	var names []string
 	err := fs.WalkDir(s.fsys, ".", func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {

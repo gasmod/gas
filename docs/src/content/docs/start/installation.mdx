@@ -1,0 +1,116 @@
+---
+title: Installation
+description: Install Gas and its modules in a Go project, run the smallest app, and check that it works.
+---
+
+import { Code, Aside } from '@astrojs/starlight/components';
+import hello from '../../../../snippets/start-installation/main.go?raw';
+import { region } from '../../../lib/snippet';
+
+## Requirements
+
+Go 1.27.3 or newer. The core and every module declare `go 1.27.3` in their
+`go.mod`.
+
+Gas is pre-1.0, so a minor version may contain breaking changes. Read the
+[changelog](https://github.com/gasmod/gas/blob/main/CHANGELOG.md) before
+upgrading. These docs describe v0.6.0.
+
+## Install the core
+
+In a Go module, add the core package:
+
+```bash
+go get github.com/gasmod/gas
+```
+
+The core holds the app, the DI container, the router, handlers, middleware,
+errors, and events. It is enough for an HTTP app with no infrastructure.
+
+## Add modules
+
+Everything else is a separate Go module under `github.com/gasmod/gas/`, so an
+app adds only the modules it uses. For example, configuration, logging, a
+database, and migrations:
+
+```bash
+go get github.com/gasmod/gas/config \
+  github.com/gasmod/gas/log \
+  github.com/gasmod/gas/database \
+  github.com/gasmod/gas/migrate
+```
+
+The modules are `auth`, `cache`, `config`, `database`, `email`, `log`,
+`migrate`, `queue`, `storage`, `template`, and `ui`.
+[Modules overview](/gas/modules/overview/) says what each one is for, and each
+module's page lists what it needs from the container.
+
+<Aside type="note" title="Database drivers">
+`gas/database` does not import a SQLite driver. For SQLite, add one as well,
+such as `modernc.org/sqlite`, and import it for its side effect. The
+[tutorial](/gas/start/tutorial/) does this, and
+[Database](/gas/modules/database/) covers the PostgreSQL drivers.
+</Aside>
+
+## The smallest app
+
+Create a module with one file:
+
+```bash
+mkdir hello && cd hello
+go mod init example.com/hello
+go get github.com/gasmod/gas
+```
+
+<Code code={region(hello, 'app')} lang="go" title="main.go" />
+
+`gas.NewApp` creates the app with its router, event bus, and DI container.
+`Router().Get` registers a handler for `GET /`. Its first argument is the
+service that owns the route; `nil` hands it to the router itself, which is why
+the log below names `gas/router`. A service passes itself, which ties the
+route to that service (see [Ownership and teardown](/gas/core/ownership/)). `Run` initializes the registered services, starts
+the HTTP server, and blocks until the process gets `SIGINT` or `SIGTERM`.
+
+## Check that it works
+
+Run it:
+
+```bash
+go run .
+```
+
+```text
+... WARN no logger registered reason="no registration for gas.Logger"
+... INFO route registered service=gas/router method=GET path=/
+... INFO server started environment="" addr=0.0.0.0:8080
+```
+
+No `gas.Logger` is registered, so Gas warns once and logs through
+`slog.Default()`. The server listens on `0.0.0.0:8080`, the default
+`Server.Host` and `Server.Port`.
+
+From another terminal:
+
+```bash
+curl localhost:8080/
+```
+
+```text
+Hello, Gas!
+```
+
+Stop the app with Ctrl+C. It closes its services and exits:
+
+```text
+... INFO shutdown signal received signal=interrupt
+... INFO closing service service=gas/router
+... INFO closing service service=gas/eventbus
+... INFO shutdown complete
+```
+
+## Next
+
+The [tutorial](/gas/start/tutorial/) builds a complete JSON API on SQLite,
+with configuration, logging, migrations, API keys, and a test.
+[Project structure](/gas/start/project-structure/) shows how to lay out a
+larger app.

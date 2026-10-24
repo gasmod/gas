@@ -1,0 +1,217 @@
+---
+title: Middleware
+description: Named and inline middleware, where to apply it, the order it runs in, the built-in middleware, and cross-origin protection.
+---
+
+import { Code, Aside } from '@astrojs/starlight/components';
+import mw from '../../../../snippets/core-middleware/main.go?raw';
+import { region } from '../../../lib/snippet';
+
+Middleware in Gas is the standard `func(http.Handler) http.Handler`. The router
+accepts it in two forms, wrapped in a `gas.Middleware` value:
+
+- `gas.MiddlewareByName(name)` refers to a **named** middleware, registered on
+  the router by a service that owns it.
+- `gas.MiddlewareFunc(fn)` passes an **inline** function, which has no owner.
+
+## Named middleware
+
+A service registers a named middleware with `Register(owner, name, fn)`,
+usually in its `Init`:
+
+<Code code={region(mw, 'register')} lang="go" title="auth/service.go" />
+
+The router records the owner, as it does for routes. When the owning service is
+torn down with `CloseService`, the middleware is disabled everywhere it is
+referenced: each reference answers `503` instead of calling the function,
+including on routes owned by other services and inside `Group` and `Route`
+blocks. A request is never let through with the check skipped. Registering the
+name again, which happens when `RestartService` re-runs the owner's `Init`,
+re-arms it. See [Ownership and teardown](/gas/core/ownership/). Passing `nil` as
+the owner makes the router the owner.
+
+Other services refer to it by name:
+
+<Code code={region(mw, 'reference')} lang="go" title="admin/service.go" />
+
+A name must be registered before a call refers to it. On the app's router,
+`Use` and the route registrations panic at the call when the name is not
+registered. Inside a `Group` or `Route` block, an unregistered name panics when
+the router builds the block, which for a block registered before `Start` is
+during `Start`. Make the service that refers to a name depend
+on the service that registers it, as `Admin` does above, so the container runs
+the registering service's `Init` first.
+
+`NamedMiddleware()` on the router maps each registered name to the name of the
+service that owns it.
+
+## Inline middleware
+
+`gas.MiddlewareFunc(fn)` and `router.UseMiddlewareFunc(fn)` apply a function
+directly. It is not in the registry, has no owner, and no teardown disables it.
+
+`gas.MiddlewareFuncWithName(name, fn)` is an inline middleware with a display
+name for the route map. It is still inline: `MiddlewareByName` cannot refer to
+it, and no teardown disables it.
+
+## Where to apply it
+
+<Code code={region(mw, 'global')} lang="go" />
+
+| Scope | Call |
+|---|---|
+| Every route on the router | `router.Use(...)`, `router.UseMiddlewareByName(name)`, `router.UseMiddlewareFunc(fn)` |
+| The routes in a block | the same methods on the sub-router of `Group` or `Route` |
+| One route | trailing arguments to `Handle`, `Get`, `Post`, and the other registration methods |
+
+Global middleware added with `Use` on the app's router applies to every route on
+it, including routes registered before the `Use` call. Inside a `Group` or
+`Route` block it applies only to routes registered after it in that block; see
+[Routing](/gas/core/routing/#groups-and-prefixes).
+
+## Order
+
+Middleware runs outermost first, in the order it was added:
+
+1. Cross-origin protection, which wraps the whole router (see
+   [below](#cross-origin-protection)).
+2. The request-scope middleware `gas.NewApp` installs on the router, which
+   gives each request its own [scope](/gas/core/request-scopes/). It is added
+   before any of yours, so every middleware on the router can resolve from the
+   request scope.
+3. Global middleware, in `Use` order.
+4. Group and route-block middleware, outer blocks first.
+5. Per-route middleware, in the order of the arguments.
+6. The handler.
+
+Register logging early so it observes everything after it, and authentication
+before anything that expects a principal.
+
+## Request logging
+
+`gas.RequestLogger[T]()` logs every request through a logger type `T` resolved
+from the request scope:
+
+<Code code={region(mw, 'logging')} lang="go" title="main.go" />
+
+For each request it:
+
+1. resolves `T` from the request scope; if that fails, it passes the request
+   through and logs nothing;
+2. derives a per-request logger from it with `With`, adding a `request_id`
+   field from chi's `middleware.RequestID`, which must be mounted before it or
+   the field is empty (`gas.WithRequestLoggerAppendRequestID(false)` skips this
+   step);
+3. passes that logger through the function set with
+   `gas.WithRequestLoggerBuilder`, if any, which can add fields or replace it;
+4. stores the result on the request context, where `gas.LoggerFromContext`
+   finds it, and, when `T` is registered scoped and the per-request logger's
+   type is assignable to `T`, puts it in the request scope in place of `T`'s
+   instance, so handlers and services that take `T` later in the request get
+   it;
+5. after the handler, logs the message `request` with `method`, `path`,
+   `status`, `bytes`, `duration`, and `remote`, at error level when the status
+   is 400 or above and at info level otherwise.
+
+The resolved logger itself is never changed, so a singleton `T` shared by every
+request is safe. A singleton `T` is not replaced in the scope, and neither is a
+scoped `T` whose instance implements `gas.Service`.
+
+The per-request logger is whatever `With().Logger()` returns, which is the
+backend's own logger type. That type is assignable to an interface `T`, such
+as the `interface{ gas.Logger }` above, and to `T` when `T` is the backend
+type itself. It is not assignable to a concrete wrapper type such as
+`*wrapLogger` (a `struct{ gas.Logger }`). For a `T` like that, the scope keeps
+its original instance without any error, and handlers that take `T` get a
+logger without the `request_id` field; the logger on the request context still
+carries it. This is tracked as KI-050 in
+[Known issues](/gas/project/known-issues/). Logging setup is covered in
+[Logging](/gas/modules/logging/).
+
+## Security headers
+
+`gas.SecurityHeaders(...)` sets response headers before calling the next
+handler:
+
+<Code code={region(mw, 'security')} lang="go" />
+
+Set by default:
+
+| Header | Default | Option |
+|---|---|---|
+| `X-Content-Type-Options` | `nosniff` | `WithSecurityHeadersContentTypeOptions` |
+| `X-Frame-Options` | `DENY` | `WithSecurityHeadersFrameOptions` |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` | `WithSecurityHeadersReferrerPolicy` |
+| `Permissions-Policy` | `camera=(), microphone=(), geolocation=()` | `WithSecurityHeadersPermissionsPolicy` |
+
+Set only when configured:
+
+| Header | Option |
+|---|---|
+| `Content-Security-Policy` | `WithSecurityHeadersContentSecurityPolicy` |
+| `Strict-Transport-Security` | `WithSecurityHeadersStrictTransportSecurity` |
+| `Cross-Origin-Opener-Policy` | `WithSecurityHeadersCrossOriginOpenerPolicy` |
+| `Cross-Origin-Resource-Policy` | `WithSecurityHeadersCrossOriginResourcePolicy` |
+
+Passing an empty string to any option leaves that header out.
+
+<Aside type="caution">
+Turn on HSTS only once the site is fully on HTTPS. Browsers honour it for the
+duration of `max-age`, so a premature header can make a site unreachable for
+visitors who already received it.
+</Aside>
+
+## Cache-Control
+
+`gas.CacheControl(...)` sets `Cache-Control` on matching requests:
+
+<Code code={region(mw, 'cachecontrol')} lang="go" />
+
+Path filters match an exact path (`WithCacheControlPath`,
+`WithCacheControlPaths`), a prefix (`WithCacheControlPathPrefix`,
+`WithCacheControlPathPrefixes`), or a suffix (`WithCacheControlPathSuffix`,
+`WithCacheControlPathSuffixes`); a request matching any one filter gets the
+header. With no filters, every request gets it.
+
+Each directive option appends one directive, and the header value is the
+directives joined by `, ` in the order given: `WithCacheControlMaxAge`,
+`WithCacheControlSMaxAge`, `WithCacheControlStaleWhileRevalidate`, and
+`WithCacheControlStaleIfError` take a `time.Duration` written in whole seconds;
+`WithCacheControlNoCache`, `NoStore`, `NoTransform`, `MustRevalidate`,
+`ProxyRevalidate`, `MustUnderstand`, `Private`, `Public`, and `Immutable` take
+no argument. With no directives, the middleware sets nothing.
+
+## Cross-origin protection
+
+Every `gas.App` serves its router behind Go's
+[`http.CrossOriginProtection`](https://pkg.go.dev/net/http#CrossOriginProtection).
+It is not router middleware: `App.Handler()` wraps the router with it, so it
+runs before any middleware on the router, before the request scope exists.
+
+It rejects non-safe cross-origin requests from browsers, such as a `POST`,
+`PUT`, `PATCH`, or `DELETE` from another site, with `403 Forbidden`. `GET`,
+`HEAD`, and `OPTIONS` always pass, and so do requests with neither a
+`Sec-Fetch-Site` nor an `Origin` header, such as curl and server-to-server
+calls. A same-origin app needs no configuration. Three `AppOption`s configure
+it:
+
+<Code code={region(mw, 'csrf')} lang="go" title="main.go" />
+
+- `gas.WithTrustedOrigin(origin)` allows non-safe requests from another
+  origin. The origin is a scheme and host, such as `https://app.example.com`;
+  `NewApp` panics when `http.CrossOriginProtection` rejects it.
+- `gas.WithCSRFInsecureBypassPattern(pattern)` turns the protection off for
+  requests matching the pattern, which uses `http.ServeMux` pattern syntax.
+- `gas.WithCSRFDenyHandler(h)` replaces the handler that writes the rejection.
+
+<Aside type="danger" title="A bypass is exactly that">
+`WithCSRFInsecureBypassPattern` removes the protection for matching paths. It
+is for endpoints that verify requests another way, such as a webhook receiver
+checking a signature. If the path has no such check of its own, do not bypass
+it.
+</Aside>
+
+A deny handler runs before the request scope exists, so it must not resolve
+anything from the container. `gas.WriteError` is safe there: it renders the
+standard error envelope without logging or touching the scope (see
+[Errors](/gas/core/errors/#writing-errors-directly)).

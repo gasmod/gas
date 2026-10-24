@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Service aliases.** `RegisterServiceAlias[Target, Alias]()` on the
+  `ServiceContainer` and the `Worker`, and the `WithServiceAlias[Target,
+  Alias]()` option, make one registration resolvable under an interface it
+  implements as well. Resolving the alias resolves the target: the same
+  instance, the target's lifetime, one `Init` and one `Close`. The alias and
+  its target can be registered in either order; a target still missing at
+  startup fails `BuildAll` with an error wrapping `ErrNotRegistered`, and a
+  singleton that depends on an alias of a scoped or transient service fails
+  with `ErrCaptiveDependency`. `CanResolve` reports true for an alias whose
+  target is registered. Registration panics if the alias is not an
+  interface, the target does not implement it, the alias is already a
+  registration or instance, or the target is itself an alias, and
+  registering a service under an existing alias panics too.
 - **`ServerSettings.ReadHeaderTimeout`**, which `App.Server` sets on the
   `*http.Server`. It bounds how long a client may take to send its request
   headers. net/http falls back to `ReadTimeout` only when it is zero, so a
@@ -16,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deadline at all. The default is 5s, the header deadline a default config
   already got from `ReadTimeout`, so default behaviour is unchanged.
   Closes #144.
+- **`Context.Blob(status, contentType, b)`** writes bytes the handler has
+  already encoded, under the given content type. An empty `contentType`
+  leaves `Content-Type` as it is, and when none is set net/http detects one
+  from the body. A write error is returned wrapped, as `HTML` and `Text` do.
 
 ### Fixed
 
@@ -30,9 +47,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   subscribers run after that and have the last word. This happens once:
   a later `Start`, or one after `Serve` has begun, leaves the server's
   fields alone, since net/http is reading them.
+- **Startup is deterministic.** The container kept its registrations and
+  instances in maps and ranged over them, so the order independent
+  singletons were built in, and which error startup reported when several
+  registrations were broken, changed from run to run. Singletons are now
+  built in an order fixed by their dependencies and the order they were
+  registered in: those with no registered dependencies first, in
+  registration order, then each of the others once its dependencies are
+  built. Captive-dependency errors and shape-validation errors for
+  registered instances are reported in registration order, so the same
+  broken setup reports the same error every time.
 
 ### Changed
 
+- **BREAKING: a scoped service's `Init` runs under the init deadline.** It
+  got the scope's context with no deadline added, and `InitTimeout` was
+  ignored. It now runs like a singleton's: under the container's init
+  timeout (15s by default, `WithServiceInitTimeout` or
+  `WithServiceContainerServiceTimeout`) or the service's own `InitTimeout`,
+  added to the scope's context. A scoped `Init` that takes longer fails the
+  resolution with `init <T>: timed out after ...`, wrapping
+  `context.DeadlineExceeded`, and one that returns nil after its deadline is
+  closed again. Implement `InitTimeout` (0 for no deadline) to change it.
+- **BREAKING: `App.Stop`, and so `App.Run`, return the server's shutdown
+  error.** When `http.Server.Shutdown` failed, for example because in-flight
+  requests outlived `Server.ShutdownTimeout`, `Stop` only logged
+  `server shutdown error` and returned whatever the Worker shutdown
+  returned, usually nil. It still logs it and still closes the services,
+  and now returns it, as `gas: shutdown error: server shutdown error: ...`,
+  joined with any Worker shutdown error. A Worker shutdown error on its own
+  is now wrapped the same way, as
+  `gas: shutdown error: worker shutdown error: ...`; `errors.Is` and
+  `errors.As` still reach the underlying errors. A clean `Stop` returns nil.
 - **`App.Handler` no longer builds the server.** It used to return
   `Server().Handler`, so calling it before `Start`, as tests and embedders
   do, built the `*http.Server` from the config as it stood then. It now
@@ -44,6 +90,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING: `Worker.ActiveServicesMap`.** It was a test helper compiled
   into the library. Tests now get it from `export_test.go`; use
   `ActiveServices` for the names of the active services.
+- **BREAKING: `Context.RSS`.** Encode the feed and write it with `Blob`:
+  `body, err := xml.Marshal(feed)`, then `ctx.Blob(status,
+  "application/rss+xml; charset=utf-8", append([]byte(xml.Header), body...))`.
+  A type that implements `gas.Context` itself must drop `RSS` and add `Blob`.
 
 ### Security
 

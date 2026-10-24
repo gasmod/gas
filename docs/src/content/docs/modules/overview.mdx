@@ -1,0 +1,101 @@
+---
+title: Overview
+description: The official Gas modules, what each provides, how they meet through core's provider interfaces, and the shared version they release under.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import ov from '../../../../snippets/modules-overview/main.go?raw';
+import { region } from '../../../lib/snippet';
+
+Core (`github.com/gasmod/gas`) holds the app lifecycle, the container, the
+router and the interfaces. Everything that talks to infrastructure is a
+module: its own Go module in the same repository, with its own `go.mod`, so
+`go get` pulls in only the modules you use.
+
+## The modules
+
+| Module | Import path | What it does | Implements | API |
+|---|---|---|---|---|
+| [Config](/gas/modules/config/) | `github.com/gasmod/gas/config` | Loads configuration from the environment, `.env` and JSON files, and AWS Secrets Manager; binds and validates structs; resolves the environment. | `gas.ConfigProvider` | [pkg.go.dev](https://pkg.go.dev/github.com/gasmod/gas/config) |
+| [Logging](/gas/modules/logging/) | `github.com/gasmod/gas/log` | Structured logging over zerolog or `log/slog`, and batched HTTP log shipping with an OTLP encoder. | `gas.Logger` | [pkg.go.dev](https://pkg.go.dev/github.com/gasmod/gas/log) |
+| [Database](/gas/modules/database/) | `github.com/gasmod/gas/database` | SQL connections over `database/sql` or a native pgx pool, transaction helpers, connection retries. | `gas.DatabaseProvider` | [pkg.go.dev](https://pkg.go.dev/github.com/gasmod/gas/database) |
+| [Migrations](/gas/modules/migrations/) | `github.com/gasmod/gas/migrate` | Migrations owned by the services that register them, applied at startup, with rollback. | `gas.MigrationManager` | [pkg.go.dev](https://pkg.go.dev/github.com/gasmod/gas/migrate) |
+| [Cache](/gas/modules/cache/) | `github.com/gasmod/gas/cache` | Key-value caching with a TTL, in process or on Valkey. | `gas.CacheProvider` | [pkg.go.dev](https://pkg.go.dev/github.com/gasmod/gas/cache) |
+| [Auth](/gas/modules/auth/) | `github.com/gasmod/gas/auth` | JWTs, server-side sessions, API keys and single-use tokens, with middleware that puts a `gas.Principal` on the request. | `auth.Authenticator`, `auth.PrincipalRevoker` (declared in the module) | [pkg.go.dev](https://pkg.go.dev/github.com/gasmod/gas/auth) |
+| [Templates](/gas/modules/templates/) | `github.com/gasmod/gas/template` | Template storage in memory, a directory, an `fs.FS`, a database table, or a composite of these. | `gas.TemplateProvider` | [pkg.go.dev](https://pkg.go.dev/github.com/gasmod/gas/template) |
+| [UI](/gas/modules/ui/) | `github.com/gasmod/gas/ui` | HTML rendering with layouts and partials, HTMX fragments, static files. | `gas.UIProvider` | [pkg.go.dev](https://pkg.go.dev/github.com/gasmod/gas/ui) |
+| [Storage](/gas/modules/storage/) | `github.com/gasmod/gas/storage` | Object storage on AWS S3, S3-compatible services, or a local directory, and presigned URLs. | `storage.Provider`, `storage.Presigner` (declared in the module) | [pkg.go.dev](https://pkg.go.dev/github.com/gasmod/gas/storage) |
+| [Email](/gas/modules/email/) | `github.com/gasmod/gas/email` | Email through AWS SES, literal or rendered from templates. | `gas.EmailProvider` | [pkg.go.dev](https://pkg.go.dev/github.com/gasmod/gas/email) |
+| [Queue](/gas/modules/queue/) | `github.com/gasmod/gas/queue` | Job queues on AWS SQS or an SQS-compatible endpoint. | `gas.JobQueueProvider` | [pkg.go.dev](https://pkg.go.dev/github.com/gasmod/gas/queue) |
+
+Each module page lists what its constructors resolve from the container, its
+configuration keys, its errors, and its mock package.
+
+## How modules fit together
+
+Modules depend on each other only through core. No module's non-test code
+imports another: every module's packages import only core and their own
+module. The one exception is auth's internal test helpers
+(`auth/internal/testutil`), a non-test package used only by auth's tests,
+which imports config, database and migrate. When one module needs another's service, its constructor asks
+the container for a core interface (`gas.ConfigProvider`, `gas.Logger`,
+`gas.DatabaseProvider`, `gas.MigrationManager`, `gas.TemplateProvider`, ...),
+so whatever is registered under that interface satisfies it.
+
+Most modules implement one of those core interfaces, and you register them
+under it. Two declare their own: Storage exposes `storage.Provider` and
+`storage.Presigner`, and Auth exposes `auth.Authenticator`,
+`auth.PrincipalRevoker` and a `Provider` interface per sub-package, while the
+`gas.Principal` its middleware produces is declared in core. Register those
+under the module's own interfaces.
+
+<Code code={region(ov, 'wiring')} lang="go" title="main.go" />
+
+`emailses.New()` asks for a `gas.TemplateProvider`, and gets the memory store
+here; it would get a database-backed store, or your own type, just the same.
+The same holds for your services, which depend on the interfaces rather than
+on any module:
+
+<Code code={region(ov, 'service')} lang="go" title="signups.go" />
+
+Three conventions hold across the modules:
+
+- **Configuration.** A module that has settings binds its own section
+  (`database.*`, `cache.*`, `storage.*`, `email.*`, ...) from the
+  `gas.ConfigProvider` when it initializes. Storage is the exception: its
+  `s3` and `dir` providers bind `storage.*` in their constructors. The config structs of the cache,
+  database, auth, UI, email and queue services embed `gas.WithGasEnv`, so
+  they know which environment they run in. Environment variables follow one
+  [naming rule](/gas/modules/config/#environment-variable-names).
+- **Lifecycle.** Module services implement `gas.Service`, so the container
+  runs their `Init` at startup and their `Close` at shutdown, and many
+  implement `gas.HealthReporter` or `gas.ReadyReporter` for the probes. See
+  [App lifecycle](/gas/core/lifecycle/). The services are the cache, database,
+  migrate, auth (`jwt`, `session`, `apikey`, `token`), UI, email and queue
+  services, the database template store, and the shipping logger. These are
+  not services, so the container never runs an `Init` or `Close` on them:
+  `*config.Config`, the zerolog and slog loggers, the storage `s3` and `dir`
+  providers and the `s3` presigner, and the memory, directory, `fs.FS` and
+  composite template stores.
+- **Migrations.** A module that owns tables, such as the auth stores or the
+  database template store, registers its migrations with the
+  `gas.MigrationManager` during `Init`, and core applies them after every
+  service has initialized. See [Migrations](/gas/modules/migrations/).
+
+Swapping an implementation, or replacing it with a mock in a test, changes
+only the registration. Every module except Database and Logging ships a mock
+package: `configtest`, `cachetest`, `migratetest`, `authtest`,
+`templatetest`, `uitest`, `storagetest`, `emailtest` and `queuetest`. See
+[Testing](/gas/production/testing/).
+
+## Versioning
+
+All modules share one version and are released together. A release tags the
+root module `vX.Y.Z` and each module `<dir>/vX.Y.Z` (for example
+`auth/vX.Y.Z`), which is what `go get github.com/gasmod/gas/auth@vX.Y.Z`
+resolves, and the release fails unless every module's requirement on another
+Gas module names that same version. Use the same version for core and every
+module you import; mixing versions is not supported.
+
+Gas is pre-1.0, so a minor version may contain breaking changes. See the
+[changelog](https://github.com/gasmod/gas/blob/main/CHANGELOG.md).

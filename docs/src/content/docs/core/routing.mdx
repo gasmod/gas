@@ -1,0 +1,161 @@
+---
+title: Routing
+description: Register routes on the Gas router, group them under prefixes and middleware, read path parameters, and see which service owns each route.
+---
+
+import { Code, Aside } from '@astrojs/starlight/components';
+import rt from '../../../../snippets/core-routing/main.go?raw';
+import { region } from '../../../lib/snippet';
+
+`*gas.Router` wraps a [chi](https://github.com/go-chi/chi) router and adds two
+things: every route records the service that owns it, and a handler can declare
+its dependencies as parameters (see [Handlers and Context](/gas/core/handlers/)).
+`gas.NewApp` creates one router per app and registers it in the container under
+`*gas.Router`, so a service takes it as a constructor parameter. Outside a
+service, `app.Router()` returns the same router.
+
+<Code code={region(rt, 'service')} lang="go" title="notes/service.go" />
+
+<Code code={region(rt, 'wire')} lang="go" title="main.go" />
+
+## Registering routes
+
+<Code code={region(rt, 'register')} lang="go" title="notes/service.go" />
+
+`Handle(owner, method, path, handler, middleware...)` is the general form.
+`Get`, `Head`, `Post`, `Put`, `Patch`, and `Delete` call it with the method
+filled in. A route registered for `GET`, through `Get` or `Handle`, also serves
+`HEAD` on the same path.
+
+The handler is either a plain handler (`http.HandlerFunc` or
+`func(http.ResponseWriter, *http.Request)`) or a DI-aware handler
+(`func(gas.Context, deps...) error`). Anything else panics. On the app's
+router the panic comes from the `Handle` call itself; inside a `Group` or
+`Route` callback, which runs when the router builds its tree, it comes from
+`Start` for a block registered before `Start`.
+[Handlers and Context](/gas/core/handlers/) covers both forms.
+
+The trailing arguments are per-route middleware, `gas.MiddlewareByName(...)` or
+`gas.MiddlewareFunc(...)`; see [Middleware](/gas/core/middleware/).
+
+### When registrations take effect
+
+The router collects registrations and builds its chi tree when the app starts:
+`Start` seals the router after every singleton service has run `Init`. Until
+then, the order of `Use` and `Handle` calls on the app's router does not
+matter, so services can add middleware with `Use` and register routes in any
+order during `Init`. Named middleware is the exception: a name must be
+registered before a call refers to it (see
+[Named middleware](/gas/core/middleware/#named-middleware)). Global middleware
+is always applied before the routes, which is the order chi requires.
+
+A registration made after `Start` takes effect immediately. The router builds a
+fresh tree from everything registered so far and swaps it in atomically;
+requests already in flight finish on the previous tree.
+
+## Paths and parameters
+
+Patterns use chi's syntax: `{name}` matches one path segment,
+`{name:regexp}` adds a regular expression, and a trailing `*` matches the rest
+of the path.
+
+<Code code={[region(rt, 'params'), region(rt, 'param-handlers')].join('\n\n')} lang="go" />
+
+`ctx.Param(name)` returns a path parameter, and `ctx.Param("*")` the part
+matched by the wildcard. A plain handler reads the same values with
+`chi.URLParam`:
+
+<Code code={region(rt, 'plain')} lang="go" />
+
+## Groups and prefixes
+
+`Group` scopes middleware to a set of routes without changing their paths:
+
+<Code code={region(rt, 'group')} lang="go" />
+
+`Route` mounts a path prefix. Several services may mount the same prefix, which
+is how independent features share `/api`:
+
+<Code code={region(rt, 'route')} lang="go" />
+
+Calling `Route` again with a pattern that is already mounted attaches to the
+existing mount instead of failing. Each `Route` body runs in its own group, so
+`Use` inside one block applies only to the handlers registered in that block.
+The second block's routes above are not behind `require-auth`, even though both
+hang off `/api`.
+
+`Route` nests, and the prefixes accumulate:
+
+<Code code={region(rt, 'nested')} lang="go" />
+
+<Aside type="caution" title="Inside a block, Use comes first">
+Calls on the sub-router a `Group` or `Route` callback receives go straight to
+chi. Middleware added with `Use` there applies only to the routes registered
+after it in the same block, so call `Use` before `Handle`.
+</Aside>
+
+## Serving an http.Handler
+
+`Handle` accepts functions, not `http.Handler` values. Pass the handler's
+`ServeHTTP` method, which has the plain handler signature:
+
+<Code code={region(rt, 'mount')} lang="go" />
+
+## Not found and method not allowed
+
+A request that matches no route gets chi's default response: `404` with the
+plain-text body `404 page not found`. A request whose path matches but whose
+method does not gets `405` with an empty body and an `Allow` header listing
+the methods the path serves, including the implicit `HEAD` of a `GET` route
+(`GET` and `HEAD` for a path with only a `GET` route). The methods are listed
+in no fixed order.
+
+`NotFound(owner, handler)` replaces the 404 handler. It takes either handler
+form, and a DI-aware not-found handler has its dependencies checked at startup
+like any route.
+
+<Code code={region(rt, 'notfound')} lang="go" />
+
+A router accepts one not-found handler. A second `NotFound` call panics, even
+from the same service.
+
+## Ownership
+
+The first argument of `Handle`, `Get`, `NotFound`, and the other registration
+methods is the owning service. The router records each route under the owner's
+`Name()`. Passing `nil` makes the router itself the owner: those routes are
+recorded under the name `gas/router`, including routes registered inside a
+`Group` or `Route` block.
+
+Ownership is what the kill switch acts on. `CloseService` replaces every route
+the closed service owns with a `503` handler and disables the named middleware
+it registered wherever that middleware is used; `RestartService` brings them
+back. See [Ownership and teardown](/gas/core/ownership/).
+
+`Routes()` returns a snapshot of the registered routes, grouped by owner name.
+It leaves out the implicit `HEAD` routes that `GET` registrations add.
+Each route lists the named middleware that applies to it, with one exception: a
+route registered directly on the app's router before a global
+`Use` of a named middleware is listed without that name, even though the
+middleware runs on it. This is tracked as KI-056 in
+[Known issues](/gas/project/known-issues/).
+`NamedMiddleware()` maps each registered middleware name to the name of the
+service that owns it.
+
+<Code code={region(rt, 'inspect')} lang="go" />
+
+`App.Run` logs both right after `Start`, when at least one route is
+registered. When the environment is `development`, it logs one table of routes
+and named middleware; otherwise it logs one line per route and one per named
+middleware. With no routes registered it logs nothing, not even the named
+middleware. When nothing sets the
+environment, for example when no `ConfigProvider` is registered, it is empty and
+the per-line form is used. Calling `Start` and `Serve` yourself logs no route map.
+
+## The underlying chi router
+
+`Mux()` returns the most recently built chi tree. Changes made to it directly
+are not recorded by the router, so they are lost the next time the tree is
+rebuilt: `Start` builds a fresh tree, and so does every registration or
+teardown after it. Register routes and middleware through the `*gas.Router`
+methods instead.

@@ -1,0 +1,133 @@
+---
+title: FAQ
+description: Common questions about Gas, from why it exists to how it is versioned, released, and replaced piece by piece.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import faq from '../../../../snippets/project-faq/main.go?raw';
+import { region } from '../../../lib/snippet';
+
+## What is Gas for?
+
+Gas is a modular Go framework for small SaaS products: the services, routes,
+background jobs, and integrations a product needs, wired through one
+dependency injection container with one lifecycle. It suits a small team that
+wants the same plumbing in every project without rebuilding it each time, and
+that is happy to work with Go's standard library types rather than a
+framework's own.
+
+[Introduction](/gas/start/introduction/) explains the model, and the
+[tutorial](/gas/start/tutorial/) builds a small app end to end.
+
+## Why not plain net/http, or another framework?
+
+Plain `net/http` is a fine choice for a small service, and Gas does not hide
+it. Handlers get a `gas.Context` that wraps the `http.ResponseWriter` and
+`*http.Request`, the router is built on [chi](https://github.com/go-chi/chi),
+standard `func(http.Handler) http.Handler` middleware plugs in through
+`gas.MiddlewareFunc`, and `App.Handler()` returns an `http.Handler` you can
+mount or test like any other.
+
+What Gas adds is the part that `net/http` leaves to you and that most
+products end up writing anyway:
+
+- a DI container with singleton, scoped, and transient lifetimes, which builds
+  services in dependency order, runs their `Init`, and closes them in reverse
+  order on shutdown;
+- route ownership, so each route belongs to the service that registered it and
+  can be taken down with it at runtime;
+- migrations owned by the services that need them, health and readiness
+  aggregated across services, and an event bus;
+- modules for configuration, logging, databases, auth, caching, storage, email,
+  queues, templates, and HTML, which meet only through interfaces in core.
+
+If you want a router and nothing else, use chi or `net/http` directly. If you
+want those pieces wired the same way in every app, that is what Gas is for.
+
+## Is it production ready?
+
+Gas is pre-1.0. Its API still changes between minor releases: the changelogs
+mark those changes **BREAKING**, and v0.6.0 has some. Open defects are listed
+on [Known issues](/gas/project/known-issues/), each with its workaround where
+one exists. Read both before you depend on it, and pin the version you use.
+
+## How is Gas versioned?
+
+All modules share one version and are released together. The repository is a
+monorepo: the core is `github.com/gasmod/gas`, and each official module (for
+example `github.com/gasmod/gas/queue`) is a separate Go module in its own
+directory. A release tags the core `vX.Y.Z` and each module `<dir>/vX.Y.Z`, such
+as `queue/vX.Y.Z`, which is the tag `go get github.com/gasmod/gas/queue@vX.Y.Z`
+resolves. Mixing versions across modules is not supported, so upgrade them
+together.
+
+Before 1.0, a minor version may contain breaking changes. Each module records
+its changes in its own `CHANGELOG.md`, and the core's is the
+[root CHANGELOG](https://github.com/gasmod/gas/blob/main/CHANGELOG.md).
+
+## How is a release made?
+
+Releases are cut by `.github/workflows/release.yml` when a `v*` tag is pushed:
+
+1. `scripts/verify-versions.sh` checks that every `github.com/gasmod/gas...`
+   requirement in every `go.mod`, and every replace in `go.work`, names the
+   version being released, and fails otherwise. `scripts/bump.sh` is the script
+   that rewrites them all before tagging.
+2. golangci-lint, `go test -race`, `go vet`, and govulncheck run on every
+   module except the examples and the docs snippets.
+3. When all pass, the workflow tags each module directory with
+   `<dir>/<tag>`; the core keeps the tag that was pushed.
+4. A GitHub release is published with generated release notes.
+
+## Which Go version do I need?
+
+Every module requires Go 1.27.3, through the `go` directive in its `go.mod`.
+With an older toolchain, `GOTOOLCHAIN=auto` switches to 1.27.3 and
+`GOTOOLCHAIN=local` fails the build.
+
+## Can I use one module without the rest?
+
+Yes. Each module is its own Go module, so `go get` adds that module and what it
+requires, not the whole repository. Apart from test helpers, no module imports
+another: they meet through the provider interfaces declared in core, such as
+`gas.TemplateProvider` or `gas.JobQueueProvider`. `gas/ui`, for example, renders
+whatever is registered under `gas.TemplateProvider` without importing
+`gas/template`. [Modules](/gas/modules/overview/) lists what each module needs
+from the container.
+
+## How do I swap a module for my own implementation?
+
+Implement the core interface and register your type under it. Every service
+that takes the interface then gets yours:
+
+<Code code={region(faq, 'swap')} lang="go" title="main.go" />
+
+The same works for any provider interface in core: `gas.CacheProvider`,
+`gas.DatabaseProvider`, `gas.JobQueueProvider`, `gas.EmailProvider`,
+`gas.TemplateProvider`, `gas.UIProvider`, `gas.ConfigProvider`, `gas.Logger`,
+and the rest. In tests, the modules' mock packages (`queuetest`, `uitest`, and
+so on) implement the same interfaces, so a test registers a mock the same
+way. See [Testing](/gas/production/testing/).
+
+## Can I run Gas without an HTTP server?
+
+Yes. `gas.Worker` has the same container, service lifecycle, events, and
+migrations as `gas.App`, without the router or the server. Use it for queue
+consumers, scheduled jobs, and AWS Lambda functions. See
+[Workers](/gas/core/workers/).
+
+## Where is the API reference?
+
+On pkg.go.dev, generated from the doc comments: start at
+[pkg.go.dev/github.com/gasmod/gas](https://pkg.go.dev/github.com/gasmod/gas),
+and each module page here links to its own packages. This site holds the
+guides, the concepts, and what pkg.go.dev cannot show: configuration keys and
+defaults, what each constructor resolves from the container, errors, and
+health behavior. Each module's README points to both.
+
+## Where do I report a bug or ask for a feature?
+
+Open an issue on [GitHub](https://github.com/gasmod/gas/issues), as described in
+[Contributing](/gas/project/contributing/). Report a security vulnerability
+privately, as [`SECURITY.md`](https://github.com/gasmod/gas/blob/main/SECURITY.md)
+describes, never in a public issue.

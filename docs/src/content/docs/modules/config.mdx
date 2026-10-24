@@ -1,0 +1,348 @@
+---
+title: Config
+description: Load configuration from the environment, files and AWS Secrets Manager, bind it into structs, and resolve the app's environment with gas/config.
+---
+
+import { Code, Aside } from '@astrojs/starlight/components';
+import cfg from '../../../../snippets/modules-config/main.go?raw';
+import cfgTest from '../../../../snippets/modules-config/main_test.go?raw';
+import { region } from '../../../lib/snippet';
+
+## What it is for
+
+`gas/config` reads configuration from one or more sources, merges it into one
+tree of lowercased keys, and binds that tree into Go structs with validation.
+`*config.Config` satisfies `gas.ConfigProvider`, the interface core and every
+module read their settings through. Core binds its own server settings from
+it, and each module binds its section (`database.*`, `email.*`, `jwt.*`, ...)
+in its `Init`.
+
+Config is not a service. It has no `Init` or `Close`; you build and load it
+before the app, so a bad configuration fails before any service starts, then
+register the loaded value as an instance.
+
+## Install
+
+```bash
+go get github.com/gasmod/gas/config
+```
+
+## Wiring
+
+<Code code={region(cfg, 'wiring')} lang="go" title="main.go" />
+
+`config.New` takes providers and extensions and returns the config without
+reading anything. `Load` reads every source. When `New` is given no provider
+at all, it adds `providers.NewEnvProvider()` by itself; as soon as you pass one
+provider explicitly, add the environment provider yourself if you still want
+environment variables.
+
+## Usage
+
+### Providers and precedence
+
+`Load` runs in this order:
+
+1. Every extension's `PreLoad` hook, in registration order.
+2. Every provider's `Load`, in registration order. All of them are read before
+   anything is merged, so if one fails, `Load` returns an error wrapping
+   `config.ErrProviderLoadFailed` with the provider's name and merges none of
+   them.
+3. The provider results are merged in registration order. A later provider
+   overrides the keys it defines and leaves the rest alone; nested maps are
+   merged key by key, not replaced.
+4. Every extension's `PostLoad` hook, in registration order.
+
+Keys are lowercased and trimmed at every level as they are merged, so
+`Database.DSN` from a JSON file and `DATABASE__DSN` from the environment land
+on the same key, `database.dsn`. `Load` merges into the values the config
+already holds, so a value set with `Set` before `Load` survives unless a
+provider defines the same key.
+
+`LoadProvider(p)` adds one more provider after the fact: it loads `p`, merges
+its values over the current ones, and registers it. A provider whose load
+fails is not registered.
+
+| Provider | Source |
+|---|---|
+| `providers.NewEnvProvider()` | The process environment |
+| `providers.NewDotEnvProvider()` | A `.env` file |
+| `providers.NewJSONProvider()` | A JSON file, from disk or an `fs.FS` |
+| `secretsmanager.NewProvider()` | AWS Secrets Manager, fetched at load |
+
+### Environment variable names
+
+This is the rule for every config key on this site. To set a key from the
+environment, uppercase it and replace each `.` with a double underscore:
+
+| Config key | Environment variable |
+|---|---|
+| `server.port` | `SERVER__PORT` |
+| `database.dsn` | `DATABASE__DSN` |
+| `email.fromemail` | `EMAIL__FROMEMAIL` |
+| `jwt.signingkey` | `JWT__SIGNINGKEY` |
+
+The environment provider lowercases each variable name and splits it on `__`
+into levels, so names are matched case-insensitively and a single underscore
+stays part of the key: `REQUEST_TIMEOUT` is the key `request_timeout`. Values
+arrive as strings; [binding](#binding-to-structs) converts them to the field's
+type.
+
+`WithEnvPrefix` keeps only the variables that start with the prefix (compared
+case-insensitively) and cuts it off literally, so include the trailing
+underscore. With the prefix `APP_`, the variable for `database.dsn` is
+`APP_DATABASE__DSN`:
+
+<Code code={region(cfg, 'env')} lang="go" />
+
+`WithEnvSeparator` changes `__` to another separator; an empty separator keeps
+every name as one flat key. The variable name is lowercased before it is split, so a separator
+containing uppercase letters never matches, for `WithEnvSeparator` and
+`WithDotEnvSeparator` alike (KI-055 in
+[Known issues](/gas/project/known-issues/)).
+
+<Aside type="note" title="Some variables are never read">
+A fixed list of names is skipped before anything else happens: `PATH`, `HOME`,
+`USER`, `USERNAME`, `LOGNAME`, `SHELL`, `PWD`, `OLDPWD`, `MAIL`, the loader
+variables `LD_PRELOAD`, `LD_LIBRARY_PATH`, `DYLD_INSERT_LIBRARIES` and
+`DYLD_LIBRARY_PATH`, `TERM`, `LANG`, `LC_ALL`, `LC_CTYPE`, `COLORTERM`,
+`TMPDIR`, `TMP`, `TEMP`, `SUDO_USER`, `SUDO_UID`, `SUDO_GID`, `SSH_AUTH_SOCK`,
+`SSH_AGENT_PID`, `SSH_CLIENT`, `SSH_CONNECTION`, `SSH_TTY`, `DISPLAY`,
+`XAUTHORITY`, `WAYLAND_DISPLAY`, `HOSTNAME`, `HOST`, `COMPUTERNAME`,
+`SESSION_MANAGER`, `ZSH`, `BASH`, `PROMPT`, `PS1`, `PS2`, `EDITOR`, `VISUAL`,
+`PAGER`, `GITHUB_ACTION`, `GITHUB_TOKEN` and `CI`. These are exact names, not
+prefixes, so `LD_AUDIT` is read like any other variable. The check is made on
+the full name before a prefix is cut, so `APP_HOST` is read even though `HOST`
+is not.
+</Aside>
+
+### .env files
+
+<Code code={region(cfg, 'dotenv')} lang="go" />
+
+`NewDotEnvProvider` reads `.env` from the working directory unless
+`WithDotEnvFilePath` says otherwise, and turns each `KEY=VALUE` line into a key
+with the same rule as the environment (`__` splits levels; change it with
+`WithDotEnvSeparator`). Quoted values may span lines and keep `#`; outside
+quotes, `#` starts a comment. It has no prefix option.
+
+A missing file fails `Load` with an error wrapping
+`providers.ErrDotEnvFileReadFailed`. `WithDotEnvFileNotFoundPanic(false)` makes
+a missing file yield no values instead; despite the option's name, nothing
+panics in either case. `WithDotEnvFileAppendToOSEnv(true)` also copies the
+entries into the process environment, except the names in the list above;
+it is off by default, because those values would then be inherited by every
+child process.
+
+### JSON files
+
+`NewJSONProvider` reads one JSON object from the path set with
+`WithJSONFilePath`. There is no default path: without one, `Load` fails with
+`providers.ErrJSONFilePathNotSet`. JSON numbers arrive as `float64`, and a
+number has no unit, so a duration in a JSON file is written as a string such
+as `"30s"` (see [durations](#binding-to-structs)).
+
+By default the JSON and `.env` providers read through a guarded file system:
+the path must resolve inside the working directory, its last element must not
+be a symlink, and the file must be at most 1 MiB (1,048,576 bytes).
+`WithJSONFileFS` and `WithDotEnvFileFS` read from any `fs.FS` instead, such as
+an `embed.FS`, without those checks:
+
+<Code code={region(cfg, 'json-fs')} lang="go" />
+
+### AWS Secrets Manager
+
+<Code code={region(cfg, 'secrets')} lang="go" />
+
+The provider lives in `github.com/gasmod/gas/config/providers/secretsmanager`.
+Secrets are fetched on every load, in registration order, and merged with
+later ones winning. A secret registered with `WithSecret` must hold a JSON
+object, which is merged at the root. `WithSecretAtKey` places a secret at a
+dot-separated key: a JSON object is nested there, and any other value is
+stored there as a string.
+
+`WithRegion`, `WithEndpoint` (for example LocalStack) and
+`WithStaticCredentials` configure the AWS client; static credentials are used
+only when both values are set, and otherwise the default AWS configuration and
+credential chain apply. `WithClient` injects a client instead and makes those
+options ignored. The provider's own `Load()` bounds the whole fetch with a
+10-second timeout (`secretsmanager.DefaultTimeout`), which `WithTimeout`
+changes; zero or a negative duration means no timeout. `config.Config` never
+calls that method: `Load` and `LoadWithContext` call the provider's
+`LoadContext`, which applies no timeout, so through the config the context
+passed to `LoadWithContext` is the only bound (`Load` passes
+`context.Background()`, which has none). `LoadWithContext` passes the caller's
+context through unchanged. This is tracked as KI-046 in
+[Known issues](/gas/project/known-issues/). Registering no secret at all makes `Load` fail with
+`secretsmanager.ErrNoSecretsConfigured`.
+
+### Reading and setting values
+
+`Get("database.host")` walks the dot-separated path, case-insensitively, and
+returns `nil` when the key is missing; `Find` also reports whether it exists.
+`Get`, `Find` and `Values` return deep copies, so changing a returned map does
+not change the config.
+
+`Set(key, value)` writes a value, overriding what is there. `SetDefault(key,
+value)` writes only when the key is not set yet. `SetDefaults(values)` does the
+same for a whole `map[string]any` or struct; it returns
+`config.ErrNilValues` for `nil`. Map keys passed to `SetDefaults` are taken as
+one level each and not split on `.`, so pass nested maps.
+
+### Binding to structs
+
+<Code code={region(cfg, 'bind')} lang="go" title="notes.go" />
+
+`Bind(&dest)` fills a struct from the whole tree. Each field matches its
+`json` tag, or else its lowercased field name; when both are present in the
+config, the tag wins. Keys are lowercase, so a tag with uppercase letters never
+matches and the field falls back to its name. Fields of an embedded struct
+bind at the level of the struct that embeds them, which is how
+`gas.WithGasEnv` picks up the top-level `gasenv` key.
+
+`Bind` sets only the fields whose keys are present and leaves every other
+field as it was, so the usual pattern is to fill in defaults and bind over
+them, as every Gas module does with its `DefaultConfig()`.
+
+Supported field types are every int, uint and float size, `bool`, `string`,
+`time.Duration`, slices, fixed-size arrays, maps, nested structs, embedded
+structs and pointers to any of these (allocated as needed). Strings are
+converted where needed: `"true"` to a `bool`, `"8080"` to an int, and a
+comma-separated string such as `"a, b ,c"` to a slice, with each element
+trimmed. A fixed-size array needs a real list, and a list with more elements
+than the array holds is an error rather than a silent truncation. A number
+too large for its field is an error.
+
+<Aside type="caution" title="Durations">
+A duration needs a unit. Every string is parsed with `time.ParseDuration`, so
+`"5s"`, `"250ms"` and `"1h30m"` work, and `"0"` is zero. A string without a
+unit, such as `NOTES__TIMEOUT=30`, fails to bind, and the error names the
+field and shows the fix: `field Notes: struct field Timeout: duration has no
+unit: "30"; write it like "30s"`. A number has no unit either, so a JSON number
+such as `5` fails the same way; only `0` binds, as zero. A `time.Duration` set
+from Go, for example with `SetDefault`, is used as it is.
+</Aside>
+
+After binding, `Bind` validates the struct with
+[go-playground/validator](https://github.com/go-playground/validator) against
+its `validate` tags. Pass `config.WithValidate(false)` to one `Bind` call to
+skip it, or `config.WithValidator(v)` to `config.New` to use your own
+validator instance with custom rules registered. A binding failure is returned
+as `bind config: ...` and a validation failure as `validate config: ...`.
+
+### Environments
+
+The `gasenv` extension (`github.com/gasmod/gas/config/extensions/gasenv`)
+resolves which environment the app runs in and stores it at the config key
+`gasenv`. The allowed values are `development`, `testing`, `staging` and
+`production`, compared case-sensitively.
+
+Resolution happens during `Load`:
+
+1. Before the providers load, the extension reads the OS variable `GAS_ENV`.
+   If it is unset or not an allowed value, it takes the fallback,
+   `development`. The result is set as a default for the key.
+2. After the providers load, an allowed value that a provider set at the key
+   wins. Any other value there, including one a provider set that is not
+   allowed, is replaced with the fallback.
+
+So the order is: a provider's value, then `GAS_ENV`, then `development`. An
+invalid value is never reported as an error. Because the environment provider
+reads every variable, `GASENV=production` is a provider value for the key and
+takes precedence over `GAS_ENV`.
+
+Embed `gas.WithGasEnv` in a config struct and `Bind` fills its `GasEnv` field,
+which has `IsDevelopment`, `IsTesting`, `IsStaging`, `IsProduction`,
+`IsDevelopmentLike` (development or testing) and `IsProductionLike` (staging
+or production). Every Gas module's config embeds it except Storage's: the
+`s3` and `dir` configs do not. Without the extension,
+nothing sets the key and `GasEnv` stays empty unless a provider sets `gasenv`.
+
+To ask before the app exists, keep the extension; it has the same helpers plus
+`Current()`:
+
+<Code code={region(cfg, 'gasenv')} lang="go" />
+
+`WithEnvVarName` reads another OS variable instead of `GAS_ENV`.
+`WithConfigKey` stores the result under another key, and also writes it to
+`gasenv` so `gas.WithGasEnv` still binds. `WithAllowedEnvs` narrows the
+allowed values and `WithDefault` changes the fallback; the fallback should be
+one of the allowed values, which is not checked.
+
+### Extensions
+
+An extension implements `config.Extension`: `Name()`, `PreLoad(ctx, cfg)` and
+`PostLoad(ctx, cfg)`, called around the providers as described in
+[Providers and precedence](#providers-and-precedence).
+
+<Code code={region(cfg, 'extension')} lang="go" />
+
+A failing hook stops `Load` with an error wrapping
+`config.ErrExtensionPreLoadHookFailed` or
+`config.ErrExtensionPostLoadHookFailed` and the extension's name.
+
+### Writing a provider
+
+A provider implements `providers.Provider`: `Name() string` and
+`Load() (map[string]any, error)`, returning a nested map. If it also implements
+`providers.ContextProvider`, `LoadContext(ctx) (map[string]any, error)`,
+`LoadWithContext` and `LoadProviderContext` call that with their context
+instead, which matters for anything that does network calls.
+
+## Configuration
+
+`gas/config` reads one key itself, through the `gasenv` extension:
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `gasenv` | string | `GAS_ENV` when it holds an allowed value, else `development` | The resolved environment, set by the extension during `Load`. See [Environments](#environments). |
+
+Core binds its server settings (`server.host`, `server.port`, the server
+timeouts) from the same config; see [Deployment](/gas/production/deployment/).
+
+## Errors
+
+| Error | Returned when |
+|---|---|
+| `config.ErrProviderLoadFailed` | A provider's `Load` failed during `Load` or `LoadProvider`. Wraps the provider's own error. |
+| `config.ErrExtensionPreLoadHookFailed` | An extension's `PreLoad` failed. |
+| `config.ErrExtensionPostLoadHookFailed` | An extension's `PostLoad` failed. |
+| `config.ErrNilValues` | `SetDefaults(nil)`. |
+| `providers.ErrJSONFilePathNotSet` | A JSON provider has no path. |
+| `providers.ErrJSONFileReadFailed` | The JSON file could not be read, including a path outside the working directory, a symlink, or a file over 1 MiB. |
+| `providers.ErrJSONDecodeFailed` | The file is not valid JSON, or holds an array, string, number or boolean. A file holding `null` loads with no error and no values (KI-047 in [Known issues](/gas/project/known-issues/)). |
+| `providers.ErrDotEnvFilePathNotSet` | A `.env` provider's path was set to `""`. |
+| `providers.ErrDotEnvFileReadFailed` | The `.env` file could not be read, or is missing while missing files are errors. |
+| `providers.ErrDotEnvParseFailed` | The `.env` file could not be parsed, for example a quoted value that is never closed. |
+| `providers.ErrSetEnv` | Copying an entry into the process environment failed. |
+| `secretsmanager.ErrNoSecretsConfigured` | No secret was registered. |
+| `secretsmanager.ErrClientInitFailed` | The AWS configuration could not be loaded. |
+| `secretsmanager.ErrSecretFetchFailed` | `GetSecretValue` failed. The error names the secret. |
+| `secretsmanager.ErrSecretDecodeFailed` | A secret registered with `WithSecret` is not a JSON object. |
+
+The provider errors reach `Load`'s caller wrapped in
+`config.ErrProviderLoadFailed`, and `errors.Is` finds both. The environment
+provider never fails.
+
+## Testing
+
+`configtest.MockConfig` satisfies `gas.ConfigProvider`. Each method records
+the call in `Calls` and delegates to its `Fn` field (`GetFn`, `BindFn`, ...)
+when set; with no `Fn`, it returns the zero value, so `Bind` leaves the struct
+untouched and returns `nil`. `CallCount(method)` and `Reset()` help with
+assertions.
+
+When a test needs real `Get`, `Find` and `Bind` behavior over known values,
+`configtest.NewMockConfigWithValues` builds a mock whose `Fn` fields delegate to
+a real `*config.Config` seeded with the values you pass. It does not read the
+process environment, so the machine running the test cannot leak into it.
+
+<Code code={region(cfgTest, 'testing')} lang="go" title="notes_test.go" />
+
+## API reference
+
+- [`config`](https://pkg.go.dev/github.com/gasmod/gas/config)
+- [`config/providers`](https://pkg.go.dev/github.com/gasmod/gas/config/providers)
+- [`config/providers/secretsmanager`](https://pkg.go.dev/github.com/gasmod/gas/config/providers/secretsmanager)
+- [`config/extensions/gasenv`](https://pkg.go.dev/github.com/gasmod/gas/config/extensions/gasenv)
+- [`config/configtest`](https://pkg.go.dev/github.com/gasmod/gas/config/configtest)

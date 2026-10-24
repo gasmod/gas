@@ -105,7 +105,10 @@ func WithRequestLoggerBuilder(fn func(Logger, *http.Request) Logger) RequestLogg
 // T's instance in the request scope, so handlers and services that take T as a
 // dependency later in the request get it, request fields included. A singleton T
 // is not shadowed, and a scoped T whose instance is a Service is not replaced,
-// so the scope still closes it. When the request finishes it logs
+// so the scope still closes it. When T is an alias (see
+// ServiceContainer.RegisterServiceAlias), nothing is replaced: the logger is
+// still stored on the context, but the scope keeps its instance of the
+// target. When the request finishes it logs
 // method, path, status, bytes written, duration, and remote address: at error
 // level for a status >= 400, at info level otherwise.
 //

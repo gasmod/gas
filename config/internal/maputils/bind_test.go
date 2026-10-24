@@ -133,29 +133,86 @@ func TestBind_DurationField(t *testing.T) {
 	t.Parallel()
 
 	type Struct struct {
-		Int64    time.Duration
 		Duration time.Duration
 		String0  time.Duration
 		String1  time.Duration
 		String2  time.Duration
+		Zero     time.Duration
 	}
 
 	src := map[string]any{
-		"int64":    int64(1 * time.Second),
 		"duration": 2 * time.Minute,
 		"string0":  "300ms",
 		"string1":  "-1.5h",
 		"string2":  "2h45m",
+		"zero":     "0",
 	}
 
-	var dest Struct
+	dest := Struct{Zero: time.Second}
 	require.NoError(t, maputils.Bind(src, &dest))
 
-	assert.Equal(t, 1*time.Second, dest.Int64)
 	assert.Equal(t, 2*time.Minute, dest.Duration)
+	assert.Equal(t, time.Duration(0), dest.Zero)
 	assert.Equal(t, 300*time.Millisecond, dest.String0)
 	assert.Equal(t, -(90 * time.Minute), dest.String1)
 	assert.Equal(t, 165*time.Minute, dest.String2)
+}
+
+func TestBind_DurationZeroNumber(t *testing.T) {
+	t.Parallel()
+
+	for _, zero := range []any{float64(0), 0, int64(0), uint8(0), float32(0)} {
+		dest := struct{ Timeout time.Duration }{Timeout: time.Second}
+		require.NoError(t, maputils.Bind(map[string]any{"timeout": zero}, &dest), "%T 0", zero)
+		assert.Equal(t, time.Duration(0), dest.Timeout, "%T 0", zero)
+	}
+}
+
+func TestBind_DurationWithoutUnit(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		value any
+		want  string
+	}{
+		{"30", `field Timeout: duration has no unit: "30"; write it like "30s"`},
+		{"-1.5", `field Timeout: duration has no unit: "-1.5"; write it like "-1.5s"`},
+		{float64(5), `field Timeout: duration has no unit: 5; write it like "5s"`},
+		{float64(1e6), `field Timeout: duration has no unit: 1000000; write it like "1000000s"`},
+		{2.5, `field Timeout: duration has no unit: 2.5; write it like "2.5s"`},
+		{
+			int64(time.Second),
+			`field Timeout: duration has no unit: 1000000000; write it like "1000000000s"`,
+		},
+		{30, `field Timeout: duration has no unit: 30; write it like "30s"`},
+		{uint16(30), `field Timeout: duration has no unit: 30; write it like "30s"`},
+	}
+	for _, c := range cases {
+		dest := struct{ Timeout time.Duration }{Timeout: time.Second}
+		err := maputils.Bind(map[string]any{"timeout": c.value}, &dest)
+		require.ErrorIs(t, err, maputils.ErrDurationWithoutUnit, "%T %v", c.value, c.value)
+		assert.EqualError(t, err, c.want)
+		assert.Equal(
+			t,
+			time.Second,
+			dest.Timeout,
+			"%T %v left the field as it was",
+			c.value,
+			c.value,
+		)
+	}
+}
+
+func TestBind_DurationInvalidString(t *testing.T) {
+	t.Parallel()
+
+	for _, s := range []string{"abc", "1e3", "5 s"} {
+		var dest struct{ Timeout time.Duration }
+		err := maputils.Bind(map[string]any{"timeout": s}, &dest)
+		require.Error(t, err, s)
+		assert.NotErrorIs(t, err, maputils.ErrDurationWithoutUnit, s)
+		assert.ErrorContains(t, err, "parse duration "+strconv.Quote(s))
+	}
 }
 
 func TestBind_Array(t *testing.T) {

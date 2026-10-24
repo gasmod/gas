@@ -128,6 +128,13 @@ Supported types: all int/uint/float variants, bool, string, `time.Duration`,
 slices (including comma-separated strings), fixed-size arrays, maps, nested
 structs, embedded structs.
 
+A `time.Duration` field needs a unit. Strings go through `time.ParseDuration`
+(`"5s"`, `"250ms"`, `"1h30m"`; `"0"` is zero). A string without a unit
+(`"30"`, `SERVER__READTIMEOUT=30`) or a non-zero number (a JSON `5`, an `int`
+or `int64` passed to `Set`) fails `Bind` with `field ...: duration has no unit:
+"30"; write it like "30s"`; a number `0` binds as zero, and a `time.Duration`
+value passes through. That sentinel also lives in `internal/maputils`.
+
 Comma-separated strings bind to slices only. A fixed-size array needs a real
 list (JSON array or any `[]any`); a source with more elements than the array
 can hold is an error, not a silent truncation. (The sentinel lives in

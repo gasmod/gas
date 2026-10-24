@@ -1,21 +1,20 @@
 package index_test
 
 import (
-	"bufio"
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"log/slog"
+	"net"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
-	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/config/configtest"
-	gaslog "github.com/gasmod/gas/log"
+	"github.com/gasmod/gas/docs/snippets/claims/internal/testport"
 )
 
 // recorder collects events from several goroutines in the order they happen.
@@ -36,66 +35,32 @@ func (r *recorder) list() []string {
 	return slices.Clone(r.events)
 }
 
-// only returns the recorded events that start with one of the prefixes.
-func (r *recorder) only(prefixes ...string) []string {
-	var out []string
-	for _, e := range r.list() {
-		for _, p := range prefixes {
-			if strings.HasPrefix(e, p) {
-				out = append(out, e)
-				break
-			}
-		}
-	}
-	return out
-}
-
 // svc is a Service whose type is distinct per kind K, so several of them can
 // be registered in one container. Its Name is the kind's type name.
 type svc[K any] struct {
-	rec     *recorder
-	onInit  func(ctx context.Context) error
-	onClose func(ctx context.Context) error
+	rec *recorder
 
 	mu         sync.Mutex
-	initCount  int
 	closeCount int
 }
 
-func kindName[K any]() string { return reflect.TypeFor[K]().Name() }
+func (s *svc[K]) Name() string { return reflect.TypeFor[K]().Name() }
 
-func (s *svc[K]) Name() string { return kindName[K]() }
-
-func (s *svc[K]) Init(ctx context.Context) error {
+func (s *svc[K]) Init(context.Context) error {
 	if s.rec != nil {
 		s.rec.add("init %s", s.Name())
-	}
-	s.mu.Lock()
-	s.initCount++
-	s.mu.Unlock()
-	if s.onInit != nil {
-		return s.onInit(ctx)
 	}
 	return nil
 }
 
-func (s *svc[K]) Close(ctx context.Context) error {
+func (s *svc[K]) Close(context.Context) error {
 	if s.rec != nil {
 		s.rec.add("close %s", s.Name())
 	}
 	s.mu.Lock()
 	s.closeCount++
 	s.mu.Unlock()
-	if s.onClose != nil {
-		return s.onClose(ctx)
-	}
 	return nil
-}
-
-func (s *svc[K]) inits() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.initCount
 }
 
 func (s *svc[K]) closes() int {
@@ -110,74 +75,6 @@ type (
 	kC struct{}
 )
 
-// logSink captures JSON log lines written by a slog-backed gas.Logger.
-type logSink struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
-}
-
-func (s *logSink) Write(p []byte) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.buf.Write(p)
-}
-
-func (s *logSink) String() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.buf.String()
-}
-
-// records returns every captured line decoded as a JSON object.
-func (s *logSink) records(t *testing.T) []map[string]any {
-	t.Helper()
-	var out []map[string]any
-	sc := bufio.NewScanner(strings.NewReader(s.String()))
-	sc.Buffer(make([]byte, 0, 1<<20), 1<<20)
-	for sc.Scan() {
-		var m map[string]any
-		if err := json.Unmarshal(sc.Bytes(), &m); err != nil {
-			t.Fatalf("decode log line %q: %v", sc.Text(), err)
-		}
-		out = append(out, m)
-	}
-	return out
-}
-
-// find returns the captured records whose msg contains substr.
-func (s *logSink) find(t *testing.T, substr string) []map[string]any {
-	t.Helper()
-	var out []map[string]any
-	for _, r := range s.records(t) {
-		if msg, _ := r["msg"].(string); strings.Contains(msg, substr) {
-			out = append(out, r)
-		}
-	}
-	return out
-}
-
-// hasValue reports whether any attribute of rec, other than time and msg,
-// renders as want.
-func hasValue(rec map[string]any, want string) bool {
-	for k, v := range rec {
-		if k == "time" || k == "msg" {
-			continue
-		}
-		if fmt.Sprint(v) == want {
-			return true
-		}
-	}
-	return false
-}
-
-// newSink returns a capturing sink and a gas.Logger constructor writing JSON
-// lines to it at debug level and above.
-func newSink() (*logSink, gaslog.SlogLoggerCtor) {
-	sink := &logSink{}
-	l := slog.New(slog.NewJSONHandler(sink, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	return sink, gaslog.NewSlogLogger(gaslog.WithSlogInstance(l))
-}
-
 func mustConfig(t *testing.T, values map[string]any) gas.ConfigProvider {
 	t.Helper()
 	cfg, err := configtest.NewMockConfigWithValues(values)
@@ -185,4 +82,78 @@ func mustConfig(t *testing.T, values map[string]any) gas.ConfigProvider {
 		t.Fatalf("config: %v", err)
 	}
 	return cfg
+}
+
+// freePort returns a port reserved for this test process; see
+// testport.Free for why a port-0 listener is not enough.
+func freePort(t *testing.T) int {
+	t.Helper()
+	return testport.Free(t)
+}
+
+// serverConfig is a config provider that binds the server to 127.0.0.1 on
+// port, with any extra server keys.
+func serverConfig(t *testing.T, port int, extra map[string]any) gas.ConfigProvider {
+	t.Helper()
+	server := map[string]any{"host": "127.0.0.1", "port": port}
+	for k, v := range extra {
+		server[k] = v
+	}
+	return mustConfig(t, map[string]any{"server": server})
+}
+
+// waitFor polls cond until it holds or the timeout passes.
+func waitFor(timeout time.Duration, cond func() bool) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return true
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return cond()
+}
+
+// accepting reports whether something accepts TCP connections on port.
+func accepting(port int) bool {
+	c, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 100*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = c.Close()
+	return true
+}
+
+// repoRoot is the directory holding go.work.
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	d, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(d, "go.work")); err == nil {
+			return d
+		}
+		if filepath.Dir(d) == d {
+			t.Fatal("go.work not found")
+		}
+		d = filepath.Dir(d)
+	}
+}
+
+// listedModules maps each LinkCard on the landing page's Modules section to
+// the directory, under the repository root, of the module it links to.
+var listedModules = map[string]string{
+	"Config":     "config",
+	"Logging":    "log",
+	"Database":   "database",
+	"Migrations": "migrate",
+	"Cache":      "cache",
+	"Auth":       "auth",
+	"Templates":  "template",
+	"UI":         "ui",
+	"Storage":    "storage",
+	"Email":      "email",
+	"Queue":      "queue",
 }

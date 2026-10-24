@@ -29,7 +29,7 @@ gas.WithSingletonService[gas.JobQueueProvider](sqs.New()),
 The full guide, with configuration, testing, and worked examples, is on the docs site.
 This README is deliberately a signpost: keeping a second copy here is how the docs drifted before.
 
-- **Guide:** [Run background jobs](https://gasmod.github.io/gas/guides/background-jobs/)
+- **Guide:** [Queue](https://gasmod.github.io/gas/modules/queue/)
 - **API reference:** [pkg.go.dev/github.com/gasmod/gas/queue](https://pkg.go.dev/github.com/gasmod/gas/queue)
 - **Contributing:** [CONTRIBUTING.md](../CONTRIBUTING.md)
 

@@ -29,12 +29,14 @@ type Context interface {
 	// XML serializes v as XML and writes it with the given status code.
 	// Uses content type "application/xml; charset=utf-8".
 	XML(status int, v any) error
-	// RSS serializes v as XML with content type "application/rss+xml; charset=utf-8".
-	RSS(status int, v any) error
 	// HTML writes an HTML response with the given status code and content string.
 	HTML(status int, s string) error
 	// Text writes a plain-text response with the given status code.
 	Text(status int, s string) error
+	// Blob writes b with the given status code under the given content type.
+	// An empty contentType leaves the Content-Type header as it is; if none is
+	// set, net/http detects one from the start of b.
+	Blob(status int, contentType string, b []byte) error
 	// NoContent writes a 204 No Content response.
 	NoContent() error
 
@@ -214,8 +216,7 @@ func (c *reqContext) JSON(status int, v any) error {
 }
 
 // xmlWithContentType writes v as an XML document under the given content
-// type, emitting xml.Header ahead of the encoded value. XML and RSS differ
-// only in the content type they pass.
+// type, emitting xml.Header ahead of the encoded value.
 func (c *reqContext) xmlWithContentType(status int, v any, contentType string) error {
 	c.w.Header().Set("Content-Type", contentType)
 	c.w.WriteHeader(status)
@@ -244,10 +245,6 @@ func (c *reqContext) XML(status int, v any) error {
 	return c.xmlWithContentType(status, v, "application/xml; charset=utf-8")
 }
 
-func (c *reqContext) RSS(status int, v any) error {
-	return c.xmlWithContentType(status, v, "application/rss+xml; charset=utf-8")
-}
-
 func (c *reqContext) HTML(status int, s string) error {
 	c.w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	c.w.WriteHeader(status)
@@ -262,6 +259,18 @@ func (c *reqContext) Text(status int, s string) error {
 	c.w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	c.w.WriteHeader(status)
 	_, err := c.w.Write([]byte(s))
+	if err != nil {
+		return fmt.Errorf("failed to write response: %w", err)
+	}
+	return nil
+}
+
+func (c *reqContext) Blob(status int, contentType string, b []byte) error {
+	if contentType != "" {
+		c.w.Header().Set("Content-Type", contentType)
+	}
+	c.w.WriteHeader(status)
+	_, err := c.w.Write(b)
 	if err != nil {
 		return fmt.Errorf("failed to write response: %w", err)
 	}

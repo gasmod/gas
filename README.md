@@ -6,7 +6,7 @@
 needs (dependency injection, routing, middleware, events, migrations, and service lifecycle management) so you
 can spend your time on business logic instead of rebuilding the same wiring for each project.
 
-📚 **[Documentation](https://gasmod.github.io/gas)** · [Getting started](https://gasmod.github.io/gas/start/getting-started/) · [Guides](https://gasmod.github.io/gas/guides/database/) · [API reference](https://pkg.go.dev/github.com/gasmod/gas)
+📚 **[Documentation](https://gasmod.github.io/gas)** · [Getting started](https://gasmod.github.io/gas/start/installation/) · [Modules](https://gasmod.github.io/gas/modules/overview/) · [API reference](https://pkg.go.dev/github.com/gasmod/gas)
 
 ## Quick start
 
@@ -42,7 +42,7 @@ go run .
 # listening on 0.0.0.0:8080
 ```
 
-That is a complete Gas app. From there you write [services](https://gasmod.github.io/gas/start/first-service/)
+That is a complete Gas app. From there you write [services](https://gasmod.github.io/gas/core/services/)
 and register modules the same way, letting the DI container wire them together.
 
 ## Modules
@@ -89,7 +89,7 @@ cd example/hello-world && go run ./cmd
 
 | Where | What |
 |---|---|
-| [gasmod.github.io/gas](https://gasmod.github.io/gas) | Guides, concepts, and getting started |
+| [gasmod.github.io/gas](https://gasmod.github.io/gas) | Getting started, tutorial, core concepts, and module guides |
 | [pkg.go.dev](https://pkg.go.dev/github.com/gasmod/gas) | API reference for every package |
 | [`example/`](example/README.md) | Runnable applications |
 

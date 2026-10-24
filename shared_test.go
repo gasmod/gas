@@ -207,20 +207,14 @@ func equalStrings(a, b []string) bool {
 
 // Worker.Shutdown documents that it "closes all services in reverse
 // initialization order", which is what makes it safe for a service to use its
-// dependencies during Close. It does not do that.
+// dependencies during Close.
 //
-// InitServices builds w.serviceOrder by iterating EachInstance, which ranges
-// over ServiceContainer.instances — a map[reflect.Type]reflect.Value. Go
-// randomizes map iteration order, so serviceOrder is a random permutation of
-// the services rather than the order they were initialized in, and reversing a
-// random permutation is still random. Construction order is correct (BuildAll
-// walks the topological sort); only the close order is lost.
-//
-// Consequence: a service can be closed AFTER a dependency it uses inside
-// Close, so Close runs against an already-torn-down dependency. Which
-// services are affected changes from process to process, so this surfaces as
-// an intermittent shutdown failure in production rather than a reproducible
-// one.
+// InitServices builds w.serviceOrder by iterating EachInstance. When the
+// container kept its instances in a plain map, that iteration was randomized,
+// so serviceOrder was a random permutation of the services and a service
+// could be closed after a dependency it uses inside Close. EachInstance now
+// yields instances in the order they became available, which is a valid
+// initialization order.
 //
 // The chain below is S0 <- S1 <- ... <- S5 (each depends on the previous), so
 // the only correct close order is S5, S4, S3, S2, S1, S0.

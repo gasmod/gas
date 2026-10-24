@@ -1,0 +1,114 @@
+---
+title: Introduction
+description: What Gas is, the problem it solves, the design behind it, when it fits, and where to go next.
+---
+
+import { Aside, Code, CardGrid, LinkCard } from '@astrojs/starlight/components';
+import intro from '../../../../snippets/start-introduction/main.go?raw';
+import { region } from '../../../lib/snippet';
+
+Gas is a modular Go framework for building SaaS backends. It provides the
+plumbing every product needs (dependency injection, routing, middleware,
+events, migrations, and service lifecycle), so that each new product starts
+from working wiring instead of rebuilding it.
+
+It has two layers. The core package, `github.com/gasmod/gas`, is the framework
+itself. Around it sit optional modules for configuration, logging, databases,
+migrations, caching, authentication, templates and HTML, object storage,
+email, and job queues. Each module is its own Go module, so `go get` pulls in
+only what you use.
+
+## The problem
+
+A typical Go service starts with `net/http` or a small router and grows its
+own wiring: a `main` that constructs everything in the right order, passes
+dependencies by hand, starts background goroutines, and hopefully closes things
+in the right order on shutdown. Every new project repeats it, slightly
+differently, and the mistakes in it (a dependency constructed twice, a
+connection never closed, a handler that needs something nobody registered) tend
+to show up at runtime.
+
+Gas replaces that wiring with a container that knows how to build, start, and
+stop your application, and that checks the wiring before the first request.
+
+## What it looks like
+
+<Code code={region(intro, 'app')} lang="go" title="main.go" />
+
+`Greeter` is a **service**: a constructor that declares its dependencies as
+parameters, and three methods. The container builds it after the router and
+logger it asks for, calls `Init` at startup, where it registers its route, and
+calls `Close` at shutdown. `app.Run()` starts everything, serves HTTP on
+`0.0.0.0:8080` by default, and shuts down on SIGINT or SIGTERM.
+
+## The design
+
+**Everything is a service.** Features, and the infrastructure under them, are
+packaged as types with a constructor, `Init`, and `Close`. The container
+initializes them in dependency order and closes them in reverse.
+See [Services and DI](/gas/core/services/).
+
+**Dependencies are injected by interface.** Core declares provider interfaces
+such as `gas.Logger`, `gas.ConfigProvider`, `gas.DatabaseProvider`, and
+`gas.CacheProvider`. Modules implement them and are registered under them, and
+your services ask for the interfaces, never for a module's concrete type. The
+container resolves by exact type, with no guessing about which registration
+satisfies an interface. Swapping a backend, or a test mock, is a change to one
+registration.
+
+**Modules are separate and independent.** No module's production code imports
+another module; they meet only through the interfaces in core. A service that
+depends on `gas.CacheProvider` works the same against the in-memory cache, the
+Valkey cache, or a mock. See [Modules](/gas/modules/overview/).
+
+**Wiring mistakes fail at startup.** A missing registration, a service that
+implements only part of the lifecycle, a singleton holding a per-request value,
+a handler parameter nobody registered: each one fails `Start` with an error
+naming the types involved, before the server accepts a request.
+
+**Services own what they register.** Every route, named middleware, and event
+subscription records the service that registered it. That makes the route map
+attributable, and it makes it possible to close one service at runtime, with
+its routes answering 503, without restarting the process. See
+[Ownership and teardown](/gas/core/ownership/).
+
+**Services do not import each other.** They talk through the
+[event bus](/gas/core/events/) and through interfaces, so features can be added
+and removed independently.
+
+**HTTP is optional.** `gas.App` serves HTTP; `gas.Worker` is the same container
+and lifecycle without a server, for queue consumers, Lambda functions, and CLI
+tools. See [Workers](/gas/core/workers/).
+
+## When Gas fits
+
+Gas is built for small teams and solo developers shipping SaaS backends: JSON
+APIs, server-rendered HTML apps with HTMX, background workers, and AWS-hosted
+services. It fits when you want conventions for structure and lifecycle, and
+want the infrastructure (PostgreSQL or SQLite, Valkey, S3, SES, SQS) behind
+interfaces you can swap and mock.
+
+It is a poorer fit when:
+
+- You want a minimal router and nothing else. Gas's container and lifecycle are
+  the point; if you do not want them, `net/http` or chi alone is simpler.
+- You need a stable, 1.0 API. Gas is pre-1.0, and minor versions can contain
+  breaking changes.
+- Your infrastructure is outside what the modules cover and you do not want to
+  write the provider yourself. Any provider interface can be implemented by
+  your own type, but the official modules target the backends listed above.
+
+## Where to go next
+
+<CardGrid>
+	<LinkCard title="Installation" href="/gas/start/installation/" description="Add Gas to a Go module." />
+	<LinkCard title="Tutorial: build a notes API" href="/gas/start/tutorial/" description="Build a small app end to end, from first route to tests." />
+	<LinkCard title="Services and DI" href="/gas/core/services/" description="How services are registered, built, and resolved." />
+	<LinkCard title="App lifecycle" href="/gas/core/lifecycle/" description="What happens, in what order, from Start to Stop." />
+</CardGrid>
+
+<Aside type="note">
+API reference for every package is on
+[pkg.go.dev](https://pkg.go.dev/github.com/gasmod/gas). These pages cover what
+it cannot: how the pieces fit together, and the behavior behind them.
+</Aside>

@@ -58,13 +58,27 @@ The same DI container, service lifecycle, and migrations as `gas.App`, without a
 worker is built in `init()` so it survives across Lambda invocations, and `Shutdown` is wired to Lambda's
 SIGTERM callback.
 
-Needs a Postgres database and an SQS queue, configured through `APP_`-prefixed environment variables:
+Needs a Postgres database with `db/schema.sql` applied and an SQS queue to send notifications to, configured
+through `APP_`-prefixed environment variables. All but `APP_QUEUE__REGION`, which defaults to `us-east-1`, are
+required: `gas/database` defaults to the `postgres` driver, which is not registered, so the driver must be `pgx`,
+and the handler refuses to start without the notification queue URL.
 
 ```bash
 cd lambda-worker
+export APP_DATABASE__DRIVER=pgx
 export APP_DATABASE__DSN='postgres://user:pass@localhost:5432/orders?sslmode=disable'
 export APP_QUEUE__REGION=us-east-1
-go run ./cmd
+export APP_NOTIFICATION_QUEUE_URL='https://sqs.us-east-1.amazonaws.com/123456789012/order-notifications'
+```
+
+The binary only serves invocations inside AWS Lambda. Run outside it, `go run ./cmd` starts the worker (connects to
+the database and validates the config, so it doubles as a startup check), then exits with
+`expected AWS Lambda environment variables [_LAMBDA_SERVER_PORT AWS_LAMBDA_RUNTIME_API] are not defined`. To
+exercise the handler locally, run its tests, which drive it through the worker's DI container with no database or
+queue:
+
+```bash
+go test ./...
 ```
 
 ## api-server

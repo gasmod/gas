@@ -1,0 +1,443 @@
+---
+title: Storage
+description: Buckets, objects, listings and presigned URLs with gas/storage, on S3, S3-compatible services, or a local directory.
+---
+
+import { Code, Aside } from '@astrojs/starlight/components';
+import st from '../../../../snippets/modules-storage/main.go?raw';
+import stTest from '../../../../snippets/modules-storage/main_test.go?raw';
+import { region } from '../../../lib/snippet';
+
+## What it is for
+
+`gas/storage` is object storage for Gas apps. The `storage` package defines
+two interfaces and holds no implementation:
+
+- `storage.Provider` creates, inspects, lists and deletes buckets, and writes,
+  reads, inspects, lists and deletes objects.
+- `storage.Presigner` issues time-limited URLs that let a client with no
+  credentials upload or download one object directly against the backend.
+
+The interfaces live in this module, not in the gas core, because no other
+module uses them. Two backends implement them:
+
+| Package | Implements | Backend |
+|---|---|---|
+| `storage/s3` | `Provider`, `Presigner` | AWS S3 and S3-compatible services such as MinIO and LocalStack, through the AWS SDK for Go v2 |
+| `storage/dir` | `Provider` | a directory on local disk, for development, tests and single-host deployments |
+
+Services depend on the interfaces, so the same code runs against a directory
+or LocalStack in development and S3 in production. `storage/storagetest`
+holds recording mocks of both interfaces.
+
+## Install
+
+```bash
+go get github.com/gasmod/gas/storage
+```
+
+## Wiring
+
+<Code code={region(st, 'wiring')} lang="go" title="main.go" />
+
+`s3.NewProvider(opts...)` and `s3.NewPresigner(opts...)` return constructors of
+the shape `func(gas.ConfigProvider) (*T, error)`. The container calls them with
+the registered `gas.ConfigProvider`, so one must be registered, and each binds
+its [configuration](#configuration) from it. A constructor fails, and so does
+startup, when the configured bucket is set but is not a valid S3 bucket name
+(`storage.ErrInvalidBucket`), when an option is nil (`storage.ErrInvalidOption`,
+with the option's zero-based position in the message, as in
+`gas/storage/s3/provider: storage: invalid option: option 1 is nil`), or when
+binding fails. Constructors send no request to S3.
+
+<Aside type="caution">
+Register each under the interface your services inject. The container
+matches by exact type, so registering `*s3.Provider` leaves a
+`storage.Provider` dependency unresolved and startup fails. See
+[Services and DI](/gas/core/services/).
+</Aside>
+
+The s3 options replace a client the constructor would otherwise build from
+configuration: `WithClient` (an `*s3.Client`) and `WithUploaderClient` (a
+transfer manager client) for the Provider, `WithPresignerS3Client` and
+`WithPresignClient` for the Presigner, where `WithPresignClient` takes
+precedence. Configuration is still bound, and the configured bucket still
+applies, when a client is injected. Each option sets its client as given,
+so when an option appears more than once the last one wins, and a nil client
+in that last position means the constructor builds that client from
+configuration: `WithClient(c), WithClient(nil)` discards `c`. The options'
+doc comments say a nil client is ignored, which is not what the code does
+(KI-051, see [Known issues](/gas/project/known-issues/)).
+
+The directory backend stores into an `os.Root` that you open and close:
+
+<Code code={region(st, 'dir')} lang="go" title="main.go" />
+
+`dir.NewProvider(opts...)` has the same constructor shape and binds
+`storage.bucket` from the `gas.ConfigProvider`, so one must be registered even
+when nothing is configured. It takes two options:
+
+- `WithRoot(root)` is required; the last one given wins. Without it, or with
+  `WithRoot(nil)`, the constructor returns `dir.ErrRootRequired`, which wraps
+  `storage.ErrNotInitialized`. The provider never closes the root; whoever
+  opened it closes it once the provider is no longer used.
+- `WithSkipHandler(fn)` receives the entries listings leave out; see
+  [The directory backend](#the-directory-backend).
+
+The constructor creates the backend's internal directories in the root, and no
+bucket. A nil option fails with `storage.ErrInvalidOption`, and then nothing is
+created in the root.
+
+## Usage
+
+<Code code={region(st, 'service')} lang="go" title="files/service.go" />
+
+### Inputs
+
+Every method takes a pointer to an input struct; a nil input fails with
+`storage.ErrInputRequired`. Optional fields are pointers, so "not set" differs
+from the zero value.
+
+Object inputs embed `BaseObjectInput`:
+
+- `Key` is the object key, a plain string. Every backend rejects, with
+  `storage.ErrInvalidKey`, an empty key, a key longer than 1024 bytes, a key
+  that is not valid UTF-8, and a key whose last path element is `.` or that
+  cleans to `.`. Only `/` separates path elements, on every platform, as on
+  S3: a backslash is an ordinary byte, so `a\.` is valid and `a/.` is not.
+  The key is checked before the bucket.
+- `Bucket` is optional. Nil selects the configured bucket (`storage.bucket`).
+  A non-nil pointer must name a valid S3 bucket name; an empty string is not a
+  fallback. An invalid bucket, or a nil `Bucket` with no valid configured
+  bucket, fails with `storage.ErrInvalidBucket`.
+
+Input is validated before anything is sent to the backend.
+
+### Operations
+
+| Method | Returns | Notes |
+|---|---|---|
+| `CreateBucket(ctx, *CreateBucketInput)` | `*Bucket` | A bucket you already own is success |
+| `HeadBucket(ctx, *HeadBucketInput)` | `*Bucket` | Whether a bucket exists, and what the backend knows about it |
+| `DeleteBucket(ctx, *DeleteBucketInput)` | `error` | Deletes an empty bucket; a missing one is `ErrBucketNotFound` |
+| `ListBuckets(ctx, *ListBucketsInput)` | `*ListBucketsOutput` | One page of your buckets, by name; filter with `Prefix` |
+| `PutObject(ctx, *PutObjectInput)` | `*ObjectInfo` | Streams the body and replaces any object under the key. Headers, metadata, length and a write condition are optional. Returns the ETag |
+| `GetObject(ctx, *GetObjectInput)` | `*Object` | Body plus `ObjectInfo`; the caller closes `Body`. A missing key is `ErrKeyNotFound` |
+| `HeadObject(ctx, *HeadObjectInput)` | `*ObjectInfo` | Size, content type, modification time, ETag, version, metadata and stored headers. A missing object is `ErrNotFound` |
+| `DeleteObject(ctx, *DeleteObjectInput)` | `*ObjectInfo` | Deleting a missing key succeeds |
+| `ListObjects(ctx, *ListObjectsInput)` | `*ListObjectsOutput` | One page of a bucket's objects, by key, with `Prefix`, `Delimiter` and `StartAfter` |
+| `PresignUploadURL(ctx, *PresignUploadURLInput)` | `*PresignURLResponse` | URL, method, and the headers the client must send |
+| `PresignDownloadURL(ctx, *PresignDownloadURLInput)` | `*PresignURLResponse` | URL, method, and signed headers for a GET |
+
+The bucket methods take the bucket name as a plain `Bucket` string, and the
+configured bucket is not a fallback for them.
+
+### Writing objects
+
+<Code code={region(st, 'upload')} lang="go" />
+
+- `Body` may be any reader, including one that cannot seek or has unknown
+  length; a nil `Body` writes an empty object.
+- `ContentLength` is optional. When it is set, the body must yield exactly
+  that many bytes: a shorter or longer body, or a negative length, fails with
+  `storage.ErrContentLengthMismatch` and stores nothing, leaving any object
+  already under the key as it was. The body is read to EOF, so one that blocks
+  after exactly `ContentLength` bytes without ending blocks `PutObject`.
+- `PutObjectInput` embeds `ObjectHeaders`: the content type, `Cache-Control`,
+  `Content-Disposition`, `Content-Encoding`, `Content-Language`, `Expires`, and
+  user metadata. Every header a write sets reads back on the `ObjectInfo` from
+  `HeadObject` and `GetObject`. The body is stored as given; a
+  `Content-Encoding` does not encode or decode it.
+- `Expires` is text, so a stored value that is not a date survives the round
+  trip. The s3 backend accepts only an IMF-fixdate such as
+  `Wed, 21 Oct 2026 07:28:00 GMT` and fails anything else, including the
+  obsolete RFC 850 and asctime forms and a date with the wrong weekday, with
+  `storage.ErrInvalidHeader` before sending anything. The directory backend
+  stores any text.
+- Every object reports an `ETag`, unquoted. Compare ETags only for equality:
+  an ETag is not always a digest of the body.
+
+What `PutObject` returns differs by backend. On s3 the `ObjectInfo` holds the
+ETag and the version S3 reports, and its other fields are empty. The directory
+backend returns the object as `HeadObject` would read it: ETag (the hex MD5 of
+the body), size, modification time, content type, metadata and headers. With no
+content type, the directory backend sniffs one from the body with
+`http.DetectContentType`.
+
+On s3, `PutObject` uploads through the SDK's transfer manager, which switches
+to a multipart upload for large bodies and aborts a failed one. If that abort
+fails, the incomplete upload stays stored and billed until a bucket lifecycle
+rule removes it, and the abort's error is not reported.
+
+### Reading objects
+
+<Code code={region(st, 'download')} lang="go" />
+
+`GetObject` returns an open `Body` that the caller must close. `HeadObject`
+returns the same `ObjectInfo` without the body.
+
+A `Range` such as `bytes=0-1023` reads part of the object on both backends,
+and `Size` is then the length of that part. A range that cannot be satisfied,
+because its first byte is at or past the end or it is `bytes=-0`, is
+`storage.ErrInvalidRange`. The directory backend applies RFC 9110
+single-range semantics (one `bytes=first-last`, `bytes=first-` or
+`bytes=-suffix` range, clamped to the object) and ignores any other header,
+returning the whole object. The s3 backend sends the header as given, so the
+result is S3's, which agrees on valid single ranges but accepts some malformed
+ones; S3's `416` comes back as `storage.ErrInvalidRange`.
+
+The directory backend's `Body` also implements `io.ReadSeeker`, for whole and
+ranged reads. The interface promises only `io.ReadCloser`, and s3 makes no such
+promise.
+
+### Conditional writes
+
+`PutObjectInput` embeds a `WriteCondition`, at most one field of which may be
+set:
+
+- `IfNoneMatch: "*"` writes only when no object exists under the key.
+- `IfMatch` writes only over the object with that ETag, quoted or not. A
+  missing key is `storage.ErrKeyNotFound`.
+
+A condition that does not hold fails with `storage.ErrPreconditionFailed`,
+and nothing is written. A condition that cannot be evaluated (an `IfNoneMatch`
+other than `*`, an empty `IfMatch` or one of `*`, or both set) fails with
+`storage.ErrInvalidCondition` before anything is sent. An optimistic update is
+a read, then a `PutObject` with `IfMatch` set to the ETag it saw:
+
+<Code code={region(st, 'conditional')} lang="go" />
+
+On s3 the condition is sent as `If-Match` or `If-None-Match` and S3's `412` is
+`storage.ErrPreconditionFailed`; a `409 ConditionalRequestConflict`, which S3
+answers when a concurrent write conflicts, carries no sentinel. The directory
+backend checks the condition under the object's lock, so across processes too.
+
+### Listing
+
+<Code code={region(st, 'list')} lang="go" />
+
+`ListObjects` and `ListBuckets` return one page at a time, with the semantics
+of S3 ListObjectsV2 and ListBuckets: entries in byte order of their UTF-8
+names, and a continuation token that resumes after the page.
+
+- **Page size.** A page holds at most `MaxKeys` objects and common prefixes
+  together, or `MaxBuckets` buckets. A `MaxKeys` under 1, or a `MaxBuckets`
+  outside 1 to 10000, fails with `storage.ErrInvalidLimit`. The directory
+  backend defaults `MaxKeys` to 1000 and treats a larger value as 1000, and
+  defaults `MaxBuckets` to 10000. The s3 backend passes both through as given,
+  so the page size is S3's: S3 returns at most 1000 keys per page.
+- **Next page.** Pass the page's `NextContinuationToken` back as
+  `ContinuationToken`, and stop when it is empty, which happens on the last
+  page only. `ListObjects` also reports `IsTruncated`, as S3 does. A
+  `ContinuationToken` that is set but empty fails with
+  `storage.ErrInvalidContinuationToken`. Tokens are opaque and belong to the
+  backend that issued them.
+- **Grouping.** A `Delimiter` such as `/` rolls every key that holds it after
+  `Prefix` up into a common prefix, listed once across all pages in
+  `CommonPrefixes`, the way S3 consoles show folders. `StartAfter` applies to
+  keys before they are rolled up, and need not name an existing key.
+- **Skipped entries.** Each page's `Skipped` counts the entries the backend
+  could not read and left out, over the whole bucket (or every bucket), so
+  every page repeats it. The entries returned are correct; a caller that
+  ignores `Skipped` sees a short listing and no error. The s3 backend never
+  skips.
+
+`ListObjects` of a missing bucket is `storage.ErrBucketNotFound`. On s3,
+`ListObjects` uses ListObjectsV2 with URL encoding, so keys holding characters
+XML 1.0 cannot carry are listed intact, and `ListBuckets` lists the buckets
+the credentials own.
+
+### Buckets
+
+`CreateBucket` of a bucket you already own succeeds on both backends.
+`storage.ErrBucketExists` means another account owns the name, which only the
+s3 backend can report. `DeleteBucket` deletes an empty bucket: one that holds
+objects is `storage.ErrBucketNotEmpty`, and a missing one
+`storage.ErrBucketNotFound`. Unlike `DeleteObject` of a missing key, which
+succeeds, deleting a missing bucket is an error, as on S3. `HeadBucket` of a
+missing bucket is `storage.ErrBucketNotFound`.
+
+Which `Bucket` fields are filled depends on the backend and the operation:
+
+| | s3 | dir |
+|---|---|---|
+| `CreateBucket` | `Name`, and the ARN as `ID` | `Name`, `CreationDate` |
+| `HeadBucket` | `Name`, `ID` (ARN), `Region` | `Name`, and `CreationDate` unless the bucket's name record is damaged |
+| `ListBuckets` | `Name`, `CreationDate`, and the ARN and region when S3 sends them | `Name`, `CreationDate` |
+
+On S3, `CreateBucket` creates the bucket in the client's region, and outside
+us-east-1 and `aws-global` it sends the location constraint S3 requires there;
+with no configured region it uses the region the AWS SDK resolved. For a
+bucket you already own it succeeds, and the returned `Bucket` may hold only the
+name. `HeadBucket` and `DeleteBucket` report any `403` as
+`storage.ErrAccessDenied`, which S3 gives both for a bucket another account
+owns and for one you own without permission. On the directory backend, a
+bucket's `CreationDate` is when `CreateBucket` first ran for it.
+
+### Presigned URLs
+
+Presigned URLs let the browser transfer bytes straight to S3, so large files
+never pass through your server. Only the s3 backend has a `Presigner`.
+
+<Code code={region(st, 'presign')} lang="go" />
+
+- Signing is local: no request is sent to S3, so a presigner never reports a
+  missing key or bucket. Input is validated as for `Provider`.
+- A nil or zero TTL signs 15 minutes. A TTL that is negative, under one
+  second, or over seven days fails with `storage.ErrInvalidTTL` and nothing is
+  signed. The expiry is written in whole seconds, truncating any fraction, so
+  1.9 seconds signs as one.
+- The TTL is passed to the SDK explicitly, so it also overrides a default
+  expiry configured on a presign client given with `WithPresignClient`.
+- `PresignUploadURL` signs `ContentLength` and every header of
+  `ObjectHeaders` that is set, and a `WriteCondition`; the client must send
+  the returned `Method` and every header in `SignedHeader` unchanged. The
+  embedded `Body` is ignored. `Expires` must be an IMF-fixdate, as for
+  `PutObject`.
+
+### The directory backend
+
+The directory backend keeps every bucket and object under the root, named by
+the hex SHA-256 of its name, so a key is an opaque string as on S3: `../x`,
+`/abs`, and keys that differ only in case or Unicode normalization are
+distinct objects on every filesystem, and no key can name a path. All access
+goes through the `os.Root`, so symlinks in the storage directory cannot lead
+outside it. Directories are created with mode `0o750` and files with `0o600`,
+before umask.
+
+- **Writes are atomic.** A `PutObject` writes a new data file, then renames
+  a new metadata file over the old one. Readers see the old object or the new
+  one, never a mix, and a failed write leaves the previous object as it was.
+  When the replaced data file cannot be removed afterwards, `PutObject`
+  returns the `ObjectInfo` together with `dir.ErrStaleData`: the object reads
+  back as written, and the old data file stays on disk.
+- **One writer per key.** Operations on one key are serialized with an OS
+  file lock, which also excludes other processes sharing the directory.
+  Waiting for the lock honors the context: a canceled wait returns an error
+  wrapping `ctx.Err()`. A `GetObject` body keeps reading the data it opened
+  even if the object is overwritten or deleted meanwhile (not on Windows).
+- **No versions or parts.** `Version` on `HeadObject`, `GetObject` or
+  `DeleteObject`, and `PartNumber` on `HeadObject` or `GetObject`, fail with
+  `storage.ErrNotSupported`. The `Response*` fields of reads are ignored, and
+  `ObjectInfo` carries no `Version`.
+- **Damaged entries.** An object whose metadata cannot be used is reported by
+  `HeadObject`, `GetObject` and `DeleteObject` as an error wrapping
+  `dir.ErrCorrupt`, which never means the object is missing; a `PutObject` of
+  the key replaces it, and `ListObjects` leaves it out. A bucket whose name
+  record is missing or wrong (`dir.ErrUnnamedBucket`) is left out of
+  `ListBuckets` until `CreateBucket` of it runs again; its objects stay
+  reachable meanwhile. `DeleteBucket` removes such debris with the bucket, so
+  it can never make a bucket undeletable.
+- **Skip handler.** `WithSkipHandler(fn)` is called, synchronously and once
+  per entry per call, with the path of each entry a listing leaves out,
+  relative to the root, and an error wrapping `dir.ErrCorrupt` or
+  `dir.ErrUnnamedBucket`. `DeleteBucket` also reports the debris it removes
+  and anything it leaves behind. A paged listing reports the same entry on
+  every page.
+- **Listing cost.** Every `ListObjects` call reads the metadata of every
+  object in the bucket, so a page costs time in proportion to the bucket, not
+  the page. It suits development and small buckets.
+
+The provider holds no open files between calls and has nothing to close.
+
+## Configuration
+
+The constructors bind these keys from the `gas.ConfigProvider`, under
+`storage`. Keys are case-insensitive; see [Config](/gas/modules/config/) for
+how keys map to environment variables and files.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `storage.bucket` | string | | Bucket for inputs with a nil `Bucket` (s3 and dir). Optional; must be a valid S3 bucket name when set |
+| `storage.region` | string | | AWS region (s3). Empty uses the AWS SDK's default resolution from the environment and shared config |
+| `storage.accesskeyid` | string | | Static access key ID (s3). When empty, the SDK's default credential chain applies |
+| `storage.secretaccesskey` | string | | Secret for `accesskeyid` (s3) |
+| `storage.sessiontoken` | string | | Optional session token for `accesskeyid` (s3) |
+| `storage.endpoint` | string | | Custom endpoint for S3-compatible services (s3). Setting it also switches to path-style addressing |
+
+The directory backend reads only `storage.bucket`.
+
+## Errors
+
+Every error a method returns, except `ErrNotInitialized`, names the backend
+and the operation, in the form
+`gas/storage/<backend>/<component>: <operation>: <cause>`, for example
+`gas/storage/s3/provider: get: ...` or `gas/storage/dir/provider: put: ...`,
+and wraps one of the sentinels in `storage` when one applies. Constructor
+errors carry the component but no operation. Classify
+failures with `errors.Is`. Backend causes, such as an AWS SDK error, stay in
+the chain for `errors.As`. The storage packages put no object key or metadata
+value into the messages they build, but the AWS SDK's error for a failed
+request includes the request URL, which contains the bucket and key, so treat
+error text as possibly holding both before logging it or returning it to a
+client.
+
+| Sentinel | Meaning |
+|---|---|
+| `ErrKeyNotFound` | `GetObject` of a missing key, or a `PutObject` with `IfMatch` of a missing key |
+| `ErrNotFound` | `HeadObject` of a missing object; on S3 also a missing bucket, because HEAD responses carry no error code |
+| `ErrBucketNotFound` | An object operation, `ListObjects`, `HeadBucket` or `DeleteBucket` on a missing bucket (S3 `HeadObject` excepted) |
+| `ErrVersionNotFound` | S3 `GetObject` of a version that does not exist. S3 `HeadObject` reports it as `ErrNotFound`, and AWS may reject a malformed version ID with an error that carries no sentinel |
+| `ErrBucketExists` | S3 `CreateBucket` of a name another account owns |
+| `ErrBucketNotEmpty` | `DeleteBucket` of a bucket that holds objects |
+| `ErrAccessDenied` | S3 `HeadBucket` or `DeleteBucket` answered 403 |
+| `ErrPreconditionFailed` | A `PutObject` whose `WriteCondition` does not hold; nothing is written |
+| `ErrInvalidCondition` | A `WriteCondition` that cannot be evaluated, such as an `IfNoneMatch` other than `*` |
+| `ErrInvalidHeader` | An S3 `PutObject` or presigned upload whose `Expires` is not an IMF-fixdate |
+| `ErrInvalidKey`, `ErrInvalidBucket`, `ErrInputRequired` | Input rejected before anything is sent |
+| `ErrInvalidTTL` | A presign TTL out of bounds |
+| `ErrInvalidLimit` | A `MaxKeys` under 1, or a `MaxBuckets` outside 1 to 10000 |
+| `ErrInvalidContinuationToken` | A list token that is set but empty, or one the directory backend cannot decode. The directory backend cannot tell a well-formed token it did not issue, and resumes after the name it decodes to; S3 may reject a token it did not issue with an error that carries no sentinel |
+| `ErrInvalidRange` | A `Range` whose first byte is at or past the end of the object, or `bytes=-0` |
+| `ErrNotSupported` | A feature the backend does not implement, such as `Version` or `PartNumber` on the directory backend |
+| `ErrContentLengthMismatch` | A `PutObject` whose body does not match its `ContentLength`; nothing is stored |
+| `ErrInvalidOption` | A constructor given a nil option |
+| `ErrNotInitialized` | Every method of a provider not built by its constructor, such as a zero value; on s3 also a nil pointer |
+
+Each sentinel is distinct: none matches another. When a `PutObject` has both a
+missing bucket and a mismatched body, the error may be either
+`ErrBucketNotFound` or `ErrContentLengthMismatch`, depending on the backend and
+the body's size; do not rely on the order.
+
+The directory backend adds three sentinels of its own:
+
+| Sentinel | Meaning |
+|---|---|
+| `dir.ErrCorrupt` | An object it cannot read, from `HeadObject`, `GetObject` and `DeleteObject`. It never means the object is missing, and a `PutObject` of the key replaces it |
+| `dir.ErrUnnamedBucket` | A bucket whose name record is missing or wrong. `ListBuckets` leaves it out, and the skip handler receives an error wrapping it |
+| `dir.ErrStaleData` | A `PutObject` that stored the object but could not remove the data file it replaced. It is returned with the `ObjectInfo` |
+
+## Health and readiness
+
+Neither backend has a start or close step, and neither implements
+`gas.HealthReporter` or `gas.ReadyReporter`. A provider is ready when its
+constructor returns. Both backends are safe for concurrent use.
+
+## Testing
+
+`storagetest.MockProvider` and `storagetest.MockPresigner` implement the two
+interfaces. Each method records the call in `Calls` (the method name and the
+arguments after the context) and delegates to the matching `Fn` field, such as
+`GetObjectFn` or `PresignUploadURLFn`, when it is set; otherwise it returns
+`nil, nil` (`nil` for `DeleteBucket`). `CallCount(method)` counts the calls to
+one method, and `Reset` clears `Calls` but keeps the `Fn` fields. The zero
+value is ready to use. Recording is safe for concurrent calls, but read
+`Calls` only after the calls under test have finished, or use `CallCount`,
+which locks.
+
+<Code code={region(stTest, 'mock')} lang="go" title="files/service_test.go" />
+
+A mock shows that your code handles what a backend returns, not that a backend
+behaves that way. For real storage behavior with no network, run the directory
+backend on a temporary directory:
+
+<Code code={region(stTest, 'dir-test')} lang="go" title="files/service_test.go" />
+
+See [Testing](/gas/production/testing/) for testing services in general.
+
+## API reference
+
+- [pkg.go.dev/github.com/gasmod/gas/storage](https://pkg.go.dev/github.com/gasmod/gas/storage)
+- [storage/s3](https://pkg.go.dev/github.com/gasmod/gas/storage/s3)
+- [storage/dir](https://pkg.go.dev/github.com/gasmod/gas/storage/dir)
+- [storage/storagetest](https://pkg.go.dev/github.com/gasmod/gas/storage/storagetest)

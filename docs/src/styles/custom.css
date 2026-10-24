@@ -1,17 +1,25 @@
-/* Gas brand accent. Starlight derives hover and border shades from these. */
+/* Gas brand accent: the greys and white of the icon on black. Starlight
+   derives hover and border shades from these. */
 :root {
-	--sl-color-accent-low: #17303b;
-	--sl-color-accent: #2b7fa0;
-	--sl-color-accent-high: #b3dbe9;
+	--sl-color-accent-low: #262626;
+	--sl-color-accent: #b3b3b3;
+	--sl-color-accent-high: #ffffff;
 }
 
 :root[data-theme='light'] {
-	--sl-color-accent-low: #c5e3ee;
-	--sl-color-accent: #1c6b87;
-	--sl-color-accent-high: #123a49;
+	--sl-color-accent-low: #e6e6e6;
+	--sl-color-accent: #4d4d4d;
+	--sl-color-accent-high: #000000;
 }
 
 /* Give Go code blocks a little more room to breathe. */
 .expressive-code .frame pre {
 	padding-block: 0.9rem;
+}
+
+
+/* Card icons in the brand greys rather than Starlight's rotating colors. */
+.card {
+	--sl-card-border: var(--sl-color-accent);
+	--sl-card-bg: var(--sl-color-accent-low);
 }

@@ -1,0 +1,183 @@
+---
+title: Deployment
+description: What a Gas app does when it runs in production, from startup and graceful shutdown to server timeouts, health and readiness checks, environments, and the Lambda worker.
+---
+
+import { Code, Aside } from '@astrojs/starlight/components';
+import dep from '../../../../snippets/production-deployment/main.go?raw';
+import lambdaMain from '../../../../../example/lambda-worker/cmd/main.go?raw';
+import { region } from '../../../lib/snippet';
+
+A Gas app is one Go binary that serves HTTP. This page covers what that binary
+does at startup and shutdown, the settings it reads, and the hooks it gives a
+platform for health checks. How to build and host the binary is up to the
+platform.
+
+## Running
+
+<Code code={region(dep, 'run')} lang="go" title="main.go" />
+
+`App.Run` does, in order:
+
+1. `Start` with `context.Background()`: builds and initializes every service,
+   runs pending migrations, runs ready hooks, and binds the server
+   configuration. If any step fails, `Run` returns the error before listening.
+   See [App lifecycle](/gas/core/lifecycle/).
+2. Logs the route map (see [Routing](/gas/core/routing/#ownership)).
+3. Starts the HTTP server in a goroutine and logs `server started` with the
+   `environment` and `addr` fields.
+4. Waits for `SIGINT` or `SIGTERM`, or for the server to fail.
+
+On a signal it logs `shutdown signal received` with the signal name, then
+shuts down as described below and returns the result. If the server fails
+instead, for example because the port is taken, `Run` still shuts down, so the
+services `Start` initialized are closed, and returns the server error joined
+with any shutdown error.
+
+## Graceful shutdown
+
+Shutdown is `App.Stop(ctx)`, which `Run` calls with `context.Background()`:
+
+1. Emits `gas.SystemServerShuttingDown` and waits for its subscribers to
+   return. See [Events](/gas/core/events/).
+2. Calls `http.Server.Shutdown`, which closes the listeners and waits for
+   in-flight requests to finish, for at most `Server.ShutdownTimeout` (default
+   `30s`) or until `ctx` ends, whichever is first. A shutdown error, including
+   the timeout, is logged as `server shutdown error` and does not stop the
+   sequence; `Stop` returns it at the end, joined with any errors from step 3.
+3. Calls `Shutdown(ctx)`: emits `gas.SystemShuttingDown`, waits for its
+   subscribers, then calls `Close(ctx)` on every active service in reverse
+   initialization order. A failing `Close` does not stop the others; the
+   errors are joined and returned. It logs `shutdown complete` at the end.
+
+`Server.ShutdownTimeout` bounds only the HTTP drain in step 2. In `Run`, the
+services' `Close` calls get `context.Background()`, so nothing bounds them. Once
+`Run` has received a signal it keeps handling `SIGINT` and `SIGTERM` until it
+returns, so a second signal does not interrupt a slow shutdown; the platform's
+own kill deadline (such as a container runtime's grace period) is what ends it.
+
+To bound the whole shutdown, or use your own signal handling, drive the
+lifecycle yourself:
+
+<Code code={region(dep, 'manual')} lang="go" title="main.go" />
+
+`Serve` returns `nil` after a clean shutdown. Started this way, the app logs no
+route map.
+
+## Server settings
+
+When `Start` runs, the app binds its `gas.Config` from the registered
+`gas.ConfigProvider`. The server settings live under the `server` key:
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `server.host` | string | `0.0.0.0` | Listen address: an IP address or an RFC 1123 hostname |
+| `server.port` | int | `8080` | Listen port |
+| `server.readtimeout` | duration | `5s` | `http.Server.ReadTimeout`: reading the whole request |
+| `server.readheadertimeout` | duration | `5s` | `http.Server.ReadHeaderTimeout`: reading the request headers; `0` falls back to `ReadTimeout` |
+| `server.writetimeout` | duration | `10s` | `http.Server.WriteTimeout`: writing the response |
+| `server.idletimeout` | duration | `2m` | `http.Server.IdleTimeout`: keep-alive idle time |
+| `server.shutdowntimeout` | duration | `30s` | Longest wait for in-flight requests at shutdown |
+| `server.maxjsonbodybytes` | int | `1048576` (1 MiB) | Most bytes `BindJSON` reads; `0` or negative means no limit |
+
+Durations accept Go duration strings such as `45s` or `2m`. With the
+environment provider, `SERVER__PORT=9090` sets `server.port`; the naming rule is
+on [Config](/gas/modules/config/).
+
+<Code code={region(dep, 'config')} lang="go" title="main.go" />
+
+Binding validates `server.host` by shape only, with no DNS lookup. A host that
+is neither an IP address nor an RFC 1123 hostname, or longer than 253
+characters, fails `Start` with a `gas: failed to bind config` error. With no
+`ConfigProvider` registered, nothing is bound and the defaults apply.
+
+`server.maxjsonbodybytes` applies only to `BindJSON`; a handler that reads the
+body itself is not limited by it (see
+[Handlers and Context](/gas/core/handlers/#binding-request-bodies)).
+
+### Changing the http.Server
+
+The address and timeouts come from the `server.*` settings above. `App.Server()`
+is the escape hatch for the `http.Server` fields that have no config key, such
+as `TLSConfig`, `ErrorLog`, `ConnState`, `BaseContext` and `MaxHeaderBytes`.
+Do not use it for a setting the config already covers. It returns the
+`*http.Server` the app serves, built on first call:
+
+<Code code={region(dep, 'server')} lang="go" />
+
+A single route that needs longer to read a large upload sets its own deadline
+in the handler with `http.NewResponseController(ctx.ResponseWriter()).SetReadDeadline(...)`,
+instead of turning off `server.readtimeout` for every route.
+
+A server built before `Start` starts from the configuration as it stands at that point, the defaults unless you changed `app.Config()`. When `Start` binds the
+configuration, it writes the bound address and timeouts to every one of those
+fields still holding the value the server was built with, and keeps any field
+changed since. A subscriber to `gas.AppConfigUpdated`, which `Start` emits
+after this, can also set fields, and what it sets stays. Once `Serve` has begun,
+`Start` no longer writes to the server.
+
+## Health and readiness
+
+Gas does not mount health endpoints. It gives you the checks, and you choose
+the paths. Every app's container holds two aggregates:
+
+- `gas.HealthProvider`, whose `CheckHealth(ctx)` calls `CheckHealth` on every
+  active service that implements `gas.HealthReporter`: is the process alive,
+  or would a restart fix it? This maps to a liveness probe.
+- `gas.ReadyProvider`, whose `CheckReady(ctx)` calls `CheckReady` on every
+  active service that implements `gas.ReadyReporter`: should traffic be routed
+  here right now? This maps to a readiness probe.
+
+Both run the checks concurrently and return a map from service name to result,
+`nil` meaning healthy or ready. Services that do not implement the reporter
+interface are left out of the map. A check that panics is reported as an error
+starting with `panic:` instead of crashing the process. Only active services
+are checked: a service closed with `CloseService`, or by shutdown, is no longer
+in the map.
+
+<Code code={region(dep, 'health')} lang="go" title="health/service.go" />
+
+The `GET` endpoints pass cross-origin protection, so probes need no
+configuration.
+
+Among the modules, [gas/database](/gas/modules/database/) and the Valkey backend
+of [gas/cache](/gas/modules/cache/) implement both reporters;
+[gas/migrate](/gas/modules/migrations/), [gas/ui](/gas/modules/ui/), the SQS
+backend of [gas/queue](/gas/modules/queue/), and the SES backend of
+[gas/email](/gas/modules/email/) implement readiness. Each module page describes
+what its checks test. A service of your own reports by implementing either
+interface:
+
+```go
+func (s *Service) CheckReady(ctx context.Context) error // nil means ready
+```
+
+## Environments
+
+The `gasenv` extension of [gas/config](/gas/modules/config/) sets the
+environment from `GAS_ENV` or a config provider: `development`, `testing`,
+`staging`, or `production`, falling back to `development` for a missing or
+unknown value. The app binds it into `Config().GasEnv` at `Start`. Without the
+extension, nothing sets it unless a provider sets the `GasEnv` key, and it stays
+empty.
+
+Core uses it in two places: `Run` logs the route map as one table in
+`development` and as one line per route otherwise, and `server started` carries
+it in the `environment` field. Modules that change behavior by environment say
+so on their pages. Your own configuration struct gets it by embedding
+`gas.WithGasEnv`, with helpers such as `IsProduction()` and
+`IsProductionLike()` (`staging` or `production`).
+
+## AWS Lambda and other non-HTTP processes
+
+`gas.Worker` is an app without the router and HTTP server: the same container,
+services, migrations, ready hooks, and events. Lambda calls for `Start` and
+`Shutdown` rather than `Run`, because the Lambda runtime owns the process loop.
+This is the `main.go` of the [lambda-worker example](/gas/project/examples/):
+
+<Code code={lambdaMain} lang="go" title="example/lambda-worker/cmd/main.go" />
+
+`Worker.Run` exists for long-running non-HTTP processes such as queue
+consumers: it starts, logs `worker started`, waits for `SIGINT` or `SIGTERM`,
+and shuts down the same way an app does, without the HTTP steps. See
+[Workers](/gas/core/workers/).

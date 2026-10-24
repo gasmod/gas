@@ -32,7 +32,7 @@ Both constructors need a `gas.ConfigProvider`.
 The full guide, with configuration, testing, and worked examples, is on the docs site.
 This README is deliberately a signpost: keeping a second copy here is how the docs drifted before.
 
-- **Guide:** [Store and serve files](https://gasmod.github.io/gas/guides/files/)
+- **Guide:** [Storage](https://gasmod.github.io/gas/modules/storage/)
 - **API reference:** [pkg.go.dev/github.com/gasmod/gas/storage](https://pkg.go.dev/github.com/gasmod/gas/storage)
 - **Contributing:** [CONTRIBUTING.md](../CONTRIBUTING.md)
 

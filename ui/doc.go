@@ -63,7 +63,7 @@
 // errors start with "ui:", and the Service's own render and readiness errors
 // with "gas/ui:"; the package defines no sentinel errors.
 //
-// Guides with usage examples are at https://gasmod.github.io/gas.
+// Guides with usage examples are at https://gasmod.github.io/gas/modules/ui/.
 //
 // SPDX-License-Identifier: MIT
 package ui

@@ -86,7 +86,7 @@
 // initialized". Configuration errors also name the offending field, for
 // example Database.DSN. The package defines no sentinel errors.
 //
-// Guides with usage examples are at https://gasmod.github.io/gas.
+// Guides with usage examples are at https://gasmod.github.io/gas/modules/database/.
 //
 // SPDX-License-Identifier: MIT
 package database

@@ -40,7 +40,7 @@ func (s *Store) Get(_ context.Context, name string) ([]byte, error) {
 }
 
 // List returns all available template names in sorted order.
-func (s *Store) List(_ context.Context) ([]string, error) {
+func (s *Store) List(context.Context) ([]string, error) {
 	s.mu.RLock()
 	names := make([]string, 0, len(s.templates))
 	for name := range s.templates {

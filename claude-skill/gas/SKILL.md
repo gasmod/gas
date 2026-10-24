@@ -70,8 +70,9 @@ returns nil late is closed again. So:
 - Do synchronous startup work (dial, ping, retry loops, migrations) with ctx.
 - Never derive a background goroutine from Init's ctx: it is canceled as soon
   as Init returns. Give the goroutine its own context and cancel it in Close.
-- A scoped service's Init gets the scope's context (the request's, in an App),
-  with no added deadline.
+- A scoped service's Init gets the scope's context (the request's, in an App)
+  with the same init deadline and timeout handling as a singleton's; a scoped
+  Init that times out fails the resolution.
 
 Close gets the caller's shutdown context (`Shutdown(ctx)` / `Stop(ctx)` /
 `CloseService(ctx)`; a request scope passes the request context without its
@@ -146,6 +147,7 @@ gas.WithScopedService[T any](ctor any) WorkerOption
 gas.WithTransientService[T any](ctor any) WorkerOption
 gas.WithService[T any](ctor any, lifetime ServiceLifetime) WorkerOption
 gas.WithServiceInstance[T any](val T) WorkerOption
+gas.WithServiceAlias[Target, Alias any]() WorkerOption // Alias resolves Target
 gas.WithReadyFunc(fn func(*ServiceContainer) error) WorkerOption
 ```
 
@@ -194,6 +196,7 @@ w := gas.NewWorker(opts ...Option) *Worker
 | `RegisterService[T]` | `(ctor any, lifetime ServiceLifetime)` | Imperative form of `WithService`; forwards to the container             |
 | `RegisterTransientService[T]` / `RegisterScopedService[T]` / `RegisterSingletonService[T]` | `(ctor any)` | Same, with the lifetime fixed |
 | `RegisterServiceInstance[T]` | `(val T)`      | Registers a pre-built value under `T`, the static type at the call site          |
+| `RegisterServiceAlias[Target, Alias]` | `()` | Imperative form of `WithServiceAlias`; forwards to the container |
 | `ReadyFunc`        | `(fn func(*ServiceContainer) error)` | Imperative form of `WithReadyFunc`; panics if called after the ready hooks ran |
 | `ActiveServices`   | `() []string`            | Names of active services, including the framework ones (`gas/worker`, `gas/eventbus`, `gas/router` in an App) |
 | `CloseService[T Service]`   | `(ctx) error`   | Kill switch: 503 the service's routes and middleware, remove subs, `Close(ctx)`, emit event |
@@ -240,9 +243,12 @@ protection (`net/http.CrossOriginProtection`) is enabled by default.
 
 On shutdown (SIGINT/SIGTERM): emit `SystemServerShuttingDown` → graceful
 HTTP shutdown → `Worker.Shutdown` (emit `SystemShuttingDown`, close services
-in reverse init order). If the server fails instead (for example the port is
-taken), `Run` runs the same `Stop` and returns the server error joined with any
-`Stop` error.
+in reverse init order). A failed HTTP shutdown (for example in-flight
+requests outliving `Server.ShutdownTimeout`) is logged as `server shutdown
+error` and returned from `Stop`, joined with any `Worker.Shutdown` error under
+`gas: shutdown error:`; the services are closed either way. If the server
+fails instead (for example the port is taken), `Run` runs the same `Stop` and
+returns the server error joined with any `Stop` error.
 
 `Run` is the convenience path. For embedding scenarios (tests, custom
 listeners, Lambda with HTTP, etc.), compose `Start` → `Serve` → `Stop`
@@ -288,6 +294,7 @@ c.RegisterSingletonService[T any](ctor any)
 c.RegisterScopedService[T any](ctor any)
 c.RegisterTransientService[T any](ctor any)
 c.RegisterServiceInstance[T any](val T)
+c.RegisterServiceAlias[Target, Alias any]()
 ```
 
 ```go
@@ -298,6 +305,19 @@ c.RegisterSingletonService[*myservice.Service](myservice.New)
 site, not the dynamic type of `val`. Passing an interface-typed variable makes
 the value resolvable as that interface only; name `T` explicitly to control it.
 Registering a type twice replaces the earlier registration.
+
+`RegisterServiceAlias[Target, Alias]()` makes the registration under `Target`
+resolvable as the interface `Alias` too: the same instance, `Target`'s
+lifetime, one `Init` and one `Close`. Use it when consumers ask for one
+service under several interfaces, instead of a second constructor, which
+builds a second instance. Either order works; a missing target fails
+`BuildAll` with `ErrNotRegistered`, and the captive-dependency check looks
+through the alias. It panics if `Alias` is not an interface, `Target` does
+not implement it, `Alias` is already registered, or `Target` is itself an
+alias; registering a service under an existing alias panics too. Registering
+the same alias again replaces its target. `RequestLogger[Alias]` stores the
+per-request logger on the context but does not replace the target's scoped
+instance.
 
 Constructor signature: `func(DepA, DepB, ...) T` or `func(DepA, DepB, ...) (T, error)`
 
@@ -560,9 +580,9 @@ Panics if any of parent, w, or r is nil. Options: `gas.WithValidate(v)`,
 | `Request`        | `() *http.Request`             |                          |
 | `JSON`           | `(status int, v any) error`    | application/json         |
 | `XML`            | `(status int, v any) error`    | application/xml          |
-| `RSS`            | `(status int, v any) error`    | application/rss+xml      |
 | `HTML`           | `(status int, s string) error` | text/html                |
 | `Text`           | `(status int, s string) error` | text/plain               |
+| `Blob`           | `(status int, contentType string, b []byte) error` | given type; sniffed if empty |
 | `NoContent`      | `() error`                     | 204                      |
 | `WriteError`     | `(err error) error`            | unified error response   |
 | `WriteErrorJSON` | `(err error) error`            | forces the JSON envelope |
@@ -825,7 +845,7 @@ func New(router *gas.Router, bus *gas.EventBus) *Service {
 
 func (s *Service) Name() string { return "myservice" }
 
-func (s *Service) Init(_ context.Context) error {
+func (s *Service) Init(context.Context) error {
 	// DI-aware handler — db is resolved per-request from the scoped container.
 	s.router.Handle(s, "GET", "/hello", s.handleHello)
 
@@ -848,7 +868,7 @@ func (s *Service) handleHello(ctx gas.Context, db gas.DatabaseProvider) error {
 	return ctx.JSON(http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func (s *Service) Close(_ context.Context) error { return nil }
+func (s *Service) Close(context.Context) error { return nil }
 ```
 
 ```go

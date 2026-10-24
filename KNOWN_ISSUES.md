@@ -43,8 +43,9 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   `content`, renders an empty fragment, so the documented HTMX pattern of
   one template with two entry points (`Render` for the full page,
   `RenderFragment` for the swap) does not work. Claim test:
-  `TestRenderFragmentSkipsLayout` in `docs/snippets/claims/guides-html`
-  (`fragment = "", want "<ul>...</ul>"`).
+  `TestKI032FragmentEmpty` in
+  `docs/snippets/claims/project-known-issues` (the fragment of a page
+  that defines only `content` is empty).
 - **Next step**: decide what a fragment of a convention page is (the
   `content` block, say) and render that, or change the documented pattern.
 
@@ -56,10 +57,9 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
 - **Detail**: `Store` declares `Close() error` (`template/dir/store.go:186`)
   and no `Name` or `Init`, so the container rejects it at Start:
   `*dir.Store declares Close but does not implement gas.Service`. The
-  package comment (`template/dir/doc.go`) and the guides say to register
-  `NewStore(dir)` under `gas.TemplateProvider`. Claim test:
-  `TestDirStoreWiredAsTemplateProvider` in
-  `docs/snippets/claims/guides-html`.
+  package comment (`template/dir/doc.go`) documents the limitation. Claim
+  test: `TestKI033DirStoreRejected` in
+  `docs/snippets/claims/project-known-issues`.
 - **Next step**: give `Store` the `gas.Service` shape, or document another
   way to wire it.
 
@@ -71,9 +71,9 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
 - **Detail**: `Service.Send` (`email/ses/ses.go:201` onward) builds an SES
   `SendEmail` request from the recipients, subject and bodies and never
   reads `Headers` (`providers.go:124`), so custom headers are dropped
-  without an error. Claim test: `TestCcBccReplyToAndHeadersAreSent` in
-  `docs/snippets/claims/guides-email` (the header is absent from the SES
-  request form).
+  without an error. Claim test: `TestKI034HeadersDropped` in
+  `docs/snippets/claims/project-known-issues` (the header is absent from
+  the SES request form).
 - **Next step**: send headers (SES `SendEmail` has no header field, so this
   means a raw message), or reject or document them as unsupported.
 
@@ -89,8 +89,8 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   context with `WithLogger` and into the scope's slot for `T`
   (`middleware.go:147`), never under `gas.Logger`, so the panic line lacks
   `request_id` even with chi's `RequestID` and `gas.RequestLogger`
-  mounted. Claim test: `TestPanicLoggedThroughRequestLogger` in
-  `docs/snippets/claims/guides-errors`.
+  mounted. Claim test: `TestKI035PanicLoggedWithoutRequestID` in
+  `docs/snippets/claims/project-known-issues`.
 - **Next step**: log through `LoggerFromContext(r.Context())` when it is
   set, falling back to the scope's `gas.Logger`.
 
@@ -108,21 +108,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   returning an error.
 - **Next step**: return a not-initialized error, as `migrate` does since
   v0.6.0.
-
-## KI-037: the api-server example never runs its migrations
-
-- **Status**: open
-- **Area**: `example/api-server`.
-- **Found**: 2026-10-21, docs audit.
-- **Detail**: `example/api-server/app/app.go:53` registers
-  `migrate.New()` under `*migrate.Service`, not `gas.MigrationManager`. The
-  Worker looks for `gas.MigrationManager`, so it runs nothing, and the
-  auth, files and shares services, which take `gas.MigrationManager`
-  (`auth/service.go:43`, `files/service.go:53`, `shares/service.go:51`),
-  fail to resolve with `ErrNotRegistered`. The test hides it by registering
-  a `migratetest.MockMigrationManager` (`app/app_test.go:83`).
-- **Next step**: register under `gas.MigrationManager`, and make the test
-  exercise the app's own registration.
 
 ## KI-038: `database` Close leaks the pgx pool when the sql.DB close fails
 
@@ -203,8 +188,8 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   `scopes TEXT NOT NULL DEFAULT ''`. MySQL rejects a literal default on a
   TEXT column: `Error 1101 (42000): BLOB, TEXT, GEOMETRY or JSON column
   'scopes' can't have a default value`. The session and token stores
-  migrate cleanly. Claim test: `TestStoresSupportMySQL` in
-  `docs/snippets/claims/guides-auth`, with a DSN of
+  migrate cleanly. Claim test: `TestKI044APIKeyMigrationFailsOnMySQL` in
+  `docs/snippets/claims/project-known-issues`, with a DSN of
   `multiStatements=true&parseTime=true`. Context: each auth MySQL
   migration file holds several statements (a CREATE TABLE and its CREATE
   INDEX lines), and `migrate` runs a file in one `ExecContext`
@@ -212,3 +197,240 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   `multiStatements=true` for any of them to apply.
 - **Next step**: drop the default or use an expression default
   (`DEFAULT ('')`), and document the `multiStatements=true` requirement.
+
+## KI-045: sub-routers drop the parent's validator and form decoder
+
+- **Status**: open
+- **Area**: core, `router.go`.
+- **Found**: 2026-10-21, docs claim tests.
+- **Detail**: `NewRouter` sets `validator` and `formDecoder`
+  (`router.go:190-191`; fields at `router.go:100-101`), the decoder with
+  `SetAliasTag("form")` and `IgnoreUnknownKeys(true)`. `newSubRouter`
+  (`router.go:205-228`) copies neither, so handlers registered inside
+  `Group` or `Route` are adapted with nil (`router.go:406-407`), and the
+  Context falls back per request to `schema.NewDecoder()` and a fresh
+  validator (`context.go:449-460`): no `form` tag alias, unknown keys
+  rejected, and validation rules registered on the router's validator
+  absent. Repro: a field tagged `form:"user_name"`, POST
+  `user_name=bob&extra=1`: 200 `bob` on a top-level route, 400
+  `invalid_form` under `Route` or `Group`.
+- **Next step**: copy both fields from the parent in `newSubRouter`.
+
+## KI-046: `config.Load` does not apply the Secrets Manager provider's timeout
+
+- **Status**: open
+- **Area**: `config`, `config/providers/secretsmanager`.
+- **Found**: 2026-10-21, docs claim tests.
+- **Detail**: `Config.Load` calls `LoadWithContext(context.Background())`
+  (`config/config.go:170`), and `loadValues` prefers
+  `ContextProvider.LoadContext` (`config/config.go:206`), which uses the
+  context as is. Only the provider's own `Load`
+  (`config/providers/secretsmanager/provider.go:148-156`) applies
+  `DefaultTimeout` (10s) or `WithTimeout`, and `Config.Load` never calls
+  it. A Secrets Manager endpoint that accepts and never answers blocks
+  `config.Load` with no deadline from the provider.
+- **Next step**: apply the provider's timeout in `LoadContext` when the
+  context has no deadline, or have `Config.Load` call `Load`.
+
+## KI-047: the JSON provider accepts a file holding `null`
+
+- **Status**: open
+- **Area**: `config/providers`.
+- **Found**: 2026-10-21, docs claim tests.
+- **Detail**: `JSONProvider.Load` unmarshals into a `map[string]any`
+  (`config/providers/json_provider.go:77-78`). A file holding `null`
+  leaves the map nil with no error, so it loads as no values instead of
+  failing with `ErrJSONDecodeFailed`, as a top-level array, string, number
+  or boolean does.
+- **Next step**: reject a nil result with `ErrJSONDecodeFailed`.
+
+## KI-048: `migrate` on MySQL requires `parseTime=true`
+
+- **Status**: open
+- **Area**: `migrate/db/mysql`.
+- **Found**: 2026-10-21, docs claim tests.
+- **Detail**: `GasMigrations.AppliedAt` is a `time.Time`
+  (`migrate/db/mysql/models.go:17`), scanned at
+  `migrate/db/mysql/queries.sql.go:39` and `:83`. Without `parseTime=true`
+  in the DSN the driver returns `DATETIME` as bytes, so the first
+  `RunPending` succeeds and every later read of the tracking table fails:
+  `gas/migrate: failed to query applied migrations: sql: Scan error on
+  column index 5, name "applied_at": unsupported Scan, storing
+  driver.Value type []uint8 into type *time.Time`.
+- **Next step**: scan `applied_at` in a form that works without
+  `parseTime`, or check the DSN and fail with a clear error; document the
+  requirement either way.
+
+## KI-049: the `template/db` MySQL migration needs `multiStatements=true`
+
+- **Status**: open
+- **Area**: `template/db/mysql`.
+- **Found**: 2026-10-21, docs claim tests.
+- **Detail**: the migration `create templates table` (Version
+  20260322235959,
+  `template/db/mysql/20260322235959_create_templates.up.sql`) holds a
+  CREATE TABLE and a CREATE INDEX, and `migrate` runs a file in one
+  `ExecContext` (`migrate/manager.go:263`). Without `multiStatements=true`
+  in the DSN, `RunPending` fails with `Error 1064` near `'CREATE INDEX
+  idx___gas_templates_namespace'`. Same mechanism as KI-044.
+- **Next step**: split the statements, or document the
+  `multiStatements=true` requirement.
+
+## KI-050: `RequestLogger[T]` silently keeps a concrete scoped `T`
+
+- **Status**: open
+- **Area**: core, `middleware.go`, `service_registry.go`.
+- **Found**: 2026-10-21, docs claim tests.
+- **Detail**: the per-request logger comes from `With().Logger()`
+  (`middleware.go:137-139`), whose type is the backend's, and
+  `replaceScoped` (`service_registry.go:741-757`) replaces the scoped slot
+  only when that type is assignable to `T` (`service_registry.go:747`).
+  For a concrete `T` such as `struct{ gas.Logger }` the slot is kept with
+  no error or log, so handlers and services resolving `T` get the original
+  logger without `request_id`. The logger put on the request context with
+  `WithLogger` (`middleware.go:147`) does carry it.
+- **Next step**: reject a `T` the derived logger cannot be assigned to
+  when the middleware is built, or log it.
+
+## KI-051: `storage/s3` option doc comments say a nil client is ignored
+
+- **Status**: open
+- **Area**: `storage/s3`.
+- **Found**: 2026-10-21, docs claim tests.
+- **Detail**: `WithClient`, `WithPresignerS3Client` and
+  `WithPresignClient` assign their value, nil included
+  (`storage/s3/provider.go:32-34`, `storage/s3/presigner.go:41-49`), so a
+  later nil discards an earlier client and the constructor builds one from
+  config (`storage/s3/provider.go:78`, `storage/s3/presigner.go:90`). Their
+  doc comments say "A nil client is ignored." (or "A nil presigner is
+  ignored.").
+- **Next step**: skip a nil value in the options, or fix the comments.
+
+## KI-052: `cache/valkey` Init's context does not bound the dial
+
+- **Status**: open
+- **Area**: `cache/valkey`.
+- **Found**: 2026-10-21, docs claim tests.
+- **Detail**: `connect` builds the client with `valkey.NewClient`, which
+  takes no context (`cache/valkey/service.go:150-156`), so against a
+  server that accepts and never answers, Init runs until
+  `cache.dialtimeout` ends the attempt, whatever its context's deadline.
+  Measured: 30s with a 300ms context and a 30s `dialtimeout`.
+- **Next step**: bound the dial by the context, for example through the
+  client option's dial function.
+
+## KI-053: `ui` keeps serving errors after a failed recompile
+
+- **Status**: open
+- **Area**: `ui`.
+- **Found**: 2026-10-21, docs claim tests.
+- **Detail**: `Engine.Build` sets `built` to true only after a successful
+  compile (`ui/render.go:128-132`); a failure returns early
+  (`ui/render.go:100`, `:107`, `:123`) and leaves the previous cache in
+  place but `built` false, as `AddFuncs` set it (`ui/render.go:88`).
+  `Engine.lookup` rebuilds whenever `built` is false or `devMode` is on
+  (`ui/render.go:194-201`) and returns the build error before it reads the
+  cache. So after one failed recompile, for example `RegisterFuncs`
+  triggering a rebuild while another page has a parse error, every later
+  render in production returns that error, and the previously compiled
+  templates, still in memory, are never served.
+- **Next step**: serve the previous templates after a failed rebuild, or
+  stop rebuilding until something changes, and decide whether the render
+  should still report the error.
+
+## KI-054: `RestartService` revives routes the restarted Init did not re-register
+
+- **Status**: open
+- **Area**: core, `router.go`.
+- **Found**: 2026-10-21, docs claim tests.
+- **Detail**: `RemoveByService` (`router.go:596`) moves the service's
+  routes into `r.removed`, which only overlays them with 503 handlers on
+  each rebuild (`router.go:738`). The route ops themselves stay in
+  `pendingOps` (`router.go:686` `applyOp`), and `buildMux`
+  (`router.go:708`) replays all of them. On restart, the service's first
+  `Handle` runs `recordBookkeeping`, whose `delete(r.removed, name)`
+  (`router.go:507`) drops the overlay for all of the service's routes.
+  Repro: a service registers GET `/a` and GET `/b` in its first Init and
+  only `/a` in later ones. After Start both answer 200; after
+  `CloseService` both answer 503 and `Routes()` is empty; after
+  `RestartService` `/a` answers 200 and `/b` answers 200 from the first
+  Init's handler, while `Routes()` lists only `/a`. A path re-registered
+  with a different handler is likely affected too; that case is untested.
+- **Next step**: drop a closed service's route ops from `pendingOps` (or
+  mark them dead) so a restart replays only what its Init registers.
+
+## KI-055: env and .env separators with uppercase letters never match
+
+- **Status**: open
+- **Area**: `config/providers`, `config/internal/env`.
+- **Found**: 2026-10-21, docs claim tests.
+- **Detail**: `ParseVariables` lowercases every key
+  (`config/internal/env/parse.go:19`; the prefix too, at `:16`) and then
+  calls `BuildNestedMap` with the separator as given
+  (`config/internal/env/parse.go:37`), which splits on it
+  (`config/internal/env/util.go:89`). `WithEnvSeparator` and
+  `WithDotEnvSeparator` store the separator unchanged
+  (`config/providers/env_provider.go:42`,
+  `config/providers/dotenv_provider.go:61`), so a separator with an
+  uppercase letter never occurs in a lowercased key. Repro:
+  `WithEnvSeparator("_X_")` with `PROBEA_X_B=upper` gives the flat key
+  `probea_x_b`; `WithDotEnvSeparator("_X_")` likewise; `"_y_"` nests
+  correctly.
+- **Next step**: lowercase the separator as the prefix is, or reject one
+  with uppercase letters.
+
+## KI-056: `Routes()` misreports global named middleware for routes registered before the `Use`
+
+- **Status**: open
+- **Area**: core, `router.go`.
+- **Found**: 2026-10-21, docs claim tests.
+- **Detail**: `Handle` records a route's bookkeeping when it is called
+  (`router.go:427`), and `recordBookkeeping` copies `r.scopeMiddleware`
+  as it stands then (`router.go:500-503`). A top-level `Use` of named
+  middleware appends to `scopeMiddleware` when it is called
+  (`router.go:295`), while group bodies run at Seal, and `newSubRouter`
+  copies `scopeMiddleware` (`router.go:206-207`) after every top-level
+  `Use`. So a top-level route registered before the `Use` is reported
+  without the middleware, and a grouped route registered before it is
+  reported with it. Repro: `Register(nil, "audit")`; `Get /before`;
+  `Group{ Get /group-before }`; `UseMiddlewareByName("audit")`;
+  `Get /after`; Start. All three responses carry audit's header, but
+  `Routes()` returns `map[gas/router:[{GET /before []} {GET /after
+  [audit]} {GET /group-before [audit]}]]`. This contradicts the
+  order-independence the router's doc comment states
+  (`router.go:56-61`). Serving is correct; only `Routes()` and the
+  route-map log are wrong.
+- **Next step**: compute a route's middleware names when the tree is
+  built, after every pending `Use` is known, rather than at the `Handle`
+  call.
+
+## KI-057: `migrate` keeps a duplicate of a service's migrations on every restart
+
+- **Status**: open
+- **Area**: `migrate`, `migrate/manager.go`.
+- **Found**: 2026-10-22, docs review.
+- **Detail**: services register their migrations in `Init`, and
+  `RestartService` re-runs `Init` on the same instance. `Register` and
+  `RegisterSlice` append to `s.migrations[service.Name()]` without
+  checking for an identical entry (`migrate/manager.go:16-31`), so each
+  restart adds another copy. `registeredMigrations` collapses identical
+  copies when it reads them (`migrate/manager.go:371-377`), so nothing
+  runs twice, but the slice grows by one copy per restart for the life of
+  the process.
+- **Next step**: skip an identical migration (same service, version,
+  description, up and down) at registration time, and keep the
+  read-time check for conflicting content.
+
+## KI-058: `FieldError` godoc names only the `json` tag
+
+- **Status**: open
+- **Area**: core, `errors.go`.
+- **Found**: 2026-10-23, docs review.
+- **Detail**: the `FieldError` godoc (`errors.go:28-29`) says `Field`
+  carries "the name the client sent (the json tag)". The validator's tag
+  name function (`validation.go:16-27`) uses the `json` tag, falls back
+  to the `form` tag when there is none, and falls back to the Go field
+  name when neither is set or the `json` tag is `-`. The errors page
+  (`core/errors.mdx`) describes the full rule; the godoc does not.
+- **Next step**: state the `json`, then `form`, then Go field name order
+  in the godoc.

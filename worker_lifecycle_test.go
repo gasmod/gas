@@ -392,8 +392,9 @@ func TestRestartServiceInitDeadlineCancelsAndWaits(t *testing.T) {
 	}
 }
 
-// Scoped services get the scope's context, not a startup deadline.
-func TestScopedInitGetsScopeContext(t *testing.T) {
+// A scoped service's Init gets the scope's context with the init deadline
+// added.
+func TestScopedInitGetsScopeContextWithDeadline(t *testing.T) {
 	c := gas.NewServiceContainer()
 	c.RegisterScopedService[*lcProbe[lcTag0]](func() *lcProbe[lcTag0] {
 		return &lcProbe[lcTag0]{name: "scoped"}
@@ -410,8 +411,8 @@ func TestScopedInitGetsScopeContext(t *testing.T) {
 	if got, _ := p.values(); got != "request" {
 		t.Errorf("scoped Init saw context value %v, want request", got)
 	}
-	if _, ok := p.deadline(); ok {
-		t.Error("scoped Init context has a deadline")
+	if _, ok := p.deadline(); !ok {
+		t.Error("scoped Init context didn't get a deadline")
 	}
 
 	if err := scope.Close(context.WithValue(context.Background(), ctxKey{}, "close")); err != nil {
@@ -1051,10 +1052,10 @@ func newOrdWorker(log *ordLog) *gas.Worker {
 }
 
 // TestShutdownClosesServicesInReverseInitOrder is the contract Shutdown
-// documents. It is repeated because the failure is driven by Go's randomized
-// map iteration: a single run can land on the correct permutation by chance
-// (1 in 720 for six services), so a one-shot test would be flaky. Every
-// repetition must satisfy the contract.
+// documents. It is repeated because the regression it guards against came
+// from randomized map iteration: a single run could land on the correct
+// permutation by chance (1 in 720 for six services). Every repetition must
+// satisfy the contract.
 func TestShutdownClosesServicesInReverseInitOrder(t *testing.T) {
 	const repeats = 20
 

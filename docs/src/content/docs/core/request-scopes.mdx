@@ -1,0 +1,128 @@
+---
+title: Request scopes
+description: Scoped services get one instance per request, initialized on first use and closed when the request ends.
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import rs from '../../../../snippets/core-request-scopes/main.go?raw';
+import { region } from '../../../lib/snippet';
+
+A scoped service has one instance per `gas.Scope`. An App opens a scope for
+every HTTP request, so a scoped service is effectively per-request: built the
+first time something in the request asks for it, shared by everything else in
+that request, and closed when the request ends.
+
+That is the right lifetime for per-request state: a buffer flushed at the end
+of the request, a transaction that spans one request, a logger carrying the
+request's ID. Each request gets its own instance, and its cleanup runs without
+the handler having to remember it.
+
+## A scoped service
+
+<Code code={region(rs, 'scoped')} lang="go" title="audit.go" />
+
+<Code code={region(rs, 'register')} lang="go" title="main.go" />
+
+A scoped service implements `Service` like any other when it has something to
+set up or release. Its `Init` runs on its first resolution in the scope, under
+the same init deadline as a singleton's (in an App its context is the
+request's), and its `Close` runs when the scope closes.
+A scoped type that declares neither method is simply built once per scope.
+
+A scoped constructor can depend on singletons and on other scoped services. The
+reverse is not allowed: a singleton that depends on a scoped service fails
+startup with `gas.ErrCaptiveDependency`, because it would capture the first
+request's instance and hand it to every request after it. Take the scoped
+dependency in the handler instead; see
+[Services and DI](/gas/core/services/#captive-dependencies).
+
+## How an App scopes requests
+
+`gas.NewApp` installs a middleware on the router that, for each request:
+
+1. creates a scope with `NewScope(r.Context())`,
+2. attaches it to the request context and calls the rest of the chain,
+3. closes the scope after the chain returns, with the request's context minus
+   its cancellation, so cleanup still runs after the client has disconnected.
+
+The middleware is installed when the App is constructed, before any service's
+`Init` runs, so every middleware a service adds with `Use` runs inside the
+scope. The scope closes even if the handler panics.
+CSRF protection wraps the router from outside, so a request it rejects never
+gets a scope.
+
+`Scope.Close` closes the scoped services in the **reverse of the order they
+were resolved**, so a scoped service can still use the scoped dependencies it
+was built from while it closes. A failing `Close` does not stop the others; the
+errors are joined. By then the response has been written, so the middleware
+logs the joined error as `request scope close failed`, with the request's method
+and path, instead of returning it.
+
+## Getting the instance
+
+### In a DI-aware handler
+
+Declare the scoped service as a parameter, and the router resolves it from that
+request's scope before calling the handler:
+
+<Code code={region(rs, 'typed')} lang="go" title="orders.go" />
+
+If a parameter fails to resolve at request time, for example because a scoped
+constructor returned an error, the handler is not called and the error goes to
+the router's error handler; the default one renders it as a 500. Whether each parameter type is
+registered at all is checked at startup. See
+[Handlers and Context](/gas/core/handlers/).
+
+### In a plain handler or middleware
+
+Resolve from the request:
+
+<Code code={region(rs, 'plain')} lang="go" title="orders.go" />
+
+| Helper | Returns |
+|---|---|
+| `gas.ResolveFromRequestScope[T](r)` | `(T, error)` |
+| `gas.MustResolveFromRequestScope[T](r)` | `T`, and panics if it cannot resolve |
+| `gas.RequestScope(r)` | The request's `*gas.Scope`, to resolve several values from it |
+
+All three panic if the request carries no scope, which is the case for a request
+that did not come through an App's router.
+
+Within a scope, a scoped type resolves to the scope's instance, a singleton
+resolves to the container's instance, and a transient is built fresh each time.
+
+<Aside type="caution">
+`Scope` has no locking of its own. Resolve from it on one goroutine at a time,
+which is what a request handler does naturally.
+</Aside>
+
+## Outside HTTP
+
+A background job, a queue consumer, or a test can make a scope of its own. The
+context passed to `NewScope` is the one each scoped service's `Init` receives,
+and closing the scope is your job:
+
+<Code code={region(rs, 'job')} lang="go" title="job.go" />
+
+Resolving a scoped service from the container itself, rather than from a
+scope, fails with an error that wraps `gas.ErrScopeRequired`:
+
+```
+scoped service *main.Audit cannot be resolved outside a scope; use container.NewScope(ctx)
+```
+
+To run code that expects a request scope, attach a scope to a context with
+`gas.WithRequestScope(ctx, scope)`. `gas.RequestScope(r)` finds it on any
+request built with that context, which is how a worker or a test can call
+handler code without an App serving the request.
+
+## Choosing a lifetime
+
+Use **scoped** when an instance carries per-request state or must be cleaned up
+per request. Use **singleton** for anything stateless or expensive to build,
+which is most infrastructure. Use **transient** for small value objects that
+must be fresh on every resolution and own no resources: a transient cannot
+implement `Service`, so nothing ever closes it.
+
+The per-request logger is a common scoped type; [Logging](/gas/modules/logging/)
+shows how `gas.RequestLogger` fills it.

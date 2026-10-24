@@ -64,7 +64,10 @@
 // Bind copies the values into a struct, matching a field by its json tag,
 // then by its lowercased name; nested structs, slices, arrays, maps and
 // pointers are filled recursively, with conversion between common scalar
-// types and time.Duration. A key with no matching field is ignored, and a
+// types and time.Duration. A time.Duration field takes a string parsed with
+// time.ParseDuration, so it needs a unit ("30s"; "0" is zero), or a
+// time.Duration; a number binds only when it is 0, and a string or number
+// without a unit is an error. A key with no matching field is ignored, and a
 // field with no key keeps its value, so binding over a struct of defaults
 // keeps the defaults. Bind then validates the struct with
 // go-playground/validator (the "validate" struct tags) unless
@@ -84,7 +87,7 @@
 // Bind errors start with "bind config:" or "validate config:". A Config is
 // safe for concurrent use: reads take a read lock and writes a write lock.
 //
-// Guides with usage examples are at https://gasmod.github.io/gas.
+// Guides with usage examples are at https://gasmod.github.io/gas/modules/config/.
 //
 // SPDX-License-Identifier: MIT
 package config

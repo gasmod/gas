@@ -1,0 +1,218 @@
+---
+title: Templates
+description: Template storage with gas/template, from memory, an embedded FS, a directory, a database, or a chain of them.
+---
+
+import { Code, Aside } from '@astrojs/starlight/components';
+import tpl from '../../../../snippets/modules-templates/main.go?raw';
+import tplTest from '../../../../snippets/modules-templates/main_test.go?raw';
+import { region } from '../../../lib/snippet';
+
+## What it is for
+
+`gas/template` stores raw template content and hands it out by name. It does
+not parse or render anything: [gas/ui](/gas/modules/ui/) renders pages and
+[gas/email](/gas/modules/email/) renders messages, and both read their
+templates through `gas.TemplateProvider`, the interface declared in core. Where
+templates live (the binary, a directory, a database) is decided where the app
+is wired, and the renderers never notice.
+
+`gas.TemplateProvider` has four methods: `Get(ctx, name)` returns the raw
+bytes, `List(ctx)` returns every name, `Register(ctx, name, content)` adds or
+replaces one, and `RegisterFS(ctx, fsys)` registers every template file of an
+`fs.FS`. Each store in this module implements it:
+
+| Package | Store | Writes | Use it for |
+|---|---|---|---|
+| `template/memory` | An in-process map | Yes | Tests, and the writable layer of a composite |
+| `template/fs` | Any `fs.FS`, such as an `embed.FS` | No | Templates shipped in the binary |
+| `template/dir` | A directory on disk, plus an in-memory overlay | To the overlay | Reading templates from disk without a rebuild |
+| `template/db` | The `__gas_templates` table on PostgreSQL, MySQL, or SQLite | Yes | Templates edited at runtime and shared by every instance |
+| `template/composite` | One writable store in front of read-only fallbacks | To the writable store | Overrides over shipped defaults |
+| `template/templatetest` | `MockTemplate` | | Tests of code that takes a `gas.TemplateProvider` |
+
+The module reads no configuration.
+
+## Install
+
+```bash
+go get github.com/gasmod/gas/template
+```
+
+## Wiring
+
+The common case is templates embedded in the binary, served by the `fs` store:
+
+<Code code={region(tpl, 'embed')} lang="go" />
+
+<Code code={region(tpl, 'wiring')} lang="go" title="main.go" />
+
+`shipped` is `fs.Sub(embedded, "templates")`, so the names are relative to the
+`templates` directory. In development, pass `os.DirFS("templates")` instead and
+the same code reads from disk.
+
+How each store is built and registered differs:
+
+| Store | Constructor | Resolves from the container | Register with |
+|---|---|---|---|
+| `fs` | `templatefs.NewStore(fsys)` returns a constructor | Nothing | `gas.WithSingletonService[gas.TemplateProvider]` |
+| `db` | `templatedb.NewStore(opts...)` returns a constructor | `gas.DatabaseProvider`, `gas.Logger`, `gas.MigrationManager` | `gas.WithSingletonService[gas.TemplateProvider]` |
+| `memory` | `memory.NewStore()` returns the store | | `gas.WithServiceInstance[gas.TemplateProvider]` |
+| `composite` | `composite.NewStore(writable, readers...)` returns the store | | `gas.WithServiceInstance[gas.TemplateProvider]` |
+| `dir` | `templatedir.NewStore(dir)` returns a constructor | Nothing | Cannot be registered; see [Directory store](#directory-store) |
+
+The constructors that return a constructor never fail; the error result is
+always nil, and it is there for the container's constructor shape.
+
+## Usage
+
+### Template names
+
+The file-based stores and every `RegisterFS` recognize only files ending in
+`.html`, and name each template by its slash-separated path relative to the
+root, such as `layouts/base.html` or `emails/welcome.html`. `List` on the `fs`
+and `dir` stores returns only those `.html` names. `Get` reads whatever path it
+is given. The `memory` and `db` stores keep any name passed to `Register`.
+
+### Reading templates
+
+Code that needs a template takes `gas.TemplateProvider` and never imports this
+module's stores:
+
+<Code code={region(tpl, 'read')} lang="go" />
+
+Every store's `Get` returns `template.ErrTemplateNotFound` for a missing name,
+and `template.IsNotFound(err)` reports whether an error wraps it. The `fs` and
+`dir` stores report any failure to read the file, a permission error included,
+as `ErrTemplateNotFound`.
+
+The `memory` store returns the slice it stored, not a copy, so do not modify
+what `Get` returns.
+
+### Overriding shipped templates
+
+`composite.NewStore(writable, readers...)` puts one writable store in front of
+any number of fallbacks:
+
+<Code code={region(tpl, 'composite')} lang="go" />
+
+- `Register` and `RegisterFS` go to the writable store only.
+- `Get` tries the writable store, then each reader in order, and returns the
+  first success. When none succeeds it returns `ErrTemplateNotFound`, whatever
+  the stores' own errors were, so a failing backend also reads as not found.
+- `List` merges the names from every store, sorted and deduplicated. A store
+  whose `List` fails is skipped; the first such error is returned only when no
+  store returned any name.
+
+With a `db` store as the writable layer instead of `memory`, edits survive a
+restart and every instance sees them, while the embedded files stay the
+fallback.
+
+### Database store
+
+<Code code={region(tpl, 'db')} lang="go" />
+
+`templatedb.NewStore` keeps templates in the `__gas_templates` table. When the
+store starts, it picks the queries for the database provider's driver:
+`postgres` or `pgx`, `mysql`, `sqlite` or `sqlite3`. Any other driver fails
+startup with `gas/template/db: unsupported driver`. It then registers the
+migration that creates the table (version `20260322235959`, "create templates
+table") with the `gas.MigrationManager`, so register
+[gas/migrate](/gas/modules/migrations/) under that interface.
+
+On MySQL the DSN needs two parameters. `multiStatements=true`, because the
+MySQL migration file holds two statements (the `CREATE TABLE` and a
+`CREATE INDEX`) and gas/migrate runs a file as one statement batch; without it
+the migration fails with a syntax error (`Error 1064`) at the `CREATE INDEX`
+([KI-049](/gas/project/known-issues/)).
+And `parseTime=true`, which gas/migrate needs on MySQL; see
+[Migrations](/gas/modules/migrations/#mysql).
+
+<Aside type="caution" title="Write after migrations, not in Init">
+Migrations run after every service has started. On a fresh database the table
+does not exist while services are still starting, so a `Register` from another
+service's `Init` fails. Seed the store from a ready function
+(`gas.WithReadyFunc`), which runs after migrations are applied, or later.
+</Aside>
+
+`templatedb.WithNamespace(ns)` scopes every query to a namespace, `"default"`
+when not given, so stores with different namespaces share the table without
+seeing each other's templates. `Register` upserts by namespace and name, and
+`List` returns the namespace's names sorted.
+
+`*templatedb.Store` has two methods beyond the interface. `Exists(name)`
+reports whether a template exists, and `Delete(name)` removes one and returns
+`ErrTemplateNotFound` when there was none. Both run on `context.Background()`
+rather than taking a context. Database errors from every method are wrapped
+with the operation and, where there is one, the template name, as in
+`template: get "home.html": ...`.
+
+### Directory store
+
+`templatedir.NewStore(dir)` reads templates from a directory on disk. The
+directory is opened as an `os.Root` on the first `Get` or `List` that reaches
+disk, which confines reads to it. `Register` and `RegisterFS` write to an
+in-memory overlay, never to disk, and `Get` checks the overlay before the disk.
+If opening the directory fails, the `Get` or `List` that tried and every later
+one that reaches disk return that error: `List` always does, even when the overlay has names, and
+`Get` does for a name not in the overlay. `Register` still succeeds, and `Get`
+of an overlay name still returns its content. `List`
+returns the `.html` files on disk and the overlay's names, sorted and
+deduplicated. If walking the directory fails, `List` stops there and returns
+what it found without an error.
+
+<Aside type="caution" title="Known issue KI-033">
+A `*dir.Store` cannot be registered in the container. It declares `Close()`
+without a context and has no `Name` or `Init`, so `Start` rejects it with
+`gas.ErrInvalidServiceShape`. Build it yourself, pass it where a
+`gas.TemplateProvider` is taken as a value, and close it yourself.
+</Aside>
+
+<Code code={region(tpl, 'dir')} lang="go" />
+
+Wrapping the store in a composite gives the container a value with no `Close`,
+so registering the result with `gas.WithServiceInstance[gas.TemplateProvider]`
+works. `Close` releases the root and drops the overlay, waiting for reads in
+flight; a second `Close` returns nil. After `Close`, `Get`, `List`, `Register`,
+and `RegisterFS` return `template.ErrClosed`, and the store cannot be opened
+again.
+
+## Errors
+
+| Error | Returned by | When |
+|---|---|---|
+| `template.ErrTemplateNotFound` | `Get` on every store; `templatedb.Store.Delete` | No template has the name |
+| `template.ErrReadOnly` | `Register` and `RegisterFS` on the `fs` store | Always |
+| `template.ErrClosed` | `Get`, `List`, `Register`, `RegisterFS` on the `dir` store | After `Close` |
+| `gas/template/db: unsupported driver: "..."` | `db` store startup | The database driver is not one the store supports |
+
+`template.IsNotFound(err)` is `errors.Is(err, template.ErrTemplateNotFound)`.
+On the `memory`, `dir`, and `db` stores, `RegisterFS` wraps a read or register
+failure with the file's path, under `template: register fs:`. Through a composite, `Register` errors are wrapped
+under `composite: register:`, so `errors.Is(err, template.ErrReadOnly)` still
+matches.
+
+## Health and readiness
+
+No store implements `gas.HealthReporter` or `gas.ReadyReporter`. The `db`
+store's health is the database's: see [Database](/gas/modules/database/).
+
+## Testing
+
+`templatetest.MockTemplate` implements `gas.TemplateProvider`. Each method
+records the call in `Calls` and delegates to `GetFn`, `ListFn`, `RegisterFn`, or
+`RegisterFSFn` when set. Unset, every method returns zero values: `Get` returns
+nil content and a nil error, not `ErrTemplateNotFound`. `CallCount(method)`
+counts the calls to one method, and `Reset` clears them.
+
+<Code code={region(tplTest, 'test')} lang="go" title="mailer_test.go" />
+
+When the test needs real content rather than call records, a `memory` store
+filled with `Register` is often simpler.
+
+## API reference
+
+- [`github.com/gasmod/gas/template`](https://pkg.go.dev/github.com/gasmod/gas/template)
+- [`template/memory`](https://pkg.go.dev/github.com/gasmod/gas/template/memory), [`template/fs`](https://pkg.go.dev/github.com/gasmod/gas/template/fs), [`template/dir`](https://pkg.go.dev/github.com/gasmod/gas/template/dir), [`template/db`](https://pkg.go.dev/github.com/gasmod/gas/template/db), [`template/composite`](https://pkg.go.dev/github.com/gasmod/gas/template/composite)
+- [`template/templatetest`](https://pkg.go.dev/github.com/gasmod/gas/template/templatetest)
+- [`gas.TemplateProvider`](https://pkg.go.dev/github.com/gasmod/gas#TemplateProvider), in core

@@ -1,10 +1,10 @@
 /**
  * Extracts a named region from a source file imported with Vite's `?raw`.
  *
- * Regions are delimited by `// #region <name>` and `// #endregion` in the Go
- * source under `docs/snippets`, which compiles as part of the workspace. A
- * missing region throws, so renaming a marker fails the docs build rather
- * than silently publishing an empty code block.
+ * Regions are delimited by `// #region <name>` and `// #endregion <name>` in
+ * the Go source under `docs/snippets`, which compiles as part of the
+ * workspace. A missing region throws, so renaming a marker fails the docs
+ * build rather than silently publishing an empty code block.
  */
 export function region(source: string, name: string): string {
 	const lines = source.split('\n');
@@ -14,7 +14,9 @@ export function region(source: string, name: string): string {
 	}
 
 	const rest = lines.slice(start + 1);
-	const end = rest.findIndex((l) => l.trim().startsWith('// #endregion'));
+	// Only the region's own end marker closes it, so a nested or overlapping
+	// region ending first does not cut it short.
+	const end = rest.findIndex((l) => l.trim() === `// #endregion ${name}`);
 	if (end === -1) {
 		throw new Error(`snippet region "${name}" is not closed`);
 	}

@@ -1,0 +1,199 @@
+---
+title: Handlers and Context
+description: The two handler forms, dependencies as handler parameters, and the gas.Context methods for reading requests, binding bodies, and writing responses.
+---
+
+import { Code, Aside } from '@astrojs/starlight/components';
+import h from '../../../../snippets/core-handlers/main.go?raw';
+import { region } from '../../../lib/snippet';
+
+A route handler takes one of two forms, and both register on the same router
+(see [Routing](/gas/core/routing/)):
+
+<Code code={region(h, 'forms')} lang="go" />
+
+- A **plain handler** is an `http.HandlerFunc` or a
+  `func(http.ResponseWriter, *http.Request)`. The router serves it as is, with
+  one addition: a panic in it is recovered and sent to the
+  [error handler](/gas/core/errors/).
+- A **DI-aware handler** is a function whose first parameter is `gas.Context`,
+  whose remaining parameters are dependencies, and which returns `error`. A
+  returned error goes to the error handler, and so does a recovered panic.
+
+## DI-aware handlers
+
+The signature rules are checked when the route is registered. `Handle` panics
+when the handler:
+
+- is not a function (an `http.Handler` value included; pass its `ServeHTTP`
+  method instead),
+- has no parameters, or a first parameter that is not exactly `gas.Context`,
+- does not return exactly one result whose type implements `error` (so
+  `func(gas.Context) *gas.Error` is accepted).
+
+Every parameter after the first is a dependency:
+
+<Code code={region(h, 'deps')} lang="go" title="main.go" />
+
+On each request, the handler resolves its dependencies from that request's
+[scope](/gas/core/request-scopes/) by parameter type, in order, and then calls
+the handler. The lifetime of each registration decides what it gets: a
+singleton is the one shared instance, a scoped service is built once for the
+request and shared by everything that resolves it during that request, and a
+transient service is built fresh for each parameter. Scoped services that
+implement `gas.Service` are closed when the request ends.
+
+Parameter types are matched against registrations by exact type. A parameter
+of type `gas.CacheProvider` needs a registration under `gas.CacheProvider`; a
+concrete type registered under its own type does not satisfy it. See
+[Services and DI](/gas/core/services/).
+
+### Missing dependencies fail at startup
+
+`Start` checks every DI-aware handler's parameter types against the container
+after all services have run `Init`. If one is not registered, `Start` returns an
+error that names the route, its owner, and the type, and the app never serves
+traffic:
+
+```text
+gas: handler GET /x (service "gas/router"): dependency *main.NoteStore is not registered in the container
+```
+
+The check confirms that each type is registered; it does not build anything. A
+dependency whose constructor fails at request time sends a wrapped
+`gas: resolving <type>: ...` error to the error handler, which the default
+handler renders as a `500`.
+
+The container always holds `*gas.Router`, `*gas.EventBus`,
+`gas.HealthProvider`, and `gas.ReadyProvider`, so a handler can take any of them
+without registering anything.
+
+## gas.Context
+
+`gas.Context` embeds `context.Context`, so it goes straight into database calls
+and anything else that takes a context. It is also the request's own context:
+`ctx.Request().Context()` returns the same value, so request-scoped values and
+cancellation are the request's.
+
+Because `gas.Context` is an interface, a test can embed it in a struct and
+override only the methods it needs.
+
+### Reading the request
+
+<Code code={region(h, 'request')} lang="go" />
+
+| Method | Returns |
+|---|---|
+| `Param(name)` | A path parameter, through `chi.URLParam` |
+| `Query(name)` | The first value of a query string parameter |
+| `Header(name)` | The first value of a request header |
+| `Request()` | The `*http.Request` |
+| `ResponseWriter()` | The `http.ResponseWriter` |
+
+`SetHeader(name, value)` sets a response header. Set headers before writing the
+response.
+
+### Writing responses
+
+<Code code={[region(h, 'feed'), region(h, 'responses')].join('\n\n')} lang="go" />
+
+| Method | Status | `Content-Type` |
+|---|---|---|
+| `JSON(status, v)` | `status` | `application/json` |
+| `XML(status, v)` | `status` | `application/xml; charset=utf-8` |
+| `HTML(status, s)` | `status` | `text/html; charset=utf-8` |
+| `Text(status, s)` | `status` | `text/plain; charset=utf-8` |
+| `Blob(status, contentType, b)` | `status` | `contentType` |
+| `NoContent()` | `204` | none |
+| `Redirect(status, url)` | `status` | set by `http.Redirect` |
+
+`XML` writes the standard `<?xml ...?>` header line before the encoded value.
+`Blob` writes bytes you have already encoded, such as the RSS feed above. With
+an empty `contentType` it leaves `Content-Type` as it is, and when none is set,
+`net/http` detects one from the start of the body. The helpers write the
+status line immediately and return an error only when encoding or writing the
+body fails.
+
+<Aside type="caution" title="Write once, then return nil">
+After a helper has written the response, return `nil`. Returning an error at
+that point sends it to the error handler, which writes its error body after
+the response already sent, under the original status.
+</Aside>
+
+For errors, return a `*gas.Error` and let the error handler write it. The
+Context also carries constructors such as `ctx.NotFound(msg)` and
+`ctx.NotFoundErr(err, msg)`, and `WriteError` and `WriteErrorJSON` for writing
+an error directly. All of them are covered in [Errors](/gas/core/errors/).
+
+## Binding request bodies
+
+<Code code={region(h, 'bind')} lang="go" />
+
+`BindJSON(dest)` decodes the request body as JSON into `dest`, then validates
+it. It reads at most `Server.MaxJSONBodyBytes` bytes, 1 MiB by default; zero or
+a negative value means no limit (see [Deployment](/gas/production/deployment/)).
+`BindForm(dest)` parses the request form, decodes the form values from the
+body (`r.PostForm`, not the query string) into `dest` by `form` struct tags,
+ignoring keys with no matching field, then validates it.
+
+Validation uses [go-playground/validator](https://github.com/go-playground/validator)
+and the struct's `validate` tags. Both methods return a `*gas.Error` on failure,
+so the handler returns it unchanged:
+
+| Failure | Status | Code |
+|---|---|---|
+| `BindJSON`: body over the limit | `413` | `payload_too_large` |
+| `BindJSON`: body is not valid JSON | `400` | `invalid_json` |
+| `BindForm`: form cannot be parsed or decoded | `400` | `invalid_form` |
+| Validation fails | `422` | `validation_failed`, one entry in `fields` per failed rule |
+
+[Errors](/gas/core/errors/#validation-errors) shows the response body and how
+fields are named.
+
+<Aside type="caution" title="Bind into a struct">
+Validation runs on every bind and expects a struct. Binding into a map or other
+non-struct value decodes it and then fails validation, so the request gets a
+`422` with no `fields`.
+</Aside>
+
+`ctx.Validator()` returns the `*validator.Validate` in use, for validating
+values yourself, and `ctx.FormDecoder()` returns the `*schema.Decoder` used by
+`BindForm`.
+
+<Aside type="caution" title="Form binding inside Group and Route blocks">
+The `form` tag support and the ignoring of unknown keys described above come
+from the decoder of the app's router, which handlers registered directly on it
+use. A DI-aware handler registered on the sub-router of a `Group` or `Route`
+block gets the default decoder instead, the same one a
+[Context built by hand](#plain-handlers) gets: it does not read `form` tags and
+rejects keys with no matching field. This is tracked as KI-045 in
+[Known issues](/gas/project/known-issues/).
+</Aside>
+
+## The authenticated principal
+
+<Code code={region(h, 'principal')} lang="go" />
+
+`ctx.Principal()` returns the `gas.Principal` an authentication middleware
+attached to the request. When there is none, it returns a `401` `*gas.Error`
+with code `unauthorized`, so the handler can return it directly. Authentication
+itself comes from [gas/auth](/gas/modules/auth/).
+
+## Plain handlers
+
+A plain handler gets no injected dependencies, but it can resolve them from the
+request scope with `gas.ResolveFromRequestScope`:
+
+<Code code={region(h, 'resolve')} lang="go" />
+
+`gas.NewContext(r.Context(), w, r)` builds a `gas.Context` around a plain
+handler's writer and request, for the response helpers:
+
+<Code code={region(h, 'plaincontext')} lang="go" />
+
+A Context built this way does not use the router's form decoder. Its default
+decoder does not read `form` tags and rejects form keys with no matching field,
+so `BindForm` behaves differently than in a DI-aware handler. Pass
+`gas.WithFormDecoder`, `gas.WithValidate`, or `gas.WithMaxJSONBodyBytes` to
+`NewContext` to configure it; without `WithMaxJSONBodyBytes`, its `BindJSON`
+limit is 1 MiB.

@@ -18,7 +18,7 @@
 // lifecycle of its own; see the ses sub-package for the backend's
 // constructor, configuration keys and lifecycle.
 //
-// Guides with usage examples are at https://gasmod.github.io/gas.
+// Guides with usage examples are at https://gasmod.github.io/gas/modules/email/.
 //
 // SPDX-License-Identifier: MIT
 package email

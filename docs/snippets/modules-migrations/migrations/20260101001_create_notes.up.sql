@@ -1,0 +1,4 @@
+CREATE TABLE notes (
+    id    INTEGER PRIMARY KEY,
+    title TEXT NOT NULL
+);

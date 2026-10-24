@@ -3,41 +3,88 @@ title: Gas
 description: A modular Go framework for building micro-SaaS applications.
 template: splash
 hero:
+  title: Gas
   tagline: A modular Go framework for building micro-SaaS applications. Dependency injection, routing, middleware, events, migrations, and service lifecycle, so you write business logic instead of wiring.
+  image:
+    html: '<img src="/gas/gas-icon.svg" alt="" width="240" height="240" />'
   actions:
     - text: Get started
-      link: /gas/start/getting-started/
+      link: /gas/start/introduction/
       icon: right-arrow
+    - text: Tutorial
+      link: /gas/start/tutorial/
+      variant: secondary
     - text: View on GitHub
       link: https://github.com/gasmod/gas
       icon: external
       variant: minimal
 ---
 
-import { Card, CardGrid, Code } from '@astrojs/starlight/components';
-import quickstart from '../../../snippets/quickstart/main.go?raw';
+import { Card, CardGrid, Code, LinkCard } from '@astrojs/starlight/components';
+import landing from '../../../snippets/landing/main.go?raw';
 import { region } from '../../lib/snippet';
 
-<Code code={region(quickstart, 'app')} lang="go" title="main.go" />
+## Quickstart
 
-That is a complete Gas app. Everything else is additive: register modules the
-same way and let the DI container wire them together.
+```sh
+go get github.com/gasmod/gas
+```
 
-<CardGrid stagger>
+<Code code={region(landing, 'app')} lang="go" title="main.go" />
+
+That is a complete Gas app. `Run` starts the server and blocks until the
+process receives SIGINT or SIGTERM, then shuts the app down.
+
+## Why Gas
+
+<CardGrid>
 	<Card title="Take only what you need" icon="puzzle">
 		Each module is its own Go module, so `go get` pulls in only what you use.
 		An app that just serves HTTP depends on the core package alone.
 	</Card>
-	<Card title="Services, not frameworks-in-frameworks" icon="seti:go">
+	<Card title="Constructor injection" icon="seti:go">
 		A service is three methods: `Name`, `Init`, `Close`. The container
-		resolves constructors, sorts dependencies, and manages the lifecycle.
+		resolves constructor parameters, initializes services in dependency
+		order, and closes them in reverse.
 	</Card>
 	<Card title="Wired by interface" icon="random">
-		Modules meet through provider interfaces declared in core, so any of them
-		swaps for your own implementation or a test mock.
+		Modules meet through provider interfaces declared in core, not by
+		importing each other. Each module's service sits behind an interface, in
+		core or in the module itself (`storage.Provider`, `auth.Authenticator`),
+		so any of them swaps for your own implementation or a test mock.
 	</Card>
 	<Card title="Fails at startup, not in production" icon="error">
 		Unresolved dependencies, malformed services, and handler signature
 		mismatches are all rejected before the server accepts traffic.
 	</Card>
+	<Card title="Graceful shutdown" icon="approve-check">
+		On shutdown the HTTP server drains in-flight requests within
+		`ShutdownTimeout`, 30 seconds by default, and then every active service's
+		`Close` runs.
+	</Card>
+	<Card title="Runtime kill switch" icon="warning">
+		`CloseService` tears down one running service: the event subscriptions
+		it made with `SubscribeWithOwner` are removed and its routes answer 503
+		while the rest of the app keeps serving.
+	</Card>
+</CardGrid>
+
+## Modules
+
+The core package is `github.com/gasmod/gas`. Each module below is a separate Go
+module in the same repository, versioned and released together with core.
+
+<CardGrid>
+	<LinkCard title="Overview" href="/gas/modules/overview/" description="How the modules fit together." />
+	<LinkCard title="Config" href="/gas/modules/config/" description="Configuration from environment variables, JSON, .env files, and AWS Secrets Manager, bound to structs." />
+	<LinkCard title="Logging" href="/gas/modules/logging/" description="Structured logging on zerolog or slog, with HTTP and OTLP log shipping." />
+	<LinkCard title="Database" href="/gas/modules/database/" description="database/sql and native pgx pools with transaction helpers." />
+	<LinkCard title="Migrations" href="/gas/modules/migrations/" description="Service-owned database migrations with dirty-state detection and rollback." />
+	<LinkCard title="Cache" href="/gas/modules/cache/" description="Key-value caching in memory or on Valkey." />
+	<LinkCard title="Auth" href="/gas/modules/auth/" description="JWT, server-side sessions, API keys, and single-use tokens." />
+	<LinkCard title="Templates" href="/gas/modules/templates/" description="Template storage in memory, a directory, an embedded FS, a database, or a composite of those." />
+	<LinkCard title="UI" href="/gas/modules/ui/" description="HTML rendering with layouts and partials, static files, and HTMX fragments." />
+	<LinkCard title="Storage" href="/gas/modules/storage/" description="Object storage on S3, S3-compatible services, or a local directory." />
+	<LinkCard title="Email" href="/gas/modules/email/" description="Email over AWS SES, including templated sends." />
+	<LinkCard title="Queue" href="/gas/modules/queue/" description="Job queues on AWS SQS." />
 </CardGrid>

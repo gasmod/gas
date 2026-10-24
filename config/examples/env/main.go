@@ -31,7 +31,10 @@ func initEnvVars() {
 	_ = os.Setenv("MYAPP_DATABASE__USER", "admin")
 	_ = os.Setenv("MYAPP_DATABASE__PASSWORD", "admin")
 	_ = os.Setenv("MYAPP_SERVER__HOST", "0.0.0.0")
-	_ = os.Setenv("MYAPP_SERVER_PORT", "8080") // using the standard _ separator should also work!
+	// A single underscore does not nest: only the "__" separator splits a name
+	// into levels, so this sets the key "server_port", not "server.port", and
+	// Server.Port stays 0. MYAPP_SERVER__PORT would set Server.Port.
+	_ = os.Setenv("MYAPP_SERVER_PORT", "8080")
 	_ = os.Setenv("MYAPP_LOGGING__LEVEL", "debug")
 }
 

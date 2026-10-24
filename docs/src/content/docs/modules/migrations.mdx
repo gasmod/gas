@@ -1,0 +1,252 @@
+---
+title: Migrations
+description: Per-service schema migrations with gas/migrate, applied in global version order at startup.
+---
+
+import { Code, Aside } from '@astrojs/starlight/components';
+import mig from '../../../../snippets/modules-migrations/main.go?raw';
+import migTest from '../../../../snippets/modules-migrations/main_test.go?raw';
+import { region } from '../../../lib/snippet';
+
+## What it is for
+
+`gas/migrate` applies schema changes that individual services declare. Its
+`*migrate.Service` implements `gas.MigrationManager`, the core interface a
+service injects to register its migrations, along with `gas.Service`.
+
+There is no central list of migrations. Each service registers its own while
+it initializes, so a service carries its schema with it, and removing a
+service removes its migrations. Once every service has initialized, the app
+applies whatever is pending, from every service, in one global version order.
+Applied migrations are recorded in a `__gas_migrations` table in the same
+database.
+
+It works on PostgreSQL, SQLite and MySQL, through a
+[gas/database](/gas/modules/database/) provider or any other
+`gas.DatabaseProvider`. On MySQL the DSN needs `parseTime=true`; see
+[MySQL](#mysql).
+
+## Install
+
+```bash
+go get github.com/gasmod/gas/migrate
+```
+
+## Wiring
+
+<Code code={region(mig, 'wiring')} lang="go" title="main.go" />
+
+`migrate.New()` takes no options and returns a constructor that the container
+calls with `gas.DatabaseProvider`, so a database provider must be registered
+under that interface. The constructor never returns an error.
+
+<Aside type="danger" title="Register it under gas.MigrationManager">
+The app looks the manager up as `gas.MigrationManager`, and when none is
+registered it runs no migrations and reports nothing. Registered as
+`*migrate.Service`, the manager is never found: no migration runs, and any
+service that takes a `gas.MigrationManager` fails to resolve, which fails
+startup.
+</Aside>
+
+`Init` picks the SQL dialect for the tracking table from the provider's
+`Driver()`:
+
+| `Driver()` | Dialect |
+|---|---|
+| `postgres`, `pgx` | PostgreSQL |
+| `mysql` | MySQL |
+| `sqlite`, `sqlite3` | SQLite |
+
+Any other driver name fails `Init` with `gas/migrate: unsupported driver`.
+`Init` then creates `__gas_migrations` if it does not exist, under the
+context `Init` receives. The module reads no configuration.
+
+### MySQL
+
+`gas/database` accepts `postgres`, `pgx` and `sqlite` as its own drivers.
+For MySQL, give it a connector with `database.WithConnector` and set
+`database.driver` to `mysql`, or register your own `gas.DatabaseProvider`
+whose `Driver()` returns `mysql`; see [Database](/gas/modules/database/).
+
+The MySQL DSN needs `parseTime=true`, because the module scans the tracking
+table's `applied_at` column into `time.Time`. Without it the first
+`RunPending` succeeds, but every later read of the tracking table fails:
+`CheckReady`, `Down`, and the next `RunPending`, so the next start of the app.
+The error is `gas/migrate: failed to query applied migrations: sql: Scan
+error on column index 5, name "applied_at": unsupported Scan, storing
+driver.Value type []uint8 into type *time.Time` (KI-048, see
+[Known issues](/gas/project/known-issues/)).
+
+## Usage
+
+### Declaring migrations
+
+A service takes `gas.MigrationManager` as a constructor parameter and
+registers its migrations in `Init`. Register before `Init` returns: pending
+migrations are applied right after the last service initializes.
+
+`Register` adds one `gas.Migration`:
+
+<Code code={region(mig, 'register')} lang="go" title="tags/service.go" />
+
+`RegisterSlice` adds several at once. `RegisterFS` reads them from an `fs.FS`,
+usually an `embed.FS`:
+
+<Code code={region(mig, 'register-fs')} lang="go" title="notes/service.go" />
+
+`RegisterFS` walks the whole file system, subdirectories included. Every file
+ending in `.up.sql` is a migration, named `{version}_{description}.up.sql`:
+
+- the version is the file name up to the first underscore, so a version must
+  not contain one: `20260101_001_create_notes.up.sql` has version `20260101`;
+- the description is the rest of the name with underscores turned into spaces
+  (`create notes`);
+- a matching `.down.sql` file is required, and a missing one fails
+  `RegisterFS` with an error naming the `.up.sql` file. Nothing from that file
+  system is registered then.
+
+Every registration records the service it was given as the migration's owner,
+and the owner's `Name()` is stored in the tracking table.
+
+### Versions and ordering
+
+Versions are strings and are compared as strings, so they must have a fixed
+width to sort as numbers. A timestamp such as `20260101001` works; `9` sorts
+after `10`. Every pending migration, from every service, runs in ascending
+version order, so a version decides where a migration runs relative to other
+services' migrations too.
+
+A version must be unique across the app. When two services register the same
+version, or one service registers two different migrations under one
+version, `RunPending`, `Down` and `CheckReady` fail with an error that wraps
+`migrate.ErrDuplicateVersion` and names the version and the services, and
+nothing runs. A service that registers an identical migration (same version,
+description, up SQL and down SQL) more than once gets it applied once.
+
+### When migrations run
+
+`gas.App` and `gas.Worker` both run them as part of `Start` (and so of
+`App.Run`): after every service has initialized, before the app's ready
+hooks, and before the HTTP server accepts traffic. `Start` calls `RunPending`,
+which applies, in version order, every registered migration whose version is
+not in the tracking table.
+
+If `RunPending` fails, `Start` closes every service it initialized and
+returns an error starting with `gas: migrations:`. The app does not start.
+
+Each migration's up SQL and its tracking row commit in one transaction. When
+the SQL or the tracking insert fails, the transaction rolls back, the version
+is recorded as dirty, and `RunPending` stops and returns the error.
+Migrations that committed earlier in the same run stay applied. The up and
+down SQL run as a single `Exec` call, so whether a migration can hold several
+statements depends on the driver.
+
+<Aside type="caution" title="MySQL DDL is not transactional">
+On MySQL, DDL such as `CREATE TABLE`, `DROP TABLE` and `ALTER TABLE` commits
+any open transaction implicitly. A migration containing DDL is therefore not
+atomic with its tracking row in either direction: a failure after the DDL
+leaves the schema changed whatever the tracking table says.
+</Aside>
+
+### Dirty migrations
+
+A dirty version blocks the app. While any version is dirty, `RunPending`,
+`Down` and `CheckReady` return an error wrapping `migrate.ErrDirty` that names
+the dirty versions, so every later start fails until you resolve it. A dirty
+migration's up SQL was rolled back (except for MySQL DDL), so the schema is
+as it was before that migration.
+
+To resolve it, fix the cause, then call `ClearDirty(version)` on the
+`*migrate.Service`. It deletes the version's tracking row, so the next
+`RunPending` applies the migration again. For a version that is not dirty,
+because it applied cleanly or has no tracking row, it changes nothing and
+returns an error wrapping `migrate.ErrNotDirty`.
+
+`ClearDirty` is not part of `gas.MigrationManager`, and the app cannot start
+while a version is dirty, so run it from a maintenance command that builds
+the two services itself:
+
+<Code code={region(mig, 'clear-dirty')} lang="go" title="cmd/migrate-clear/main.go" />
+
+### Rolling back
+
+`Down(n)` reverts the `n` highest versions in the tracking table, highest
+first. For each, it runs the down SQL and deletes the tracking row in one
+transaction. When either fails, that migration's transaction rolls back, the
+version is not marked dirty, and `Down` stops and returns the error; versions
+it reverted before the failure stay reverted. A version to revert must still
+be registered, or `Down` fails with an error naming it. An `n` larger than
+the number of applied migrations reverts them all; zero or less reverts
+nothing. Like `RunPending`, `Down` runs nothing while any version is dirty,
+because a dirty version's down SQL would act on a schema its up SQL never
+changed.
+
+Nothing in Gas calls `Down`. Call it from a maintenance command:
+
+<Code code={region(mig, 'down')} lang="go" />
+
+`RunPending`, `Down` and `ClearDirty` take no context and run under
+`context.Background()`.
+
+### The tracking table
+
+`__gas_migrations` has one row per applied or dirty version:
+
+| Column | Holds |
+|---|---|
+| `version` | The migration version, the primary key |
+| `service` | The owning service's `Name()` |
+| `description` | The migration's description |
+| `migrate_version` | The version of `gas/migrate` that applied it |
+| `module_version` | The version of the Go module whose path ends in `/` plus the service name, such as `github.com/gasmod/gas/auth` for `gas/auth`; empty when there is none |
+| `applied_at` | When the row was written |
+| `dirty` | Whether the migration failed |
+
+Both versions are read from the binary's build information.
+
+## Errors
+
+| Error | Returned by | When |
+|---|---|---|
+| `migrate.ErrDirty` | `RunPending`, `Down`, `CheckReady` | Any version is marked dirty. The message names the versions |
+| `migrate.ErrDuplicateVersion` | `RunPending`, `Down`, `CheckReady` | Two different migrations share a version. The message names the version and the services |
+| `migrate.ErrNotDirty` | `ClearDirty` | The version is not marked dirty |
+
+All three are returned wrapped; match them with `errors.Is`. Other errors
+start with `gas/migrate:`, including the failure of a migration
+(`... failed (marked dirty): <cause>`, wrapping the driver's error). Before
+`Init`, `RunPending`, `Down`, `ClearDirty` and `CheckReady` return
+`gas/migrate: not initialized`; after `Close`, `gas/migrate: service is
+closed`. `Register`, `RegisterSlice` and `RegisterFS` work at any time.
+
+## Health and readiness
+
+`*migrate.Service` implements `gas.ReadyReporter` but not
+`gas.HealthReporter`. `CheckReady` fails when the service is closed or not
+initialized, while any version is dirty (wrapping `migrate.ErrDirty`), when
+two migrations share a version (wrapping `migrate.ErrDuplicateVersion`), and
+while any registered migration has not been applied
+(`gas/migrate: <n> pending migration(s)`). Once the app has started, the
+last case means a migration was registered or reverted after `RunPending`
+ran.
+
+## Testing
+
+`migratetest.MockMigrationManager` implements `gas.MigrationManager` for
+unit tests. Each method records the call in `Calls` and delegates to the
+matching `Fn` field (`RegisterFn`, `RegisterSliceFn`, `RegisterFSFn`,
+`RunPendingFn`, `DownFn`, and so on) when it is set; otherwise it returns nil,
+and `Name` returns `gas/migrate`. `CallCount(method)` counts the calls to one
+method and `Reset` clears `Calls`. The mock has no `ClearDirty` or
+`CheckReady`.
+
+<Code code={region(migTest, 'mock')} lang="go" title="notes/service_test.go" />
+
+The mock shows that a service registers its migrations; it does not run them.
+To test the SQL itself, start the real `gas/migrate` on SQLite as shown under
+[Database testing](/gas/modules/database/#testing). Every pending migration
+then runs during `Start`, as in production.
+
+## API reference
+
+[pkg.go.dev/github.com/gasmod/gas/migrate](https://pkg.go.dev/github.com/gasmod/gas/migrate)

@@ -3,11 +3,15 @@ package gas_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gasmod/gas"
 )
@@ -174,6 +178,141 @@ func TestServiceContainer_CaptiveDependency(t *testing.T) {
 	})
 }
 
+// closeOnlyA and closeOnlyB declare Close without the rest of Service, so a
+// registered instance of either fails shape validation.
+type (
+	closeOnlyA struct{}
+	closeOnlyB struct{}
+)
+
+func (*closeOnlyA) Close(context.Context) error { return nil }
+func (*closeOnlyB) Close(context.Context) error { return nil }
+
+// With two independent broken registrations, BuildAll reports the same one
+// on every run: the one registered first. Each case registers the B types
+// before the A types, so registration order differs from alphabetical order.
+func TestStartupErrorIsDeterministic(t *testing.T) {
+	type (
+		Root     struct{}
+		MissingA struct{}
+		MissingB struct{}
+		NeedsA   struct{}
+		NeedsB   struct{}
+		ScopedA  struct{}
+		ScopedB  struct{}
+		CaptiveA struct{}
+		CaptiveB struct{}
+	)
+	const runs = 100
+
+	cases := []struct {
+		register func(c *gas.ServiceContainer)
+		name     string
+		want     string
+	}{
+		{
+			register: func(c *gas.ServiceContainer) {
+				c.RegisterSingletonService[*NeedsB](func(*MissingB) *NeedsB { return &NeedsB{} })
+				c.RegisterSingletonService[*NeedsA](func(*MissingA) *NeedsA { return &NeedsA{} })
+			},
+			name: "UnregisteredDependencies",
+			want: "building *gas_test.NeedsB: ",
+		},
+		{
+			register: func(c *gas.ServiceContainer) {
+				c.RegisterSingletonService[*Root](func() *Root { return &Root{} })
+				c.RegisterSingletonService[*NeedsB](
+					func(*Root, *MissingB) *NeedsB { return &NeedsB{} },
+				)
+				c.RegisterSingletonService[*NeedsA](
+					func(*Root, *MissingA) *NeedsA { return &NeedsA{} },
+				)
+			},
+			name: "UnregisteredDependenciesBelowRoot",
+			want: "building *gas_test.NeedsB: ",
+		},
+		{
+			register: func(c *gas.ServiceContainer) {
+				c.RegisterScopedService[*ScopedB](func() *ScopedB { return &ScopedB{} })
+				c.RegisterScopedService[*ScopedA](func() *ScopedA { return &ScopedA{} })
+				c.RegisterSingletonService[*CaptiveB](
+					func(*ScopedB) *CaptiveB { return &CaptiveB{} },
+				)
+				c.RegisterSingletonService[*CaptiveA](
+					func(*ScopedA) *CaptiveA { return &CaptiveA{} },
+				)
+			},
+			name: "CaptiveDependencies",
+			want: "singleton *gas_test.CaptiveB depends on",
+		},
+		{
+			register: func(c *gas.ServiceContainer) {
+				c.RegisterServiceInstance(&closeOnlyB{})
+				c.RegisterServiceInstance(&closeOnlyA{})
+			},
+			name: "InstanceShapes",
+			want: "gas: *gas_test.closeOnlyB declares Close",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			seen := map[string]int{}
+			for range runs {
+				c := gas.NewServiceContainer()
+				tc.register(c)
+				err := c.BuildAll(context.Background())
+				if err == nil {
+					t.Fatal("BuildAll succeeded with two broken registrations")
+				}
+				seen[err.Error()]++
+			}
+			if len(seen) != 1 {
+				var b strings.Builder
+				for msg, n := range seen {
+					_, _ = fmt.Fprintf(&b, "\n  %d/%d: %s", n, runs, msg)
+				}
+				t.Fatalf(
+					"BuildAll returned %d distinct errors over %d runs:%s",
+					len(seen),
+					runs,
+					b.String(),
+				)
+			}
+			for msg := range seen {
+				if !strings.Contains(msg, tc.want) {
+					t.Fatalf("BuildAll() = %q, want the first registered (%q)", msg, tc.want)
+				}
+			}
+		})
+	}
+}
+
+// EachInstance calls fn without holding the container's lock, so fn may
+// resolve from the container. Holding the lock across fn deadlocks here.
+func TestEachInstance_FnMayResolve(t *testing.T) {
+	c := gas.NewServiceContainer()
+	c.RegisterServiceInstance(&testDep{})
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		c.EachInstance(func(reflect.Value) {
+			if !c.CanResolve[*testDep]() {
+				t.Error("CanResolve[*testDep]() = false inside EachInstance")
+			}
+			if _, err := c.Resolve[*testDep](); err != nil {
+				t.Errorf("Resolve[*testDep]() inside EachInstance = %v", err)
+			}
+		})
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("EachInstance did not return: fn resolving from the container deadlocked")
+	}
+}
+
 func TestServiceContainer_ConstructorError(t *testing.T) {
 	c := gas.NewServiceContainer()
 	type Svc struct{}
@@ -242,5 +381,333 @@ func TestScopeClosesInReverseResolutionOrder(t *testing.T) {
 		if got := strings.Join(closes, " "); got != wantClose {
 			t.Fatalf("run %d: scope close order = [%s], want [%s]", run, got, wantClose)
 		}
+	}
+}
+
+// namer is the alias interface most alias tests resolve through.
+type namer interface{ Name() string }
+
+// countedService counts its Init and Close calls.
+type countedService struct {
+	inits, closes atomic.Int32
+}
+
+func (s *countedService) Name() string                { return "counted" }
+func (s *countedService) Init(context.Context) error  { s.inits.Add(1); return nil }
+func (s *countedService) Close(context.Context) error { s.closes.Add(1); return nil }
+
+// labeled is a plain transient value, not a Service.
+type labeled struct{ label string }
+
+func (l *labeled) Name() string { return l.label }
+
+// namedSvc is an interface target: an interface that implements namer.
+type namedSvc interface {
+	namer
+	Kind() string
+}
+
+type kindService struct{}
+
+func (kindService) Name() string { return "kind" }
+func (kindService) Kind() string { return "service" }
+
+// needsNamer is a singleton that depends on the namer alias.
+type needsNamer struct{ n namer }
+
+func newNeedsNamer(n namer) *needsNamer { return &needsNamer{n: n} }
+
+// A singleton resolved through its alias is the same instance as through its
+// target, and the Worker initializes and closes it once.
+func TestServiceAlias_SingletonSharesInstance(t *testing.T) {
+	t.Parallel()
+
+	svc := &countedService{}
+	w := gas.NewWorker(
+		gas.WithSingletonService[*countedService](func() *countedService { return svc }),
+		gas.WithServiceAlias[*countedService, namer](),
+	)
+	if err := w.Start(t.Context()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	c := w.ServiceContainer()
+	if got := c.MustResolve[namer](); got != namer(svc) {
+		t.Errorf("Resolve[namer]() = %p, want the *countedService %p", got, svc)
+	}
+	if got := c.MustResolve[*countedService](); got != svc {
+		t.Errorf("Resolve[*countedService]() = %p, want %p", got, svc)
+	}
+	if err := w.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	if i, cl := svc.inits.Load(), svc.closes.Load(); i != 1 || cl != 1 {
+		t.Errorf("Init ran %d times and Close %d times, want 1 each", i, cl)
+	}
+}
+
+// A scoped target resolved through its alias is the scope's one instance,
+// and Scope.Close closes it once.
+func TestServiceAlias_ScopedSharesInstance(t *testing.T) {
+	t.Parallel()
+
+	c := gas.NewServiceContainer()
+	c.RegisterScopedService[*countedService](func() *countedService { return &countedService{} })
+	c.RegisterServiceAlias[*countedService, namer]()
+	if err := c.BuildAll(t.Context()); err != nil {
+		t.Fatalf("BuildAll: %v", err)
+	}
+
+	scope := c.NewScope(t.Context())
+	viaAlias := scope.MustResolve[namer]()
+	viaTarget := scope.MustResolve[*countedService]()
+	if viaAlias != namer(viaTarget) {
+		t.Fatalf("Resolve[namer]() = %p, want the scope's *countedService %p", viaAlias, viaTarget)
+	}
+	if err := scope.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if i, cl := viaTarget.inits.Load(), viaTarget.closes.Load(); i != 1 || cl != 1 {
+		t.Errorf("Init ran %d times and Close %d times, want 1 each", i, cl)
+	}
+	if _, err := c.Resolve[namer](); !errors.Is(err, gas.ErrScopeRequired) {
+		t.Errorf("container Resolve[namer]() = %v, want ErrScopeRequired for a scoped target", err)
+	}
+}
+
+// A transient target resolved through its alias is built fresh each time.
+func TestServiceAlias_Transient(t *testing.T) {
+	t.Parallel()
+
+	c := gas.NewServiceContainer()
+	c.RegisterTransientService[*labeled](func() *labeled { return &labeled{label: "fresh"} })
+	c.RegisterServiceAlias[*labeled, namer]()
+
+	a, b := c.MustResolve[namer](), c.MustResolve[namer]()
+	if a == b {
+		t.Error("two resolutions of a transient alias returned the same instance")
+	}
+	if a.Name() != "fresh" {
+		t.Errorf("Name() = %q, want %q", a.Name(), "fresh")
+	}
+}
+
+// The target may be an interface, as long as it implements the alias.
+func TestServiceAlias_InterfaceTarget(t *testing.T) {
+	t.Parallel()
+
+	c := gas.NewServiceContainer()
+	c.RegisterSingletonService[namedSvc](func() namedSvc { return kindService{} })
+	c.RegisterServiceAlias[namedSvc, namer]()
+	if err := c.BuildAll(t.Context()); err != nil {
+		t.Fatalf("BuildAll: %v", err)
+	}
+	if got := c.MustResolve[namer]().Name(); got != "kind" {
+		t.Errorf("Resolve[namer]().Name() = %q, want %q", got, "kind")
+	}
+}
+
+// A singleton that depends on an alias is checked against the target's
+// lifetime, and is built after the target.
+func TestServiceAlias_CaptiveDependency(t *testing.T) {
+	t.Parallel()
+
+	for _, lifetime := range []gas.ServiceLifetime{gas.ServiceLifetimeScoped, gas.ServiceLifetimeTransient} {
+		t.Run(lifetime.String(), func(t *testing.T) {
+			t.Parallel()
+			c := gas.NewServiceContainer()
+			c.RegisterService[*labeled](func() *labeled { return &labeled{} }, lifetime)
+			c.RegisterServiceAlias[*labeled, namer]()
+			c.RegisterSingletonService[*needsNamer](newNeedsNamer)
+			err := c.BuildAll(t.Context())
+			if !errors.Is(err, gas.ErrCaptiveDependency) {
+				t.Fatalf("BuildAll = %v, want ErrCaptiveDependency", err)
+			}
+			if !strings.Contains(err.Error(), "*gas_test.labeled") {
+				t.Errorf("error %q does not name the target", err)
+			}
+		})
+	}
+
+	t.Run("singleton", func(t *testing.T) {
+		t.Parallel()
+		c := gas.NewServiceContainer()
+		// The dependent is registered first, so it builds only if the
+		// sort sees the edge through the alias.
+		c.RegisterSingletonService[*needsNamer](newNeedsNamer)
+		c.RegisterServiceAlias[*labeled, namer]()
+		c.RegisterSingletonService[*labeled](func() *labeled { return &labeled{label: "dep"} })
+		if err := c.BuildAll(t.Context()); err != nil {
+			t.Fatalf("BuildAll: %v", err)
+		}
+		if got := c.MustResolve[*needsNamer]().n; got != namer(c.MustResolve[*labeled]()) {
+			t.Errorf("needsNamer got %v, want the *labeled singleton", got)
+		}
+	})
+}
+
+// An alias may be registered before its target. A target that is never
+// registered fails BuildAll and Resolve with ErrNotRegistered, and
+// CanResolve reports false until it is there.
+func TestServiceAlias_MissingTarget(t *testing.T) {
+	t.Parallel()
+
+	c := gas.NewServiceContainer()
+	c.RegisterServiceAlias[*labeled, namer]()
+	if c.CanResolve[namer]() {
+		t.Error("CanResolve[namer]() = true with no target registered")
+	}
+	err := c.BuildAll(t.Context())
+	if !errors.Is(err, gas.ErrNotRegistered) {
+		t.Fatalf("BuildAll = %v, want ErrNotRegistered", err)
+	}
+	if !strings.Contains(err.Error(), "*gas_test.labeled") ||
+		!strings.Contains(err.Error(), "gas_test.namer") {
+		t.Errorf("error %q does not name the alias and its target", err)
+	}
+	if _, err := c.Resolve[namer](); !errors.Is(err, gas.ErrNotRegistered) {
+		t.Errorf("Resolve[namer]() = %v, want ErrNotRegistered", err)
+	}
+	if _, err := c.NewScope(t.Context()).Resolve[namer](); !errors.Is(err, gas.ErrNotRegistered) {
+		t.Errorf("Scope.Resolve[namer]() = %v, want ErrNotRegistered", err)
+	}
+
+	c.RegisterSingletonService[*labeled](func() *labeled { return &labeled{label: "late"} })
+	if !c.CanResolve[namer]() {
+		t.Error("CanResolve[namer]() = false once the target is registered")
+	}
+	if err := c.BuildAll(t.Context()); err != nil {
+		t.Fatalf("BuildAll after registering the target: %v", err)
+	}
+	if got := c.MustResolve[namer]().Name(); got != "late" {
+		t.Errorf("Resolve[namer]().Name() = %q, want %q", got, "late")
+	}
+}
+
+// An instance target resolves through its alias too.
+func TestServiceAlias_InstanceTarget(t *testing.T) {
+	t.Parallel()
+
+	inst := &labeled{label: "instance"}
+	c := gas.NewServiceContainer()
+	c.RegisterServiceInstance(inst)
+	c.RegisterServiceAlias[*labeled, namer]()
+	if !c.CanResolve[namer]() {
+		t.Error("CanResolve[namer]() = false for an instance target")
+	}
+	if got := c.MustResolve[namer](); got != namer(inst) {
+		t.Errorf("Resolve[namer]() = %p, want the instance %p", got, inst)
+	}
+}
+
+type otherNamer interface{ Name() string }
+
+type notANamer struct{}
+
+func TestServiceAlias_Panics(t *testing.T) {
+	t.Parallel()
+
+	assertPanics(t, "a non-interface alias", func() {
+		gas.NewServiceContainer().RegisterServiceAlias[*labeled, *labeled]()
+	})
+	assertPanics(t, "a target that does not implement the alias", func() {
+		gas.NewServiceContainer().RegisterServiceAlias[*notANamer, namer]()
+	})
+	assertPanics(t, "an interface aliased to itself", func() {
+		gas.NewServiceContainer().RegisterServiceAlias[namer, namer]()
+	})
+	assertPanics(t, "an alias already registered as a service", func() {
+		c := gas.NewServiceContainer()
+		c.RegisterSingletonService[namer](func() namer { return &labeled{} })
+		c.RegisterServiceAlias[*labeled, namer]()
+	})
+	assertPanics(t, "an alias already registered as an instance", func() {
+		c := gas.NewServiceContainer()
+		c.RegisterServiceInstance[namer](&labeled{})
+		c.RegisterServiceAlias[*labeled, namer]()
+	})
+	assertPanics(t, "a service registered under an alias", func() {
+		c := gas.NewServiceContainer()
+		c.RegisterServiceAlias[*labeled, namer]()
+		c.RegisterSingletonService[namer](func() namer { return &labeled{} })
+	})
+	assertPanics(t, "an instance registered under an alias", func() {
+		c := gas.NewServiceContainer()
+		c.RegisterServiceAlias[*labeled, namer]()
+		c.RegisterServiceInstance[namer](&labeled{})
+	})
+	assertPanics(t, "an alias whose target is an alias", func() {
+		c := gas.NewServiceContainer()
+		c.RegisterServiceAlias[*labeled, namer]()
+		c.RegisterServiceAlias[namer, otherNamer]()
+	})
+	assertPanics(t, "an alias that is another alias's target", func() {
+		c := gas.NewServiceContainer()
+		c.RegisterServiceAlias[namer, otherNamer]()
+		c.RegisterServiceAlias[*labeled, namer]()
+	})
+}
+
+// A panic message names the types with %v, so a pointer type is not printed
+// as an empty name.
+func TestServiceAlias_PanicNamesTypes(t *testing.T) {
+	t.Parallel()
+
+	defer func() {
+		msg := fmt.Sprint(recover())
+		if !strings.Contains(msg, "*gas_test.notANamer") ||
+			!strings.Contains(msg, "gas_test.namer") {
+			t.Errorf("panic %q does not name both types", msg)
+		}
+	}()
+	gas.NewServiceContainer().RegisterServiceAlias[*notANamer, namer]()
+}
+
+// Worker.RegisterServiceAlias is the imperative form of WithServiceAlias.
+func TestServiceAlias_WorkerRegister(t *testing.T) {
+	t.Parallel()
+
+	w := gas.NewWorker()
+	w.RegisterServiceAlias[*labeled, namer]()
+	w.RegisterSingletonService[*labeled](func() *labeled { return &labeled{label: "worker"} })
+	if err := w.Start(t.Context()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = w.Shutdown(context.Background()) })
+	if got := w.ServiceContainer().MustResolve[namer]().Name(); got != "worker" {
+		t.Errorf("Resolve[namer]().Name() = %q, want %q", got, "worker")
+	}
+}
+
+// Registering an alias while other goroutines resolve through it is safe:
+// the alias map is guarded like the registrations. Run with -race.
+func TestServiceAlias_RegisterDuringResolve(t *testing.T) {
+	t.Parallel()
+
+	c := gas.NewServiceContainer()
+	c.RegisterSingletonService[*labeled](func() *labeled { return &labeled{} })
+	c.RegisterServiceAlias[*labeled, namer]()
+
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Go(func() {
+			for range 200 {
+				if _, err := c.Resolve[namer](); err != nil {
+					t.Errorf("Resolve[namer]() = %v", err)
+					return
+				}
+				_ = c.CanResolve[otherNamer]()
+				_, _ = c.NewScope(context.Background()).Resolve[otherNamer]()
+			}
+		})
+	}
+	wg.Go(func() {
+		for range 200 {
+			c.RegisterServiceAlias[*labeled, otherNamer]()
+		}
+	})
+	wg.Wait()
+
+	if !c.CanResolve[otherNamer]() {
+		t.Error("CanResolve[otherNamer]() = false after registering it")
 	}
 }

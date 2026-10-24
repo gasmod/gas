@@ -34,7 +34,7 @@ others need nothing; `dir` and `fs` return a constructor you call yourself.
 The full guide, with configuration, testing, and worked examples, is on the docs site.
 This README is deliberately a signpost: keeping a second copy here is how the docs drifted before.
 
-- **Guide:** [Serve HTML](https://gasmod.github.io/gas/guides/html/)
+- **Guide:** [Templates](https://gasmod.github.io/gas/modules/templates/)
 - **API reference:** [pkg.go.dev/github.com/gasmod/gas/template](https://pkg.go.dev/github.com/gasmod/gas/template)
 - **Contributing:** [CONTRIBUTING.md](../CONTRIBUTING.md)
 

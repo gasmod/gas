@@ -1,0 +1,109 @@
+---
+title: Workers
+description: gas.Worker runs services without an HTTP server, for queue consumers, Lambda functions, and CLI tools.
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import wk from '../../../../snippets/core-workers/main.go?raw';
+import { region } from '../../../lib/snippet';
+
+`gas.Worker` is Gas without the HTTP layer. It has the same DI container,
+service lifecycle, event bus, migrations, health and readiness checks, and kill
+switch as an App, and no router or server. Use it for background job
+processors, Lambda functions, and command-line tools.
+
+`gas.App` embeds a Worker and adds HTTP on top, so every registration option
+works with both, and so does everything on [App lifecycle](/gas/core/lifecycle/)
+that is not marked App only.
+
+## What a Worker does not have
+
+| App only | In a Worker |
+|---|---|
+| `*gas.Router` in the container | Not registered. A constructor that asks for it fails startup with `gas.ErrNotRegistered`. |
+| HTTP server, `Serve`, `Handler`, CSRF protection | None |
+| A request scope per HTTP request | None; make scopes yourself (see [below](#scopes)) |
+| Binding the App's `gas.Config` and emitting `gas.AppConfigUpdated` | Not done |
+| `gas.SystemServerShuttingDown` | Not emitted |
+
+`gas.NewWorker` registers the `*gas.EventBus`, and the Worker itself as
+`gas.HealthProvider` and `gas.ReadyProvider`, in its container. It accepts the
+same `gas.Option` values as `gas.NewApp`, but only the Worker options: passing
+an HTTP option such as `gas.WithErrorHandler` or `gas.WithTrustedOrigin`
+panics.
+
+## Run, or Start and Shutdown
+
+<Code code={region(wk, 'worker')} lang="go" title="cmd/worker/main.go" />
+
+`w.Run()` starts the Worker, blocks until SIGINT or SIGTERM, then shuts it
+down, using `context.Background()` throughout. If startup fails, it returns the
+error without blocking.
+
+When something else owns the process, call the parts yourself:
+
+- `w.Start(ctx)` builds and initializes every service, runs pending migrations,
+  and runs the ready hooks, then returns. It does not block.
+- `w.Shutdown(ctx)` emits `gas.SystemShuttingDown` and closes every service in
+  reverse initialization order. It runs once; later calls return nil.
+
+A failed `Start` closes what it had initialized and cannot be retried on the
+same Worker; the rules are the same as for an App, described under
+[A failed start leaves nothing running](/gas/core/lifecycle/#a-failed-start-leaves-nothing-running).
+
+## A long-running consumer
+
+A Worker has no request loop of its own, so the work happens in a service that
+starts a goroutine in `Init` and stops it in `Close`:
+
+<Code code={region(wk, 'consumer')} lang="go" title="consumer.go" />
+
+Two details matter here.
+
+The loop must not use the context passed to `Init`. That context carries the
+service's init deadline and is canceled as soon as `Init` returns, which would
+stop the loop immediately. The service makes a context of its own and cancels
+it in `Close`.
+
+`Close` gets the shutdown context, so it waits for the loop to finish only as
+long as that context allows. `Run` passes `context.Background()`, which never
+ends; pass a context with a deadline to `Shutdown` if you need shutdown to be
+bounded.
+
+<Aside type="caution" title="Init runs before migrations">
+Services are initialized in the first step of startup, before migrations run
+and before ready hooks. A loop started in `Init` can pick up work before the
+schema it needs exists. If it depends on migrations, start it from a ready hook
+(`gas.WithReadyFunc`) instead, which runs after them.
+</Aside>
+
+The queue itself is the `gas.JobQueueProvider` from the
+[Queue module](/gas/modules/queue/), which covers enqueue options, delivery
+semantics, and configuration.
+
+## On AWS Lambda
+
+A Lambda function keeps its execution environment between invocations, so build
+and start the Worker once, from `init`, and resolve the handler from the
+container once:
+
+<Code code={region(wk, 'lambda')} lang="go" title="cmd/lambda/main.go" />
+
+`initWorker` and `lambdaMain` stand in for the function's `init` and `main`.
+`lambda.StartWithOptions` (from `github.com/aws/aws-lambda-go/lambda`) hands the
+resolved handler to the runtime, and `lambda.WithEnableSIGTERM` registers a hook
+that runs `Worker.Shutdown` when the runtime sends SIGTERM before shutting the
+environment down, so services are closed in reverse initialization order. Here a
+failed `Start` calls `log.Fatal`, so a broken deployment fails on its first cold
+start rather than on a later invocation.
+
+The `lambda-worker` program in the repository's `example/` directory is a
+complete function built this way, with a database and an SQS queue; see
+[Examples](/gas/project/examples/).
+
+## Scopes
+
+Nothing in a Worker opens scopes automatically. Code that uses scoped services,
+such as a job handler that wants one instance per job, creates a scope with
+`ServiceContainer().NewScope(ctx)` and closes it when the job is done; see
+[Request scopes](/gas/core/request-scopes/#outside-http).

@@ -1,0 +1,211 @@
+---
+title: Queue
+description: Job queues on AWS SQS with gas/queue, behind the gas.JobQueueProvider interface.
+---
+
+import { Code, Aside } from '@astrojs/starlight/components';
+import queue from '../../../../snippets/modules-queue/main.go?raw';
+import queueTest from '../../../../snippets/modules-queue/main_test.go?raw';
+import { region } from '../../../lib/snippet';
+
+## What it is for
+
+`gas/queue` sends and receives background jobs through AWS SQS, or through an
+SQS-compatible service such as ElasticMQ or LocalStack. Its `sqs.Service`
+implements `gas.JobQueueProvider`, the interface declared in core, so the code
+that enqueues and consumes jobs imports only `github.com/gasmod/gas` and the
+backend is chosen where the app is wired.
+
+The interface is pull-based. Gas does not run a consumer for you: your code
+calls `Dequeue` in its own loop, decides the concurrency and the failure
+policy, and settles each job with `Ack` or `Nack`. A queue is named by its full
+queue URL, and the package never creates queues.
+
+| Package | Provides |
+|---|---|
+| `queue` | The sentinel `ErrClosed` |
+| `queue/sqs` | `Service`, the SQS backend |
+| `queue/queuetest` | `MockQueue`, a recording mock of `gas.JobQueueProvider` |
+
+## Install
+
+```bash
+go get github.com/gasmod/gas/queue
+```
+
+## Wiring
+
+<Code code={region(queue, 'wiring')} lang="go" title="cmd/worker/main.go" />
+
+`sqs.New()` returns a constructor that resolves `gas.ConfigProvider` and
+`gas.Logger` from the container. It takes two options:
+
+- `sqs.WithConfig(cfg)` uses `cfg` as the whole configuration and skips the
+  `ConfigProvider`. Start from `sqs.DefaultConfig()` so the keys you do not set
+  keep their defaults. A config given this way is used as given, without
+  validation.
+- `sqs.WithClient(client)` injects a ready SQS client; `Init` then builds none
+  and fetches no credentials.
+
+A queue works the same in a `gas.App` and in a `gas.Worker`. The example uses a
+Worker because a consumer usually runs without an HTTP server; see
+[Workers](/gas/core/workers/) for the Worker itself, including running it on
+AWS Lambda.
+
+To point the backend at a local ElasticMQ without touching the environment,
+pass a config:
+
+<Code code={region(queue, 'elasticmq')} lang="go" />
+
+## Usage
+
+### Enqueueing
+
+<Code code={region(queue, 'enqueue')} lang="go" />
+
+`Enqueue` sends the payload as the message body. The options are declared in
+core and map onto the SQS `SendMessage` request:
+
+| Option | SQS field | Notes |
+|---|---|---|
+| `gas.WithDelay(d)` | `DelaySeconds` | Whole seconds, truncated. Set only when `d` is positive |
+| `gas.WithGroupID(id)` | `MessageGroupId` | Set only when `id` is not empty |
+| `gas.WithDedupeID(id)` | `MessageDeduplicationId` | Set only when `id` is not empty |
+| `gas.WithJobAttributes(m)` | `MessageAttributes` | Each entry becomes a `String` attribute |
+
+Gas passes the group and deduplication IDs on any queue and leaves the checks
+to SQS. They are meant for FIFO queues:
+
+<Code code={region(queue, 'enqueue-fifo')} lang="go" />
+
+### Consuming
+
+A consumer is an ordinary service that owns its loop. This one starts the loop
+in `Init` and stops it in `Close`:
+
+<Code code={region(queue, 'consumer')} lang="go" title="jobs/consumer.go" />
+
+Two details in it matter. The `ctx` that `Init` receives is canceled as soon
+as `Init` returns, so the loop runs on a context of its own. And because the
+consumer takes `gas.JobQueueProvider` as a dependency, it is initialized after
+the queue and closed before it, so `Close` drains the batch in hand while the
+queue still accepts `Ack` and `Nack`.
+
+Each pass receives a batch and settles every job in it:
+
+<Code code={region(queue, 'poll')} lang="go" />
+
+`Dequeue(ctx, queueURL, maxMessages, wait)` long-polls SQS `ReceiveMessage`:
+
+- `maxMessages` is clamped to SQS's range of 1 to 10. A value above 10 also
+  logs a warning.
+- `wait` is sent in whole seconds. When it truncates to zero, the configured
+  `queue.waittimeseconds` is used instead. A nonzero `wait` is passed as given,
+  so keep it at 20 seconds or less, the most SQS allows.
+- The configured `queue.visibilitytimeout` is applied to every message
+  received.
+
+Each `gas.Job` carries the SQS message ID in `ID`, the receipt handle in
+`ReceiptHandle`, and the body in `Body`. `Attributes` merges the message's
+system attributes with its message attributes that have a string value; on a
+shared name the message attribute wins. `Attributes` is nil when the message
+has neither.
+
+`Ack` deletes the message. `Nack` sets its visibility timeout to zero, so it
+can be received again at once. A job that is neither acked nor nacked becomes
+visible again when its visibility timeout ends.
+
+<Aside type="caution" title="Make handlers idempotent">
+Delivery, ordering, and retries are SQS's. A process that dies after doing the
+work but before `Ack` leaves the message to reappear when its visibility
+timeout ends, and the job runs again. Key side effects on something stable in
+the payload.
+</Aside>
+
+### Using the SQS client directly
+
+`Service.Client()` returns the underlying `*sqs.Client` for calls the interface
+does not cover, such as creating or purging a queue:
+
+<Code code={region(queue, 'client')} lang="go" />
+
+`Client` returns nil until `Init` has built the client, and when `WithClient`
+injected a client that is not an `*sqs.Client`.
+
+## Configuration
+
+Unless `WithConfig` is given, `Init` binds the settings from the
+`gas.ConfigProvider` over `sqs.DefaultConfig()`, so a key that is not set keeps
+its default. The keys sit under `queue`:
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `queue.region` | string | `us-east-1` | AWS region. Must not be empty |
+| `queue.endpoint` | string | empty | Custom endpoint URL, for ElasticMQ or LocalStack. Empty uses the AWS endpoint |
+| `queue.accesskeyid` | string | empty | Static access key ID. Used only when `queue.secretaccesskey` is set too; otherwise the default AWS credential chain applies |
+| `queue.secretaccesskey` | string | empty | Static secret access key |
+| `queue.visibilitytimeout` | duration | `30s` | How long a received message stays hidden from other consumers. Must not be negative |
+| `queue.waittimeseconds` | int | `20` | Long-poll duration used when `Dequeue` is given no wait. 0 to 20 |
+
+The rules in the table are `validate` tags, which `ConfigProvider.Bind`
+enforces when it binds the config; a violation fails `Init`. How keys map to
+environment variables is described on [Config](/gas/modules/config/).
+
+`Init` loads the AWS configuration and then fetches the credentials, both under
+`Init`'s context, so a missing or broken credential setup fails startup rather
+than the first call. With the default chain this can make a network call, for
+example to the instance metadata service. `Init` does not contact SQS: an
+unreachable endpoint, rejected credentials, or a missing queue surface on the
+first operation.
+
+## Errors
+
+| Error | Returned by | When |
+|---|---|---|
+| `queue.ErrClosed` | `Enqueue`, `Dequeue`, `Ack`, `Nack`, `CheckReady` | After `Close` |
+| `gas/queue/sqs: config binding: ...` | `Init` | The config cannot be bound or fails its `validate` tags |
+| `gas/queue/sqs: load aws config: ...` | `Init` | The AWS configuration cannot be loaded |
+| `gas/queue/sqs: retrieve aws credentials: ...` | `Init` | No credentials can be found |
+| `gas/queue/sqs: enqueue: ...` (and `dequeue`, `ack`, `nack`) | The matching operation | The SQS call failed |
+
+`queue.ErrClosed` is the only sentinel. Errors from SQS calls wrap the AWS
+SDK's error with `%w`, so `errors.As` reaches the SDK's error types.
+
+<Aside type="caution" title="Known issue KI-036">
+`Enqueue`, `Dequeue`, `Ack`, and `Nack` on a service that was constructed but
+never initialized dereference a nil client and panic instead of returning an
+error. In an app the container runs `Init` before handing the service out, so
+this affects only code that calls the constructor by hand. See
+[Known issues](/gas/project/known-issues/).
+</Aside>
+
+## Health and readiness
+
+`sqs.Service` implements `gas.ReadyReporter`, not `gas.HealthReporter`.
+`CheckReady` returns `gas/queue/sqs: not initialized` before `Init` has built a
+client and `queue.ErrClosed` after `Close`, so a readiness probe takes the
+instance out of rotation while it drains. It does not call SQS.
+
+`Close` only marks the service closed: the service starts no goroutines and has
+nothing else to release. A later `Init`, as `RestartService` runs, clears the
+mark.
+
+## Testing
+
+`queuetest.MockQueue` implements `gas.JobQueueProvider`. Each method records
+the call in `Calls` (a `Method` name and its `Args`) and then delegates to the
+matching `EnqueueFn`, `DequeueFn`, `AckFn`, or `NackFn` field. With the field
+unset it returns zero values: a nil error, and no jobs from `Dequeue`.
+`CallCount(method)` counts the calls to one method, and `Reset` clears them.
+
+<Code code={region(queueTest, 'test')} lang="go" title="jobs/consumer_test.go" />
+
+To test against a real queue without AWS, run ElasticMQ or LocalStack and set
+`queue.endpoint` to it.
+
+## API reference
+
+- [`github.com/gasmod/gas/queue`](https://pkg.go.dev/github.com/gasmod/gas/queue)
+- [`github.com/gasmod/gas/queue/sqs`](https://pkg.go.dev/github.com/gasmod/gas/queue/sqs)
+- [`github.com/gasmod/gas/queue/queuetest`](https://pkg.go.dev/github.com/gasmod/gas/queue/queuetest)
+- [`gas.JobQueueProvider`](https://pkg.go.dev/github.com/gasmod/gas#JobQueueProvider) and its options, in core

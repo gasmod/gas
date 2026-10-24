@@ -47,7 +47,7 @@ func TestDI_CapturedContainerSelfCycle(t *testing.T) {
 	if !errors.Is(err, ErrCircularDependency) {
 		t.Fatalf("BuildAll() = %v, want %v", err, ErrCircularDependency)
 	}
-	if !strings.Contains(err.Error(), "cycleSelf -> ") {
+	if err == nil || !strings.Contains(err.Error(), "cycleSelf -> ") {
 		t.Errorf("BuildAll() error %q does not name the cycle", err)
 	}
 }
@@ -179,10 +179,10 @@ func TestDI_DepthLimit(t *testing.T) {
 		ctor := reflect.MakeFunc(fnType, func([]reflect.Value) []reflect.Value {
 			return []reflect.Value{reflect.New(typ).Elem()}
 		})
-		c.registrations[typ] = registration{
+		c.registrations.Set(typ, registration{
 			ctor:     ctor.Interface(),
 			lifetime: ServiceLifetimeTransient,
-		}
+		})
 	}
 
 	_, err := c.resolveType(context.Background(), types[0])

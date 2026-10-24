@@ -118,8 +118,14 @@ func (c *fakeConn) Prepare(string) (driver.Stmt, error) {
 	return nil, errors.New("fake driver: Prepare is not supported")
 }
 
-func (c *fakeConn) Begin() (driver.Tx, error) {
-	return nil, errors.New("fake driver: Begin is not supported")
-}
+// Begin returns a transaction that commits and rolls back nothing, so
+// gas/migrate can run its per-migration transactions. Statements inside it
+// are recorded like any other.
+func (c *fakeConn) Begin() (driver.Tx, error) { return fakeTx{}, nil }
+
+type fakeTx struct{}
+
+func (fakeTx) Commit() error   { return nil }
+func (fakeTx) Rollback() error { return nil }
 
 func (c *fakeConn) Close() error { return nil }
