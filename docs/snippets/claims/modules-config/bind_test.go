@@ -198,24 +198,39 @@ func TestBindArraysAndOverflow(t *testing.T) {
 }
 
 // Docs: modules/config.mdx#binding-to-structs
-// "A string ending in `s`, `m` or `h` is parsed with `time.ParseDuration`, so `"5s"` and `"250ms"` work. Any other string is read as an integer number of nanoseconds: `NOTES__TIMEOUT=5` is 5ns, not 5 seconds. A JSON number for a duration field fails to bind; write it as a string."
+// "A duration needs a unit. Every string is parsed with `time.ParseDuration`, so `"5s"`, `"250ms"` and `"1h30m"` work, and `"0"` is zero. A string without a unit, such as `NOTES__TIMEOUT=30`, fails to bind, and the error names the field and shows the fix: `field Notes: struct field Timeout: duration has no unit: "30"; write it like "30s"`. A number has no unit either, so a JSON number such as `5` fails the same way; only `0` binds, as zero. A `time.Duration` set from Go, for example with `SetDefault`, is used as it is."
 func TestBindDurations(t *testing.T) {
-	t.Setenv("NOTES__TIMEOUT", "5")
-	var d struct {
+	t.Setenv("NOTES__TIMEOUT", "30")
+	d := struct {
 		Notes struct{ Timeout time.Duration }
+	}{}
+	d.Notes.Timeout = time.Second
+	err := load(t, config.WithProvider(envProvider())).Bind(&d)
+	const want = `field Notes: struct field Timeout: duration has no unit: "30"; write it like "30s"`
+	if err == nil || !strings.HasSuffix(err.Error(), want) {
+		t.Fatalf("NOTES__TIMEOUT=30: %v; want an error ending in %s", err, want)
 	}
-	if err := load(t, config.WithProvider(envProvider())).Bind(&d); err != nil || d.Notes.Timeout != 5 {
-		t.Fatalf("NOTES__TIMEOUT=5: %v, %v; want 5ns", d.Notes.Timeout, err)
+	if d.Notes.Timeout != time.Second {
+		t.Errorf("NOTES__TIMEOUT=30 changed the field to %v", d.Notes.Timeout)
 	}
-	for in, want := range map[string]time.Duration{"5s": 5 * time.Second, "250ms": 250 * time.Millisecond, "2m": 2 * time.Minute, "1h": time.Hour} {
-		var got struct{ D time.Duration }
+	for in, want := range map[any]time.Duration{
+		"5s": 5 * time.Second, "250ms": 250 * time.Millisecond, "1h30m": 90 * time.Minute,
+		"0": 0, float64(0): 0, 3 * time.Minute: 3 * time.Minute,
+	} {
+		got := struct{ D time.Duration }{D: time.Hour}
 		if err := bindFrom(t, map[string]any{"d": in}, &got); err != nil || got.D != want {
-			t.Errorf("%q = %v, %v; want %v", in, got.D, err, want)
+			t.Errorf("%#v = %v, %v; want %v", in, got.D, err, want)
 		}
 	}
 	var got struct{ D time.Duration }
-	if err := bindFrom(t, map[string]any{"d": float64(5)}, &got); err == nil {
-		t.Errorf("JSON number 5 bound as %v, want an error", got.D)
+	err = bindFrom(t, map[string]any{"d": float64(5)}, &got)
+	if err == nil || !strings.HasSuffix(err.Error(), `field D: duration has no unit: 5; write it like "5s"`) {
+		t.Errorf("JSON number 5: %v, %v; want the no-unit error naming D", got.D, err)
+	}
+	cfg := config.New()
+	cfg.SetDefault("d", 45*time.Second)
+	if err := cfg.Bind(&got); err != nil || got.D != 45*time.Second {
+		t.Errorf("SetDefault 45s: %v, %v; want 45s", got.D, err)
 	}
 }
 

@@ -138,8 +138,9 @@ child process.
 
 `NewJSONProvider` reads one JSON object from the path set with
 `WithJSONFilePath`. There is no default path: without one, `Load` fails with
-`providers.ErrJSONFilePathNotSet`. JSON numbers arrive as `float64`, which
-matters for [durations](#binding-to-structs).
+`providers.ErrJSONFilePathNotSet`. JSON numbers arrive as `float64`, and a
+number has no unit, so a duration in a JSON file is written as a string such
+as `"30s"` (see [durations](#binding-to-structs)).
 
 By default the JSON and `.env` providers read through a guarded file system:
 the path must resolve inside the working directory, its last element must not
@@ -213,10 +214,13 @@ than the array holds is an error rather than a silent truncation. A number
 too large for its field is an error.
 
 <Aside type="caution" title="Durations">
-A string ending in `s`, `m` or `h` is parsed with `time.ParseDuration`, so
-`"5s"` and `"250ms"` work. Any other string is read as an integer number of
-nanoseconds: `NOTES__TIMEOUT=5` is 5ns, not 5 seconds. A JSON number for a
-duration field fails to bind; write it as a string.
+A duration needs a unit. Every string is parsed with `time.ParseDuration`, so
+`"5s"`, `"250ms"` and `"1h30m"` work, and `"0"` is zero. A string without a
+unit, such as `NOTES__TIMEOUT=30`, fails to bind, and the error names the
+field and shows the fix: `field Notes: struct field Timeout: duration has no
+unit: "30"; write it like "30s"`. A number has no unit either, so a JSON number
+such as `5` fails the same way; only `0` binds, as zero. A `time.Duration` set
+from Go, for example with `SetDefault`, is used as it is.
 </Aside>
 
 After binding, `Bind` validates the struct with

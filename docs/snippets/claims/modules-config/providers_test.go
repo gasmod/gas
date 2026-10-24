@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/gasmod/gas/config"
 	"github.com/gasmod/gas/config/providers"
@@ -259,6 +260,27 @@ func TestJSONProvider(t *testing.T) {
 	err := config.New(config.WithProvider(providers.NewJSONProvider(providers.WithJSONFileFS(fsys)))).Load()
 	if !errors.Is(err, providers.ErrJSONFilePathNotSet) {
 		t.Fatalf("no path: Load = %v, want ErrJSONFilePathNotSet", err)
+	}
+}
+
+// Docs: modules/config.mdx#json-files
+// "JSON numbers arrive as `float64`, and a number has no unit, so a duration in a JSON file is written as a string such as `"30s"`"
+func TestJSONDurationIsAString(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"string.json": {Data: []byte(`{"server":{"readtimeout":"30s"}}`)},
+		"number.json": {Data: []byte(`{"server":{"readtimeout":30}}`)},
+	}
+	var got struct {
+		Server struct{ ReadTimeout time.Duration }
+	}
+	cfg := load(t, config.WithProvider(jsonProvider("string.json", providers.WithJSONFileFS(fsys))))
+	if err := cfg.Bind(&got); err != nil || got.Server.ReadTimeout != 30*time.Second {
+		t.Errorf(`"30s" = %v, %v; want 30s`, got.Server.ReadTimeout, err)
+	}
+	cfg = load(t, config.WithProvider(jsonProvider("number.json", providers.WithJSONFileFS(fsys))))
+	if err := cfg.Bind(&got); err == nil || !strings.Contains(err.Error(), "duration has no unit: 30") {
+		t.Errorf("30 = %v; want the no-unit error", err)
 	}
 }
 

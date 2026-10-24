@@ -6,6 +6,7 @@ import (
 	"maps"
 	"math"
 	"reflect"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -55,6 +56,10 @@ var (
 	ErrCannotConvertToUint64 = errors.New("cannot convert to uint64")
 	// ErrCannotConvertToFloat64 indicates type cannot be converted to float64.
 	ErrCannotConvertToFloat64 = errors.New("cannot convert to float64")
+
+	// ErrDurationWithoutUnit indicates a non-zero duration given without a unit,
+	// such as the string "30" or the number 30.
+	ErrDurationWithoutUnit = errors.New("duration has no unit")
 
 	// Range/overflow errors...
 
@@ -823,33 +828,67 @@ func toInt64(val any) (int64, error) {
 	}
 }
 
+// toDuration converts value to a time.Duration. A string is parsed with
+// time.ParseDuration, so it needs a unit unless it is "0". A number has no
+// unit, so only 0 is accepted. A time.Duration passes through.
+//
+//nolint:cyclop // type switch with many cases is inherently complex
 func toDuration(value any) (time.Duration, error) {
 	switch typedValue := value.(type) {
 	case time.Duration:
 		return typedValue, nil
-	case int64:
-		return time.Duration(typedValue), nil
 	case string:
 		if typedValue == "" {
 			return 0, fmt.Errorf("parse duration %q: %w", typedValue, strconv.ErrSyntax)
 		}
 
-		switch typedValue[len(typedValue)-1:] {
-		case "s", "m", "h": // "s" captures "ns", "us", "µs", "ms", and "s"
-			d, err := time.ParseDuration(typedValue)
-			if err != nil {
-				return 0, fmt.Errorf("parse duration %q: %w", typedValue, err)
-			}
-
+		d, err := time.ParseDuration(typedValue)
+		if err == nil {
 			return d, nil
-		default:
-			i, err := strconv.ParseInt(typedValue, 10, 64)
-
-			return time.Duration(i), err
 		}
+
+		if bareNumber.MatchString(typedValue) {
+			return 0, durationWithoutUnit(strconv.Quote(typedValue), typedValue)
+		}
+
+		return 0, fmt.Errorf("parse duration %q: %w", typedValue, err)
+	case int,
+		int8,
+		int16,
+		int32,
+		int64,
+		uint,
+		uint8,
+		uint16,
+		uint32,
+		uint64,
+		uintptr,
+		float32,
+		float64:
+		if reflect.ValueOf(typedValue).IsZero() {
+			return 0, nil
+		}
+
+		number := fmt.Sprint(typedValue)
+		if f, ok := typedValue.(float64); ok {
+			number = strconv.FormatFloat(f, 'f', -1, 64)
+		} else if f, ok := typedValue.(float32); ok {
+			number = strconv.FormatFloat(float64(f), 'f', -1, 32)
+		}
+
+		return 0, durationWithoutUnit(number, number)
 	default:
 		return 0, fmt.Errorf("%w %T", ErrCannotConvertToInt64, value)
 	}
+}
+
+// bareNumber matches a decimal number with no unit, such as "30" or "-1.5".
+var bareNumber = regexp.MustCompile(`^[+-]?(\d+\.?\d*|\.\d+)$`)
+
+// durationWithoutUnit reports shown, a duration written without a unit, with
+// number in seconds as an example.
+func durationWithoutUnit(shown, number string) error {
+	return fmt.Errorf("%w: %s; write it like %q", ErrDurationWithoutUnit, shown, number+"s")
 }
 
 //nolint:gocyclo,cyclop // type switch with many cases is inherently complex

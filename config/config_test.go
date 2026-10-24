@@ -926,6 +926,45 @@ func TestConfig_BindEmptyDurationReturnsError(t *testing.T) {
 	assert.Equal(t, time.Duration(0), settings.Timeout)
 }
 
+func TestConfig_BindDurationNeedsUnit(t *testing.T) {
+	t.Parallel()
+
+	type Settings struct {
+		Server struct {
+			ReadTimeout time.Duration `json:"readtimeout"`
+		} `json:"server"`
+	}
+
+	for _, c := range []struct {
+		value any
+		want  string
+	}{
+		{"30", `bind config: field Server: struct field ReadTimeout: duration has no unit: "30"; write it like "30s"`},
+		{float64(5), `bind config: field Server: struct field ReadTimeout: duration has no unit: 5; write it like "5s"`},
+	} {
+		provider := &mockProvider{name: "mock", data: map[string]any{
+			"server": map[string]any{"readtimeout": c.value},
+		}}
+		cfg := config.New(config.WithProvider(provider))
+		require.NoError(t, cfg.Load())
+
+		var settings Settings
+		assert.EqualError(t, cfg.Bind(&settings, config.WithValidate(false)), c.want)
+	}
+
+	for value, want := range map[any]time.Duration{"0": 0, float64(0): 0, "250ms": 250 * time.Millisecond, "1h30m": 90 * time.Minute} {
+		provider := &mockProvider{name: "mock", data: map[string]any{
+			"server": map[string]any{"readtimeout": value},
+		}}
+		cfg := config.New(config.WithProvider(provider))
+		require.NoError(t, cfg.Load())
+
+		var settings Settings
+		require.NoError(t, cfg.Bind(&settings, config.WithValidate(false)), "%#v", value)
+		assert.Equal(t, want, settings.Server.ReadTimeout, "%#v", value)
+	}
+}
+
 func TestConfig_BindFixedSizeArray(t *testing.T) {
 	t.Parallel()
 

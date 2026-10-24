@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 The internal modules this module requires are pinned at 0.6.0.
 
+### Changed
+
+- **BREAKING: a duration needs a unit.** `Bind` parses every string for a
+  `time.Duration` field with `time.ParseDuration`. A string without a unit
+  was read as nanoseconds, so `SERVER__READTIMEOUT=30` set 30ns; it is now
+  an error that names the field and shows the fix, such as `field Server:
+  struct field ReadTimeout: duration has no unit: "30"; write it like
+  "30s"`. A number for a duration field, a JSON number or an int, uint or
+  float set with `Set` or `SetDefault`, is the same error unless it is 0,
+  which binds as zero; a JSON number used to fail with `cannot convert to
+  int64 float64`, and an `int64` was read as nanoseconds. `"0"` and a
+  `time.Duration` value bind as before.
+
 ### Fixed
 
 - **`Bind` no longer picks a field's value at random.** When the source
