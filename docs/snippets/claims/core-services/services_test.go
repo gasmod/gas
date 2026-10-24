@@ -176,7 +176,7 @@ func (*ptrService) Name() string                { return "ptr" }
 func (*ptrService) Init(context.Context) error  { return nil }
 func (*ptrService) Close(context.Context) error { return nil }
 
-// Docs: core/services.mdx#partial-services-are-rejected
+// Docs: core/services.mdx#service-shape
 // "A registered type that declares `Init` or `Close` must implement all three
 // methods, with the signatures above. One that declares either and falls short,
 // for example an `Init` without the `context.Context` parameter, or an `Init`
@@ -215,10 +215,10 @@ func TestPartialServicesRejected(t *testing.T) {
 	}
 }
 
-// Docs: core/services.mdx#partial-services-are-rejected
+// Docs: core/services.mdx#service-shape
 // "`Name` alone does not count: a type that declares only `Name()` is an ordinary
 // dependency."
-// Docs: core/services.mdx#partial-services-are-rejected
+// Docs: core/services.mdx#service-shape
 // "A registration under a value type whose methods are declared on the
 // pointer is rejected too, with a message telling you to register the pointer
 // type."
@@ -249,7 +249,7 @@ func (s *dbService) Name() string                   { return "db" }
 func (s *dbService) Init(ctx context.Context) error { return s.db.PingContext(ctx) }
 func (s *dbService) Close(context.Context) error    { return s.db.Close() }
 
-// Docs: core/services.mdx#partial-services-are-rejected
+// Docs: core/services.mdx#service-shape
 // "A type from another package that declares `Close`, such as `*sql.DB`, cannot be
 // given the other two methods. Wrap it in a service of your own instead of
 // registering it directly."
@@ -285,7 +285,7 @@ type reporter struct{ svc[kA] }
 
 func (*reporter) CheckHealth(context.Context) error { return nil }
 
-// Docs: core/services.mdx#names-must-be-unique
+// Docs: core/services.mdx#names
 // "`Name()` identifies a service at runtime: active services, health and
 // readiness results, the kill switch, and the ownership of routes and
 // subscriptions are all keyed by it."
@@ -327,7 +327,7 @@ func TestNameKeysRuntimeState(t *testing.T) {
 	}
 }
 
-// Docs: core/services.mdx#names-must-be-unique
+// Docs: core/services.mdx#names
 // "A Worker tracks one active service per name,
 // so a second service with the same name is not tracked, and shutdown does not
 // close it."
@@ -423,7 +423,7 @@ func TestConstructorForms(t *testing.T) {
 	}
 }
 
-// Docs: core/services.mdx#constructors
+// Docs: core/services.mdx#constructor-checks
 // "The constructor is checked when it is registered. Registration panics if it is
 // not a function, is variadic, returns anything other than one or two values,
 // returns a first value not assignable to the registered type (or, for an
@@ -449,7 +449,7 @@ func TestMalformedConstructorPanicsAtRegistration(t *testing.T) {
 	mustPanic(t, "option form", func() { gas.NewWorker(gas.WithSingletonService[*holder](42)) })
 }
 
-// Docs: core/services.mdx#constructors
+// Docs: core/services.mdx#constructor-checks
 // "Parameters are not checked at registration, since whether they resolve
 // is only known once everything is registered; a parameter with no registration
 // fails the build."
@@ -491,7 +491,7 @@ func TestRegisteringTwiceReplaces(t *testing.T) {
 	}
 }
 
-// Docs: core/services.mdx#overriding-a-registration
+// Docs: core/services.mdx#instances-override-constructors
 // "a value registered with `WithServiceInstance` wins over a constructor
 // registration for the same type, whichever was registered last and whatever
 // the constructor's lifetime. The constructor never runs."
@@ -546,7 +546,7 @@ func TestInstanceWinsOverConstructor(t *testing.T) {
 	}
 }
 
-// Docs: core/services.mdx#overriding-a-registration
+// Docs: core/services.mdx#instances-override-constructors
 // "To replace an instance, register another instance."
 func TestInstanceReplacesInstance(t *testing.T) {
 	t.Parallel()
@@ -663,7 +663,7 @@ type nonce struct{ _ int }
 
 // Docs: core/services.mdx#lifetimes
 // "| Transient | `WithTransientService` | A new one on every resolution | Not allowed: the type cannot implement `Service` |"
-// Docs: core/services.mdx#lifetimes
+// Docs: core/services.mdx#instances-and-transients
 // "**Transient** registrations of a type that implements `Service` panic at
 // registration."
 func TestTransientLifetime(t *testing.T) {
@@ -683,7 +683,7 @@ func TestTransientLifetime(t *testing.T) {
 
 // Docs: core/services.mdx#lifetimes
 // "| Instance | `WithServiceInstance` | The value you pass, treated as a singleton | `Init` at startup, `Close` at shutdown |"
-// Docs: core/services.mdx#lifetimes
+// Docs: core/services.mdx#instances-and-transients
 // "**Instances** are pre-built, not pre-initialized. If the value implements
 // `Service`, the container calls its `Init` at startup and its `Close` at
 // shutdown like any other singleton"
@@ -744,7 +744,7 @@ func TestWithServiceTakesLifetime(t *testing.T) {
 	})
 }
 
-// Docs: core/services.mdx#lifetimes
+// Docs: core/services.mdx#instances-and-transients
 // "An instance is stored under `T`, the static type at the call
 // site, so passing an interface-typed variable registers it under that interface
 // and not under its concrete type."
@@ -1176,7 +1176,7 @@ func TestCanResolve(t *testing.T) {
 	}
 }
 
-// Docs: core/services.mdx#resolving
+// Docs: core/services.mdx#concurrent-resolution
 // "Resolving a singleton that has not been built yet builds it, and its
 // dependencies, on the spot."
 func TestResolveBuildsOnTheSpot(t *testing.T) {
@@ -1193,7 +1193,7 @@ func TestResolveBuildsOnTheSpot(t *testing.T) {
 	}
 }
 
-// Docs: core/services.mdx#resolving
+// Docs: core/services.mdx#concurrent-resolution
 // "The container is safe for concurrent resolution: a
 // singleton is built by one goroutine at a time, and another goroutine asking for
 // it while it is being built waits and gets the same instance."
