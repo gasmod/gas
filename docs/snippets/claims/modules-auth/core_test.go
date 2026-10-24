@@ -169,7 +169,9 @@ func params(ctor any) []reflect.Type {
 // implements `gas.Service`. Register it under the sub-package's `Provider`
 // interface (`jwt.Provider`, `session.Provider`, `apikey.Provider`,
 // `token.Provider`) or as its `*Service`."
-// and "| `jwt.New()` | `gas.ConfigProvider`, `gas.Logger` |"
+// and
+// Docs: modules/auth.mdx#constructors-and-configuration
+// "| `jwt.New()` | `gas.ConfigProvider`, `gas.Logger` |"
 // and "| `session.New()`, `apikey.New()`, `token.New()` | `gas.DatabaseProvider`, `gas.Logger`, `gas.MigrationManager`, `gas.ConfigProvider` |"
 func TestConstructorsAndProviders(t *testing.T) {
 	t.Parallel()
@@ -238,7 +240,7 @@ func TestConstructorsAndProviders(t *testing.T) {
 	}
 }
 
-// Docs: modules/auth.mdx#wiring
+// Docs: modules/auth.mdx#constructors-and-configuration
 // "`session`, `apikey` and `token` also pick a SQL dialect from the database
 // provider's `Driver()` and register their migrations with the
 // `gas.MigrationManager` in `Init`. Core runs the migrations after every
@@ -332,10 +334,10 @@ func TestMiddleware(t *testing.T) {
 	}
 }
 
-// Docs: modules/auth.mdx#protecting-routes
+// Docs: modules/auth.mdx#middleware-and-chains
 // "An authenticator that returns a `nil` principal with a `nil` error has
 // failed with `auth.ErrUnauthenticated`; it never counts as a success. Passing
-// a `nil` authenticator panics when the middleware is built."
+// a `nil` authenticator to `Middleware` panics when the middleware is built."
 func TestMiddlewareNilCases(t *testing.T) {
 	t.Parallel()
 	for name, p := range map[string]gas.Principal{"nil": nil, "typed nil": (*auth.BasePrincipal)(nil)} {
@@ -362,9 +364,11 @@ func TestMiddlewareNilCases(t *testing.T) {
 
 // Docs: modules/auth.mdx#protecting-routes
 // "`auth.Chain{...}` tries each authenticator in order and returns the first
-// success. When all fail it returns the last one's error, so with
-// `Chain{jwt, session, apikey}` the error a handler sees comes from `apikey`.
-// An empty chain returns `auth.ErrUnauthenticated`."
+// success"
+// Docs: modules/auth.mdx#middleware-and-chains
+// "When every authenticator in a `Chain` fails, the chain returns the last
+// one's error, so with `Chain{jwt, session, apikey}` the error a handler sees
+// comes from `apikey`. An empty chain returns `auth.ErrUnauthenticated`."
 func TestChain(t *testing.T) {
 	t.Parallel()
 	p1 := auth.NewPrincipal("a", auth.SchemeJWT, "", nil)
@@ -429,10 +433,10 @@ func TestRequireScheme(t *testing.T) {
 }
 
 // Docs: modules/auth.mdx#reading-the-principal
-// "A `gas.Principal` has `Subject()` (the stable user ID), `Scheme()` (`jwt`,
-// `session` or `apikey`, also available as `auth.SchemeJWT`,
-// `auth.SchemeSession` and `auth.SchemeAPIKey`), `CredentialID()` (the session
-// ID, API key ID or JWT `jti`) and `Metadata()`."
+// "`Subject()` | The stable user ID" and "`Scheme()` | `jwt`, `session` or
+// `apikey`, also available as `auth.SchemeJWT`, `auth.SchemeSession` and
+// `auth.SchemeAPIKey`" and "`CredentialID()` | The session ID, API key ID or
+// JWT `jti`" and "`Metadata()` | The metadata stored with the credential"
 // and "`gas.MetadataValue[T](p.Metadata(), key)` reads a metadata value and
 // reports `false` when the key is missing or holds another type"
 func TestPrincipalFields(t *testing.T) {
