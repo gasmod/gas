@@ -13,7 +13,7 @@ import (
 
 // Docs: modules/storage.mdx#testing
 // "`storagetest.MockProvider` and `storagetest.MockPresigner` implement the two
-// interfaces. Each method records the call in `Calls` (the method name and the
+// interfaces. ... Each method records the call in `Calls` (the method name and the
 // arguments after the context) and delegates to the matching `Fn` field, such
 // as `GetObjectFn` or `PresignUploadURLFn`, when it is set"
 func TestMocksRecordAndDelegate(t *testing.T) {
