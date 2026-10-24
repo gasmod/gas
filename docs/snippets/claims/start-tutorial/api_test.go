@@ -63,8 +63,8 @@ func jsonKeys(t *testing.T, body string) []string {
 // Docs: start/tutorial.mdx#run-it-2
 // "A wrong token gets a JSON error:" and
 // "curl -X POST localhost:8080/keys -H 'X-Admin-Token: wrong' -d '{}'" and
-// "{"error":{"status":401,"code":"unauthorized","message":"a valid
-// X-Admin-Token header is required"}}"
+// "{ "error": { "status": 401, "code": "unauthorized", "message": "a valid
+// X-Admin-Token header is required" } }"
 func TestKeysNeedTheAdminToken(t *testing.T) {
 	_, srv := fullApp(t, nil)
 	const want = `{"error":{"status":401,"code":"unauthorized","message":"a valid X-Admin-Token header is required"}}`
@@ -540,8 +540,8 @@ func TestAuthMiddleware(t *testing.T) {
 // Docs: start/tutorial.mdx#run-it-3
 // "Without a key, the notes routes answer 401:" and "curl
 // localhost:8080/notes" and
-// "{"error":{"status":401,"code":"unauthorized","message":"a valid
-// X-API-Key header is required"}}"
+// "{ "error": { "status": 401, "code": "unauthorized", "message": "a valid
+// X-API-Key header is required" } }"
 func TestMiddlewareCoversOnlyNotes(t *testing.T) {
 	_, srv := fullApp(t, nil)
 	const want = `{"error":{"status":401,"code":"unauthorized","message":"a valid X-API-Key header is required"}}`
@@ -712,11 +712,11 @@ func TestKeySurvivesRestart(t *testing.T) {
 // {"id":2,"title":"Second note","body":"SQLite underneath","created_at":"2026-10-21T16:05:42.852999Z"}"
 // and "A note without a title fails validation with a 422 that names the
 // field:" and
-// "{"error":{"status":422,"code":"validation_failed","message":"request
-// validation failed","fields":[{"field":"title","rule":"required","message":"is
-// required"}]}}"
+// "{ "error": { "status": 422, "code": "validation_failed", "message": "request
+// validation failed", "fields": [ { "field": "title", "rule": "required",
+// "message": "is required" } ] } }"
 // and "List, get, delete, and get again:" and "204" and
-// "{"error":{"status":404,"code":"not_found","message":"note not found"}}"
+// "{ "error": { "status": 404, "code": "not_found", "message": "note not found" } }"
 // created_at varies per run, so it is matched as an RFC 3339 UTC timestamp.
 // Assumption: list and get show the created_at create returned, as the
 // page's output does.

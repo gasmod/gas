@@ -347,7 +347,13 @@ curl -X POST localhost:8080/keys -H 'X-Admin-Token: wrong' -d '{}'
 ```
 
 ```json
-{"error":{"status":401,"code":"unauthorized","message":"a valid X-Admin-Token header is required"}}
+{
+  "error": {
+    "status": 401,
+    "code": "unauthorized",
+    "message": "a valid X-Admin-Token header is required"
+  }
+}
 ```
 
 ## Step 5: the notes service
@@ -441,7 +447,13 @@ curl localhost:8080/notes
 ```
 
 ```json
-{"error":{"status":401,"code":"unauthorized","message":"a valid X-API-Key header is required"}}
+{
+  "error": {
+    "status": 401,
+    "code": "unauthorized",
+    "message": "a valid X-API-Key header is required"
+  }
+}
 ```
 
 Create two notes:
@@ -465,7 +477,20 @@ curl -X POST localhost:8080/notes -H "X-API-Key: $KEY" -d '{"body":"no title"}'
 ```
 
 ```json
-{"error":{"status":422,"code":"validation_failed","message":"request validation failed","fields":[{"field":"title","rule":"required","message":"is required"}]}}
+{
+  "error": {
+    "status": 422,
+    "code": "validation_failed",
+    "message": "request validation failed",
+    "fields": [
+      {
+        "field": "title",
+        "rule": "required",
+        "message": "is required"
+      }
+    ]
+  }
+}
 ```
 
 List, get, delete, and get again:
@@ -481,7 +506,13 @@ curl localhost:8080/notes/1 -H "X-API-Key: $KEY"
 [{"id":1,"title":"First note","body":"Hello from Gas","created_at":"2026-10-21T16:05:42.844152Z"},{"id":2,"title":"Second note","body":"SQLite underneath","created_at":"2026-10-21T16:05:42.852999Z"}]
 {"id":1,"title":"First note","body":"Hello from Gas","created_at":"2026-10-21T16:05:42.844152Z"}
 204
-{"error":{"status":404,"code":"not_found","message":"note not found"}}
+{
+  "error": {
+    "status": 404,
+    "code": "not_found",
+    "message": "note not found"
+  }
+}
 ```
 
 With `sqlite3`, the tracking table shows the migrations from both services in

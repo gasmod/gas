@@ -17,7 +17,13 @@ envelope, and the error handler that sits between the two.
 <Code code={region(errs, 'handler')} lang="go" title="users/service.go" />
 
 ```json
-{"error":{"status":404,"code":"not_found","message":"user not found"}}
+{
+  "error": {
+    "status": 404,
+    "code": "not_found",
+    "message": "user not found"
+  }
+}
 ```
 
 Each constructor builds a `*gas.Error` with a fixed status and code:
@@ -63,10 +69,36 @@ Every error response Gas writes as JSON has this shape, which
 `gas.ErrorResponse` decodes:
 
 ```json
-{"error":{"status":409,"code":"conflict","message":"email already registered",
-  "fields":[{"field":"email","rule":"unique","message":"that address is already in use"}],
-  "details":{"suggestion":"a@example.com"}}}
+{
+  "error": {
+    "status": 409,
+    "code": "conflict",
+    "message": "email already registered",
+    "fields": [
+      {
+        "field": "email",
+        "rule": "unique",
+        "message": "that address is already in use"
+      }
+    ],
+    "details": {
+      "suggestion": "a@example.com"
+    }
+  }
+}
 ```
+
+| Field | JSON type | Meaning | Left out |
+|---|---|---|---|
+| `error` | object | The error | Never |
+| `error.status` | number | The HTTP status, the same as the status line | Never |
+| `error.code` | string | The machine-readable code, such as `conflict` | Never, even when empty |
+| `error.message` | string | The message for the client | Never, even when empty |
+| `error.fields` | array of objects | One entry per field-level failure, in the order they were added | When it has no entries |
+| `error.fields[].field` | string | The field name the client sent | Never, even when empty |
+| `error.fields[].rule` | string | The rule that failed, such as `required` | Never, even when empty |
+| `error.fields[].message` | string | What is wrong with the field | Never, even when empty |
+| `error.details` | object | The keys set with `WithDetail`, each value encoded as JSON | When it has no keys |
 
 `fields` and `details` are left out when empty. The `status` in the body always
 matches the status line. A `Status` outside 100 to 599 is written as `500` in
@@ -100,7 +132,13 @@ from a database call, is rendered as `gas.Internal("internal server error")`
 with the original as its cause:
 
 ```json
-{"error":{"status":500,"code":"internal_error","message":"internal server error"}}
+{
+  "error": {
+    "status": 500,
+    "code": "internal_error",
+    "message": "internal server error"
+  }
+}
 ```
 
 The original error reaches the log, not the client.
@@ -117,9 +155,25 @@ A body that decodes but fails validation is a `422` with code
 `fields` per failed rule:
 
 ```json
-{"error":{"status":422,"code":"validation_failed","message":"request validation failed",
-  "fields":[{"field":"email","rule":"email","message":"must be a valid email address"},
-            {"field":"name","rule":"required","message":"is required"}]}}
+{
+  "error": {
+    "status": 422,
+    "code": "validation_failed",
+    "message": "request validation failed",
+    "fields": [
+      {
+        "field": "email",
+        "rule": "email",
+        "message": "must be a valid email address"
+      },
+      {
+        "field": "name",
+        "rule": "required",
+        "message": "is required"
+      }
+    ]
+  }
+}
 ```
 
 `field` is the name the client sent, not the Go field name: the field's `json`

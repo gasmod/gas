@@ -1,6 +1,7 @@
 package coreownership_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -395,7 +396,7 @@ const body503 = `{"error":{"status":503,"code":"service_unavailable","message":"
 // `503 Service Unavailable` in the [unified error shape](/gas/core/errors/),
 // including the `HEAD` route that came with each `GET`. The body does not name the
 // service:"
-// "{"error":{"status":503,"code":"service_unavailable","message":"service unavailable"}}"
+// "{ "error": { "status": 503, "code": "service_unavailable", "message": "service unavailable" } }"
 func TestTeardown503Body(t *testing.T) {
 	t.Parallel()
 	s := &svc[kA]{name: "secretive"}
@@ -487,18 +488,27 @@ func newSampleApp(t *testing.T, invoicesCalls *atomic.Int32) *gas.App {
 	return app
 }
 
+// line formats a response the way the sample's get does: a JSON body is
+// indented on the lines after the status, any other body stays on the status
+// line.
 func line(h http.Handler, path string) string {
 	rr := get(h, path)
-	return fmt.Sprintf("GET %s -> %d %s", path, rr.Code, strings.TrimSpace(rr.Body.String()))
+	status := fmt.Sprintf("GET %s -> %d", path, rr.Code)
+	var indented bytes.Buffer
+	if json.Indent(&indented, bytes.TrimSpace(rr.Body.Bytes()), "", "  ") == nil {
+		return status + "\n" + indented.String()
+	}
+	return status + " " + strings.TrimSpace(rr.Body.String())
 }
 
 // Docs: core/ownership.mdx#what-503-means
 // "Every **named middleware** the service registered is replaced with a 503 as
 // well, **wherever it is referenced**: on routes owned by other services that are
 // still running, and inside `Group` and `Route` blocks."
-// "GET /api/invoices -> 200 invoices
-// GET /auth/me -> 503 {"error":{"status":503,"code":"service_unavailable","message":"service unavailable"}}
-// GET /api/invoices -> 503 {"error":{"status":503,"code":"service_unavailable","message":"service unavailable"}}"
+// "GET /api/invoices -> 200 invoices GET /auth/me -> 503 { "error": {
+// "status": 503, "code": "service_unavailable", "message": "service
+// unavailable" } } GET /api/invoices -> 503 { "error": { "status": 503,
+// "code": "service_unavailable", "message": "service unavailable" } }"
 func TestNamedMiddlewareDisabledWherever(t *testing.T) {
 	t.Parallel()
 	var calls atomic.Int32
@@ -509,10 +519,17 @@ func TestNamedMiddlewareDisabledWherever(t *testing.T) {
 		t.Fatalf("CloseService: %v", err)
 	}
 	got = append(got, line(h, "/auth/me"), line(h, "/api/invoices"))
+	const indented503 = `{
+  "error": {
+    "status": 503,
+    "code": "service_unavailable",
+    "message": "service unavailable"
+  }
+}`
 	want := []string{
 		"GET /api/invoices -> 200 invoices",
-		"GET /auth/me -> 503 " + body503,
-		"GET /api/invoices -> 503 " + body503,
+		"GET /auth/me -> 503\n" + indented503,
+		"GET /api/invoices -> 503\n" + indented503,
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("sample output:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))

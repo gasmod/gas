@@ -7,7 +7,9 @@ package main
 
 // #region imports
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -108,7 +110,14 @@ func get(base, path string) string {
 	if err != nil {
 		log.Fatal(err)
 	}
-	return fmt.Sprintf("GET %s -> %d %s", path, resp.StatusCode, strings.TrimSpace(string(body)))
+	line := fmt.Sprintf("GET %s -> %d", path, resp.StatusCode)
+	// A JSON body is indented on the lines after the status; any other body
+	// stays on the status line.
+	var indented bytes.Buffer
+	if json.Indent(&indented, bytes.TrimSpace(body), "", "  ") == nil {
+		return line + "\n" + indented.String()
+	}
+	return line + " " + strings.TrimSpace(string(body))
 }
 
 func main() {

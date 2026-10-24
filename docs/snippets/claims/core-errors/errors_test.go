@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -21,7 +23,7 @@ import (
 // `500`."
 // and
 // Docs: core/errors.mdx#returning-errors
-// "{"error":{"status":404,"code":"not_found","message":"user not found"}}"
+// "{ "error": { "status": 404, "code": "not_found", "message": "user not found" } }"
 func TestNotFoundEnvelope(t *testing.T) {
 	t.Parallel()
 	app, _ := routeApp(t, map[string]func(gas.Context) error{
@@ -225,6 +227,77 @@ func TestEnvelopeShapeFieldsAndDetails(t *testing.T) {
 }
 
 // Docs: core/errors.mdx#the-envelope
+// "| `error` | object | The error | Never |
+// | `error.status` | number | The HTTP status, the same as the status line | Never |
+// | `error.code` | string | The machine-readable code, such as `conflict` | Never, even when empty |
+// | `error.message` | string | The message for the client | Never, even when empty |
+// | `error.fields` | array of objects | One entry per field-level failure, in the order they were added | When it has no entries |
+// | `error.fields[].field` | string | The field name the client sent | Never, even when empty |
+// | `error.fields[].rule` | string | The rule that failed, such as `required` | Never, even when empty |
+// | `error.fields[].message` | string | What is wrong with the field | Never, even when empty |
+// | `error.details` | object | The keys set with `WithDetail`, each value encoded as JSON | When it has no keys |"
+func TestEnvelopeFieldTable(t *testing.T) {
+	t.Parallel()
+	envelope := func(e *gas.Error) (int, map[string]any) {
+		t.Helper()
+		rr := httptest.NewRecorder()
+		if err := gas.WriteError(rr, httptest.NewRequest(http.MethodGet, "/", nil), e); err != nil {
+			t.Fatalf("WriteError: %v", err)
+		}
+		var top map[string]any
+		if err := json.Unmarshal(rr.Body.Bytes(), &top); err != nil {
+			t.Fatalf("body %q: %v", rr.Body.String(), err)
+		}
+		if len(top) != 1 {
+			t.Errorf("top-level keys = %v, want only error", top)
+		}
+		inner, ok := top["error"].(map[string]any)
+		if !ok {
+			t.Fatalf("error = %#v, want an object", top["error"])
+		}
+		return rr.Code, inner
+	}
+
+	// Empty code and message are still written; nil and empty fields and
+	// details are not.
+	for name, e := range map[string]*gas.Error{
+		"nil":   {Status: 409},
+		"empty": {Status: 409, Fields: []gas.FieldError{}, Details: map[string]any{}},
+	} {
+		code, inner := envelope(e)
+		if got := slices.Sorted(maps.Keys(inner)); !slices.Equal(got, []string{"code", "message", "status"}) {
+			t.Errorf("%s: keys = %v, want code, message, status", name, got)
+		}
+		if inner["status"] != float64(code) || inner["code"] != "" || inner["message"] != "" {
+			t.Errorf("%s: status %#v (line %d), code %#v, message %#v", name, inner["status"], code, inner["code"], inner["message"])
+		}
+	}
+
+	e := gas.Unprocessable("bad").
+		WithField("title", "required", "is required").
+		WithField("", "", "").
+		WithDetail("limits", map[string]any{"max": 3})
+	code, inner := envelope(e)
+	if inner["status"] != float64(code) || code != http.StatusUnprocessableEntity {
+		t.Errorf("status = %#v, status line %d, want both 422", inner["status"], code)
+	}
+	fields, ok := inner["fields"].([]any)
+	if !ok || len(fields) != 2 {
+		t.Fatalf("fields = %#v, want an array of 2", inner["fields"])
+	}
+	for i, want := range [][3]string{{"title", "required", "is required"}, {"", "", ""}} {
+		entry, ok := fields[i].(map[string]any)
+		if !ok || len(entry) != 3 || entry["field"] != want[0] || entry["rule"] != want[1] || entry["message"] != want[2] {
+			t.Errorf("fields[%d] = %#v, want field/rule/message %q in the order added", i, fields[i], want)
+		}
+	}
+	details, ok := inner["details"].(map[string]any)
+	if limits, isObj := details["limits"].(map[string]any); !ok || !isObj || limits["max"] != float64(3) {
+		t.Errorf("details = %#v, want an object holding limits.max 3", inner["details"])
+	}
+}
+
+// Docs: core/errors.mdx#the-envelope
 // "The `status` in the body always matches the status line. A `Status` outside
 // 100 to 599 is written as `500` in both places, so an `Error` built by hand
 // can never produce an invalid status line."
@@ -314,7 +387,7 @@ func TestAsError(t *testing.T) {
 // "An error that is not and does not wrap a `*gas.Error`, such as a plain error
 // from a database call, is rendered as `gas.Internal("internal server error")`
 // with the original as its cause:"
-// and "{"error":{"status":500,"code":"internal_error","message":"internal server error"}}"
+// and "{ "error": { "status": 500, "code": "internal_error", "message": "internal server error" } }"
 // and "The original error reaches the log, not the client."
 func TestPlainErrorIs500(t *testing.T) {
 	t.Parallel()

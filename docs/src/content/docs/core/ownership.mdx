@@ -76,7 +76,13 @@ including the `HEAD` route that came with each `GET`. The body does not name the
 service:
 
 ```json
-{"error":{"status":503,"code":"service_unavailable","message":"service unavailable"}}
+{
+  "error": {
+    "status": 503,
+    "code": "service_unavailable",
+    "message": "service unavailable"
+  }
+}
 ```
 
 A client that asks for `text/html` without also accepting `application/json`
@@ -89,8 +95,22 @@ still running, but its route uses auth's `require-auth`:
 
 ```
 GET /api/invoices -> 200 invoices
-GET /auth/me -> 503 {"error":{"status":503,"code":"service_unavailable","message":"service unavailable"}}
-GET /api/invoices -> 503 {"error":{"status":503,"code":"service_unavailable","message":"service unavailable"}}
+GET /auth/me -> 503
+{
+  "error": {
+    "status": 503,
+    "code": "service_unavailable",
+    "message": "service unavailable"
+  }
+}
+GET /api/invoices -> 503
+{
+  "error": {
+    "status": 503,
+    "code": "service_unavailable",
+    "message": "service unavailable"
+  }
+}
 ```
 
 <Aside type="danger" title="Disabled, never skipped">
