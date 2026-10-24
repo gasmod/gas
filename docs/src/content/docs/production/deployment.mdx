@@ -97,9 +97,17 @@ body itself is not limited by it (see
 
 ### Changing the http.Server
 
-`App.Server()` returns the `*http.Server` the app serves, built on first call:
+The address and timeouts come from the `server.*` settings above. `App.Server()`
+is the escape hatch for the `http.Server` fields that have no config key, such
+as `TLSConfig`, `ErrorLog`, `ConnState`, `BaseContext` and `MaxHeaderBytes`.
+Do not use it for a setting the config already covers. It returns the
+`*http.Server` the app serves, built on first call:
 
 <Code code={region(dep, 'server')} lang="go" />
+
+A single route that needs longer to read a large upload sets its own deadline
+in the handler with `http.NewResponseController(ctx.ResponseWriter()).SetReadDeadline(...)`,
+instead of turning off `server.readtimeout` for every route.
 
 A server built before `Start` starts from the configuration as it stands at that point, the defaults unless you changed `app.Config()`. When `Start` binds the
 configuration, it writes the bound address and timeouts to every one of those

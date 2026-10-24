@@ -83,10 +83,10 @@ func options() []gas.Option {
 // #endregion config
 
 // #region server
-// Server returns the *http.Server the App serves. A field set here before Start
-// is kept when Start applies the bound configuration.
-func streamingUploads(app *gas.App) {
-	app.Server().ReadTimeout = 0 // stream large request bodies
+// capHeaderBytes caps the request line and headers at 64 KiB, below net/http's
+// 1 MiB default. MaxHeaderBytes has no server.* key, so Start leaves it as set.
+func capHeaderBytes(app *gas.App) {
+	app.Server().MaxHeaderBytes = 64 << 10
 }
 
 // #endregion server

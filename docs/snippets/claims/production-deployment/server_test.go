@@ -3,8 +3,10 @@ package productiondeployment_test
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -295,14 +297,16 @@ func TestMaxJSONBodyBytes(t *testing.T) {
 }
 
 // Docs: production/deployment.mdx#changing-the-httpserver
-// "`App.Server()` returns the `*http.Server` the app serves, built on first
-// call" and "A server built before `Start` starts from the configuration as it
+// "It returns the `*http.Server` the app serves, built on first call" and "A
+// server built before `Start` starts from the configuration as it
 // stands at that point, the defaults unless you changed `app.Config()`. When
 // `Start` binds the configuration, it writes the bound address and timeouts to
 // every one of those fields still holding the value the server was built
 // with, and keeps any field changed since. A subscriber to
 // `gas.AppConfigUpdated`, which `Start` emits after this, can also set
 // fields, and what it sets stays."
+// ReadTimeout has a config key and MaxHeaderBytes, the field the page's
+// example sets, has none; both are set before Start and both are kept.
 func TestServerBuiltBeforeStart(t *testing.T) {
 	a := gas.NewApp(
 		gas.WithServiceInstance[gas.Logger](&gas.NopLogger{}),
@@ -319,7 +323,8 @@ func TestServerBuiltBeforeStart(t *testing.T) {
 		t.Errorf("before Start Addr=%s Read=%v ReadHeader=%v, want the defaults with the changed ReadHeaderTimeout",
 			srv.Addr, srv.ReadTimeout, srv.ReadHeaderTimeout)
 	}
-	srv.ReadTimeout = 0
+	srv.ReadTimeout = 30 * time.Second
+	srv.MaxHeaderBytes = 64 << 10
 	a.EventBus().Subscribe[gas.AppConfigUpdated](func(gas.AppConfigUpdatedPayload) {
 		a.Server().IdleTimeout = 11 * time.Second
 	})
@@ -330,11 +335,129 @@ func TestServerBuiltBeforeStart(t *testing.T) {
 	if srv.Addr != "127.0.0.1:9092" || srv.WriteTimeout != 20*time.Second {
 		t.Errorf("unchanged fields Addr=%s Write=%v, want the bound 127.0.0.1:9092 and 20s", srv.Addr, srv.WriteTimeout)
 	}
-	if srv.ReadTimeout != 0 {
-		t.Errorf("ReadTimeout = %v, want the 0 set before Start kept", srv.ReadTimeout)
+	if srv.ReadTimeout != 30*time.Second {
+		t.Errorf("ReadTimeout = %v, want the 30s set before Start kept over the bound 45s", srv.ReadTimeout)
+	}
+	if srv.MaxHeaderBytes != 64<<10 {
+		t.Errorf("MaxHeaderBytes = %d, want the 64 KiB set before Start kept", srv.MaxHeaderBytes)
 	}
 	if srv.IdleTimeout != 11*time.Second {
 		t.Errorf("IdleTimeout = %v, want the subscriber's 11s", srv.IdleTimeout)
+	}
+}
+
+// Docs: production/deployment.mdx#changing-the-httpserver
+// "The address and timeouts come from the `server.*` settings above.
+// `App.Server()` is the escape hatch for the `http.Server` fields that have
+// no config key, such as `TLSConfig`, `ErrorLog`, `ConnState`, `BaseContext`
+// and `MaxHeaderBytes`."
+func TestEscapeHatchFieldsHaveNoKey(t *testing.T) {
+	hatch := []string{"TLSConfig", "ErrorLog", "ConnState", "BaseContext", "MaxHeaderBytes"}
+	settings := reflect.TypeFor[gas.ServerSettings]()
+	for _, name := range hatch {
+		if _, ok := reflect.TypeFor[http.Server]().FieldByName(name); !ok {
+			t.Errorf("http.Server has no field %s", name)
+		}
+		if _, ok := settings.FieldByName(name); ok {
+			t.Errorf("gas.ServerSettings has a %s field, so it has a server.* key", name)
+		}
+	}
+
+	a := gas.NewApp(
+		gas.WithServiceInstance[gas.Logger](&gas.NopLogger{}),
+		gas.WithServiceInstance[gas.ConfigProvider](cfgFrom(t, map[string]any{"server": map[string]any{
+			"host": "127.0.0.1", "port": 9093,
+			"readtimeout": "45s", "readheadertimeout": "3s", "writetimeout": "2m",
+			"idletimeout": "90s", "shutdowntimeout": "1m", "maxjsonbodybytes": 2048,
+		}})),
+	)
+	srv := a.Server()
+	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS13}
+	errLog := log.New(io.Discard, "", 0)
+	srv.TLSConfig, srv.ErrorLog, srv.MaxHeaderBytes = tlsCfg, errLog, 64<<10
+	srv.ConnState = func(net.Conn, http.ConnState) {}
+	srv.BaseContext = func(net.Listener) context.Context { return context.Background() }
+	if err := a.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = a.Stop(context.Background()) })
+	if srv.TLSConfig != tlsCfg || srv.ErrorLog != errLog || srv.MaxHeaderBytes != 64<<10 ||
+		srv.ConnState == nil || srv.BaseContext == nil {
+		t.Errorf("after Start TLSConfig=%p ErrorLog=%p MaxHeaderBytes=%d ConnState set=%t BaseContext set=%t, want each as set",
+			srv.TLSConfig, srv.ErrorLog, srv.MaxHeaderBytes, srv.ConnState != nil, srv.BaseContext != nil)
+	}
+	if srv.Addr != "127.0.0.1:9093" || srv.ReadTimeout != 45*time.Second {
+		t.Errorf("Addr=%s Read=%v, want the bound address and timeouts alongside", srv.Addr, srv.ReadTimeout)
+	}
+}
+
+// Docs: production/deployment.mdx#changing-the-httpserver
+// "A single route that needs longer to read a large upload sets its own
+// deadline in the handler with
+// `http.NewResponseController(ctx.ResponseWriter()).SetReadDeadline(...)`,
+// instead of turning off `server.readtimeout` for every route."
+// The body arrives in two halves 600ms apart, past a 200ms server.readtimeout:
+// the route that extends its deadline reads all of it, and a route that does
+// not fails.
+func TestRouteSetsItsOwnReadDeadline(t *testing.T) {
+	port := freePort(t)
+	a := gas.NewApp(
+		gas.WithServiceInstance[gas.Logger](&gas.NopLogger{}),
+		gas.WithServiceInstance[gas.ConfigProvider](serverCfg(t, port, map[string]any{"readtimeout": "200ms"})),
+		gas.WithSingletonService[*svc[kA]](func(r *gas.Router) *svc[kA] {
+			s := &svc[kA]{}
+			s.onInit = func(context.Context) error {
+				r.Post(s, "/upload", func(ctx gas.Context) error {
+					rc := http.NewResponseController(ctx.ResponseWriter())
+					if err := rc.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+						return err
+					}
+					b, err := io.ReadAll(ctx.Request().Body)
+					if err != nil {
+						return err
+					}
+					return ctx.Text(http.StatusOK, fmt.Sprint(len(b)))
+				})
+				r.Post(s, "/plain", func(ctx gas.Context) error {
+					b, err := io.ReadAll(ctx.Request().Body)
+					if err != nil {
+						return err
+					}
+					return ctx.Text(http.StatusOK, fmt.Sprint(len(b)))
+				})
+				return nil
+			}
+			return s
+		}),
+	)
+	serveApp(t, a, port)
+	t.Cleanup(func() { _ = a.Stop(context.Background()) })
+
+	slowPost := func(path string) string {
+		t.Helper()
+		conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = conn.Close() }()
+		head := "POST " + path + " HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\nConnection: close\r\n\r\n"
+		if _, err := io.WriteString(conn, head+"12345"); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(600 * time.Millisecond)
+		_, _ = io.WriteString(conn, "67890")
+		if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		resp, _ := io.ReadAll(conn)
+		return string(resp)
+	}
+
+	if got := slowPost("/upload"); !strings.HasPrefix(got, "HTTP/1.1 200 ") || !strings.HasSuffix(got, "\r\n\r\n10") {
+		t.Errorf("/upload with its own deadline answered %q, want 200 with the 10 bytes read", got)
+	}
+	if got := slowPost("/plain"); strings.HasPrefix(got, "HTTP/1.1 200 ") {
+		t.Errorf("/plain under the 200ms readtimeout answered %q, want the slow body to fail", got)
 	}
 }
 
