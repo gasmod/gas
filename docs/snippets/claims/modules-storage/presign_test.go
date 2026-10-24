@@ -96,10 +96,11 @@ func TestPresignIsLocal(t *testing.T) {
 }
 
 // Docs: modules/storage.mdx#presigned-urls
-// "A nil or zero TTL signs 15 minutes. A TTL that is negative, under one second,
-// or over seven days fails with `storage.ErrInvalidTTL` and nothing is signed.
-// The expiry is written in whole seconds, truncating any fraction, so 1.9
-// seconds signs as one."
+// "A nil or zero TTL signs 15 minutes."
+// Docs: modules/storage.mdx#presign-details
+// "A TTL that is negative, under one second, or over seven days fails with
+// `storage.ErrInvalidTTL` and nothing is signed. ... The expiry is written in
+// whole seconds, truncating any fraction, so 1.9 seconds signs as one."
 func TestPresignTTL(t *testing.T) {
 	t.Parallel()
 	f := newFakeS3(t, nil)
@@ -135,7 +136,7 @@ func TestPresignTTL(t *testing.T) {
 	}
 }
 
-// Docs: modules/storage.mdx#presigned-urls
+// Docs: modules/storage.mdx#presign-details
 // "The TTL is passed to the SDK explicitly, so it also overrides a default
 // expiry configured on a presign client given with `WithPresignClient`."
 func TestPresignTTLOverridesClientDefault(t *testing.T) {
@@ -156,7 +157,7 @@ func TestPresignTTLOverridesClientDefault(t *testing.T) {
 	}
 }
 
-// Docs: modules/storage.mdx#presigned-urls
+// Docs: modules/storage.mdx#presign-details
 // "`PresignUploadURL` signs `ContentLength` and every header of `ObjectHeaders`
 // that is set, and a `WriteCondition`; the client must send the returned
 // `Method` and every header in `SignedHeader` unchanged. The embedded `Body` is

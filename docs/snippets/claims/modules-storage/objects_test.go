@@ -72,7 +72,7 @@ func TestNilBodyWritesEmptyObject(t *testing.T) {
 	}
 }
 
-// Docs: modules/storage.mdx#writing-objects
+// Docs: modules/storage.mdx#object-bodies-and-headers
 // "`ContentLength` is optional. When it is set, the body must yield exactly
 // that many bytes: a shorter or longer body, or a negative length, fails with
 // `storage.ErrContentLengthMismatch` and stores nothing, leaving any object
@@ -115,7 +115,7 @@ func TestContentLengthMismatch(t *testing.T) {
 	}
 }
 
-// Docs: modules/storage.mdx#writing-objects
+// Docs: modules/storage.mdx#object-bodies-and-headers
 // "The body is read to EOF, so one that blocks after exactly `ContentLength`
 // bytes without ending blocks `PutObject`."
 func TestBodyReadToEOF(t *testing.T) {
@@ -155,7 +155,7 @@ func TestBodyReadToEOF(t *testing.T) {
 	}
 }
 
-// Docs: modules/storage.mdx#writing-objects
+// Docs: modules/storage.mdx#object-bodies-and-headers
 // "`PutObjectInput` embeds `ObjectHeaders`: the content type, `Cache-Control`,
 // `Content-Disposition`, `Content-Encoding`, `Content-Language`, `Expires`, and
 // user metadata. Every header a write sets reads back on the `ObjectInfo` from
@@ -208,7 +208,7 @@ func TestHeadersReadBackBodyAsGiven(t *testing.T) {
 	}
 }
 
-// Docs: modules/storage.mdx#writing-objects
+// Docs: modules/storage.mdx#object-bodies-and-headers
 // "`Expires` is text, so a stored value that is not a date survives the round
 // trip. The s3 backend accepts only an IMF-fixdate such as
 // `Wed, 21 Oct 2026 07:28:00 GMT` and fails anything else, including the
@@ -303,9 +303,8 @@ func TestETagUnquoted(t *testing.T) {
 	}
 }
 
-// Docs: modules/storage.mdx#writing-objects
-// "On s3 the `ObjectInfo` holds the ETag and the version S3 reports, and its
-// other fields are empty."
+// Docs: modules/storage.mdx#object-bodies-and-headers
+// "s3 | The ETag and the version S3 reports; its other fields are empty"
 func TestS3PutObjectReturn(t *testing.T) {
 	t.Parallel()
 	b := s3Backend(t)
@@ -330,11 +329,11 @@ func TestS3PutObjectReturn(t *testing.T) {
 	}
 }
 
-// Docs: modules/storage.mdx#writing-objects
-// "The directory backend returns the object as `HeadObject` would read it: ETag
-// (the hex MD5 of the body), size, modification time, content type, metadata
-// and headers. With no content type, the directory backend sniffs one from the
-// body with `http.DetectContentType`."
+// Docs: modules/storage.mdx#object-bodies-and-headers
+// "dir | The object as `HeadObject` would read it: ETag (the hex MD5 of the
+// body), size, modification time, content type, metadata and headers" and
+// "With no content type, the directory backend sniffs one from the body with
+// `http.DetectContentType`."
 func TestDirPutObjectReturn(t *testing.T) {
 	t.Parallel()
 	b := dirBackend(t)
@@ -482,7 +481,7 @@ func TestDeleteObject(t *testing.T) {
 	}
 }
 
-// Docs: modules/storage.mdx#reading-objects
+// Docs: modules/storage.mdx#range-reads
 // "A `Range` such as `bytes=0-1023` reads part of the object on both backends,
 // and `Size` is then the length of that part. A range that cannot be satisfied,
 // because its first byte is at or past the end or it is `bytes=-0`, is
@@ -514,8 +513,8 @@ func TestRange(t *testing.T) {
 	}
 }
 
-// Docs: modules/storage.mdx#reading-objects
-// "The directory backend applies RFC 9110 single-range semantics (one
+// Docs: modules/storage.mdx#range-reads
+// "**dir** applies RFC 9110 single-range semantics (one
 // `bytes=first-last`, `bytes=first-` or `bytes=-suffix` range, clamped to the
 // object) and ignores any other header, returning the whole object."
 func TestDirRangeSemantics(t *testing.T) {
@@ -543,8 +542,8 @@ func TestDirRangeSemantics(t *testing.T) {
 	}
 }
 
-// Docs: modules/storage.mdx#reading-objects
-// "The s3 backend sends the header as given, so the result is S3's, which
+// Docs: modules/storage.mdx#range-reads
+// "**s3** sends the header as given, so the result is S3's, which
 // agrees on valid single ranges but accepts some malformed ones; S3's `416`
 // comes back as `storage.ErrInvalidRange`."
 func TestS3RangeSentAsGiven(t *testing.T) {
@@ -594,7 +593,7 @@ func TestS3RangeSentAsGiven(t *testing.T) {
 	})
 }
 
-// Docs: modules/storage.mdx#reading-objects
+// Docs: modules/storage.mdx#range-reads
 // "The directory backend's `Body` also implements `io.ReadSeeker`, for whole and
 // ranged reads."
 func TestDirBodySeeks(t *testing.T) {
@@ -698,7 +697,7 @@ func TestIfMatch(t *testing.T) {
 // Docs: modules/storage.mdx#conditional-writes
 // "`PutObjectInput` embeds a `WriteCondition`, at most one field of which may be
 // set"
-// Docs: modules/storage.mdx#conditional-writes
+// Docs: modules/storage.mdx#write-conditions-by-backend
 // "A condition that cannot be evaluated (an `IfNoneMatch` other than `*`, an
 // empty `IfMatch` or one of `*`, or both set) fails with
 // `storage.ErrInvalidCondition` before anything is sent."
@@ -735,10 +734,10 @@ func TestInvalidCondition(t *testing.T) {
 	wantErr(t, "dir HeadObject after invalid conditions", err, storage.ErrNotFound)
 }
 
-// Docs: modules/storage.mdx#conditional-writes
-// "On s3 the condition is sent as `If-Match` or `If-None-Match` and S3's `412` is
-// `storage.ErrPreconditionFailed`; a `409 ConditionalRequestConflict`, which S3
-// answers when a concurrent write conflicts, carries no sentinel."
+// Docs: modules/storage.mdx#write-conditions-by-backend
+// "**s3** sends the condition as `If-Match` or `If-None-Match`, and S3's `412`
+// is `storage.ErrPreconditionFailed`. A `409 ConditionalRequestConflict`, which
+// S3 answers when a concurrent write conflicts, carries no sentinel."
 func TestS3ConditionOnTheWire(t *testing.T) {
 	t.Parallel()
 	t.Run("headers", func(t *testing.T) {
@@ -804,7 +803,7 @@ func TestS3ConditionOnTheWire(t *testing.T) {
 	})
 }
 
-// Docs: modules/storage.mdx#writing-objects
+// Docs: modules/storage.mdx#object-bodies-and-headers
 // "On s3, `PutObject` uploads through the SDK's transfer manager, which switches
 // to a multipart upload for large bodies and aborts a failed one. If that abort
 // fails, the incomplete upload stays stored and billed until a bucket lifecycle

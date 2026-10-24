@@ -25,7 +25,7 @@ func nilInputCalls(p storage.Provider) map[string]error {
 	return calls
 }
 
-// Docs: modules/storage.mdx#inputs
+// Docs: modules/storage.mdx#usage
 // "Every method takes a pointer to an input struct; a nil input fails with
 // `storage.ErrInputRequired`."
 func TestNilInput(t *testing.T) {
@@ -67,11 +67,11 @@ func keyChecks(p storage.Provider, pre storage.Presigner, in storage.BaseObjectI
 	return calls
 }
 
-// Docs: modules/storage.mdx#inputs
-// "Every backend rejects, with `storage.ErrInvalidKey`, an empty key, a key
-// longer than 1024 bytes, a key that is not valid UTF-8, and a key whose last
-// path element is `.` or that cleans to `.`."
-// Docs: modules/storage.mdx#inputs
+// Docs: modules/storage.mdx#keys-and-buckets
+// "Every backend rejects these keys with `storage.ErrInvalidKey`: an empty key
+// ... a key longer than 1024 bytes ... a key that is not valid UTF-8 ... a key
+// whose last path element is `.` or that cleans to `.`"
+// Docs: modules/storage.mdx#keys-and-buckets
 // "Input is validated before anything is sent to the backend."
 func TestInvalidKeys(t *testing.T) {
 	t.Parallel()
@@ -106,10 +106,10 @@ func TestInvalidKeys(t *testing.T) {
 	}
 }
 
-// Docs: modules/storage.mdx#inputs
+// Docs: modules/storage.mdx#keys-and-buckets
 // "Only `/` separates path elements, on every platform, as on S3: a backslash
 // is an ordinary byte, so `a\.` is valid and `a/.` is not."
-// Docs: modules/storage.mdx#inputs
+// Docs: modules/storage.mdx#keys-and-buckets
 // "a key longer than 1024 bytes"
 // The boundary itself, 1024 bytes, is accepted.
 func TestValidKeysRoundTrip(t *testing.T) {
@@ -131,7 +131,7 @@ func TestValidKeysRoundTrip(t *testing.T) {
 	}
 }
 
-// Docs: modules/storage.mdx#inputs
+// Docs: modules/storage.mdx#keys-and-buckets
 // "The key is checked before the bucket."
 func TestKeyCheckedBeforeBucket(t *testing.T) {
 	t.Parallel()
@@ -152,7 +152,7 @@ func TestKeyCheckedBeforeBucket(t *testing.T) {
 	}
 }
 
-// Docs: modules/storage.mdx#inputs
+// Docs: modules/storage.mdx#usage
 // "`Bucket` is optional. Nil selects the configured bucket (`storage.bucket`)."
 func TestNilBucketMeansConfigured(t *testing.T) {
 	t.Parallel()
@@ -171,8 +171,8 @@ func TestNilBucketMeansConfigured(t *testing.T) {
 	}
 }
 
-// Docs: modules/storage.mdx#inputs
-// "A non-nil pointer must name a valid S3 bucket name; an empty string is not a
+// Docs: modules/storage.mdx#keys-and-buckets
+// "A non-nil `Bucket` pointer must name a valid S3 bucket name; an empty string is not a
 // fallback. An invalid bucket, or a nil `Bucket` with no valid configured
 // bucket, fails with `storage.ErrInvalidBucket`."
 func TestInvalidBucketInputs(t *testing.T) {

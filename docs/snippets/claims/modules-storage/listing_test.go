@@ -56,7 +56,7 @@ func TestListObjectsByteOrderAndFilters(t *testing.T) {
 	}
 }
 
-// Docs: modules/storage.mdx#listing
+// Docs: modules/storage.mdx#pagination
 // "A page holds at most `MaxKeys` objects and common prefixes together"
 func TestMaxKeysCountsObjectsAndPrefixes(t *testing.T) {
 	t.Parallel()
@@ -75,7 +75,7 @@ func TestMaxKeysCountsObjectsAndPrefixes(t *testing.T) {
 	}
 }
 
-// Docs: modules/storage.mdx#listing
+// Docs: modules/storage.mdx#pagination
 // "A `MaxKeys` under 1, or a `MaxBuckets` outside 1 to 10000, fails with
 // `storage.ErrInvalidLimit`."
 func TestInvalidLimit(t *testing.T) {
@@ -106,7 +106,7 @@ func TestInvalidLimit(t *testing.T) {
 	}
 }
 
-// Docs: modules/storage.mdx#listing
+// Docs: modules/storage.mdx#pagination
 // "The directory backend defaults `MaxKeys` to 1000 and treats a larger value as
 // 1000, and defaults `MaxBuckets` to 10000."
 func TestDirPageSizes(t *testing.T) {
@@ -163,7 +163,7 @@ func TestDirPageSizes(t *testing.T) {
 	})
 }
 
-// Docs: modules/storage.mdx#listing
+// Docs: modules/storage.mdx#pagination
 // "The s3 backend passes both through as given, so the page size is S3's"
 // Assumption: "as given" includes an unset MaxKeys or MaxBuckets, which then
 // sends no page size.
@@ -256,7 +256,7 @@ func TestListObjectsPaging(t *testing.T) {
 // your buckets, by name; filter with `Prefix`"
 // Docs: modules/storage.mdx#listing
 // "stop when it is empty, which happens on the last page only"
-// Docs: modules/storage.mdx#listing
+// Docs: modules/storage.mdx#pagination
 // "`ListBuckets` lists the buckets the credentials own."
 func TestListBucketsByNameAndPaging(t *testing.T) {
 	t.Parallel()
@@ -311,7 +311,7 @@ func TestListBucketsByNameAndPaging(t *testing.T) {
 	}
 }
 
-// Docs: modules/storage.mdx#listing
+// Docs: modules/storage.mdx#pagination
 // "A `ContinuationToken` that is set but empty fails with
 // `storage.ErrInvalidContinuationToken`."
 // Docs: modules/storage.mdx#errors
@@ -390,8 +390,10 @@ func TestContinuationTokens(t *testing.T) {
 // Docs: modules/storage.mdx#listing
 // "A `Delimiter` such as `/` rolls every key that holds it after `Prefix` up into
 // a common prefix, listed once across all pages in `CommonPrefixes`, the way S3
-// consoles show folders. `StartAfter` applies to keys before they are rolled
-// up, and need not name an existing key."
+// consoles show folders."
+// Docs: modules/storage.mdx#pagination
+// "**StartAfter.** `StartAfter` applies to keys before they are rolled up, and
+// need not name an existing key."
 func TestDelimiterAndStartAfter(t *testing.T) {
 	t.Parallel()
 	keys := []string{"p/docs/a", "p/docs/b", "p/docs/c", "p/img/x/y", "p/img/z", "p/root", "q/other"}
@@ -524,7 +526,7 @@ func TestSkipped(t *testing.T) {
 	})
 }
 
-// Docs: modules/storage.mdx#listing
+// Docs: modules/storage.mdx#pagination
 // "`ListObjects` of a missing bucket is `storage.ErrBucketNotFound`."
 func TestListObjectsMissingBucket(t *testing.T) {
 	t.Parallel()
@@ -534,7 +536,7 @@ func TestListObjectsMissingBucket(t *testing.T) {
 	}
 }
 
-// Docs: modules/storage.mdx#listing
+// Docs: modules/storage.mdx#pagination
 // "On s3, `ListObjects` uses ListObjectsV2 with URL encoding, so keys holding
 // characters XML 1.0 cannot carry are listed intact"
 func TestS3ListObjectsV2URLEncoding(t *testing.T) {
