@@ -1,25 +1,636 @@
-/* Gas brand accent: the greys and white of the icon on black. Starlight
-   derives hover and border shades from these. */
+/* Gas docs: a neutral, high-contrast palette inspired by modern framework docs. */
+@font-face {
+	font-family: 'Geist';
+	src: url('/gas/fonts/geist-sans-variable.woff2') format('woff2');
+	font-style: normal;
+	font-weight: 100 900;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'Geist Mono';
+	src: url('/gas/fonts/geist-mono-variable.woff2') format('woff2');
+	font-style: normal;
+	font-weight: 100 900;
+	font-display: swap;
+}
+
 :root {
-	--sl-color-accent-low: #262626;
-	--sl-color-accent: #b3b3b3;
-	--sl-color-accent-high: #ffffff;
+	color-scheme: dark;
+	--sl-font: 'Geist', var(--sl-font-system);
+	--sl-font-mono: 'Geist Mono', var(--sl-font-system-mono);
+	--sl-color-white: #fafafa;
+	--sl-color-gray-1: #f4f4f5;
+	--sl-color-gray-2: #d4d4d8;
+	--sl-color-gray-3: #a1a1aa;
+	--sl-color-gray-4: #71717a;
+	--sl-color-gray-5: #3f3f46;
+	--sl-color-gray-6: #27272a;
+	--sl-color-black: #070708;
+	--sl-color-accent-low: #27272a;
+	--sl-color-accent: #fafafa;
+	--sl-color-accent-high: #f4f4f5;
+	--sl-color-bg: #070708;
+	--sl-color-bg-nav: #0a0a0c;
+	--sl-color-bg-sidebar: #0a0a0c;
+	--sl-color-bg-inline-code: #27272a;
+	--sl-color-hairline: #27272a;
+	--sl-color-hairline-light: #333338;
+	--sl-color-hairline-shade: #070708;
+	--gas-shadow: rgb(0 0 0 / 0.32);
+	--sl-sidebar-width: 18rem;
+	--sl-content-width: 48rem;
+	--sl-content-pad-x: clamp(1rem, 2.5vw, 1.75rem);
+	--sl-line-height: 1.78;
+	--sl-text-h2: 1.5rem;
+	--sl-text-h3: 1.25rem;
+	--gas-radius: 0.75rem;
 }
 
 :root[data-theme='light'] {
-	--sl-color-accent-low: #e6e6e6;
-	--sl-color-accent: #4d4d4d;
-	--sl-color-accent-high: #000000;
+	color-scheme: light;
+	--sl-color-white: #09090b;
+	--sl-color-gray-1: #18181b;
+	--sl-color-gray-2: #3f3f46;
+	--sl-color-gray-3: #71717a;
+	--sl-color-gray-4: #a1a1aa;
+	--sl-color-gray-5: #d4d4d8;
+	--sl-color-gray-6: #f4f4f5;
+	--sl-color-gray-7: #fafafa;
+	--sl-color-black: #ffffff;
+	--sl-color-accent-low: #e4e4e7;
+	--sl-color-accent: #18181b;
+	--sl-color-accent-high: #09090b;
+	--sl-color-bg: #ffffff;
+	--sl-color-bg-nav: #ffffff;
+	--sl-color-bg-sidebar: #fafafa;
+	--sl-color-bg-inline-code: #f4f4f5;
+	--sl-color-hairline: #e4e4e7;
+	--sl-color-hairline-light: #e4e4e7;
+	--sl-color-hairline-shade: #ededee;
+	--gas-shadow: rgb(0 0 0 / 0.08);
 }
 
-/* Give Go code blocks a little more room to breathe. */
+html {
+	background: var(--sl-color-bg);
+	scroll-behavior: smooth;
+}
+
+body {
+	background: var(--sl-color-bg);
+}
+
+::selection {
+	color: var(--sl-color-text-invert);
+	background: var(--sl-color-accent);
+}
+
+/* A quiet glass header keeps search and navigation anchored while scrolling. */
+header.header {
+	background-color: color-mix(in srgb, var(--sl-color-bg-nav) 94%, transparent);
+	backdrop-filter: blur(14px);
+	border-bottom-color: var(--sl-color-hairline);
+}
+
+header.header site-search button {
+	min-height: 2.4rem;
+	border: 1px solid var(--sl-color-gray-5);
+	border-radius: 0.7rem;
+	background: color-mix(in srgb, var(--sl-color-bg) 68%, transparent);
+	color: var(--sl-color-gray-3);
+	transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
+}
+
+header.header site-search button:hover {
+	border-color: var(--sl-color-accent);
+	background: var(--sl-color-bg);
+	color: var(--sl-color-white);
+}
+
+header.header site-search button > kbd {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.2rem;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--sl-color-gray-3);
+}
+
+header.header site-search button > kbd > kbd {
+	min-width: 1.25rem;
+	padding: 0.1rem 0.25rem;
+	border: 1px solid var(--sl-color-gray-5);
+	border-radius: 0.25rem;
+	background: var(--sl-color-gray-6);
+	color: var(--sl-color-gray-2);
+	font-size: 0.75rem;
+	line-height: 1.2;
+	text-align: center;
+}
+
+.gas-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	width: 100%;
+	height: 100%;
+	gap: 2rem;
+}
+
+.gas-header-start,
+.gas-header-actions,
+.gas-header-nav,
+.gas-header-social,
+.gas-header-theme {
+	display: flex;
+	align-items: center;
+}
+
+.gas-header-start {
+	min-width: 0;
+	gap: clamp(1.25rem, 2.5vw, 2.75rem);
+}
+
+.gas-header-nav {
+	align-self: stretch;
+	gap: 0.25rem;
+}
+
+.gas-header-nav a {
+	display: flex;
+	align-items: center;
+	padding-inline: 0.7rem;
+	color: var(--sl-color-gray-3);
+	font-size: var(--sl-text-sm);
+	text-decoration: none;
+	transition: color 140ms ease;
+}
+
+.gas-header-nav a:hover,
+.gas-header-nav a.active,
+.gas-header-nav a[aria-current='page'] {
+	color: var(--sl-color-white);
+}
+
+.gas-header-actions {
+	flex-shrink: 0;
+	gap: 1.15rem;
+}
+
+.gas-header-actions site-search button {
+	width: 13rem;
+	max-width: 13rem;
+}
+
+.gas-header-social {
+	border-inline-start: 1px solid var(--sl-color-gray-5);
+	padding-inline-start: 0.85rem;
+}
+
+.gas-header-social a {
+	color: var(--sl-color-gray-2);
+}
+
+.gas-header-social a:hover {
+	color: var(--sl-color-white);
+}
+
+.site-title {
+	letter-spacing: -0.025em;
+}
+
+.version {
+	border-color: color-mix(in srgb, var(--sl-color-accent) 35%, var(--sl-color-gray-5)) !important;
+	background: color-mix(in srgb, var(--sl-color-accent-low) 65%, transparent);
+	color: var(--sl-color-accent-high) !important;
+}
+
+.content-panel + .content-panel {
+	border-top: 0;
+	padding-top: 0.5rem;
+}
+
+.gas-page-heading {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 1rem;
+}
+
+.gas-page-heading h1 {
+	margin: 0;
+	font-size: clamp(2rem, 3.5vw, 2.5rem);
+	font-weight: 600;
+	letter-spacing: -0.04em;
+	line-height: 1.2;
+}
+
+.gas-copy-page {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 0.45rem;
+	min-height: 2.2rem;
+	padding: 0.35rem 0.65rem;
+	border: 1px solid var(--sl-color-gray-5);
+	border-radius: 0.45rem;
+	background: transparent;
+	color: var(--sl-color-gray-2);
+	font: inherit;
+	font-size: 0.9rem;
+	white-space: nowrap;
+	cursor: pointer;
+	transition: border-color 140ms ease, color 140ms ease, background-color 140ms ease;
+}
+
+.gas-copy-page:hover {
+	border-color: var(--sl-color-gray-3);
+	background: var(--sl-color-gray-6);
+	color: var(--sl-color-white);
+}
+
+.gas-copy-page svg {
+	width: 0.9rem;
+	height: 0.9rem;
+	stroke: currentColor;
+	stroke-width: 1.5;
+}
+
+/* Give the navigation a little more rhythm and a clear, persistent selection. */
+.sidebar-pane {
+	background-color: var(--sl-color-bg-sidebar);
+}
+
+.sidebar-content {
+	padding-block: 1.25rem 2rem;
+}
+
+.sidebar-content ul ul {
+	margin-block-start: 0.35rem;
+}
+
+.sidebar-content ul ul li {
+	border-inline-start-color: color-mix(in srgb, var(--sl-color-gray-5) 78%, transparent);
+}
+
+.sidebar-content summary {
+	border-radius: 0.55rem;
+	color: var(--sl-color-white);
+}
+
+.sidebar-content summary:hover {
+	background: color-mix(in srgb, var(--sl-color-gray-5) 35%, transparent);
+}
+
+.sidebar-content a {
+	transition: color 140ms ease, background-color 140ms ease;
+}
+
+.sidebar-content a:hover,
+.sidebar-content a:focus-visible {
+	background: color-mix(in srgb, var(--sl-color-gray-5) 38%, transparent);
+}
+
+.sidebar-content a[aria-current='page'],
+.sidebar-content a[aria-current='page']:hover {
+	border-inline-start: 0;
+	border-radius: 0.35rem;
+	background: color-mix(in srgb, var(--sl-color-gray-5) 34%, transparent);
+	color: var(--sl-color-white);
+	font-weight: 600;
+}
+
+/* A restrained glow gives article pages some depth without competing with text. */
+.main-pane {
+	background:
+		linear-gradient(180deg, color-mix(in srgb, var(--sl-color-gray-6) 14%, transparent), transparent 28rem),
+		var(--sl-color-bg);
+}
+
+.sl-markdown-content {
+	font-size: 1rem;
+	letter-spacing: -0.006em;
+}
+
+.sl-markdown-content h1,
+main .hero h1 {
+	letter-spacing: -0.045em;
+	font-weight: 650;
+}
+
+.sl-markdown-content h1 {
+	margin-bottom: 0.75rem;
+}
+
+.sl-markdown-content h2 {
+	margin-block: 2.5rem 0.85rem;
+	letter-spacing: -0.028em;
+}
+
+.sl-markdown-content h3 {
+	margin-block: 2rem 0.65rem;
+	letter-spacing: -0.018em;
+}
+
+.sl-markdown-content p,
+.sl-markdown-content li {
+	/* max-width: 60ch; */
+	line-height: 1.82;
+	color: var(--sl-color-gray-2);
+}
+
+.sl-markdown-content li + li {
+	margin-block-start: 0.35em;
+}
+
+.sl-markdown-content a:not(.sl-link-button, .sl-link-card a) {
+	text-decoration-color: color-mix(in srgb, var(--sl-color-accent) 48%, transparent);
+	text-underline-offset: 0.2em;
+	text-decoration-thickness: 1px;
+}
+
+.sl-markdown-content a:not(.sl-link-button, .sl-link-card a):hover {
+	text-decoration-color: currentColor;
+}
+
+.sl-markdown-content :not(pre) > code {
+	border: 1px solid color-mix(in srgb, var(--sl-color-gray-5) 65%, transparent);
+	border-radius: 0.35rem;
+	color: var(--sl-color-accent-high);
+}
+
+/* Keep code frames compact, neutral, and focused on the snippet itself. */
+.expressive-code {
+	--ec-brdRad: 0.55rem;
+	--ec-brdCol: var(--sl-color-gray-5);
+	--ec-codeBg: color-mix(in srgb, var(--sl-color-bg-sidebar) 78%, var(--sl-color-gray-6));
+	--ec-codeFg: var(--sl-color-gray-1);
+	--ec-frm-edBg: var(--sl-color-bg-sidebar);
+	--ec-frm-trmBg: color-mix(in srgb, var(--sl-color-bg-sidebar) 78%, var(--sl-color-gray-6));
+	--ec-frm-trmTtbBg: var(--sl-color-bg-sidebar);
+	--ec-frm-frameBoxShdCssVal: none;
+}
+
+.expressive-code .frame {
+	border: 1px solid var(--sl-color-gray-5);
+	border-radius: 0.55rem;
+	box-shadow: none;
+	overflow: hidden;
+}
+
 .expressive-code .frame pre {
-	padding-block: 0.9rem;
+	padding-block: 0.75rem;
+	border: 0;
+	border-radius: 0;
+	background: var(--ec-codeBg);
 }
 
+.expressive-code .frame.has-title:not(.is-terminal) .header {
+	display: flex;
+	min-height: 2.25rem;
+	padding: 0.45rem 0.85rem;
+	border: 0;
+	border-radius: 0;
+	border-bottom: 1px solid var(--sl-color-hairline);
+	background: var(--sl-color-bg-sidebar);
+	color: var(--sl-color-gray-3);
+}
 
-/* Card icons in the brand greys rather than Starlight's rotating colors. */
-.card {
-	--sl-card-border: var(--sl-color-accent);
-	--sl-card-bg: var(--sl-color-accent-low);
+.expressive-code .frame.has-title:not(.is-terminal) .header::before,
+.expressive-code .frame.has-title:not(.is-terminal) .header::after,
+.expressive-code .frame.has-title:not(.is-terminal) .title::after {
+	display: none;
+}
+
+.expressive-code .frame.has-title:not(.is-terminal) .title {
+	margin: 0;
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	color: var(--sl-color-gray-3);
+}
+
+.expressive-code .frame.is-terminal .header {
+	display: none;
+}
+
+.sl-markdown-content table {
+	width: 100%;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+}
+
+.sl-markdown-content :is(th, td) {
+	padding: 0.65rem 0.8rem;
+	font-size: 0.95rem;
+	line-height: 1.55;
+	text-align: start;
+	vertical-align: top;
+}
+
+.sl-markdown-content th {
+	background: transparent;
+	color: var(--sl-color-white);
+	white-space: nowrap;
+}
+
+.sl-markdown-content tr > :first-child {
+	padding-inline-start: 0.8rem;
+}
+
+.sl-markdown-content tr > :last-child {
+	padding-inline-end: 0.8rem;
+}
+
+.sl-markdown-content tbody tr:last-child > * {
+	border-bottom: 0;
+}
+
+/* Cards feel like small surfaces and respond clearly to pointer and keyboard. */
+.sl-markdown-content .card,
+.sl-markdown-content .sl-link-card {
+	--sl-card-border: var(--sl-color-gray-5);
+	--sl-card-bg: color-mix(in srgb, var(--sl-color-gray-6) 44%, var(--sl-color-bg-sidebar));
+	border-radius: var(--gas-radius);
+	box-shadow: none;
+	transition: transform 150ms ease, border-color 150ms ease, background-color 150ms ease;
+}
+
+.sl-markdown-content .card:hover,
+.sl-markdown-content .sl-link-card:hover {
+	--sl-card-border: var(--sl-color-gray-3);
+	--sl-card-bg: color-mix(in srgb, var(--sl-color-gray-6) 72%, var(--sl-color-bg-sidebar));
+	transform: translateY(-1px);
+}
+
+.sl-markdown-content .card-grid {
+	margin-block: 1.25rem 2.5rem;
+}
+
+.sl-markdown-content .path-cards {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+	gap: 1rem;
+	margin-block: 1.25rem 2.5rem;
+}
+
+/* The home hero shares the same rounded surfaces as code and navigation. */
+main .hero {
+	position: relative;
+	isolation: isolate;
+	overflow: hidden;
+	margin-block: 0.5rem 1.5rem;
+	padding: clamp(1.75rem, 4vw, 3.5rem);
+	border: 1px solid var(--sl-color-gray-5);
+	border-radius: 1rem;
+	background:
+		radial-gradient(75% 115% at 100% 0%, color-mix(in srgb, var(--sl-color-gray-4) 12%, transparent), transparent 72%),
+		linear-gradient(135deg, color-mix(in srgb, var(--sl-color-gray-6) 44%, transparent), transparent 72%);
+	box-shadow: none;
+}
+
+main .hero .tagline {
+	max-width: 44ch;
+	line-height: 1.65;
+}
+
+main .hero > img,
+main .hero > .hero-html img {
+	filter: drop-shadow(0 1rem 2rem var(--gas-shadow));
+}
+
+main .hero .sl-link-button.primary {
+	box-shadow: none;
+	transition: transform 150ms ease, opacity 150ms ease;
+}
+
+main .hero .sl-link-button.primary:hover {
+	transform: translateY(-1px);
+	opacity: 0.88;
+}
+
+/* Keep the page outline quiet, legible, and aligned with the navigation. */
+.right-sidebar {
+	background: color-mix(in srgb, var(--sl-color-bg) 94%, transparent);
+	border-inline-start: 0;
+}
+
+.right-sidebar-panel a[aria-current='true'] {
+	color: var(--sl-color-accent-high);
+}
+
+.right-sidebar-panel starlight-toc > nav > ul {
+	border-inline-start: 1px solid var(--sl-color-gray-5);
+	padding-inline-start: 0.5rem;
+}
+
+.right-sidebar-panel starlight-toc a[aria-current='true'] {
+	position: relative;
+	color: var(--sl-color-white);
+}
+
+.right-sidebar-panel starlight-toc a[aria-current='true']::before {
+	position: absolute;
+	inset-block: 0.1rem;
+	inset-inline-start: -0.55rem;
+	width: 2px;
+	background: var(--sl-color-white);
+	content: '';
+}
+
+footer .meta {
+	padding-top: 1.25rem;
+	border-top: 1px solid var(--sl-color-hairline);
+}
+
+:focus-visible {
+	outline-color: var(--sl-color-accent);
+	outline-offset: 3px;
+}
+
+@media (max-width: 50rem) {
+	.gas-header {
+		gap: 0.5rem;
+	}
+
+	.gas-header-nav,
+	.gas-header-social,
+	.gas-header-theme {
+		display: none;
+	}
+
+	.gas-header-actions {
+		gap: 0;
+	}
+
+	.gas-header-actions site-search button {
+		justify-content: center;
+		width: 2.5rem;
+		max-width: 2.5rem;
+		padding-inline: 0;
+		border-color: transparent;
+		background: transparent;
+	}
+
+	main .hero {
+		margin-block: 0 1.25rem;
+		padding: 1.5rem 1.15rem 1.75rem;
+		border-radius: 0.85rem;
+	}
+
+	.sl-markdown-content h2 {
+		margin-block-start: 2.25rem;
+	}
+
+	.sl-markdown-content .card-grid {
+		margin-block: 1rem 2rem;
+	}
+
+	.sl-markdown-content .path-cards {
+		grid-template-columns: 1fr;
+		margin-block: 1rem 2rem;
+	}
+
+	.gas-page-heading {
+		align-items: flex-start;
+	}
+
+	.gas-copy-page {
+		min-height: 2rem;
+		padding-inline: 0.5rem;
+	}
+
+	.gas-copy-page span {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		white-space: nowrap;
+		clip-path: inset(50%);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	html {
+		scroll-behavior: auto;
+	}
+
+	.sidebar-content a,
+	main .hero .sl-link-button.primary,
+	.gas-header-nav a,
+	.gas-copy-page,
+	.sl-markdown-content .card,
+	.sl-markdown-content .sl-link-card {
+		transition: none;
+	}
+
+	main .hero .sl-link-button.primary:hover,
+	.sl-markdown-content .card:hover,
+	.sl-markdown-content .sl-link-card:hover {
+		transform: none;
+	}
 }
