@@ -52,7 +52,7 @@ func TestGasEnvAllowedValues(t *testing.T) {
 	}
 }
 
-// Docs: modules/config.mdx#environments
+// Docs: modules/config.mdx#environment-resolution
 // "1. Before the providers load, the extension reads the OS variable `GAS_ENV`. If it is unset or not an allowed value, it takes the fallback, `development`. The result is set as a default for the key. 2. After the providers load, an allowed value that a provider set at the key wins. Any other value there, including one a provider set that is not allowed, is replaced with the fallback."
 func TestGasEnvResolutionSteps(t *testing.T) {
 	unsetGasEnv(t)
@@ -78,7 +78,7 @@ func TestGasEnvResolutionSteps(t *testing.T) {
 	}
 }
 
-// Docs: modules/config.mdx#environments
+// Docs: modules/config.mdx#environment-resolution
 // "So the order is: a provider's value, then `GAS_ENV`, then `development`. An invalid value is never reported as an error. Because the environment provider reads every variable, `GASENV=production` is a provider value for the key and takes precedence over `GAS_ENV`."
 func TestGasEnvOrder(t *testing.T) {
 	unsetGasEnv(t)
@@ -115,7 +115,7 @@ func TestGasEnvHelpers(t *testing.T) {
 	}
 }
 
-// Docs: modules/config.mdx#environments
+// Docs: modules/config.mdx#environment-resolution
 // "Without the extension, nothing sets the key and `GasEnv` stays empty unless a provider sets `gasenv`."
 func TestGasEnvWithoutExtension(t *testing.T) {
 	t.Setenv("GAS_ENV", "production")
@@ -147,8 +147,8 @@ func TestGasEnvExtensionHelpers(t *testing.T) {
 	}
 }
 
-// Docs: modules/config.mdx#environments
-// "`WithEnvVarName` reads another OS variable instead of `GAS_ENV`. `WithConfigKey` stores the result under another key, and also writes it to `gasenv` so `gas.WithGasEnv` still binds. `WithAllowedEnvs` narrows the allowed values and `WithDefault` changes the fallback; the fallback should be one of the allowed values, which is not checked."
+// Docs: modules/config.mdx#environment-resolution
+// "`WithEnvVarName` | Reads another OS variable instead of `GAS_ENV`" and "`WithConfigKey` | Stores the result under another key, and also writes it to `gasenv` so `gas.WithGasEnv` still binds" and "`WithAllowedEnvs` | Narrows the allowed values" and "`WithDefault` | Changes the fallback" and "The fallback should be one of the allowed values, which is not checked."
 func TestGasEnvOptions(t *testing.T) {
 	unsetGasEnv(t)
 	t.Setenv("GAS_ENV", "staging")

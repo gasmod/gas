@@ -52,17 +52,8 @@ whatever store the app registered for that interface. Register the result under
 `gas.UIProvider` so consumers depend on the interface. The constructor never
 fails; its error result is always nil.
 
-Two options:
-
-- `ui.WithStaticFS(fsys)` serves static files from `fsys` instead of
-  `ui.staticdir`.
-- `ui.WithConfig(cfg)` uses `cfg` as the whole configuration and skips the
-  `ConfigProvider`. Start from `ui.DefaultConfig()`. Since nothing is bound,
-  `GasEnv` stays empty unless you set it, which turns development mode off.
-
-When the service starts it binds and validates the configuration, builds the
-template engine, and registers the static route. It does not read any template
-yet.
+To serve static files from an `embed.FS`, pass `ui.WithStaticFS(fsys)`. See
+[Options and startup](#options-and-startup) for `ui.WithConfig`.
 
 ## Usage
 
@@ -110,14 +101,8 @@ define `content` without clashing.
   success they set `Content-Type: text/html; charset=utf-8`.
 - An unknown name returns `ui: template "<name>" not found`.
 
-Templates are compiled on the first render, not when the service starts, so
-template functions other services add while starting are in place. When
-`GasEnv` is `development` or `testing`, every render recompiles the templates,
-so edits to a store that reads from disk show on the next request. A failed
-compile returns its error, and every later render retries the build and
-returns the error until a compile succeeds; the previously compiled templates
-are not served in the meantime
-([KI-053](/gas/project/known-issues/)).
+In development and testing, every render recompiles the templates, so edits
+show on the next request. See [Compilation](#compilation).
 
 ### HTMX fragments
 
@@ -172,19 +157,9 @@ the built-in. And any service can call `RegisterFuncs` from its `Init`:
 
 <Code code={region(uiSrc, 'funcs')} lang="go" />
 
-`RegisterFuncs` merges the functions into the engine and marks the templates
-for recompiling on the next render. A name that already exists is replaced,
-with a warning in the log. Called before the ui service has started, it logs a
-warning and drops the functions; a service that takes `gas.UIProvider` as a
-dependency always starts after it.
+See [Registering functions](#registering-functions) for the merge rules.
 
 ### Static files
-
-The service registers a `GET` route for static files when it starts, owned by
-the ui service, on `ui.staticpath` (`/static/*` by default), or on each pattern
-in `ui.staticpaths` when that is set. Files come from the `ui.WithStaticFS`
-filesystem when one was given, otherwise from `ui.staticdir`. With neither, no
-route is registered.
 
 Three settings, three separate jobs:
 
@@ -194,19 +169,28 @@ Three settings, three separate jobs:
 | `ui.staticpath` or `ui.staticpaths` | Which URL patterns serve it |
 | `ui.staticstripprefix` | What to strip from the request path before looking up the file |
 
-When `ui.staticstripprefix` is empty, it defaults to `ui.staticpath`'s literal
-part up to its first wildcard or path parameter: `/static/*` strips `/static/`,
-so `/static/app.css` is served from `app.css` at the root of the static
-directory or filesystem. If your files mirror the URLs instead
-(`static/app.css` served at `/static/app.css`), set `ui.staticstripprefix` to
-`/`. With `ui.staticpaths` set and no strip prefix, nothing is stripped:
+With the defaults, `/static/app.css` is served from `app.css` at the root of
+the static directory or filesystem. To serve several URL trees, set
+`ui.staticpaths`; with no strip prefix, the request path is used as it is:
 
 <Code code={region(uiSrc, 'config')} lang="go" />
 
-A request whose path ends in `/`, or that names the strip prefix itself without
-the slash (`/static`), gets 404, so directory listings are never served. The
-same handler is exported as `ui.StaticHandler(prefix, dir)` and
-`ui.StaticHandlerFS(prefix, fsys)` for routes of your own.
+See [Static file serving](#static-file-serving) for how the prefix is stripped.
+
+## Testing
+
+`uitest.MockUI` implements `gas.UIProvider`. Each method records the call in
+`Calls` and delegates to `RenderFn`, `RenderFragmentFn`, `RenderWithStatusFn`,
+or `RegisterFuncsFn` when set. Unset, a method returns nil and writes nothing to
+the `ResponseWriter`. `CallCount(method)` counts the calls to one method, and
+`Reset` clears them.
+
+<Code code={region(uiTest, 'test')} lang="go" title="pages_test.go" />
+
+To test the templates themselves, build an engine over a store with
+`ui.NewEngine(provider, funcMap, layout, devMode, logger)` and render into an
+`httptest.ResponseRecorder`, or start the app and send requests to
+`App.Handler()`.
 
 ## Configuration
 
@@ -254,7 +238,65 @@ The render methods return the error and leave the response to you; a handler
 that returns it hands it to the router's error handler (see
 [Errors](/gas/core/errors/)).
 
-## Health and readiness
+## Behavior details
+
+The sections above cover everyday use. This section is the full contract, for
+when an exact edge case matters.
+
+### Options and startup
+
+Two options:
+
+- `ui.WithStaticFS(fsys)` serves static files from `fsys` instead of
+  `ui.staticdir`.
+- `ui.WithConfig(cfg)` uses `cfg` as the whole configuration and skips the
+  `ConfigProvider`. Start from `ui.DefaultConfig()`. Since nothing is bound,
+  `GasEnv` stays empty unless you set it, which turns development mode off.
+
+When the service starts it binds and validates the configuration, builds the
+template engine, and registers the static route. It does not read any template
+yet.
+
+### Compilation
+
+Templates are compiled on the first render, not when the service starts, so
+template functions other services add while starting are in place. When
+`GasEnv` is `development` or `testing`, every render recompiles the templates,
+so edits to a store that reads from disk show on the next request. A failed
+compile returns its error, and every later render retries the build and
+returns the error until a compile succeeds; the previously compiled templates
+are not served in the meantime
+([KI-053](/gas/project/known-issues/)).
+
+### Registering functions
+
+`RegisterFuncs` merges the functions into the engine and marks the templates
+for recompiling on the next render. A name that already exists is replaced,
+with a warning in the log. Called before the ui service has started, it logs a
+warning and drops the functions; a service that takes `gas.UIProvider` as a
+dependency always starts after it.
+
+### Static file serving
+
+The service registers a `GET` route for static files when it starts, owned by
+the ui service, on `ui.staticpath` (`/static/*` by default), or on each pattern
+in `ui.staticpaths` when that is set. Files come from the `ui.WithStaticFS`
+filesystem when one was given, otherwise from `ui.staticdir`. With neither, no
+route is registered.
+
+When `ui.staticstripprefix` is empty, it defaults to `ui.staticpath`'s literal
+part up to its first wildcard or path parameter: `/static/*` strips `/static/`,
+so `/static/app.css` is served from `app.css` at the root of the static
+directory or filesystem. If your files mirror the URLs instead
+(`static/app.css` served at `/static/app.css`), set `ui.staticstripprefix` to
+`/`. With `ui.staticpaths` set and no strip prefix, nothing is stripped:
+
+A request whose path ends in `/`, or that names the strip prefix itself without
+the slash (`/static`), gets 404, so directory listings are never served. The
+same handler is exported as `ui.StaticHandler(prefix, dir)` and
+`ui.StaticHandlerFS(prefix, fsys)` for routes of your own.
+
+### Health and readiness
 
 `ui.Service` implements `gas.ReadyReporter`, not `gas.HealthReporter`.
 `CheckReady` returns `gas/ui: template engine not initialized` before the
@@ -262,21 +304,6 @@ service has started and `gas/ui: service is closed` after `Close`.
 
 `Close` marks the service closed: the render methods then answer 503 and
 return an error. The static route keeps serving.
-
-## Testing
-
-`uitest.MockUI` implements `gas.UIProvider`. Each method records the call in
-`Calls` and delegates to `RenderFn`, `RenderFragmentFn`, `RenderWithStatusFn`,
-or `RegisterFuncsFn` when set. Unset, a method returns nil and writes nothing to
-the `ResponseWriter`. `CallCount(method)` counts the calls to one method, and
-`Reset` clears them.
-
-<Code code={region(uiTest, 'test')} lang="go" title="pages_test.go" />
-
-To test the templates themselves, build an engine over a store with
-`ui.NewEngine(provider, funcMap, layout, devMode, logger)` and render into an
-`httptest.ResponseRecorder`, or start the app and send requests to
-`App.Handler()`.
 
 ## API reference
 

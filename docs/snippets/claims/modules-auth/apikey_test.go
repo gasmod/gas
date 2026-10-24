@@ -77,9 +77,10 @@ func TestAPIKeyGenerate(t *testing.T) {
 }
 
 // Docs: modules/auth.mdx#api-keys
-// "`WithTTL(d)` and `WithExpiresAt(t)` set an expiry (a non-positive duration
-// or zero time is ignored, and the last one given wins), and
-// `WithMetadata(m)` stores metadata returned with the principal."
+// "`WithTTL(d)` | Expires the key `d` from now" and "`WithExpiresAt(t)` |
+// Expires the key at `t`" and "`WithMetadata(m)` | Stores metadata returned
+// with the principal" and "A non-positive duration or zero time is ignored,
+// and when both expiry options are given the last one wins."
 func TestAPIKeyOptions(t *testing.T) {
 	t.Parallel()
 	svc := mustAPIKey(t, sqliteDB(t), nil)

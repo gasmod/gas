@@ -53,7 +53,7 @@ func TestConstructorNoError(t *testing.T) {
 // and "It works on PostgreSQL, SQLite and MySQL, through a gas/database
 // provider or any other `gas.DatabaseProvider`."
 // and
-// Docs: modules/migrations.mdx#wiring
+// Docs: modules/migrations.mdx#drivers
 // "| `Driver()` | Dialect |" and "| `postgres`, `pgx` | PostgreSQL |" and
 // "| `mysql` | MySQL |" and "| `sqlite`, `sqlite3` | SQLite |"
 // and "On MySQL the DSN needs `parseTime=true`"
@@ -122,7 +122,7 @@ func lockPostgres(t *testing.T) {
 	t.Cleanup(pgMu.Unlock)
 }
 
-// Docs: modules/migrations.mdx#wiring
+// Docs: modules/migrations.mdx#drivers
 // "Any other driver name fails `Init` with `gas/migrate: unsupported driver`."
 func TestUnsupportedDriver(t *testing.T) {
 	t.Parallel()
@@ -133,7 +133,7 @@ func TestUnsupportedDriver(t *testing.T) {
 	}
 }
 
-// Docs: modules/migrations.mdx#wiring
+// Docs: modules/migrations.mdx#drivers
 // "`Init` then creates `__gas_migrations` if it does not exist, under the
 // context `Init` receives."
 func TestInitCreatesTrackingTable(t *testing.T) {
@@ -256,7 +256,7 @@ func TestRegisterFSMissingDown(t *testing.T) {
 	}
 }
 
-// Docs: modules/migrations.mdx#versions-and-ordering
+// Docs: modules/migrations.mdx#version-rules
 // "Versions are strings and are compared as strings, so they must have a fixed
 // width to sort as numbers. A timestamp such as `20260101001` works; `9` sorts
 // after `10`. Every pending migration, from every service, runs in ascending
@@ -275,7 +275,7 @@ func TestVersionOrder(t *testing.T) {
 	}
 }
 
-// Docs: modules/migrations.mdx#versions-and-ordering
+// Docs: modules/migrations.mdx#version-rules
 // "When two services register the same version, or one service registers two
 // different migrations under one version, `RunPending`, `Down` and
 // `CheckReady` fail with an error that wraps `migrate.ErrDuplicateVersion` and
@@ -332,7 +332,7 @@ func TestDuplicateVersion(t *testing.T) {
 	}
 }
 
-// Docs: modules/migrations.mdx#versions-and-ordering
+// Docs: modules/migrations.mdx#version-rules
 // "A service that registers an identical migration (same version, description,
 // up SQL and down SQL) more than once gets it applied once."
 func TestIdenticalRegistrationAppliedOnce(t *testing.T) {
@@ -370,7 +370,7 @@ func TestRunPendingSkipsApplied(t *testing.T) {
 	}
 }
 
-// Docs: modules/migrations.mdx#when-migrations-run
+// Docs: modules/migrations.mdx#transactions-and-failures
 // "Each migration's up SQL and its tracking row commit in one transaction. When
 // the SQL or the tracking insert fails, the transaction rolls back, the version
 // is recorded as dirty, and `RunPending` stops and returns the error.
@@ -430,7 +430,7 @@ func TestUpFailure(t *testing.T) {
 	})
 }
 
-// Docs: modules/migrations.mdx#when-migrations-run
+// Docs: modules/migrations.mdx#transactions-and-failures
 // "The up and down SQL run as a single `Exec` call, so whether a migration can
 // hold several statements depends on the driver."
 // SQLite here runs both statements; mysql_test.go shows a driver that refuses.
@@ -465,14 +465,14 @@ func dirtyAt(t *testing.T, m *migrate.Service) {
 	}
 }
 
-// Docs: modules/migrations.mdx#dirty-migrations
+// Docs: modules/migrations.mdx#dirty-versions
 // "While any version is dirty, `RunPending`, `Down` and `CheckReady` return an
 // error wrapping `migrate.ErrDirty` that names the dirty versions"
 // and
 // Docs: modules/migrations.mdx#errors
 // "| `migrate.ErrDirty` | `RunPending`, `Down`, `CheckReady` | Any version is marked dirty. The message names the versions |"
 // and
-// Docs: modules/migrations.mdx#rolling-back
+// Docs: modules/migrations.mdx#rollback-rules
 // "Like `RunPending`, `Down` runs nothing while any version is dirty"
 func TestDirtyBlocks(t *testing.T) {
 	t.Parallel()
@@ -500,7 +500,7 @@ func TestDirtyBlocks(t *testing.T) {
 	}
 }
 
-// Docs: modules/migrations.mdx#dirty-migrations
+// Docs: modules/migrations.mdx#fixing-a-dirty-migration
 // "To resolve it, fix the cause, then call `ClearDirty(version)` on the
 // `*migrate.Service`. It deletes the version's tracking row, so the next
 // `RunPending` applies the migration again."
@@ -523,7 +523,7 @@ func TestClearDirty(t *testing.T) {
 	}
 }
 
-// Docs: modules/migrations.mdx#dirty-migrations
+// Docs: modules/migrations.mdx#fixing-a-dirty-migration
 // "For a version that is not dirty, because it applied cleanly or has no
 // tracking row, it changes nothing and returns an error wrapping
 // `migrate.ErrNotDirty`."
@@ -548,7 +548,7 @@ func TestClearDirtyNotDirty(t *testing.T) {
 	}
 }
 
-// Docs: modules/migrations.mdx#dirty-migrations
+// Docs: modules/migrations.mdx#fixing-a-dirty-migration
 // "`ClearDirty` is not part of `gas.MigrationManager`"
 func TestClearDirtyNotOnInterface(t *testing.T) {
 	t.Parallel()
@@ -581,7 +581,7 @@ func applied(t *testing.T, versions ...string) (*migrate.Service, func(string) [
 	}
 }
 
-// Docs: modules/migrations.mdx#rolling-back
+// Docs: modules/migrations.mdx#rollback-rules
 // "`Down(n)` reverts the `n` highest versions in the tracking table, highest
 // first. For each, it runs the down SQL and deletes the tracking row"
 // and "An `n` larger than the number of applied migrations reverts them all;
@@ -611,7 +611,7 @@ func TestDown(t *testing.T) {
 	}
 }
 
-// Docs: modules/migrations.mdx#rolling-back
+// Docs: modules/migrations.mdx#rollback-rules
 // "When either fails, that migration's transaction rolls back, the version is
 // not marked dirty, and `Down` stops and returns the error; versions it
 // reverted before the failure stay reverted."
@@ -650,7 +650,7 @@ func TestDownFailure(t *testing.T) {
 	}
 }
 
-// Docs: modules/migrations.mdx#rolling-back
+// Docs: modules/migrations.mdx#rollback-rules
 // "A version to revert must still be registered, or `Down` fails with an error
 // naming it."
 func TestDownUnregistered(t *testing.T) {

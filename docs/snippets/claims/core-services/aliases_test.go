@@ -119,7 +119,7 @@ func TestAliasForms(t *testing.T) {
 	}
 }
 
-// Docs: core/services.mdx#one-service-under-several-types
+// Docs: core/services.mdx#alias-rules
 // "The alias and its target can be registered in either order. The target is
 // checked at startup: if it has no registration or instance, `Start` fails with
 // an error that wraps `gas.ErrNotRegistered`, and so does resolving the alias."
@@ -146,7 +146,7 @@ func TestAliasOrderAndMissingTarget(t *testing.T) {
 	}
 }
 
-// Docs: core/services.mdx#one-service-under-several-types
+// Docs: core/services.mdx#alias-rules
 // "The captive-dependency rule looks through an alias: a singleton that depends
 // on an alias of a scoped or transient service fails startup with
 // `gas.ErrCaptiveDependency`."
@@ -167,7 +167,7 @@ func TestAliasCaptiveDependency(t *testing.T) {
 // otherNamed is a second interface with named's method set.
 type otherNamed interface{ Name() string }
 
-// Docs: core/services.mdx#one-service-under-several-types
+// Docs: core/services.mdx#alias-rules
 // "Registration panics if the alias is not an interface, the target does not
 // implement it, the alias is already registered as a service or instance, or the
 // target is itself an alias. Registering a service under a type that is already
@@ -211,7 +211,7 @@ func TestAliasPanics(t *testing.T) {
 	}
 }
 
-// Docs: core/services.mdx#one-service-under-several-types
+// Docs: core/services.mdx#alias-rules
 // "Registering the same alias again replaces its target."
 func TestAliasReRegisterReplacesTarget(t *testing.T) {
 	t.Parallel()

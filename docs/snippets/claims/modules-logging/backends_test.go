@@ -139,7 +139,7 @@ func TestSingletonOnScopedRejected(t *testing.T) {
 	}
 }
 
-// Docs: modules/logging.mdx#wiring
+// Docs: modules/logging.mdx#without-a-logger
 // "If no `gas.Logger` is registered at all, Gas logs its own lifecycle messages through a logger over `slog.Default()` and logs a `no logger registered` warning once."
 func TestFallbackLogger(t *testing.T) {
 	sink := &logSink{}
@@ -166,7 +166,7 @@ func TestFallbackLogger(t *testing.T) {
 
 type wantsLogger struct{}
 
-// Docs: modules/logging.mdx#wiring
+// Docs: modules/logging.mdx#without-a-logger
 // "That fallback is not registered in the container, so a service that takes a `gas.Logger` still fails to resolve."
 func TestFallbackNotRegistered(t *testing.T) {
 	t.Parallel()
@@ -218,7 +218,7 @@ type writerFunc func([]byte) (int, error)
 
 func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
 
-// Docs: modules/logging.mdx#choosing-a-backend
+// Docs: modules/logging.mdx#levels
 // "| `Trace` | `TraceLevel` | `LevelDebug` | 5 | | `Debug` | `DebugLevel` | `LevelDebug` | 5 | | `Info` | `InfoLevel` | `LevelInfo` | 9 | | `Warn` | `WarnLevel` | `LevelWarn` | 13 | | `Error` | `ErrorLevel` | `LevelError` | 17 |"
 func TestLevelTable(t *testing.T) {
 	t.Parallel()

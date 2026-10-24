@@ -84,7 +84,7 @@ func TestEnvPrefix(t *testing.T) {
 	}
 }
 
-// Docs: modules/config.mdx#environment-variable-names
+// Docs: modules/config.mdx#the-environment-provider
 // "`WithEnvSeparator` changes `__` to another separator; an empty separator keeps every name as one flat key."
 func TestEnvSeparator(t *testing.T) {
 	t.Setenv("DOCSCLAIM_SEP__A", "a")
@@ -114,7 +114,7 @@ var deniedVars = []string{
 	"EDITOR", "VISUAL", "PAGER", "GITHUB_ACTION", "GITHUB_TOKEN", "CI",
 }
 
-// Docs: modules/config.mdx#environment-variable-names
+// Docs: modules/config.mdx#the-environment-provider
 // "A fixed list of names is skipped before anything else happens: `PATH`, `HOME`, `USER`, `USERNAME`, `LOGNAME`, `SHELL`, `PWD`, `OLDPWD`, `MAIL`, the loader variables `LD_PRELOAD`, `LD_LIBRARY_PATH`, `DYLD_INSERT_LIBRARIES` and `DYLD_LIBRARY_PATH`, `TERM`, `LANG`, `LC_ALL`, `LC_CTYPE`, `COLORTERM`, `TMPDIR`, `TMP`, `TEMP`, `SUDO_USER`, `SUDO_UID`, `SUDO_GID`, `SSH_AUTH_SOCK`, `SSH_AGENT_PID`, `SSH_CLIENT`, `SSH_CONNECTION`, `SSH_TTY`, `DISPLAY`, `XAUTHORITY`, `WAYLAND_DISPLAY`, `HOSTNAME`, `HOST`, `COMPUTERNAME`, `SESSION_MANAGER`, `ZSH`, `BASH`, `PROMPT`, `PS1`, `PS2`, `EDITOR`, `VISUAL`, `PAGER`, `GITHUB_ACTION`, `GITHUB_TOKEN` and `CI`. These are exact names, not prefixes, so `LD_AUDIT` is read like any other variable. The check is made on the full name before a prefix is cut, so `APP_HOST` is read even though `HOST` is not."
 func TestEnvDenylist(t *testing.T) {
 	allowed := []string{"LD_AUDIT", "PATHX", "HOME_DIR", "CI_JOB"}
@@ -138,7 +138,7 @@ func TestEnvDenylist(t *testing.T) {
 	}
 }
 
-// Docs: modules/config.mdx#env-files
+// Docs: modules/config.mdx#env-and-json-files
 // "`NewDotEnvProvider` reads `.env` from the working directory unless `WithDotEnvFilePath` says otherwise, and turns each `KEY=VALUE` line into a key with the same rule as the environment (`__` splits levels; change it with `WithDotEnvSeparator`)."
 func TestDotEnvReadsAndNames(t *testing.T) {
 	dir := t.TempDir()
@@ -159,8 +159,8 @@ func TestDotEnvReadsAndNames(t *testing.T) {
 	}
 }
 
-// Docs: modules/config.mdx#env-files
-// "Quoted values may span lines and keep `#`; outside quotes, `#` starts a comment."
+// Docs: modules/config.mdx#file-providers
+// "quoted values may span lines and keep `#`; outside quotes, `#` starts a comment."
 func TestDotEnvQuotesAndComments(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{".env": {Data: []byte(strings.Join([]string{
@@ -185,7 +185,7 @@ func TestDotEnvQuotesAndComments(t *testing.T) {
 	}
 }
 
-// Docs: modules/config.mdx#env-files
+// Docs: modules/config.mdx#file-providers
 // "A missing file fails `Load` with an error wrapping `providers.ErrDotEnvFileReadFailed`. `WithDotEnvFileNotFoundPanic(false)` makes a missing file yield no values instead; despite the option's name, nothing panics in either case."
 func TestDotEnvMissingFile(t *testing.T) {
 	t.Chdir(t.TempDir())
@@ -218,7 +218,7 @@ func TestDotEnvMissingFile(t *testing.T) {
 	}
 }
 
-// Docs: modules/config.mdx#env-files
+// Docs: modules/config.mdx#file-providers
 // "`WithDotEnvFileAppendToOSEnv(true)` also copies the entries into the process environment, except the names in the list above; it is off by default"
 func TestDotEnvAppendToOSEnv(t *testing.T) {
 	dir := t.TempDir()
@@ -248,7 +248,7 @@ func TestDotEnvAppendToOSEnv(t *testing.T) {
 	}
 }
 
-// Docs: modules/config.mdx#json-files
+// Docs: modules/config.mdx#env-and-json-files
 // "`NewJSONProvider` reads one JSON object from the path set with `WithJSONFilePath`. There is no default path: without one, `Load` fails with `providers.ErrJSONFilePathNotSet`. JSON numbers arrive as `float64`"
 func TestJSONProvider(t *testing.T) {
 	t.Parallel()
@@ -263,7 +263,7 @@ func TestJSONProvider(t *testing.T) {
 	}
 }
 
-// Docs: modules/config.mdx#json-files
+// Docs: modules/config.mdx#env-and-json-files
 // "JSON numbers arrive as `float64`, and a number has no unit, so a duration in a JSON file is written as a string such as `"30s"`"
 func TestJSONDurationIsAString(t *testing.T) {
 	t.Parallel()
@@ -290,7 +290,7 @@ func jsonOfSize(n int) string {
 	return head + strings.Repeat("a", n-len(head)-len(tail)) + tail
 }
 
-// Docs: modules/config.mdx#json-files
+// Docs: modules/config.mdx#file-providers
 // "By default the JSON and `.env` providers read through a guarded file system: the path must resolve inside the working directory, its last element must not be a symlink, and the file must be at most 1 MiB (1,048,576 bytes)."
 // Docs: modules/config.mdx#errors
 // "| `providers.ErrJSONFileReadFailed` | The JSON file could not be read, including a path outside the working directory, a symlink, or a file over 1 MiB. |"
@@ -337,7 +337,7 @@ func TestGuardedFileSystem(t *testing.T) {
 	}
 }
 
-// Docs: modules/config.mdx#json-files
+// Docs: modules/config.mdx#file-providers
 // "`WithJSONFileFS` and `WithDotEnvFileFS` read from any `fs.FS` instead, such as an `embed.FS`, without those checks"
 func TestFileFSSkipsChecks(t *testing.T) {
 	t.Parallel()
@@ -433,7 +433,7 @@ func TestDotEnvSetEnvFailed(t *testing.T) {
 	}
 }
 
-// Docs: modules/config.mdx#environment-variable-names
+// Docs: modules/config.mdx#the-environment-provider
 // "The variable name is lowercased before it is split, so a separator containing uppercase letters never matches, for `WithEnvSeparator` and `WithDotEnvSeparator` alike"
 func TestSeparatorWithUppercaseNeverMatches(t *testing.T) {
 	t.Setenv("DOCSCLAIM_KI_X_INNER", "env")

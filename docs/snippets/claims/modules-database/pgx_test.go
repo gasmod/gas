@@ -55,9 +55,12 @@ func TestSQLModeWithPgxDriver(t *testing.T) {
 
 // Docs: modules/database.mdx#pgx-mode
 // "Set `database.mode` to `pgx` and the service builds a `*pgxpool.Pool` from
-// the DSN alone; `database.driver` is ignored. `maxopenconns`, `connmaxlifetime`
-// and `connmaxidletime` are applied to the pool. `maxidleconns` is not, because
-// pgxpool manages idle connections itself."
+// the DSN alone; `database.driver` is ignored."
+// and
+// Docs: modules/database.mdx#pgx-transactions-and-pool-limits
+// "`maxopenconns`, `connmaxlifetime` and `connmaxidletime` are applied to the
+// pgx pool. `maxidleconns` is not, because pgxpool manages idle connections
+// itself."
 // and
 // Docs: modules/database.mdx#configuration
 // "Maximum idle connections, 1 to 1000 and at most `maxopenconns`. Sql mode only"
@@ -165,7 +168,7 @@ func TestPoolAndPoolFrom(t *testing.T) {
 	}
 }
 
-// Docs: modules/database.mdx#pgx-mode
+// Docs: modules/database.mdx#pgx-transactions-and-pool-limits
 // "Nil options use pgx's defaults."
 // pgx's default TxOptions leave the isolation level to the server, which is
 // read committed on a stock PostgreSQL.
@@ -215,7 +218,7 @@ func pgxTable(t *testing.T, svc *database.Service) (func(pgx.Tx, string), func(s
 	return insert, present
 }
 
-// Docs: modules/database.mdx#pgx-mode
+// Docs: modules/database.mdx#pgx-transactions-and-pool-limits
 // "`BeginPgxTx` and `WithPgxTx` are the pgx counterparts of `BeginTx` and
 // `WithTx`, on `pgx.Tx`."
 // and "`WithPgxTx` follows the same commit, rollback, panic and
@@ -278,7 +281,7 @@ func breakConn(t *testing.T, tx pgx.Tx) {
 	}
 }
 
-// Docs: modules/database.mdx#pgx-mode
+// Docs: modules/database.mdx#pgx-transactions-and-pool-limits
 // "`WithPgxTx` follows the same commit, rollback, panic and
 // already-finished rules as `WithTx`"
 // The rules taken from WithTx here are "A rollback that itself fails is joined
@@ -308,7 +311,7 @@ func TestWithPgxTxFailedRollback(t *testing.T) {
 	}
 }
 
-// Docs: modules/database.mdx#pgx-mode
+// Docs: modules/database.mdx#pgx-transactions-and-pool-limits
 // "it rolls back on a context detached from cancellation, so the rollback
 // still runs when the caller's context is already done;"
 // Assumption: a rollback that ran leaves no rollback error joined onto the fn
@@ -333,7 +336,7 @@ func TestWithPgxTxRollbackDetached(t *testing.T) {
 	}
 }
 
-// Docs: modules/database.mdx#pgx-mode
+// Docs: modules/database.mdx#pgx-transactions-and-pool-limits
 // "it commits with the caller's context unchanged, so an already-canceled
 // context fails the commit instead of persisting work the caller abandoned."
 func TestWithPgxTxCommitUsesCallerContext(t *testing.T) {

@@ -41,10 +41,8 @@ transient service. Per-request fields go on a separate **scoped** type derived
 from it, `RequestLogger` above, which the
 [request logger](#request-logging) fills for each request.
 
-If no `gas.Logger` is registered at all, Gas logs its own lifecycle messages
-through a logger over `slog.Default()` and logs a `no logger registered`
-warning once. That fallback is not registered in the container, so a service
-that takes a `gas.Logger` still fails to resolve.
+See [Without a logger](#without-a-logger) for what happens when none is
+registered.
 
 ## Usage
 
@@ -56,13 +54,7 @@ With no options, `NewSlogLogger` logs through `slog.Default()`, which drops
 Debug records unless its level has been lowered, so Trace and Debug calls
 produce nothing. Pass `WithSlogInstance` with a handler at the level you want.
 
-| `gas.Logger` method | zerolog level | slog level | OTLP severity number |
-|---|---|---|---|
-| `Trace` | `TraceLevel` | `LevelDebug` | 5 |
-| `Debug` | `DebugLevel` | `LevelDebug` | 5 |
-| `Info` | `InfoLevel` | `LevelInfo` | 9 |
-| `Warn` | `WarnLevel` | `LevelWarn` | 13 |
-| `Error` | `ErrorLevel` | `LevelError` | 17 |
+The backends map the `gas.Logger` levels as shown in [Levels](#levels).
 
 ### Logging
 
@@ -94,15 +86,9 @@ field out, and `gas.WithRequestLoggerBuilder(fn)` lets you add fields or swap
 the logger after that. If `T` cannot be resolved, the middleware passes the
 request through and logs nothing.
 
-The per-request logger goes on the request context with `gas.WithLogger`.
-When `T` is scoped, as `RequestLogger` is here, it also replaces `T`'s instance
-in the request scope, so handlers and services that take `T` later in the
-request get the logger with `request_id`. A singleton `T` is never replaced.
-
-When the request finishes, the middleware logs a `request` record with
-`method`, `path`, `status`, `bytes`, `duration` and `remote`: at error level
-for a status of 400 or more, at info level otherwise. See
-[Middleware](/gas/core/middleware/) for where it sits in the chain.
+When the request finishes, the middleware logs one `request` record with the
+method, path, status and duration. See
+[The request logger](#the-request-logger) for the details.
 
 ### Request-scoped fields
 
@@ -142,30 +128,8 @@ OTLP/HTTP JSON logs.
 | `WithErrorHandler(fn)` | none | Receives delivery failures. |
 | `WithName(name)` | `gas/log-shipping` | The `gas.Service` name. An empty name is ignored. |
 
-Delivery is best-effort by design, so logging can never stall or fail the
-code that logs:
-
-- A record is queued without blocking. When the queue is full, it is dropped
-  silently.
-- A batch is posted when it reaches the batch size, when the flush interval
-  passes, on `Flush`, and on `Close`.
-- Marshal errors, transport errors and responses with a status of 300 or more
-  go to the `WithErrorHandler` callback, never to the code that logged.
-  Without a callback they are discarded.
-- The local handler sees each record first. If it returns an error, the
-  record is not shipped, and `Send` drops the error.
-
-The shipping logger implements `gas.Service`. Its goroutine starts when it is
-constructed, so it works with or without the container, and its `Init` does
-nothing. `Close`, which the container runs at shutdown, posts the records still
-queued, stops the goroutine and returns once that last post has finished, so
-it can take as long as the HTTP client's timeout; it ignores its context and
-can be called more than once. After `Close`, the local handler still writes,
-records meant for shipping are dropped, and `Flush` returns at once. Outside
-the container, call `Flush()` or `Close` before the process exits.
-
-A sub-logger made with `With()` shares the same handlers and sender, so its
-records are shipped and its `Flush` posts and waits like the parent's.
+Delivery is best-effort: a full queue drops records and a failed post never
+reaches the code that logged. See [Delivery](#delivery).
 
 ### Shipping from plain slog
 
@@ -175,16 +139,7 @@ records are shipped and its `Flush` posts and waits like the parent's.
 same local-plus-shipping pipeline as an `slog.Handler`, with an `io.Closer`
 that drains and stops it like `Close` above.
 
-### OTLP and custom formats
-
-`NewOTLPMarshaler` sends one OTLP logs request per batch with
-`Content-Type: application/json`. `WithServiceName` sets the `service.name`
-resource attribute and, unless `WithScopeName` sets one, the instrumentation
-scope name; `WithServiceVersion` sets `service.version`, and
-`WithResourceAttribute(key, value)` adds any other resource attribute. Each
-record carries `timeUnixNano`, `severityText` (`DEBUG`, `INFO`, `WARN`,
-`ERROR`), `severityNumber` from the table above, the message as its body, and
-its fields as attributes. Durations and times are sent as strings.
+### Custom formats
 
 Any other wire format is a `Marshaler`: `Marshal([]Record) ([]byte, error)`
 encodes one batch into one request body, and `ContentType()` is sent as the
@@ -192,6 +147,15 @@ encodes one batch into one request body, and `ContentType()` is sent as the
 `Attrs` of the event, including the fields added with `With()`.
 
 <Code code={region(lg, 'marshaler')} lang="go" />
+
+## Testing
+
+The module ships no mock package. To assert on output, give the slog backend
+a handler over a buffer; where output does not matter, core's `gas.NopLogger`
+discards everything without allocating (`gas.NewNopLogger()` is its
+constructor for the container).
+
+<Code code={region(lgTest, 'testing')} lang="go" title="notes_test.go" />
 
 ## Configuration
 
@@ -217,14 +181,77 @@ panic, and the exported `Handler` type cannot be built outside the package,
 despite its doc comment. See [Known issues](/gas/project/known-issues/).
 </Aside>
 
-## Testing
+## Behavior details
 
-The module ships no mock package. To assert on output, give the slog backend
-a handler over a buffer; where output does not matter, core's `gas.NopLogger`
-discards everything without allocating (`gas.NewNopLogger()` is its
-constructor for the container).
+The sections above cover everyday use. This section is the full contract, for
+when an exact edge case matters.
 
-<Code code={region(lgTest, 'testing')} lang="go" title="notes_test.go" />
+### Without a logger
+
+If no `gas.Logger` is registered at all, Gas logs its own lifecycle messages
+through a logger over `slog.Default()` and logs a `no logger registered`
+warning once. That fallback is not registered in the container, so a service
+that takes a `gas.Logger` still fails to resolve.
+
+### Levels
+
+| `gas.Logger` method | zerolog level | slog level | OTLP severity number |
+|---|---|---|---|
+| `Trace` | `TraceLevel` | `LevelDebug` | 5 |
+| `Debug` | `DebugLevel` | `LevelDebug` | 5 |
+| `Info` | `InfoLevel` | `LevelInfo` | 9 |
+| `Warn` | `WarnLevel` | `LevelWarn` | 13 |
+| `Error` | `ErrorLevel` | `LevelError` | 17 |
+
+### The request logger
+
+The per-request logger goes on the request context with `gas.WithLogger`.
+When `T` is scoped, as `RequestLogger` is here, it also replaces `T`'s instance
+in the request scope, so handlers and services that take `T` later in the
+request get the logger with `request_id`. A singleton `T` is never replaced.
+
+When the request finishes, the middleware logs a `request` record with
+`method`, `path`, `status`, `bytes`, `duration` and `remote`: at error level
+for a status of 400 or more, at info level otherwise. See
+[Middleware](/gas/core/middleware/) for where it sits in the chain.
+
+### Delivery
+
+Delivery is best-effort by design, so logging can never stall or fail the
+code that logs:
+
+- A record is queued without blocking. When the queue is full, it is dropped
+  silently.
+- A batch is posted when it reaches the batch size, when the flush interval
+  passes, on `Flush`, and on `Close`.
+- Marshal errors, transport errors and responses with a status of 300 or more
+  go to the `WithErrorHandler` callback, never to the code that logged.
+  Without a callback they are discarded.
+- The local handler sees each record first. If it returns an error, the
+  record is not shipped, and `Send` drops the error.
+
+The shipping logger implements `gas.Service`. Its goroutine starts when it is
+constructed, so it works with or without the container, and its `Init` does
+nothing. `Close`, which the container runs at shutdown, posts the records still
+queued, stops the goroutine and returns once that last post has finished, so
+it can take as long as the HTTP client's timeout; it ignores its context and
+can be called more than once. After `Close`, the local handler still writes,
+records meant for shipping are dropped, and `Flush` returns at once. Outside
+the container, call `Flush()` or `Close` before the process exits.
+
+A sub-logger made with `With()` shares the same handlers and sender, so its
+records are shipped and its `Flush` posts and waits like the parent's.
+
+### OTLP encoding
+
+`NewOTLPMarshaler` sends one OTLP logs request per batch with
+`Content-Type: application/json`. `WithServiceName` sets the `service.name`
+resource attribute and, unless `WithScopeName` sets one, the instrumentation
+scope name; `WithServiceVersion` sets `service.version`, and
+`WithResourceAttribute(key, value)` adds any other resource attribute. Each
+record carries `timeUnixNano`, `severityText` (`DEBUG`, `INFO`, `WARN`,
+`ERROR`), `severityNumber` from the table above, the message as its body, and
+its fields as attributes. Durations and times are sent as strings.
 
 ## API reference
 

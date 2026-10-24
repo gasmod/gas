@@ -34,7 +34,7 @@ func uiRoutes(a *uiApp) []gas.RegisteredRoute {
 	return a.app.Router().Routes()["gas/ui"]
 }
 
-// Docs: modules/ui.mdx#static-files
+// Docs: modules/ui.mdx#static-file-serving
 // "The service registers a `GET` route for static files when it starts, owned by the ui service, on `ui.staticpath` (`/static/*` by default), or on each pattern in `ui.staticpaths` when that is set."
 func TestStaticRoutes(t *testing.T) {
 	t.Parallel()
@@ -63,9 +63,9 @@ func TestStaticRoutes(t *testing.T) {
 	}
 }
 
-// Docs: modules/ui.mdx#wiring
+// Docs: modules/ui.mdx#options-and-startup
 // "`ui.WithStaticFS(fsys)` serves static files from `fsys` instead of `ui.staticdir`."
-// Docs: modules/ui.mdx#static-files
+// Docs: modules/ui.mdx#static-file-serving
 // "Files come from the `ui.WithStaticFS` filesystem when one was given, otherwise from `ui.staticdir`. With neither, no route is registered."
 // Docs: modules/ui.mdx#configuration
 // "| `ui.staticdir` | string | `static/` | Directory of static files. Empty disables the directory; ignored when `ui.WithStaticFS` is given |"
@@ -92,7 +92,7 @@ func TestStaticSource(t *testing.T) {
 	}
 }
 
-// Docs: modules/ui.mdx#static-files
+// Docs: modules/ui.mdx#static-file-serving
 // "When `ui.staticstripprefix` is empty, it defaults to `ui.staticpath`'s literal part up to its first wildcard or path parameter: `/static/*` strips `/static/`, so `/static/app.css` is served from `app.css` at the root of the static directory or filesystem. If your files mirror the URLs instead (`static/app.css` served at `/static/app.css`), set `ui.staticstripprefix` to `/`. With `ui.staticpaths` set and no strip prefix, nothing is stripped"
 func TestStaticStripPrefix(t *testing.T) {
 	t.Parallel()
@@ -116,7 +116,7 @@ func TestStaticStripPrefix(t *testing.T) {
 	}
 }
 
-// Docs: modules/ui.mdx#static-files
+// Docs: modules/ui.mdx#static-file-serving
 // "A request whose path ends in `/`, or that names the strip prefix itself without the slash (`/static`), gets 404, so directory listings are never served."
 func TestStaticNoListings(t *testing.T) {
 	t.Parallel()
@@ -134,7 +134,7 @@ func TestStaticNoListings(t *testing.T) {
 	}
 }
 
-// Docs: modules/ui.mdx#static-files
+// Docs: modules/ui.mdx#static-file-serving
 // "The same handler is exported as `ui.StaticHandler(prefix, dir)` and `ui.StaticHandlerFS(prefix, fsys)` for routes of your own."
 func TestStaticHandlers(t *testing.T) {
 	t.Parallel()

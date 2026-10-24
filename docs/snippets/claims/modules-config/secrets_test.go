@@ -139,7 +139,7 @@ func TestSecretAtKey(t *testing.T) {
 	}
 }
 
-// Docs: modules/config.mdx#aws-secrets-manager
+// Docs: modules/config.mdx#secrets-manager-client-and-timeouts
 // "static credentials are used only when both values are set, and otherwise the default AWS configuration and credential chain apply."
 func TestSecretsStaticCredentials(t *testing.T) {
 	isolateAWS(t)
@@ -185,7 +185,7 @@ func (a *fakeAPI) last() context.Context {
 	return a.ctxs[len(a.ctxs)-1]
 }
 
-// Docs: modules/config.mdx#aws-secrets-manager
+// Docs: modules/config.mdx#secrets-manager-client-and-timeouts
 // "`WithClient` injects a client instead and makes those options ignored."
 func TestSecretsWithClient(t *testing.T) {
 	t.Parallel()
@@ -212,7 +212,7 @@ func deadlineIn(t *testing.T, load func(*secretsmanager.Provider) error, opts ..
 	return d.Sub(begin), ok
 }
 
-// Docs: modules/config.mdx#aws-secrets-manager
+// Docs: modules/config.mdx#secrets-manager-client-and-timeouts
 // "The provider's own `Load()` bounds the whole fetch with a 10-second timeout (`secretsmanager.DefaultTimeout`), which `WithTimeout` changes; zero or a negative duration means no timeout."
 func TestSecretsProviderLoadTimeout(t *testing.T) {
 	t.Parallel()
@@ -236,7 +236,7 @@ func TestSecretsProviderLoadTimeout(t *testing.T) {
 	}
 }
 
-// Docs: modules/config.mdx#aws-secrets-manager
+// Docs: modules/config.mdx#secrets-manager-client-and-timeouts
 // "`config.Config` never calls that method: `Load` and `LoadWithContext` call the provider's `LoadContext`, which applies no timeout, so through the config the context passed to `LoadWithContext` is the only bound (`Load` passes `context.Background()`, which has none)."
 func TestSecretsConfigLoadNoTimeout(t *testing.T) {
 	t.Parallel()
@@ -262,7 +262,7 @@ func TestSecretsConfigLoadNoTimeout(t *testing.T) {
 	}
 }
 
-// Docs: modules/config.mdx#aws-secrets-manager
+// Docs: modules/config.mdx#secrets-manager-client-and-timeouts
 // "`LoadWithContext` passes the caller's context through unchanged."
 func TestSecretsLoadWithContext(t *testing.T) {
 	t.Parallel()
@@ -280,7 +280,7 @@ func TestSecretsLoadWithContext(t *testing.T) {
 	}
 }
 
-// Docs: modules/config.mdx#aws-secrets-manager
+// Docs: modules/config.mdx#secrets-manager-client-and-timeouts
 // "Registering no secret at all makes `Load` fail with `secretsmanager.ErrNoSecretsConfigured`."
 func TestSecretsNoneConfigured(t *testing.T) {
 	t.Parallel()

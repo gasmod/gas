@@ -46,32 +46,9 @@ Not every registered type is a service. `Store` declares neither `Init` nor
 
 <Code code={region(svc, 'store')} lang="go" title="store.go" />
 
-### Partial services are rejected
-
 A registered type that declares `Init` or `Close` must implement all three
-methods, with the signatures above. One that declares either and falls short,
-for example an `Init` without the `context.Context` parameter, or an `Init`
-with no `Close`, fails startup with an error that wraps
-`gas.ErrInvalidServiceShape` and names each missing or mistyped method.
-Without that check the type would register cleanly and never be initialized or
-closed.
-
-`Name` alone does not count: a type that declares only `Name()` is an ordinary
-dependency. A registration under a value type whose methods are declared on the
-pointer is rejected too, with a message telling you to register the pointer
-type.
-
-A type from another package that declares `Close`, such as `*sql.DB`, cannot be
-given the other two methods. Wrap it in a service of your own instead of
-registering it directly.
-
-### Names must be unique
-
-`Name()` identifies a service at runtime: active services, health and
-readiness results, the kill switch, and the ownership of routes and
-subscriptions are all keyed by it. A Worker tracks one active service per name,
-so a second service with the same name is not tracked, and shutdown does not
-close it.
+methods; see [Service shape](#service-shape). `Name()` must be unique across
+the app; see [Names](#names).
 
 ## Registering
 
@@ -96,15 +73,8 @@ func(DepA, DepB) (T, error)
 
 <Code code={region(svc, 'ctors')} lang="go" title="settings.go" />
 
-A non-nil error from a constructor fails the build, and with it startup.
-
-The constructor is checked when it is registered. Registration panics if it is
-not a function, is variadic, returns anything other than one or two values,
-returns a first value not assignable to the registered type (or, for an
-interface type, not implementing it), or returns a second value that is not an
-`error`. Parameters are not checked at registration, since whether they resolve
-is only known once everything is registered; a parameter with no registration
-fails the build.
+A non-nil error from a constructor fails the build, and with it startup. See
+[Constructor checks](#constructor-checks) for what registration rejects.
 
 ### Lifetimes
 
@@ -121,35 +91,13 @@ fails the build.
 (`gas.ServiceLifetimeSingleton`, `gas.ServiceLifetimeScoped`, or
 `gas.ServiceLifetimeTransient`); the three shorthands call it.
 
-**Instances** are pre-built, not pre-initialized. If the value implements
-`Service`, the container calls its `Init` at startup and its `Close` at
-shutdown like any other singleton, so do not call `Init` yourself before
-registering it. An instance is stored under `T`, the static type at the call
-site, so passing an interface-typed variable registers it under that interface
-and not under its concrete type.
-
-**Transient** registrations of a type that implements `Service` panic at
-registration. The container keeps no reference to a transient, so nothing could
-ever close it, and every instance would share one `Name()`. Use a singleton or
-a scoped registration for anything with a lifecycle.
-
-**Scoped** services are covered in [Request scopes](/gas/core/request-scopes/).
+Scoped services are covered in [Request scopes](/gas/core/request-scopes/).
 They cannot be resolved from the container itself, only from a `Scope`.
 
-### Captive dependencies
-
-A singleton may not depend on a scoped or transient service. The singleton would
-hold the first instance it was given for the life of the process, which for a
-scoped service means one request's state leaking into every later request.
-Startup fails with an error that wraps `gas.ErrCaptiveDependency`:
-
-```
-captive dependency: singleton *main.Cache depends on scoped *main.RequestLog
-```
-
-The check looks at constructor parameters. A scoped service may depend on
-singletons and on other scoped services. A dependency registered with
-`WithServiceInstance` is a singleton and is always allowed.
+A singleton may not depend on a scoped or transient service; see
+[Captive dependencies](#captive-dependencies). See
+[Instances and transients](#instances-and-transients) for the rules on those
+two lifetimes.
 
 ### Overriding a registration
 
@@ -160,10 +108,8 @@ replacement after the options it overrides:
 
 <Code code={region(svc, 'override')} lang="go" title="options.go" />
 
-There is one exception to that order: a value registered with
-`WithServiceInstance` wins over a constructor registration for the same type,
-whichever was registered last and whatever the constructor's lifetime. The
-constructor never runs. To replace an instance, register another instance.
+A value registered with `WithServiceInstance` is the exception; see
+[Instances override constructors](#instances-override-constructors).
 
 ## Register under the type consumers ask for
 
@@ -213,40 +159,7 @@ has. `gas.WithServiceAlias[Target, Alias]()` is the option, and
 `RegisterServiceAlias[Target, Alias]()` on the `ServiceContainer` or the
 `Worker` is the imperative form.
 
-The alias and its target can be registered in either order. The target is
-checked at startup: if it has no registration or instance, `Start` fails with
-an error that wraps `gas.ErrNotRegistered`, and so does resolving the alias.
-The captive-dependency rule looks through an alias: a singleton that depends
-on an alias of a scoped or transient service fails startup with
-`gas.ErrCaptiveDependency`.
-
-Registration panics if the alias is not an interface, the target does not
-implement it, the alias is already registered as a service or instance, or the
-target is itself an alias. Registering a service under a type that is already
-an alias panics too. Registering the same alias again replaces its target.
-
-## Build order
-
-At startup the container builds every singleton. It first validates the service
-shape and lifetimes of every registration, then runs `Init` on every `Service`
-registered as an instance, in the order they were registered, then builds the
-singletons in dependency order. A constructor runs only after every dependency
-it names has been constructed and, if that dependency is a service,
-initialized, so a service can use its dependencies from its constructor and
-from `Init`. The order is the same on every run: singletons with no registered
-dependencies come first, in the order they were registered, and each of the
-others follows once everything it depends on has been built.
-
-Because the order is fixed, so is the error startup reports when several
-registrations are broken. A captive dependency is reported before any build
-error, and of several, the one in the singleton registered first. Of several
-build errors, startup reports the first broken singleton in build order, which
-for singletons that wait on the same dependencies, or on none, is the one
-registered first. Fix it and the next one surfaces.
-
-Shutdown closes services in the reverse of the order they were initialized, so
-a service's dependencies are still open while it closes. The full startup and
-shutdown sequence is on [App lifecycle](/gas/core/lifecycle/).
+See [Alias rules](#alias-rules) for ordering and what registration rejects.
 
 ## Resolving
 
@@ -262,11 +175,6 @@ hook, or a test, resolve it by type:
 text. `CanResolve[T]()` on the container reports whether `T` has a
 registration or instance, or is an alias whose target has one, without
 building anything.
-
-Resolving a singleton that has not been built yet builds it, and its
-dependencies, on the spot. The container is safe for concurrent resolution: a
-singleton is built by one goroutine at a time, and another goroutine asking for
-it while it is being built waits and gets the same instance.
 
 Registration also has imperative forms, for wiring done after the App or Worker
 exists: `RegisterSingletonService`, `RegisterScopedService`,
@@ -301,3 +209,125 @@ unresolvable handler parameter fails `Start`. A transient service or a
 malformed constructor panics as soon as it is registered. None of them waits
 for the first request to show up.
 </Aside>
+
+## Behavior details
+
+The sections above cover everyday use. This section is the full contract, for
+when an exact edge case matters.
+
+### Service shape
+
+A registered type that declares `Init` or `Close` must implement all three
+methods, with the signatures above. One that declares either and falls short,
+for example an `Init` without the `context.Context` parameter, or an `Init`
+with no `Close`, fails startup with an error that wraps
+`gas.ErrInvalidServiceShape` and names each missing or mistyped method.
+Without that check the type would register cleanly and never be initialized or
+closed.
+
+`Name` alone does not count: a type that declares only `Name()` is an ordinary
+dependency. A registration under a value type whose methods are declared on the
+pointer is rejected too, with a message telling you to register the pointer
+type.
+
+A type from another package that declares `Close`, such as `*sql.DB`, cannot be
+given the other two methods. Wrap it in a service of your own instead of
+registering it directly.
+
+### Names
+
+`Name()` identifies a service at runtime: active services, health and
+readiness results, the kill switch, and the ownership of routes and
+subscriptions are all keyed by it. A Worker tracks one active service per name,
+so a second service with the same name is not tracked, and shutdown does not
+close it.
+
+### Constructor checks
+
+The constructor is checked when it is registered. Registration panics if it is
+not a function, is variadic, returns anything other than one or two values,
+returns a first value not assignable to the registered type (or, for an
+interface type, not implementing it), or returns a second value that is not an
+`error`. Parameters are not checked at registration, since whether they resolve
+is only known once everything is registered; a parameter with no registration
+fails the build.
+
+### Instances and transients
+
+**Instances** are pre-built, not pre-initialized. If the value implements
+`Service`, the container calls its `Init` at startup and its `Close` at
+shutdown like any other singleton, so do not call `Init` yourself before
+registering it. An instance is stored under `T`, the static type at the call
+site, so passing an interface-typed variable registers it under that interface
+and not under its concrete type.
+
+**Transient** registrations of a type that implements `Service` panic at
+registration. The container keeps no reference to a transient, so nothing could
+ever close it, and every instance would share one `Name()`. Use a singleton or
+a scoped registration for anything with a lifecycle.
+
+### Captive dependencies
+
+A singleton may not depend on a scoped or transient service. The singleton would
+hold the first instance it was given for the life of the process, which for a
+scoped service means one request's state leaking into every later request.
+Startup fails with an error that wraps `gas.ErrCaptiveDependency`:
+
+```
+captive dependency: singleton *main.Cache depends on scoped *main.RequestLog
+```
+
+The check looks at constructor parameters. A scoped service may depend on
+singletons and on other scoped services. A dependency registered with
+`WithServiceInstance` is a singleton and is always allowed.
+
+### Instances override constructors
+
+There is one exception to that order: a value registered with
+`WithServiceInstance` wins over a constructor registration for the same type,
+whichever was registered last and whatever the constructor's lifetime. The
+constructor never runs. To replace an instance, register another instance.
+
+### Alias rules
+
+The alias and its target can be registered in either order. The target is
+checked at startup: if it has no registration or instance, `Start` fails with
+an error that wraps `gas.ErrNotRegistered`, and so does resolving the alias.
+The captive-dependency rule looks through an alias: a singleton that depends
+on an alias of a scoped or transient service fails startup with
+`gas.ErrCaptiveDependency`.
+
+Registration panics if the alias is not an interface, the target does not
+implement it, the alias is already registered as a service or instance, or the
+target is itself an alias. Registering a service under a type that is already
+an alias panics too. Registering the same alias again replaces its target.
+
+### Build order
+
+At startup the container builds every singleton. It first validates the service
+shape and lifetimes of every registration, then runs `Init` on every `Service`
+registered as an instance, in the order they were registered, then builds the
+singletons in dependency order. A constructor runs only after every dependency
+it names has been constructed and, if that dependency is a service,
+initialized, so a service can use its dependencies from its constructor and
+from `Init`. The order is the same on every run: singletons with no registered
+dependencies come first, in the order they were registered, and each of the
+others follows once everything it depends on has been built.
+
+Because the order is fixed, so is the error startup reports when several
+registrations are broken. A captive dependency is reported before any build
+error, and of several, the one in the singleton registered first. Of several
+build errors, startup reports the first broken singleton in build order, which
+for singletons that wait on the same dependencies, or on none, is the one
+registered first. Fix it and the next one surfaces.
+
+Shutdown closes services in the reverse of the order they were initialized, so
+a service's dependencies are still open while it closes. The full startup and
+shutdown sequence is on [App lifecycle](/gas/core/lifecycle/).
+
+### Concurrent resolution
+
+Resolving a singleton that has not been built yet builds it, and its
+dependencies, on the spot. The container is safe for concurrent resolution: a
+singleton is built by one goroutine at a time, and another goroutine asking for
+it while it is being built waits and gets the same instance.

@@ -146,9 +146,9 @@ func TestSessionExtendOnAccess(t *testing.T) {
 }
 
 // Docs: modules/auth.mdx#sessions
-// "`Revoke(ctx, p)` deletes the session the principal came from, `RevokeAll`
-// deletes every session of a subject, and `RevokeAllByScheme` does that only
-// when the scheme is `session` and is a no-op otherwise."
+// "`Revoke(ctx, p)` | The session the principal came from" and "`RevokeAll` |
+// Every session of a subject" and "`RevokeAllByScheme` | Every session of a
+// subject when the scheme is `session`; a no-op otherwise"
 func TestSessionRevoke(t *testing.T) {
 	t.Parallel()
 	db := sqliteDB(t)

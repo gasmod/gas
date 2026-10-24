@@ -57,10 +57,9 @@ func TestTokenIssue(t *testing.T) {
 // Docs: modules/auth.mdx#single-use-tokens
 // "`Verify(ctx, raw, purpose)` fetches and deletes the token in one atomic store
 // operation, then checks it, and returns the subject. A token is consumed the
-// first time it is presented, whatever the outcome: an unknown or already used
-// token fails with `token.ErrTokenInvalid`, a wrong purpose also fails with
-// `token.ErrTokenInvalid` and burns the token, and an expired one fails with
-// `token.ErrTokenExpired`."
+// first time it is presented, whatever the outcome:" and "Unknown or already
+// used | `token.ErrTokenInvalid`" and "Wrong purpose | `token.ErrTokenInvalid`,
+// and the token is burned" and "Expired | `token.ErrTokenExpired`"
 func TestTokenVerify(t *testing.T) {
 	t.Parallel()
 	db := sqliteDB(t)

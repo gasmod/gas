@@ -178,7 +178,7 @@ func TestLateRegistrationStaysPending(t *testing.T) {
 	}
 }
 
-// Docs: modules/migrations.mdx#when-migrations-run
+// Docs: modules/migrations.mdx#transactions-and-failures
 // "If `RunPending` fails, `Start` closes every service it initialized and
 // returns an error starting with `gas: migrations:`. The app does not start."
 func TestStartFailsOnMigrationError(t *testing.T) {

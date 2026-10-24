@@ -87,7 +87,7 @@ func TestNewResolvesT(t *testing.T) {
 	}
 }
 
-// Docs: modules/ui.mdx#wiring
+// Docs: modules/ui.mdx#options-and-startup
 // "`ui.WithConfig(cfg)` uses `cfg` as the whole configuration and skips the `ConfigProvider`. Start from `ui.DefaultConfig()`. Since nothing is bound, `GasEnv` stays empty unless you set it, which turns development mode off."
 func TestWithConfig(t *testing.T) {
 	t.Parallel()
@@ -112,9 +112,9 @@ func TestWithConfig(t *testing.T) {
 	}
 }
 
-// Docs: modules/ui.mdx#wiring
+// Docs: modules/ui.mdx#options-and-startup
 // "When the service starts it binds and validates the configuration, builds the template engine, and registers the static route. It does not read any template yet."
-// Docs: modules/ui.mdx#rendering
+// Docs: modules/ui.mdx#compilation
 // "Templates are compiled on the first render, not when the service starts"
 func TestStartReadsNoTemplate(t *testing.T) {
 	t.Parallel()
@@ -246,7 +246,7 @@ func TestFailedRenderWritesNothing(t *testing.T) {
 	}
 }
 
-// Docs: modules/ui.mdx#rendering
+// Docs: modules/ui.mdx#compilation
 // "When `GasEnv` is `development` or `testing`, every render recompiles the templates, so edits to a store that reads from disk show on the next request."
 func TestDevModeRecompiles(t *testing.T) {
 	t.Parallel()
@@ -266,7 +266,7 @@ func TestDevModeRecompiles(t *testing.T) {
 	}
 }
 
-// Docs: modules/ui.mdx#rendering
+// Docs: modules/ui.mdx#compilation
 // "A failed compile returns its error, and every later render retries the build and returns the error until a compile succeeds; the previously compiled templates are not served in the meantime"
 // In development every render compiles; a page that compiled before the
 // failure is not served while another page fails to parse.
@@ -294,7 +294,7 @@ func TestFailedRecompile(t *testing.T) {
 	}
 }
 
-// Docs: modules/ui.mdx#rendering
+// Docs: modules/ui.mdx#compilation
 // "A failed compile returns its error, and every later render retries the build and returns the error until a compile succeeds; the previously compiled templates are not served in the meantime"
 // Outside development, a recompile forced by RegisterFuncs that fails: the
 // cached v1 is not served while it keeps failing, and a good compile

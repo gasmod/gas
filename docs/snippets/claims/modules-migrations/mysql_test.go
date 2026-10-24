@@ -26,7 +26,7 @@ func mysqlTableExists(t *testing.T, db *sql.DB, name string) bool {
 	return n == 1
 }
 
-// Docs: modules/migrations.mdx#when-migrations-run
+// Docs: modules/migrations.mdx#transactions-and-failures
 // "On MySQL, DDL such as `CREATE TABLE`, `DROP TABLE` and `ALTER TABLE` commits
 // any open transaction implicitly. A migration containing DDL is therefore not
 // atomic with its tracking row in either direction: a failure after the DDL
@@ -82,7 +82,7 @@ func TestMySQLDDLNotAtomic(t *testing.T) {
 	})
 }
 
-// Docs: modules/migrations.mdx#when-migrations-run
+// Docs: modules/migrations.mdx#transactions-and-failures
 // "The up and down SQL run as a single `Exec` call, so whether a migration can
 // hold several statements depends on the driver."
 // go-sql-driver rejects several statements in one Exec unless

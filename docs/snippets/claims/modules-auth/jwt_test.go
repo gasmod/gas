@@ -24,10 +24,9 @@ import (
 
 // Docs: modules/auth.mdx#jwt
 // "`Authenticate` reads `Authorization: Bearer <token>`; the word `Bearer` is
-// matched case-insensitively. A missing or malformed header, a bad signature, a
-// token signed with another algorithm, or a wrong issuer or audience fails with
-// `auth.ErrUnauthenticated`; an expired token fails with
-// `auth.ErrCredentialsExpired`."
+// matched case-insensitively." and "Missing or malformed header, bad signature,
+// another algorithm, wrong issuer or audience | `auth.ErrUnauthenticated`" and
+// "Expired | `auth.ErrCredentialsExpired`"
 func TestJWTAuthenticate(t *testing.T) {
 	t.Parallel()
 	j := mustJWT(t, hsConfig())
@@ -260,7 +259,7 @@ func TestJWTKeys(t *testing.T) {
 	}
 }
 
-// Docs: modules/auth.mdx#wiring
+// Docs: modules/auth.mdx#constructors-and-configuration
 // "In `Init`, each service binds its section of the configuration and
 // validates it (see Configuration), unless `WithConfig(cfg)` was passed: a
 // config given that way replaces the bound one and is used as given, without
