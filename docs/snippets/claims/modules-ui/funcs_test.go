@@ -179,7 +179,7 @@ func (s *funcsService) Close(context.Context) error { return nil }
 
 // Docs: modules/ui.mdx#template-functions
 // "And any service can call `RegisterFuncs` from its `Init`"
-// Docs: modules/ui.mdx#rendering
+// Docs: modules/ui.mdx#compilation
 // "so template functions other services add while starting are in place."
 func TestRegisterFuncsFromInit(t *testing.T) {
 	t.Parallel()
@@ -192,7 +192,7 @@ func TestRegisterFuncsFromInit(t *testing.T) {
 	}
 }
 
-// Docs: modules/ui.mdx#template-functions
+// Docs: modules/ui.mdx#registering-functions
 // "`RegisterFuncs` merges the functions into the engine and marks the templates for recompiling on the next render. A name that already exists is replaced, with a warning in the log."
 func TestRegisterFuncsRecompiles(t *testing.T) {
 	t.Parallel()
@@ -218,7 +218,7 @@ func TestRegisterFuncsRecompiles(t *testing.T) {
 	}
 }
 
-// Docs: modules/ui.mdx#template-functions
+// Docs: modules/ui.mdx#registering-functions
 // "Called before the ui service has started, it logs a warning and drops the functions; a service that takes `gas.UIProvider` as a dependency always starts after it."
 func TestRegisterFuncsBeforeStart(t *testing.T) {
 	t.Parallel()
