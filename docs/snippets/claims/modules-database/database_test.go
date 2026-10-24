@@ -184,7 +184,7 @@ func TestRegisterUnderInterface(t *testing.T) {
 	})
 }
 
-// Docs: modules/database.mdx#wiring
+// Docs: modules/database.mdx#options
 // "`WithConnector(c)` supplies a `driver.Connector`, opened with `sql.OpenDB`
 // instead of `sql.Open(driver, dsn)`."
 func TestWithConnectorUsed(t *testing.T) {
@@ -292,7 +292,7 @@ func TestWithTxCommitRollbackPanic(t *testing.T) {
 	}
 }
 
-// Docs: modules/database.mdx#transactions
+// Docs: modules/database.mdx#transaction-rules
 // "A rollback that itself fails is joined onto it with `errors.Join`."
 func TestWithTxFailedRollbackJoined(t *testing.T) {
 	t.Parallel()
@@ -310,7 +310,7 @@ func TestWithTxFailedRollbackJoined(t *testing.T) {
 	}
 }
 
-// Docs: modules/database.mdx#transactions
+// Docs: modules/database.mdx#transaction-rules
 // "A failed rollback is logged at error level instead of returned."
 func TestWithTxPanicFailedRollbackLogged(t *testing.T) {
 	t.Parallel()
@@ -336,7 +336,7 @@ func TestWithTxPanicFailedRollbackLogged(t *testing.T) {
 	}
 }
 
-// Docs: modules/database.mdx#transactions
+// Docs: modules/database.mdx#transaction-rules
 // "A rollback that finds the transaction already finished (`sql.ErrTxDone`,
 // because the function committed or rolled back itself) is not an error."
 func TestWithTxRollbackAfterFnFinishedTx(t *testing.T) {
@@ -369,7 +369,7 @@ func TestWithTxRollbackAfterFnFinishedTx(t *testing.T) {
 	}
 }
 
-// Docs: modules/database.mdx#transactions
+// Docs: modules/database.mdx#transaction-rules
 // "A commit failure is returned wrapped:
 // `gas/database: failed to commit transaction: <cause>`."
 func TestWithTxCommitFailureWrapped(t *testing.T) {
@@ -386,7 +386,7 @@ func TestWithTxCommitFailureWrapped(t *testing.T) {
 	}
 }
 
-// Docs: modules/database.mdx#transactions
+// Docs: modules/database.mdx#transaction-rules
 // "`opts` is passed to `BeginTx` as given; nil uses the driver's defaults."
 func TestWithTxPassesOptions(t *testing.T) {
 	t.Parallel()
@@ -483,7 +483,7 @@ func TestNoDBTX(t *testing.T) {
 	}
 }
 
-// Docs: modules/database.mdx#custom-connections
+// Docs: modules/database.mdx#connectors
 // "A connector is only accepted in sql mode; in pgx mode `Init` fails rather
 // than ignore it."
 func TestConnectorRejectedInPgxMode(t *testing.T) {
@@ -498,7 +498,7 @@ func TestConnectorRejectedInPgxMode(t *testing.T) {
 	}
 }
 
-// Docs: modules/database.mdx#custom-connections
+// Docs: modules/database.mdx#connectors
 // "`Driver()` reports `database.driver` in sql mode, whether or not a connector
 // is set, and `pgx` in pgx mode."
 func TestDriverName(t *testing.T) {
@@ -519,7 +519,7 @@ func TestDriverName(t *testing.T) {
 	}
 }
 
-// Docs: modules/database.mdx#custom-connections
+// Docs: modules/database.mdx#connectors
 // "gas/migrate picks its SQL dialect from that name, so set `database.driver`
 // to the dialect the connector speaks"
 func TestMigrateDialectFromDriverName(t *testing.T) {
@@ -686,7 +686,7 @@ func TestNotInitialized(t *testing.T) {
 	}
 }
 
-// Docs: modules/database.mdx#pgx-mode
+// Docs: modules/database.mdx#pgx-transactions-and-pool-limits
 // "both return an error outside pgx mode"
 // and
 // Docs: modules/database.mdx#errors

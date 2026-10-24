@@ -48,7 +48,7 @@ func TestConfigDefaults(t *testing.T) {
 	}
 }
 
-// Docs: modules/database.mdx#wiring
+// Docs: modules/database.mdx#options
 // "a bare `&database.Config{}` leaves `Mode` empty and every pool limit at zero."
 func TestBareConfigIsEmpty(t *testing.T) {
 	t.Parallel()
@@ -290,7 +290,7 @@ func TestInitRules(t *testing.T) {
 // "| `database.driver` | string | `postgres` | `database/sql` driver name: `postgres`, `pgx` or `sqlite`. Sql mode only; not checked when a connector is set |"
 // and "| `database.dsn` | string | | Connection string. Required unless a connector is set |"
 // and
-// Docs: modules/database.mdx#custom-connections
+// Docs: modules/database.mdx#connectors
 // "With a connector, `database.driver` and `database.dsn` are not required and
 // the driver name is not checked."
 func TestConnectorSkipsDriverAndDSN(t *testing.T) {

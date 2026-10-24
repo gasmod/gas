@@ -58,16 +58,8 @@ by exact type, so registering it as `*database.Service` leaves every
 </Aside>
 
 The settings normally come from the `gas.ConfigProvider` under the `database`
-key; see [Configuration](#configuration). `New` takes two options:
-
-- `WithConfig(cfg)` is for configuration that cannot come from there, such as
-  a DSN built or fetched at runtime (a secret from a vault) or a test. It
-  replaces the whole configuration and skips binding from the
-  `gas.ConfigProvider`. Start from `database.DefaultConfig()`, because a bare
-  `&database.Config{}` leaves `Mode` empty and every pool limit at zero.
-- `WithConnector(c)` supplies a `driver.Connector`, opened with
-  `sql.OpenDB` instead of `sql.Open(driver, dsn)`. See
-  [Custom connections](#custom-connections).
+key; see [Configuration](#configuration). To pass them from code instead, such
+as a DSN fetched from a vault at runtime, use `WithConfig`:
 
 <Code code={region(db, 'explicit-config')} lang="go" />
 
@@ -89,28 +81,14 @@ returns nil and rolls back when it returns an error or panics.
 
 <Code code={region(db, 'transaction')} lang="go" />
 
-The details:
-
-- When the function returns an error, `WithTx` rolls back and returns that
-  error. A rollback that itself fails is joined onto it with `errors.Join`.
-- When the function panics, `WithTx` rolls back and panics again with the
-  original value. A failed rollback is logged at error level instead of
-  returned.
-- A rollback that finds the transaction already finished (`sql.ErrTxDone`,
-  because the function committed or rolled back itself) is not an error.
-- A commit failure is returned wrapped:
-  `gas/database: failed to commit transaction: <cause>`.
-- `opts` is passed to `BeginTx` as given; nil uses the driver's defaults.
-
 `BeginTx` starts a transaction you manage yourself: you call `Commit` or
-`Rollback` on the returned `*sql.Tx`.
+`Rollback` on the returned `*sql.Tx`. See
+[Transaction rules](#transaction-rules) for rollback and commit failures.
 
 ### pgx mode
 
 Set `database.mode` to `pgx` and the service builds a `*pgxpool.Pool` from the
-DSN alone; `database.driver` is ignored. `maxopenconns`, `connmaxlifetime`
-and `connmaxidletime` are applied to the pool. `maxidleconns` is not, because
-pgxpool manages idle connections itself. With the
+DSN alone; `database.driver` is ignored. With the
 [environment provider](/gas/modules/config/#environment-variable-names), two
 variables select it:
 
@@ -125,19 +103,7 @@ The pool is reachable two ways. `Pool()` on `*database.Service` returns it,
 or nil in sql mode. A service that holds only a `gas.DatabaseProvider` calls
 `database.PoolFrom(provider)`, which returns the pool and `true`, or `nil` and
 `false` when the provider is not pgx-backed, so the caller can fall back to
-`DB()`.
-
-`BeginPgxTx` and `WithPgxTx` are the pgx counterparts of `BeginTx` and
-`WithTx`, on `pgx.Tx`. They are methods of `*database.Service`, not of the
-interface, and both return an error outside pgx mode. Nil options use pgx's
-defaults. `WithPgxTx` follows the same commit, rollback, panic and
-already-finished rules as `WithTx` (here the finished error is
-`pgx.ErrTxClosed`), and in addition:
-
-- it rolls back on a context detached from cancellation, so the rollback
-  still runs when the caller's context is already done;
-- it commits with the caller's context unchanged, so an already-canceled
-  context fails the commit instead of persisting work the caller abandoned.
+`DB()`. `WithPgxTx` is the pgx counterpart of `WithTx`:
 
 <Code code={region(db, 'pgx-native')} lang="go" />
 
@@ -152,45 +118,26 @@ of its own.
 ### Custom connections
 
 `WithConnector` hands connection setup to a `driver.Connector`, for custom TLS,
-IAM authentication tokens, or a driver that is not on the list. With a
-connector, `database.driver` and `database.dsn` are not required and the
-driver name is not checked. A connector is only accepted in sql mode; in pgx
-mode `Init` fails rather than ignore it.
+IAM authentication tokens, or a driver that is not on the list.
 
 <Code code={region(db, 'connector')} lang="go" />
 
-`Driver()` reports `database.driver` in sql mode, whether or not a connector
-is set, and `pgx` in pgx mode. [gas/migrate](/gas/modules/migrations/) picks
-its SQL dialect from that name, so set `database.driver` to the dialect the
-connector speaks (`mysql`, for example) when you use one.
+Set `database.driver` to the dialect the connector speaks, because
+[gas/migrate](/gas/modules/migrations/) picks its SQL dialect from that name.
+See [Connectors](#connectors).
 
-### Connection retries
+## Testing
 
-`Init` opens the connection and pings it, with a 5-second timeout per
-attempt. When the attempt fails and `connretries` is above zero, it waits
-`connretryinterval`, retries, and doubles the wait after each failure, for at
-most `connretries` retries; an interval of zero or less uses 2 seconds. Each
-retry is logged at warn level. `Init` blocks while it waits.
+There is no mock package for `gas.DatabaseProvider`. Run the real service
+against SQLite instead: it needs no server, and the code under test goes
+through the same pool, transactions and errors as in production.
 
-The ping and the waits run under the context `Init` receives, so when that
-context ends during a wait, `Init` stops and returns an error wrapping both
-the context's error and the last connection error. When every attempt fails,
-`Init` returns `gas/database: connect failed after <n> retries: <last error>`.
-With the default of zero retries, the first failure is returned as is.
+<Code code={region(dbTest, 'test')} lang="go" title="notes/service_test.go" />
 
-### Lifecycle
-
-`Close` marks the service closed and closes the `*sql.DB` and, in pgx mode,
-the pool. After `Close`, `Query`, `Exec`, `BeginTx`, `WithTx`, `BeginPgxTx`
-and `WithPgxTx` return an error without touching the connection. The service
-starts no goroutines of its own; `database/sql` and pgxpool manage their
-connections in the background until `Close`.
-
-<Aside type="caution" title="Known issue">
-In pgx mode, when closing the `*sql.DB` fails, `Close` returns that error
-before it closes the pool, so the pool stays open (KI-038). See
-[Known issues](/gas/project/known-issues/).
-</Aside>
+Use a file DSN, not `:memory:`: with a pool, each connection to an in-memory
+SQLite database opens a separate, empty database. For migrations in tests, see
+[Migrations](/gas/modules/migrations/#testing); for testing services in general,
+see [Testing](/gas/production/testing/).
 
 ## Configuration
 
@@ -246,7 +193,98 @@ as `database: not initialized`, without the `gas/` prefix (KI-043). See
 [Known issues](/gas/project/known-issues/).
 </Aside>
 
-## Health and readiness
+## Behavior details
+
+The sections above cover everyday use. This section is the full contract, for
+when an exact edge case matters.
+
+### Options
+
+`New` takes two options:
+
+- `WithConfig(cfg)` is for configuration that cannot come from there, such as
+  a DSN built or fetched at runtime (a secret from a vault) or a test. It
+  replaces the whole configuration and skips binding from the
+  `gas.ConfigProvider`. Start from `database.DefaultConfig()`, because a bare
+  `&database.Config{}` leaves `Mode` empty and every pool limit at zero.
+- `WithConnector(c)` supplies a `driver.Connector`, opened with
+  `sql.OpenDB` instead of `sql.Open(driver, dsn)`. See
+  [Connectors](#connectors).
+
+### Transaction rules
+
+- When the function returns an error, `WithTx` rolls back and returns that
+  error. A rollback that itself fails is joined onto it with `errors.Join`.
+- When the function panics, `WithTx` rolls back and panics again with the
+  original value. A failed rollback is logged at error level instead of
+  returned.
+- A rollback that finds the transaction already finished (`sql.ErrTxDone`,
+  because the function committed or rolled back itself) is not an error.
+- A commit failure is returned wrapped:
+  `gas/database: failed to commit transaction: <cause>`.
+- `opts` is passed to `BeginTx` as given; nil uses the driver's defaults.
+
+`BeginTx` starts a transaction you manage yourself: you call `Commit` or
+`Rollback` on the returned `*sql.Tx`.
+
+### pgx transactions and pool limits
+
+`maxopenconns`, `connmaxlifetime` and `connmaxidletime` are applied to the
+pgx pool. `maxidleconns` is not, because pgxpool manages idle connections
+itself.
+
+`BeginPgxTx` and `WithPgxTx` are the pgx counterparts of `BeginTx` and
+`WithTx`, on `pgx.Tx`. They are methods of `*database.Service`, not of the
+interface, and both return an error outside pgx mode. Nil options use pgx's
+defaults. `WithPgxTx` follows the same commit, rollback, panic and
+already-finished rules as `WithTx` (here the finished error is
+`pgx.ErrTxClosed`), and in addition:
+
+- it rolls back on a context detached from cancellation, so the rollback
+  still runs when the caller's context is already done;
+- it commits with the caller's context unchanged, so an already-canceled
+  context fails the commit instead of persisting work the caller abandoned.
+
+### Connectors
+
+With a connector, `database.driver` and `database.dsn` are not required and the
+driver name is not checked. A connector is only accepted in sql mode; in pgx
+mode `Init` fails rather than ignore it.
+
+`Driver()` reports `database.driver` in sql mode, whether or not a connector
+is set, and `pgx` in pgx mode. [gas/migrate](/gas/modules/migrations/) picks
+its SQL dialect from that name, so set `database.driver` to the dialect the
+connector speaks (`mysql`, for example) when you use one.
+
+### Connection retries
+
+`Init` opens the connection and pings it, with a 5-second timeout per
+attempt. When the attempt fails and `connretries` is above zero, it waits
+`connretryinterval`, retries, and doubles the wait after each failure, for at
+most `connretries` retries; an interval of zero or less uses 2 seconds. Each
+retry is logged at warn level. `Init` blocks while it waits.
+
+The ping and the waits run under the context `Init` receives, so when that
+context ends during a wait, `Init` stops and returns an error wrapping both
+the context's error and the last connection error. When every attempt fails,
+`Init` returns `gas/database: connect failed after <n> retries: <last error>`.
+With the default of zero retries, the first failure is returned as is.
+
+### Lifecycle
+
+`Close` marks the service closed and closes the `*sql.DB` and, in pgx mode,
+the pool. After `Close`, `Query`, `Exec`, `BeginTx`, `WithTx`, `BeginPgxTx`
+and `WithPgxTx` return an error without touching the connection. The service
+starts no goroutines of its own; `database/sql` and pgxpool manage their
+connections in the background until `Close`.
+
+<Aside type="caution" title="Known issue">
+In pgx mode, when closing the `*sql.DB` fails, `Close` returns that error
+before it closes the pool, so the pool stays open (KI-038). See
+[Known issues](/gas/project/known-issues/).
+</Aside>
+
+### Health and readiness
 
 `CheckHealth` (liveness) fails only when the service is closed or not
 initialized, states a restart would fix. It does not ping: both `database/sql`
@@ -256,19 +294,6 @@ context, so while the database is unreachable the instance reports not ready
 and traffic drains off it instead of the process being killed. Both results
 appear, under the name `gas/database`, in the maps the app's `CheckHealth`
 and `CheckReady` return; see [Deployment](/gas/production/deployment/).
-
-## Testing
-
-There is no mock package for `gas.DatabaseProvider`. Run the real service
-against SQLite instead: it needs no server, and the code under test goes
-through the same pool, transactions and errors as in production.
-
-<Code code={region(dbTest, 'test')} lang="go" title="notes/service_test.go" />
-
-Use a file DSN, not `:memory:`: with a pool, each connection to an in-memory
-SQLite database opens a separate, empty database. For migrations in tests, see
-[Migrations](/gas/modules/migrations/#testing); for testing services in general,
-see [Testing](/gas/production/testing/).
 
 ## API reference
 
