@@ -57,11 +57,14 @@ by exact type, so registering it as `*database.Service` leaves every
 [Services and DI](/gas/core/services/).
 </Aside>
 
-`New` takes two options:
+The settings normally come from the `gas.ConfigProvider` under the `database`
+key; see [Configuration](#configuration). `New` takes two options:
 
-- `WithConfig(cfg)` replaces the whole configuration and skips binding from
-  the `gas.ConfigProvider`. Start from `database.DefaultConfig()`, because a
-  bare `&database.Config{}` leaves `Mode` empty and every pool limit at zero.
+- `WithConfig(cfg)` is for configuration that cannot come from there, such as
+  a DSN built or fetched at runtime (a secret from a vault) or a test. It
+  replaces the whole configuration and skips binding from the
+  `gas.ConfigProvider`. Start from `database.DefaultConfig()`, because a bare
+  `&database.Config{}` leaves `Mode` empty and every pool limit at zero.
 - `WithConnector(c)` supplies a `driver.Connector`, opened with
   `sql.OpenDB` instead of `sql.Open(driver, dsn)`. See
   [Custom connections](#custom-connections).
@@ -107,9 +110,16 @@ The details:
 Set `database.mode` to `pgx` and the service builds a `*pgxpool.Pool` from the
 DSN alone; `database.driver` is ignored. `maxopenconns`, `connmaxlifetime`
 and `connmaxidletime` are applied to the pool. `maxidleconns` is not, because
-pgxpool manages idle connections itself.
+pgxpool manages idle connections itself. With the
+[environment provider](/gas/modules/config/#environment-variable-names), two
+variables select it:
 
-<Code code={region(db, 'pgx-mode')} lang="go" />
+```bash
+DATABASE__MODE=pgx
+DATABASE__DSN=postgres://app@localhost:5432/app?sslmode=disable
+```
+
+The wiring is the same `database.New()` as in [Wiring](#wiring).
 
 The pool is reachable two ways. `Pool()` on `*database.Service` returns it,
 or nil in sql mode. A service that holds only a `gas.DatabaseProvider` calls

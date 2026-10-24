@@ -45,11 +45,14 @@ func main() {
 }
 
 // #region explicit-config
-func explicitConfig() gas.Option {
+// explicitConfig takes a DSN known only at runtime, such as one built from a
+// secret fetched from a vault. WithConfig skips binding, so every setting the
+// app needs is set here.
+func explicitConfig(dsn string) gas.Option {
 	// Start from DefaultConfig so Mode and the pool settings are populated.
 	cfg := database.DefaultConfig()
 	cfg.Database.Driver = database.DriverPgx
-	cfg.Database.DSN = "postgres://user:pass@localhost:5432/app?sslmode=disable"
+	cfg.Database.DSN = dsn
 	cfg.Database.ConnRetries = 5
 
 	return gas.WithSingletonService[gas.DatabaseProvider](
@@ -58,19 +61,6 @@ func explicitConfig() gas.Option {
 }
 
 // #endregion explicit-config
-
-// #region pgx-mode
-func pgxMode() gas.Option {
-	cfg := database.DefaultConfig()
-	cfg.Database.Mode = database.ModePgx
-	cfg.Database.DSN = "postgres://user:pass@localhost:5432/app?sslmode=disable"
-
-	return gas.WithSingletonService[gas.DatabaseProvider](
-		database.New(database.WithConfig(cfg)),
-	)
-}
-
-// #endregion pgx-mode
 
 // #region connector
 // withConnector builds the connection through pgx with a hook that runs

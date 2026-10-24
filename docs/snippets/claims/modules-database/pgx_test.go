@@ -13,6 +13,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/gasmod/gas"
+	"github.com/gasmod/gas/config"
+	"github.com/gasmod/gas/config/providers"
 	"github.com/gasmod/gas/database"
 )
 
@@ -75,6 +77,61 @@ func TestPgxModeSettings(t *testing.T) {
 	}
 	if pc.MinConns != 0 || pc.MinIdleConns != 0 {
 		t.Errorf("pool MinConns, MinIdleConns = %d, %d; want pgxpool's defaults 0, 0", pc.MinConns, pc.MinIdleConns)
+	}
+}
+
+// pageDSN is the DSN the page's pgx-mode example sets.
+const pageDSN = "postgres://app@localhost:5432/app?sslmode=disable"
+
+// envConfig is a config loaded from the environment provider, as the page's
+// wiring loads it.
+func envConfig(t *testing.T) *config.Config {
+	t.Helper()
+	cfg := config.New(config.WithProvider(providers.NewEnvProvider()))
+	if err := cfg.Load(); err != nil {
+		t.Fatalf("load env config: %v", err)
+	}
+	return cfg
+}
+
+// Docs: modules/database.mdx#pgx-mode
+// "With the environment provider, two variables select it:" and
+// "DATABASE__MODE=pgx DATABASE__DSN=postgres://app@localhost:5432/app?sslmode=disable"
+// The service binds its config with Bind over DefaultConfig in Init; this
+// binds the same way without opening a connection.
+func TestPgxModeEnvVarsBind(t *testing.T) {
+	t.Setenv("DATABASE__MODE", "pgx")
+	t.Setenv("DATABASE__DSN", pageDSN)
+	got := database.DefaultConfig()
+	if err := envConfig(t).Bind(got); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if got.Database.Mode != database.ModePgx || got.Database.DSN != pageDSN {
+		t.Errorf("Mode, DSN = %q, %q; want pgx, %q", got.Database.Mode, got.Database.DSN, pageDSN)
+	}
+}
+
+// Docs: modules/database.mdx#pgx-mode
+// "With the environment provider, two variables select it:" and "The wiring is
+// the same `database.New()` as in Wiring."
+// The DSN points at the test container instead of the page's placeholder.
+func TestPgxModeFromEnvVars(t *testing.T) {
+	dsn := postgresDSN(t)
+	t.Setenv("DATABASE__MODE", "pgx")
+	t.Setenv("DATABASE__DSN", dsn)
+	svc := build(t, envConfig(t), nil)
+	if err := svc.Init(t.Context()); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	pool := svc.Pool()
+	if pool == nil {
+		t.Fatal("Pool() is nil, want the pgx pool selected by DATABASE__MODE=pgx")
+	}
+	if err := pool.Ping(t.Context()); err != nil {
+		t.Fatalf("pool Ping: %v", err)
+	}
+	if got := pool.Config().ConnConfig.Database; got != "claims" {
+		t.Errorf("pool database = %q, want claims from DATABASE__DSN", got)
 	}
 }
 

@@ -92,8 +92,9 @@ func TestInitBindsOverDefaults(t *testing.T) {
 // "Unless `WithConfig` is given, `Init` binds the settings"
 // and
 // Docs: modules/database.mdx#wiring
-// "`WithConfig(cfg)` replaces the whole configuration and skips binding from
-// the `gas.ConfigProvider`."
+// "The settings normally come from the `gas.ConfigProvider` under the
+// `database` key" and "It replaces the whole configuration and skips binding
+// from the `gas.ConfigProvider`."
 func TestBindHappensInInitUnlessWithConfig(t *testing.T) {
 	t.Parallel()
 
