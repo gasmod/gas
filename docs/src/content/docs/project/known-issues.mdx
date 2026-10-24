@@ -84,6 +84,15 @@ correct; only the report is wrong.
 **Workaround:** call `Use` before registering routes when you rely on
 `Routes()` or the route-map log.
 
+### KI-058: `FieldError` godoc names only the `json` tag
+
+The `FieldError.Field` godoc says it holds the `json` tag name. The validator
+uses the `json` tag, falls back to the `form` tag when there is none, and
+falls back to the Go field name when neither is set or the `json` tag is `-`.
+Only the documentation is wrong.
+
+**Workaround:** rely on the full rule in [Errors](/gas/core/errors/).
+
 ## Config
 
 ### KI-046: `config.Load` does not apply the Secrets Manager provider's timeout
@@ -162,6 +171,17 @@ every later read of the tracking table fails with
 
 **Workaround:** add `parseTime=true` to the MySQL DSN. See
 [Migrations](/gas/modules/migrations/).
+
+### KI-057: `migrate` keeps a duplicate of a service's migrations on every restart
+
+A service registers its migrations in `Init`, and `RestartService` runs `Init`
+again on the same instance, so every restart appends another copy of the
+service's migrations. Identical copies are collapsed when they are read, so
+no migration runs twice, but the list grows by one copy per restart for the
+life of the process.
+
+**Workaround:** none needed for correctness; only memory grows, and only for
+a service that is restarted.
 
 ## Auth
 
