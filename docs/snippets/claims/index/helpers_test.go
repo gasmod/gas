@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -17,46 +16,18 @@ import (
 	"github.com/gasmod/gas/docs/snippets/claims/internal/testport"
 )
 
-// recorder collects events from several goroutines in the order they happen.
-type recorder struct {
-	mu     sync.Mutex
-	events []string
-}
-
-func (r *recorder) add(format string, args ...any) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.events = append(r.events, fmt.Sprintf(format, args...))
-}
-
-func (r *recorder) list() []string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return slices.Clone(r.events)
-}
-
 // svc is a Service whose type is distinct per kind K, so several of them can
 // be registered in one container. Its Name is the kind's type name.
 type svc[K any] struct {
-	rec *recorder
-
 	mu         sync.Mutex
 	closeCount int
 }
 
 func (s *svc[K]) Name() string { return reflect.TypeFor[K]().Name() }
 
-func (s *svc[K]) Init(context.Context) error {
-	if s.rec != nil {
-		s.rec.add("init %s", s.Name())
-	}
-	return nil
-}
+func (s *svc[K]) Init(context.Context) error { return nil }
 
 func (s *svc[K]) Close(context.Context) error {
-	if s.rec != nil {
-		s.rec.add("close %s", s.Name())
-	}
 	s.mu.Lock()
 	s.closeCount++
 	s.mu.Unlock()
@@ -69,11 +40,7 @@ func (s *svc[K]) closes() int {
 	return s.closeCount
 }
 
-type (
-	kA struct{}
-	kB struct{}
-	kC struct{}
-)
+type kA struct{}
 
 func mustConfig(t *testing.T, values map[string]any) gas.ConfigProvider {
 	t.Helper()
@@ -142,8 +109,8 @@ func repoRoot(t *testing.T) string {
 	}
 }
 
-// listedModules maps each LinkCard on the landing page's Modules section to
-// the directory, under the repository root, of the module it links to.
+// listedModules maps each official module's name to its directory under the
+// repository root.
 var listedModules = map[string]string{
 	"Config":     "config",
 	"Logging":    "log",

@@ -1,4 +1,4 @@
-package index_test
+package modulesoverview_test
 
 import (
 	"context"
