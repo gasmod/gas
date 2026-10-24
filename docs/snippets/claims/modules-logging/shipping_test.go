@@ -378,7 +378,7 @@ func TestShippingName(t *testing.T) {
 	}
 }
 
-// Docs: modules/logging.mdx#shipping-logs
+// Docs: modules/logging.mdx#delivery
 // "A record is queued without blocking. When the queue is full, it is dropped silently."
 func TestShippingNeverBlocks(t *testing.T) {
 	t.Parallel()
@@ -401,7 +401,7 @@ func TestShippingNeverBlocks(t *testing.T) {
 	}
 }
 
-// Docs: modules/logging.mdx#shipping-logs
+// Docs: modules/logging.mdx#delivery
 // "A batch is posted when it reaches the batch size, when the flush interval passes, on `Flush`, and on `Close`."
 func TestShippingPostTriggers(t *testing.T) {
 	t.Parallel()
@@ -433,7 +433,7 @@ func (failingMarshaler) Marshal([]gaslog.Record) ([]byte, error) {
 }
 func (failingMarshaler) ContentType() string { return "text/plain" }
 
-// Docs: modules/logging.mdx#shipping-logs
+// Docs: modules/logging.mdx#delivery
 // "Marshal errors, transport errors and responses with a status of 300 or more go to the `WithErrorHandler` callback, never to the code that logged. Without a callback they are discarded."
 // Docs: modules/logging.mdx#errors
 // "| `marshal log batch: ...` | The marshaler returned an error. The batch is dropped. | | `build log request: ...` | The request could not be built, for example from an invalid endpoint URL. | | `ship logs: ...` | The HTTP request failed. | | `ship logs: unexpected status <code>` | The endpoint answered with a status of 300 or more. |"
@@ -506,7 +506,7 @@ func (h *failingHandler) Handle(context.Context, slog.Record) error {
 func (h *failingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
 func (h *failingHandler) WithGroup(string) slog.Handler      { return h }
 
-// Docs: modules/logging.mdx#shipping-logs
+// Docs: modules/logging.mdx#delivery
 // "The local handler sees each record first. If it returns an error, the record is not shipped, and `Send` drops the error."
 func TestShippingLocalHandlerError(t *testing.T) {
 	t.Parallel()
@@ -520,7 +520,7 @@ func TestShippingLocalHandlerError(t *testing.T) {
 	}
 }
 
-// Docs: modules/logging.mdx#shipping-logs
+// Docs: modules/logging.mdx#delivery
 // "The shipping logger implements `gas.Service`. Its goroutine starts when it is constructed, so it works with or without the container, and its `Init` does nothing."
 func TestShippingIsService(t *testing.T) {
 	t.Parallel()
@@ -540,7 +540,7 @@ func TestShippingIsService(t *testing.T) {
 	}
 }
 
-// Docs: modules/logging.mdx#shipping-logs
+// Docs: modules/logging.mdx#delivery
 // "`Close`, which the container runs at shutdown, posts the records still queued, stops the goroutine and returns once that last post has finished, so it can take as long as the HTTP client's timeout; it ignores its context and can be called more than once."
 func TestShippingClose(t *testing.T) {
 	t.Parallel()
@@ -581,7 +581,7 @@ func TestShippingClose(t *testing.T) {
 	}
 }
 
-// Docs: modules/logging.mdx#shipping-logs
+// Docs: modules/logging.mdx#delivery
 // "After `Close`, the local handler still writes, records meant for shipping are dropped, and `Flush` returns at once."
 func TestShippingAfterClose(t *testing.T) {
 	t.Parallel()
@@ -604,7 +604,7 @@ func TestShippingAfterClose(t *testing.T) {
 	}
 }
 
-// Docs: modules/logging.mdx#shipping-logs
+// Docs: modules/logging.mdx#delivery
 // "A sub-logger made with `With()` shares the same handlers and sender, so its records are shipped and its `Flush` posts and waits like the parent's."
 func TestShippingSubLogger(t *testing.T) {
 	t.Parallel()

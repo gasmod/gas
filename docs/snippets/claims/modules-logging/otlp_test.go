@@ -19,7 +19,7 @@ func resourceAttrs(b otlpBatch) map[string]string {
 	return out
 }
 
-// Docs: modules/logging.mdx#otlp-and-custom-formats
+// Docs: modules/logging.mdx#otlp-encoding
 // "`NewOTLPMarshaler` sends one OTLP logs request per batch with `Content-Type: application/json`."
 func TestOTLPOneRequestPerBatch(t *testing.T) {
 	t.Parallel()
@@ -40,7 +40,7 @@ func TestOTLPOneRequestPerBatch(t *testing.T) {
 	}
 }
 
-// Docs: modules/logging.mdx#otlp-and-custom-formats
+// Docs: modules/logging.mdx#otlp-encoding
 // "`WithServiceName` sets the `service.name` resource attribute and, unless `WithScopeName` sets one, the instrumentation scope name; `WithServiceVersion` sets `service.version`, and `WithResourceAttribute(key, value)` adds any other resource attribute."
 func TestOTLPResourceAndScope(t *testing.T) {
 	t.Parallel()
@@ -74,7 +74,7 @@ func TestOTLPResourceAndScope(t *testing.T) {
 	}
 }
 
-// Docs: modules/logging.mdx#otlp-and-custom-formats
+// Docs: modules/logging.mdx#otlp-encoding
 // "Each record carries `timeUnixNano`, `severityText` (`DEBUG`, `INFO`, `WARN`, `ERROR`), `severityNumber` from the table above, the message as its body, and its fields as attributes. Durations and times are sent as strings."
 func TestOTLPRecordFields(t *testing.T) {
 	t.Parallel()
@@ -134,7 +134,7 @@ func (m recordingMarshaler) Marshal(records []gaslog.Record) ([]byte, error) {
 	return []byte("batch of " + strconv.Itoa(len(records))), nil
 }
 
-// Docs: modules/logging.mdx#otlp-and-custom-formats
+// Docs: modules/logging.mdx#custom-formats
 // "Any other wire format is a `Marshaler`: `Marshal([]Record) ([]byte, error)` encodes one batch into one request body, and `ContentType()` is sent as the `Content-Type` header. A `Record` has the `Time`, `Level`, `Message` and `Attrs` of the event, including the fields added with `With()`."
 func TestCustomMarshaler(t *testing.T) {
 	t.Parallel()

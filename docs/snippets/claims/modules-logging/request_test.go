@@ -145,7 +145,7 @@ func TestRequestLoggerUnresolvable(t *testing.T) {
 
 type audit struct{ logger RequestLogger }
 
-// Docs: modules/logging.mdx#request-logging
+// Docs: modules/logging.mdx#the-request-logger
 // "The per-request logger goes on the request context with `gas.WithLogger`. When `T` is scoped, as `RequestLogger` is here, it also replaces `T`'s instance in the request scope, so handlers and services that take `T` later in the request get the logger with `request_id`. A singleton `T` is never replaced."
 func TestRequestLoggerScopeReplacement(t *testing.T) {
 	t.Parallel()
@@ -187,7 +187,7 @@ func TestRequestLoggerScopeReplacement(t *testing.T) {
 	}
 }
 
-// Docs: modules/logging.mdx#request-logging
+// Docs: modules/logging.mdx#the-request-logger
 // "When the request finishes, the middleware logs a `request` record with `method`, `path`, `status`, `bytes`, `duration` and `remote`: at error level for a status of 400 or more, at info level otherwise."
 func TestRequestRecord(t *testing.T) {
 	t.Parallel()
