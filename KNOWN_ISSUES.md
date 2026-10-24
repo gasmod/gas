@@ -420,3 +420,17 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
 - **Next step**: skip an identical migration (same service, version,
   description, up and down) at registration time, and keep the
   read-time check for conflicting content.
+
+## KI-058: `FieldError` godoc names only the `json` tag
+
+- **Status**: open
+- **Area**: core, `errors.go`.
+- **Found**: 2026-10-23, docs review.
+- **Detail**: the `FieldError` godoc (`errors.go:28-29`) says `Field`
+  carries "the name the client sent (the json tag)". The validator's tag
+  name function (`validation.go:16-27`) uses the `json` tag, falls back
+  to the `form` tag when there is none, and falls back to the Go field
+  name when neither is set or the `json` tag is `-`. The errors page
+  (`core/errors.mdx`) describes the full rule; the godoc does not.
+- **Next step**: state the `json`, then `form`, then Go field name order
+  in the godoc.
