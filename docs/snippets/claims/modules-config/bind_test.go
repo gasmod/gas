@@ -47,7 +47,7 @@ func TestBindTagOrName(t *testing.T) {
 	}
 }
 
-// Docs: modules/config.mdx#binding-to-structs
+// Docs: modules/config.mdx#binding-rules
 // "Keys are lowercase, so a tag with uppercase letters never matches and the field falls back to its name."
 func TestBindUppercaseTagNeverMatches(t *testing.T) {
 	t.Parallel()
@@ -74,7 +74,7 @@ type Embedded struct {
 	Inner string
 }
 
-// Docs: modules/config.mdx#binding-to-structs
+// Docs: modules/config.mdx#binding-rules
 // "Fields of an embedded struct bind at the level of the struct that embeds them, which is how `gas.WithGasEnv` picks up the top-level `gasenv` key."
 func TestBindEmbeddedAtSameLevel(t *testing.T) {
 	t.Parallel()
@@ -140,7 +140,7 @@ type allTypes struct {
 	PtrStr *inner
 }
 
-// Docs: modules/config.mdx#binding-to-structs
+// Docs: modules/config.mdx#binding-rules
 // "Supported field types are every int, uint and float size, `bool`, `string`, `time.Duration`, slices, fixed-size arrays, maps, nested structs, embedded structs and pointers to any of these (allocated as needed). Strings are converted where needed: `"true"` to a `bool`, `"8080"` to an int, and a comma-separated string such as `"a, b ,c"` to a slice, with each element trimmed."
 func TestBindSupportedTypes(t *testing.T) {
 	t.Parallel()
@@ -174,7 +174,7 @@ func TestBindSupportedTypes(t *testing.T) {
 	}
 }
 
-// Docs: modules/config.mdx#binding-to-structs
+// Docs: modules/config.mdx#binding-rules
 // "A fixed-size array needs a real list, and a list with more elements than the array holds is an error rather than a silent truncation. A number too large for its field is an error."
 func TestBindArraysAndOverflow(t *testing.T) {
 	t.Parallel()

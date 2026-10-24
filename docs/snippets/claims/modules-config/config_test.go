@@ -158,7 +158,7 @@ func TestEnvProviderOnlyWithoutProviders(t *testing.T) {
 	}
 }
 
-// Docs: modules/config.mdx#providers-and-precedence
+// Docs: modules/config.mdx#load-order
 // "1. Every extension's `PreLoad` hook, in registration order. 2. Every provider's `Load`, in registration order." and "4. Every extension's `PostLoad` hook, in registration order."
 func TestLoadOrder(t *testing.T) {
 	t.Parallel()
@@ -178,7 +178,7 @@ func TestLoadOrder(t *testing.T) {
 	}
 }
 
-// Docs: modules/config.mdx#providers-and-precedence
+// Docs: modules/config.mdx#load-order
 // "All of them are read before anything is merged, so if one fails, `Load` returns an error wrapping `config.ErrProviderLoadFailed` with the provider's name and merges none of them."
 func TestFailingProviderMergesNothing(t *testing.T) {
 	t.Parallel()
@@ -199,7 +199,7 @@ func TestFailingProviderMergesNothing(t *testing.T) {
 	}
 }
 
-// Docs: modules/config.mdx#providers-and-precedence
+// Docs: modules/config.mdx#load-order
 // "3. The provider results are merged in registration order. A later provider overrides the keys it defines and leaves the rest alone; nested maps are merged key by key, not replaced."
 func TestMergeOrder(t *testing.T) {
 	t.Parallel()
@@ -214,7 +214,7 @@ func TestMergeOrder(t *testing.T) {
 	}
 }
 
-// Docs: modules/config.mdx#providers-and-precedence
+// Docs: modules/config.mdx#load-order
 // "Keys are lowercased and trimmed at every level as they are merged, so `Database.DSN` from a JSON file and `DATABASE__DSN` from the environment land on the same key, `database.dsn`."
 func TestKeysLowercasedAndTrimmed(t *testing.T) {
 	t.Parallel()
@@ -224,7 +224,7 @@ func TestKeysLowercasedAndTrimmed(t *testing.T) {
 	}
 }
 
-// Docs: modules/config.mdx#providers-and-precedence
+// Docs: modules/config.mdx#load-order
 // "Keys are lowercased and trimmed at every level as they are merged, so `Database.DSN` from a JSON file and `DATABASE__DSN` from the environment land on the same key, `database.dsn`."
 func TestJSONAndEnvLandOnSameKey(t *testing.T) {
 	t.Setenv("DATABASE__DSN", "from-env")
@@ -235,7 +235,7 @@ func TestJSONAndEnvLandOnSameKey(t *testing.T) {
 	}
 }
 
-// Docs: modules/config.mdx#providers-and-precedence
+// Docs: modules/config.mdx#load-order
 // "`Load` merges into the values the config already holds, so a value set with `Set` before `Load` survives unless a provider defines the same key."
 func TestSetBeforeLoadSurvives(t *testing.T) {
 	t.Parallel()
@@ -250,7 +250,7 @@ func TestSetBeforeLoadSurvives(t *testing.T) {
 	}
 }
 
-// Docs: modules/config.mdx#providers-and-precedence
+// Docs: modules/config.mdx#load-order
 // "`LoadProvider(p)` adds one more provider after the fact: it loads `p`, merges its values over the current ones, and registers it. A provider whose load fails is not registered."
 func TestLoadProvider(t *testing.T) {
 	t.Parallel()
