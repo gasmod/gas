@@ -1,90 +1,67 @@
 ---
-title: Gas
-description: A modular Go framework for building micro-SaaS applications.
-template: splash
-hero:
-  title: Gas
-  tagline: A modular Go framework for building micro-SaaS applications. Dependency injection, routing, middleware, events, migrations, and service lifecycle, so you write business logic instead of wiring.
-  image:
-    html: '<img src="/gas/gas-icon.svg" alt="" width="240" height="240" />'
-  actions:
-    - text: Get started
-      link: /gas/start/introduction/
-      icon: right-arrow
-    - text: Tutorial
-      link: /gas/start/tutorial/
-      variant: secondary
-    - text: View on GitHub
-      link: https://github.com/gasmod/gas
-      icon: external
-      variant: minimal
+title: Gas Docs
+description: Documentation for the modular Go framework for SaaS backends.
 ---
 
-import { Card, CardGrid, Code, LinkCard } from '@astrojs/starlight/components';
+import { CardGrid, Code, LinkCard } from '@astrojs/starlight/components';
 import landing from '../../../snippets/landing/main.go?raw';
 import { region } from '../../lib/snippet';
 
-## Quickstart
+## What is Gas?
+
+Gas is a modular Go framework for building SaaS backends. It provides
+dependency injection, routing, middleware, events, and service lifecycle so
+each application starts with working infrastructure and a clear structure.
+
+The framework has a small core package, `github.com/gasmod/gas`, and optional
+modules for databases, configuration, authentication, storage, email, queues,
+and more. Each module is its own Go module, so applications only add the
+dependencies they use.
+
+## How to use these docs
+
+The docs are organized by the parts of an application:
+
+- **[Getting started](/gas/start/introduction/)**: install Gas, learn the
+  project structure, and build a notes API.
+- **[Core](/gas/core/lifecycle/)**: services, routing, middleware, events, and
+  application lifecycle.
+- **[Modules](/gas/modules/overview/)**: optional integrations and their
+  provider interfaces.
+- **[Production](/gas/production/deployment/)**: testing and deployment.
+
+Use the sidebar to browse topics, or search with `Ctrl+K` / `⌘K` to find a
+specific API or behavior.
+
+## Start a new app
+
+Add the core package to your Go module:
 
 ```sh
 go get github.com/gasmod/gas
 ```
 
+This small program is a complete Gas app. `Run` starts the server, waits for a
+shutdown signal, and closes the app's services.
+
 <Code code={region(landing, 'app')} lang="go" title="main.go" />
 
-That is a complete Gas app. `Run` starts the server and blocks until the
-process receives SIGINT or SIGTERM, then shuts the app down.
-
-## Why Gas
+## Next steps
 
 <CardGrid>
-	<Card title="Take only what you need" icon="puzzle">
-		Each module is its own Go module, so `go get` pulls in only what you use.
-		An app that just serves HTTP depends on the core package alone.
-	</Card>
-	<Card title="Constructor injection" icon="seti:go">
-		A service is three methods: `Name`, `Init`, `Close`. The container
-		resolves constructor parameters, initializes services in dependency
-		order, and closes them in reverse.
-	</Card>
-	<Card title="Wired by interface" icon="random">
-		Modules meet through provider interfaces declared in core, not by
-		importing each other. Each module's service sits behind an interface, in
-		core or in the module itself (`storage.Provider`, `auth.Authenticator`),
-		so any of them swaps for your own implementation or a test mock.
-	</Card>
-	<Card title="Fails at startup, not in production" icon="error">
-		Unresolved dependencies, malformed services, and handler signature
-		mismatches are all rejected before the server accepts traffic.
-	</Card>
-	<Card title="Graceful shutdown" icon="approve-check">
-		On shutdown the HTTP server drains in-flight requests within
-		`ShutdownTimeout`, 30 seconds by default, and then every active service's
-		`Close` runs.
-	</Card>
-	<Card title="Runtime kill switch" icon="warning">
-		`CloseService` tears down one running service: the event subscriptions
-		it made with `SubscribeWithOwner` are removed and its routes answer 503
-		while the rest of the app keeps serving.
-	</Card>
-</CardGrid>
-
-## Modules
-
-The core package is `github.com/gasmod/gas`. Each module below is a separate Go
-module in the same repository, versioned and released together with core.
-
-<CardGrid>
-	<LinkCard title="Overview" href="/gas/modules/overview/" description="How the modules fit together." />
-	<LinkCard title="Config" href="/gas/modules/config/" description="Configuration from environment variables, JSON, .env files, and AWS Secrets Manager, bound to structs." />
-	<LinkCard title="Logging" href="/gas/modules/logging/" description="Structured logging on zerolog or slog, with HTTP and OTLP log shipping." />
-	<LinkCard title="Database" href="/gas/modules/database/" description="database/sql and native pgx pools with transaction helpers." />
-	<LinkCard title="Migrations" href="/gas/modules/migrations/" description="Service-owned database migrations with dirty-state detection and rollback." />
-	<LinkCard title="Cache" href="/gas/modules/cache/" description="Key-value caching in memory or on Valkey." />
-	<LinkCard title="Auth" href="/gas/modules/auth/" description="JWT, server-side sessions, API keys, and single-use tokens." />
-	<LinkCard title="Templates" href="/gas/modules/templates/" description="Template storage in memory, a directory, an embedded FS, a database, or a composite of those." />
-	<LinkCard title="UI" href="/gas/modules/ui/" description="HTML rendering with layouts and partials, static files, and HTMX fragments." />
-	<LinkCard title="Storage" href="/gas/modules/storage/" description="Object storage on S3, S3-compatible services, or a local directory." />
-	<LinkCard title="Email" href="/gas/modules/email/" description="Email over AWS SES, including templated sends." />
-	<LinkCard title="Queue" href="/gas/modules/queue/" description="Job queues on AWS SQS." />
+	<LinkCard
+		title="Build a JSON API"
+		href="/gas/start/tutorial/"
+		description="Follow the notes API tutorial with SQLite, migrations, API keys, and tests."
+	/>
+	<LinkCard
+		title="Build an HTML app"
+		href="/gas/project/examples/#templates-basic"
+		description="See layouts, partials, static files, and server-rendered pages."
+	/>
+	<LinkCard
+		title="Run a background worker"
+		href="/gas/core/workers/"
+		description="Use the same service lifecycle without starting an HTTP server."
+	/>
 </CardGrid>

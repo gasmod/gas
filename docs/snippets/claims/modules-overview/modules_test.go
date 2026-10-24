@@ -1,4 +1,4 @@
-package index_test
+package modulesoverview_test
 
 import (
 	"bytes"
@@ -13,7 +13,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -58,87 +57,6 @@ import (
 	"github.com/gasmod/gas/ui"
 )
 
-// Docs: index.mdx#modules
-// "The core package is `github.com/gasmod/gas`. Each module below is a separate Go module in the same repository"
-func TestCoreAndModulesLiveInOneRepository(t *testing.T) {
-	t.Parallel()
-	root := repoRoot(t)
-	core, err := os.ReadFile(filepath.Join(root, "go.mod"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Contains(strings.Split(string(core), "\n"), "module github.com/gasmod/gas") {
-		t.Fatal("the repository root go.mod does not declare module github.com/gasmod/gas")
-	}
-	work, err := os.ReadFile(filepath.Join(root, "go.work"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for card, d := range listedModules {
-		mod := "github.com/gasmod/gas/" + d
-		data, err := os.ReadFile(filepath.Join(root, d, "go.mod"))
-		if err != nil {
-			t.Errorf("%s: no go.mod in %s: %v", card, d, err)
-			continue
-		}
-		if !slices.Contains(strings.Split(string(data), "\n"), "module "+mod) {
-			t.Errorf("%s: %s/go.mod does not declare module %s", card, d, mod)
-		}
-		if !regexp.MustCompile(`(?m)^\s*\./` + regexp.QuoteMeta(d) + `\s*$`).Match(work) {
-			t.Errorf("%s: go.work does not use ./%s", card, d)
-		}
-	}
-}
-
-// Docs: index.mdx#modules
-// "versioned and released together with core."
-// Every requirement on a Gas module, in core, in every module, and in the
-// go.work replaces, names one version, which is what the release workflow's
-// verify-versions step checks before it tags core and every module.
-// Not checked: the release tags themselves, which a local clone may lack.
-func TestModulesVersionedTogetherWithCore(t *testing.T) {
-	t.Parallel()
-	root := repoRoot(t)
-	re := regexp.MustCompile(`(?m)^\s*(?:require\s+)?(github\.com/gasmod/gas(?:/[a-z]+)?)\s+(v\d+\.\d+\.\d+\S*)`)
-	versions := map[string][]string{}
-	files := []string{"go.mod", "go.work"}
-	for _, d := range listedModules {
-		files = append(files, filepath.Join(d, "go.mod"))
-	}
-	replaced := map[string]bool{}
-	for _, f := range files {
-		data, err := os.ReadFile(filepath.Join(root, f))
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, m := range re.FindAllStringSubmatch(string(data), -1) {
-			versions[m[2]] = append(versions[m[2]], f+": "+m[1])
-			if f == "go.work" {
-				replaced[m[1]] = true
-			}
-		}
-	}
-	if len(versions) != 1 {
-		t.Fatalf("Gas module requirements use %d versions, want one: %v", len(versions), versions)
-	}
-	for _, d := range append([]string{""}, slices.Collect(mapValues(listedModules))...) {
-		mod := strings.TrimSuffix("github.com/gasmod/gas/"+d, "/")
-		if !replaced[mod] {
-			t.Errorf("go.work does not pin %s to the shared version", mod)
-		}
-	}
-}
-
-func mapValues(m map[string]string) func(func(string) bool) {
-	return func(yield func(string) bool) {
-		for _, v := range m {
-			if !yield(v) {
-				return
-			}
-		}
-	}
-}
-
 type appSettings struct {
 	App struct {
 		Name   string
@@ -148,8 +66,10 @@ type appSettings struct {
 	}
 }
 
-// Docs: index.mdx#modules
-// "Configuration from environment variables, JSON, .env files, and AWS Secrets Manager, bound to structs."
+// Docs: modules/overview.mdx#the-modules
+// "Loads configuration from the environment, `.env` and JSON files, and AWS
+// Secrets Manager"
+// Each source is loaded and bound into one struct.
 // Not parallel: it sets an environment variable. Secrets Manager is served by
 // a local endpoint that answers GetSecretValue.
 func TestConfigSourcesBindToStruct(t *testing.T) {
@@ -196,8 +116,8 @@ func TestConfigSourcesBindToStruct(t *testing.T) {
 	}
 }
 
-// Docs: index.mdx#modules
-// "Structured logging on zerolog or slog"
+// Docs: modules/overview.mdx#the-modules
+// "Structured logging over zerolog or `log/slog`"
 func TestLoggingOnZerologOrSlog(t *testing.T) {
 	t.Parallel()
 	var zbuf bytes.Buffer
@@ -238,8 +158,8 @@ func (lineMarshaler) Marshal(records []gaslog.Record) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-// Docs: index.mdx#modules
-// "with HTTP and OTLP log shipping."
+// Docs: modules/overview.mdx#the-modules
+// "HTTP log shipping with an OTLP encoder"
 func TestLogShippingOverHTTPAndOTLP(t *testing.T) {
 	t.Parallel()
 	cases := map[string]struct {
@@ -349,8 +269,8 @@ func newMigrator(t *testing.T, db gas.DatabaseProvider) *migrate.Service {
 
 var errRollback = errors.New("roll back")
 
-// Docs: index.mdx#modules
-// "database/sql and native pgx pools with transaction helpers."
+// Docs: modules/overview.mdx#the-modules
+// "SQL connections over `database/sql` or a native pgx pool, transaction helpers"
 func TestDatabaseSQLWithTransactionHelpers(t *testing.T) {
 	t.Parallel()
 	svc := newSQLite(t)
@@ -378,8 +298,8 @@ func TestDatabaseSQLWithTransactionHelpers(t *testing.T) {
 	}
 }
 
-// Docs: index.mdx#modules
-// "database/sql and native pgx pools with transaction helpers."
+// Docs: modules/overview.mdx#the-modules
+// "SQL connections over `database/sql` or a native pgx pool, transaction helpers"
 func TestDatabasePgxPoolWithTransactionHelpers(t *testing.T) {
 	t.Parallel()
 	requireDocker(t)
@@ -433,8 +353,8 @@ func (o *owner) Name() string                { return o.name }
 func (o *owner) Init(context.Context) error  { return nil }
 func (o *owner) Close(context.Context) error { return nil }
 
-// Docs: index.mdx#modules
-// "Service-owned database migrations with dirty-state detection and rollback."
+// Docs: modules/overview.mdx#the-modules
+// "Migrations owned by the services that register them" and "with rollback."
 func TestMigrationsOwnedDirtyAndRollback(t *testing.T) {
 	t.Parallel()
 	db := newSQLite(t)
@@ -470,8 +390,8 @@ func TestMigrationsOwnedDirtyAndRollback(t *testing.T) {
 	}
 }
 
-// Docs: index.mdx#modules
-// "Key-value caching in memory or on Valkey."
+// Docs: modules/overview.mdx#the-modules
+// "Key-value caching ... in process or on Valkey."
 func TestCacheInMemoryOrValkey(t *testing.T) {
 	t.Parallel()
 	mem, err := cachemem.New(cachemem.WithConfig(cachemem.DefaultConfig()))(nil, &gas.NopLogger{})
@@ -540,8 +460,8 @@ func valkeyAddr(t *testing.T) string {
 
 const signingKey = "a-signing-key-of-at-least-32-bytes!!"
 
-// Docs: index.mdx#modules
-// "JWT, server-side sessions, API keys, and single-use tokens."
+// Docs: modules/overview.mdx#the-modules
+// "JWTs, server-side sessions, API keys and single-use tokens"
 func TestAuthCredentials(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
@@ -661,8 +581,9 @@ func TestAuthCredentials(t *testing.T) {
 	})
 }
 
-// Docs: index.mdx#modules
-// "Template storage in memory, a directory, an embedded FS, a database, or a composite of those."
+// Docs: modules/overview.mdx#the-modules
+// "Template storage in memory, a directory, an `fs.FS`, a database table, or a
+// composite of these."
 func TestTemplateStores(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
@@ -725,8 +646,8 @@ func TestTemplateStores(t *testing.T) {
 	}
 }
 
-// Docs: index.mdx#modules
-// "HTML rendering with layouts and partials, static files, and HTMX fragments."
+// Docs: modules/overview.mdx#the-modules
+// "HTML rendering with layouts and partials, HTMX fragments, static files."
 func TestUIRendering(t *testing.T) {
 	t.Parallel()
 	store := memory.NewStore()
@@ -782,8 +703,8 @@ func TestUIRendering(t *testing.T) {
 	}
 }
 
-// Docs: index.mdx#modules
-// "Object storage on S3, S3-compatible services, or a local directory."
+// Docs: modules/overview.mdx#the-modules
+// "Object storage on ... or a local directory"
 func TestStorageLocalDirectory(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
@@ -814,8 +735,8 @@ func TestStorageLocalDirectory(t *testing.T) {
 	}
 }
 
-// Docs: index.mdx#modules
-// "Object storage on S3, S3-compatible services, or a local directory."
+// Docs: modules/overview.mdx#the-modules
+// "Object storage on AWS S3, S3-compatible services"
 // An S3-compatible service is stood in for by a local endpoint that answers
 // GetObject; the provider reaches it through the configured endpoint, with
 // the bucket in the path.
@@ -871,8 +792,8 @@ func (f *fakeSES) SendEmail(_ context.Context, in *awsses.SendEmailInput, _ ...f
 	return &awsses.SendEmailOutput{MessageId: new("m1")}, nil
 }
 
-// Docs: index.mdx#modules
-// "Email over AWS SES, including templated sends."
+// Docs: modules/overview.mdx#the-modules
+// "Email through AWS SES, literal or rendered from templates."
 func TestEmailOverSESWithTemplates(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
@@ -958,8 +879,8 @@ func (f *fakeSQS) ChangeMessageVisibility(context.Context, *awssqs.ChangeMessage
 	return &awssqs.ChangeMessageVisibilityOutput{}, nil
 }
 
-// Docs: index.mdx#modules
-// "Job queues on AWS SQS."
+// Docs: modules/overview.mdx#the-modules
+// "Job queues on AWS SQS"
 func TestQueueOnSQS(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
@@ -992,3 +913,12 @@ func TestQueueOnSQS(t *testing.T) {
 
 // slogJSON is a slog.Logger writing JSON lines to w.
 func slogJSON(w io.Writer) *slog.Logger { return slog.New(slog.NewJSONHandler(w, nil)) }
+
+func mustConfig(t *testing.T, values map[string]any) gas.ConfigProvider {
+	t.Helper()
+	cfg, err := configtest.NewMockConfigWithValues(values)
+	if err != nil {
+		t.Fatalf("config: %v", err)
+	}
+	return cfg
+}

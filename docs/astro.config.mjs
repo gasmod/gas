@@ -26,6 +26,8 @@ export default defineConfig({
 				{ tag: 'meta', attrs: { property: 'og:image:height', content: '630' } },
 			],
 			components: {
+				Header: './src/components/Header.astro',
+				PageTitle: './src/components/PageTitle.astro',
 				SiteTitle: './src/components/SiteTitle.astro',
 			},
 			editLink: {
@@ -83,6 +85,7 @@ export default defineConfig({
 				},
 				{
 					label: 'Production',
+					collapsed: true,
 					items: [
 						{ label: 'Testing', slug: 'production/testing' },
 						{ label: 'Deployment', slug: 'production/deployment' },
@@ -90,6 +93,7 @@ export default defineConfig({
 				},
 				{
 					label: 'Project',
+					collapsed: true,
 					items: [
 						{ label: 'FAQ', slug: 'project/faq' },
 						{ label: 'Known issues', slug: 'project/known-issues' },
