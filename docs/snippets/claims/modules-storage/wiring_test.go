@@ -213,12 +213,12 @@ func TestS3ConstructorsResolveConfigProvider(t *testing.T) {
 	})
 }
 
-// Docs: modules/storage.mdx#wiring
-// "A constructor fails, and so does startup, when the configured bucket is set
-// but is not a valid S3 bucket name (`storage.ErrInvalidBucket`), when an
+// Docs: modules/storage.mdx#constructors-and-options
+// "A constructor fails, and so does startup, when: ... the configured bucket is
+// set but is not a valid S3 bucket name (`storage.ErrInvalidBucket`) ... an
 // option is nil (`storage.ErrInvalidOption`, with the option's zero-based
 // position in the message, as in `gas/storage/s3/provider: storage: invalid
-// option: option 1 is nil`), or when binding fails."
+// option: option 1 is nil`) ... binding fails."
 func TestConstructorFailures(t *testing.T) {
 	t.Parallel()
 	f := newFakeS3(t, nil)
@@ -305,10 +305,10 @@ func TestWiringConcreteTypeFailsStartup(t *testing.T) {
 	}
 }
 
-// Docs: modules/storage.mdx#wiring
-// "`WithClient` (an `*s3.Client`) and `WithUploaderClient` (a transfer manager
-// client) for the Provider"
-// Docs: modules/storage.mdx#wiring
+// Docs: modules/storage.mdx#constructors-and-options
+// "`WithClient` | `NewProvider` | an `*s3.Client`" and "`WithUploaderClient` |
+// `NewProvider` | a transfer manager client"
+// Docs: modules/storage.mdx#constructors-and-options
 // "Configuration is still bound, and the configured bucket still applies, when
 // a client is injected."
 func TestProviderClientOptions(t *testing.T) {
@@ -354,9 +354,10 @@ func TestProviderClientOptions(t *testing.T) {
 	})
 }
 
-// Docs: modules/storage.mdx#wiring
-// "`WithPresignerS3Client` and `WithPresignClient` for the Presigner, where
-// `WithPresignClient` takes precedence."
+// Docs: modules/storage.mdx#constructors-and-options
+// "`WithPresignerS3Client` | `NewPresigner` | an `*s3.Client`" and
+// "`WithPresignClient` | `NewPresigner` | an `*s3.PresignClient`; takes
+// precedence over `WithPresignerS3Client`"
 func TestPresignerClientOptions(t *testing.T) {
 	t.Parallel()
 	cfgSrv := newFakeS3(t, nil)
@@ -391,11 +392,10 @@ func TestPresignerClientOptions(t *testing.T) {
 	}
 }
 
-// Docs: modules/storage.mdx#wiring
-// "Each option sets its client as given, so when an option appears more than
-// once the last one wins, and a nil client in that last position means the
-// constructor builds that client from configuration: `WithClient(c),
-// WithClient(nil)` discards `c`."
+// Docs: modules/storage.mdx#constructors-and-options
+// "When an option appears more than once, the last one wins. A nil client in
+// that last position means the constructor builds that client from
+// configuration, so `WithClient(c), WithClient(nil)` discards `c`."
 func TestLastClientOptionWins(t *testing.T) {
 	t.Parallel()
 	cfgSrv := newFakeS3(t, nil)
@@ -518,7 +518,7 @@ func TestDirWiring(t *testing.T) {
 	})
 }
 
-// Docs: modules/storage.mdx#wiring
+// Docs: modules/storage.mdx#constructors-and-options
 // "`WithRoot(root)` is required; the last one given wins. Without it, or with
 // `WithRoot(nil)`, the constructor returns `dir.ErrRootRequired`, which wraps
 // `storage.ErrNotInitialized`."
@@ -582,7 +582,7 @@ func TestDirNeverClosesRoot(t *testing.T) {
 	}
 }
 
-// Docs: modules/storage.mdx#wiring
+// Docs: modules/storage.mdx#constructors-and-options
 // "The constructor creates the backend's internal directories in the root, and no
 // bucket. A nil option fails with `storage.ErrInvalidOption`, and then nothing is
 // created in the root."
@@ -638,7 +638,7 @@ func waitFor(d time.Duration, cond func() bool) bool {
 	return cond()
 }
 
-// Docs: modules/storage.mdx#wiring
+// Docs: modules/storage.mdx#constructors-and-options
 // "The options' doc comments say a nil client is ignored, which is not what the
 // code does"
 func TestOptionDocCommentsSayNilIgnored(t *testing.T) {

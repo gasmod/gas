@@ -493,7 +493,7 @@ func TestDirDeleteBucketRemovesDebris(t *testing.T) {
 // the root, and an error wrapping `dir.ErrCorrupt` or `dir.ErrUnnamedBucket`."
 // Docs: modules/storage.mdx#the-directory-backend
 // "A paged listing reports the same entry on every page."
-// Docs: modules/storage.mdx#wiring
+// Docs: modules/storage.mdx#constructors-and-options
 // "`WithSkipHandler(fn)` receives the entries listings leave out"
 func TestDirSkipHandler(t *testing.T) {
 	t.Parallel()

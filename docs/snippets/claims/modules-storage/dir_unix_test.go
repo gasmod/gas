@@ -208,9 +208,9 @@ func TestDirCrossProcessHelper(t *testing.T) {
 	}
 }
 
-// Docs: modules/storage.mdx#conditional-writes
-// "The directory backend checks the condition under the object's lock, so
-// across processes too."
+// Docs: modules/storage.mdx#write-conditions-by-backend
+// "**dir** checks the condition under the object's lock, so across processes
+// too."
 func TestDirConditionAcrossProcesses(t *testing.T) {
 	t.Parallel()
 	p, path := newDirProvider(t, "xproc")

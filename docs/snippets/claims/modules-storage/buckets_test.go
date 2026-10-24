@@ -36,7 +36,7 @@ func TestCreateOwnedBucketSucceeds(t *testing.T) {
 	}
 }
 
-// Docs: modules/storage.mdx#buckets
+// Docs: modules/storage.mdx#buckets-by-backend
 // "For a bucket you already own it succeeds, and the returned `Bucket` may hold
 // only the name."
 // Run outside us-east-1, where S3 answers BucketAlreadyOwnedByYou.
@@ -54,7 +54,7 @@ func TestCreateOwnedBucketOutsideUSEast1(t *testing.T) {
 	}
 }
 
-// Docs: modules/storage.mdx#buckets
+// Docs: modules/storage.mdx#buckets-by-backend
 // "`storage.ErrBucketExists` means another account owns the name, which only the
 // s3 backend can report."
 func TestBucketExists(t *testing.T) {
@@ -70,11 +70,12 @@ func TestBucketExists(t *testing.T) {
 // "`DeleteBucket(ctx, *DeleteBucketInput)` | `error` | Deletes an empty bucket; a
 // missing one is `ErrBucketNotFound`"
 // Docs: modules/storage.mdx#buckets
+// "Unlike `DeleteObject` of a missing key, which succeeds, deleting a missing
+// bucket is an error, as on S3."
+// Docs: modules/storage.mdx#buckets-by-backend
 // "`DeleteBucket` deletes an empty bucket: one that holds objects is
 // `storage.ErrBucketNotEmpty`, and a missing one `storage.ErrBucketNotFound`.
-// Unlike `DeleteObject` of a missing key, which succeeds, deleting a missing
-// bucket is an error, as on S3. `HeadBucket` of a missing bucket is
-// `storage.ErrBucketNotFound`."
+// `HeadBucket` of a missing bucket is `storage.ErrBucketNotFound`."
 func TestDeleteBucket(t *testing.T) {
 	t.Parallel()
 	for _, b := range backends(t) {
@@ -103,7 +104,7 @@ func TestDeleteBucket(t *testing.T) {
 // Docs: modules/storage.mdx#operations
 // "`HeadBucket(ctx, *HeadBucketInput)` | `*Bucket` | Whether a bucket exists, and
 // what the backend knows about it"
-// Docs: modules/storage.mdx#buckets
+// Docs: modules/storage.mdx#buckets-by-backend
 // "`HeadBucket` | `Name`, `ID` (ARN), `Region` | `Name`, and `CreationDate`
 // unless the bucket's name record is damaged"
 func TestHeadBucketFields(t *testing.T) {
@@ -146,7 +147,7 @@ func TestHeadBucketFields(t *testing.T) {
 	})
 }
 
-// Docs: modules/storage.mdx#buckets
+// Docs: modules/storage.mdx#buckets-by-backend
 // "`CreateBucket` | `Name`, and the ARN as `ID` | `Name`, `CreationDate`"
 // Assumption: a field the table does not list for an operation is empty.
 func TestCreateBucketFields(t *testing.T) {
@@ -180,7 +181,7 @@ func TestCreateBucketFields(t *testing.T) {
 	})
 }
 
-// Docs: modules/storage.mdx#buckets
+// Docs: modules/storage.mdx#buckets-by-backend
 // "`ListBuckets` | `Name`, `CreationDate`, and the ARN and region when S3 sends
 // them | `Name`, `CreationDate`"
 func TestListBucketsFields(t *testing.T) {
@@ -205,7 +206,7 @@ func TestListBucketsFields(t *testing.T) {
 	}
 }
 
-// Docs: modules/storage.mdx#buckets
+// Docs: modules/storage.mdx#buckets-by-backend
 // "On the directory backend, a bucket's `CreationDate` is when `CreateBucket`
 // first ran for it."
 func TestDirCreationDateIsFirstCreate(t *testing.T) {
@@ -235,8 +236,8 @@ func TestDirCreationDateIsFirstCreate(t *testing.T) {
 	}
 }
 
-// Docs: modules/storage.mdx#buckets
-// "On S3, `CreateBucket` creates the bucket in the client's region, and outside
+// Docs: modules/storage.mdx#buckets-by-backend
+// "On S3: ... `CreateBucket` creates the bucket in the client's region, and outside
 // us-east-1 and `aws-global` it sends the location constraint S3 requires there"
 func TestCreateBucketLocationConstraint(t *testing.T) {
 	t.Parallel()
@@ -274,7 +275,7 @@ func TestCreateBucketLocationConstraint(t *testing.T) {
 	})
 }
 
-// Docs: modules/storage.mdx#buckets
+// Docs: modules/storage.mdx#buckets-by-backend
 // "with no configured region it uses the region the AWS SDK resolved."
 func TestCreateBucketSDKResolvedRegion(t *testing.T) {
 	isolateAWSEnv(t)
@@ -291,7 +292,7 @@ func TestCreateBucketSDKResolvedRegion(t *testing.T) {
 	}
 }
 
-// Docs: modules/storage.mdx#buckets
+// Docs: modules/storage.mdx#buckets-by-backend
 // "`HeadBucket` and `DeleteBucket` report any `403` as
 // `storage.ErrAccessDenied`"
 func TestAccessDenied(t *testing.T) {
