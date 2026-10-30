@@ -230,10 +230,10 @@
 //
 // The database dialects, picked by the name the database provider's Driver
 // method reports, are Postgres (`postgres` and `pgx`), MySQL (`mysql`,
-// which needs `parseTime=true` and `multiStatements=true` in the DSN, and
-// MySQL 8.0.13 or later, since the migration that hashes session IDs gives
-// the `metadata` and `user_agent` columns expression defaults) and SQLite
-// (`sqlite` and `sqlite3`). Every event the service logs carries
+// which needs `parseTime=true` in the DSN, as gas/database sets it, and
+// MySQL 8.0.13 or later, since the migration that hashes session IDs
+// gives the `metadata` and `user_agent` columns expression defaults) and
+// SQLite (`sqlite` and `sqlite3`). Every event the service logs carries
 // [ServiceName] under `service`.
 //
 // # Concurrency

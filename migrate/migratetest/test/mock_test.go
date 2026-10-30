@@ -1,223 +1,148 @@
-package test
+package migratetest_test
 
 import (
 	"context"
 	"errors"
 	"io/fs"
-	"reflect"
 	"sync"
 	"testing"
 	"testing/fstest"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/gasmod/gas"
+	"github.com/gasmod/gas/migrate"
 	"github.com/gasmod/gas/migrate/migratetest"
 )
 
-// stubService is a minimal gas.Service to pass to the Register methods.
-type stubService struct{ name string }
+// errBoom is what the tests' functions return.
+var errBoom = errors.New("boom")
 
-func (s *stubService) Name() string                { return s.name }
-func (s *stubService) Init(context.Context) error  { return nil }
-func (s *stubService) Close(context.Context) error { return nil }
+// svc is a gas.Service to register with.
+type svc struct{}
 
-// mockCase drives one MockMigrationManager method: call invokes it, setErr
-// installs an Fn that returns err and records that it ran, and args are the
-// arguments the mock must record. returnsErr is false for Register and
-// RegisterSlice, which have no result.
-type mockCase struct {
-	call       func(m *migratetest.MockMigrationManager) error
-	setErr     func(m *migratetest.MockMigrationManager, err error, ran *bool)
-	method     string
-	args       []any
-	returnsErr bool
+// Name returns `svc`.
+func (svc) Name() string { return "svc" }
+
+// Init does nothing.
+func (svc) Init(context.Context) error { return nil }
+
+// Close does nothing.
+func (svc) Close(context.Context) error { return nil }
+
+// The example in the package documentation's Usage section.
+func TestDoc_Usage(t *testing.T) {
+	t.Parallel()
+
+	m := &migratetest.MockMigrationManager{
+		RunPendingFn: func() error { return errBoom },
+	}
+	err := m.RunPending()
+
+	require.ErrorIs(t, err, errBoom)
+	assert.Equal(t, 1, m.CallCount("RunPending"))
 }
 
-func mockCases() []mockCase {
-	ctx := context.Background()
-	svc := &stubService{name: "svc"}
-	mig := gas.Migration{Version: "001", Up: "CREATE TABLE t (id INT)"}
+// With every field nil, each method succeeds and does nothing, and Name
+// is migrate.ServiceName.
+func TestMock_Defaults(t *testing.T) {
+	t.Parallel()
+
+	m := &migratetest.MockMigrationManager{}
+	ctx := t.Context()
+
+	assert.Equal(t, migrate.ServiceName, m.Name())
+	require.NoError(t, m.Init(ctx))
+	require.NoError(t, m.Close(ctx))
+	m.Register(svc{}, gas.Migration{})
+	m.RegisterSlice(svc{}, nil)
+	require.NoError(t, m.RegisterFS(svc{}, fstest.MapFS{}))
+	require.NoError(t, m.RunPending())
+	require.NoError(t, m.Down(1))
+}
+
+// Each method records its call, with its arguments, the context of Init
+// and Close included, and then calls its field and returns its result.
+func TestMock_RecordsAndDelegates(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	mig := gas.Migration{Version: "001"}
 	migs := []gas.Migration{mig}
 	fsys := fstest.MapFS{}
 
-	return []mockCase{
-		{
-			method:     "Init",
-			returnsErr: true,
-			call:       func(m *migratetest.MockMigrationManager) error { return m.Init(ctx) },
-			setErr: func(m *migratetest.MockMigrationManager, err error, ran *bool) {
-				m.InitFn = func() error {
-					*ran = true
-					return err
-				}
-			},
+	var registered, sliced int
+
+	m := &migratetest.MockMigrationManager{
+		NameFn: func() string { return "custom" },
+		InitFn: func(got context.Context) error {
+			assert.Equal(t, ctx, got)
+
+			return errBoom
 		},
-		{
-			method:     "Close",
-			returnsErr: true,
-			call:       func(m *migratetest.MockMigrationManager) error { return m.Close(ctx) },
-			setErr: func(m *migratetest.MockMigrationManager, err error, ran *bool) {
-				m.CloseFn = func() error {
-					*ran = true
-					return err
-				}
-			},
-		},
-		{
-			method: "Register",
-			args:   []any{svc, mig},
-			call: func(m *migratetest.MockMigrationManager) error {
-				m.Register(svc, mig)
-				return nil
-			},
-			setErr: func(m *migratetest.MockMigrationManager, _ error, ran *bool) {
-				m.RegisterFn = func(gas.Service, gas.Migration) { *ran = true }
-			},
-		},
-		{
-			method: "RegisterSlice",
-			args:   []any{svc, migs},
-			call: func(m *migratetest.MockMigrationManager) error {
-				m.RegisterSlice(svc, migs)
-				return nil
-			},
-			setErr: func(m *migratetest.MockMigrationManager, _ error, ran *bool) {
-				m.RegisterSliceFn = func(gas.Service, []gas.Migration) { *ran = true }
-			},
-		},
-		{
-			method:     "RegisterFS",
-			args:       []any{svc, fsys},
-			returnsErr: true,
-			call:       func(m *migratetest.MockMigrationManager) error { return m.RegisterFS(svc, fsys) },
-			setErr: func(m *migratetest.MockMigrationManager, err error, ran *bool) {
-				m.RegisterFSFn = func(gas.Service, fs.FS) error {
-					*ran = true
-					return err
-				}
-			},
-		},
-		{
-			method:     "RunPending",
-			returnsErr: true,
-			call:       func(m *migratetest.MockMigrationManager) error { return m.RunPending() },
-			setErr: func(m *migratetest.MockMigrationManager, err error, ran *bool) {
-				m.RunPendingFn = func() error {
-					*ran = true
-					return err
-				}
-			},
-		},
-		{
-			method:     "Down",
-			args:       []any{3},
-			returnsErr: true,
-			call:       func(m *migratetest.MockMigrationManager) error { return m.Down(3) },
-			setErr: func(m *migratetest.MockMigrationManager, err error, ran *bool) {
-				m.DownFn = func(int) error {
-					*ran = true
-					return err
-				}
-			},
+		CloseFn:         func(context.Context) error { return errBoom },
+		RegisterFn:      func(gas.Service, gas.Migration) { registered++ },
+		RegisterSliceFn: func(gas.Service, []gas.Migration) { sliced++ },
+		RegisterFSFn:    func(gas.Service, fs.FS) error { return errBoom },
+		RunPendingFn:    func() error { return errBoom },
+		DownFn: func(n int) error {
+			assert.Equal(t, 2, n)
+
+			return errBoom
 		},
 	}
+
+	assert.Equal(t, "custom", m.Name())
+	require.ErrorIs(t, m.Init(ctx), errBoom)
+	require.ErrorIs(t, m.Close(ctx), errBoom)
+	m.Register(svc{}, mig)
+	m.RegisterSlice(svc{}, migs)
+	require.ErrorIs(t, m.RegisterFS(svc{}, fsys), errBoom)
+	require.ErrorIs(t, m.RunPending(), errBoom)
+	require.ErrorIs(t, m.Down(2), errBoom)
+
+	assert.Equal(t, 1, registered)
+	assert.Equal(t, 1, sliced)
+	assert.Equal(t, []migratetest.Call{
+		{Method: "Name"},
+		{Method: "Init", Args: []any{ctx}},
+		{Method: "Close", Args: []any{ctx}},
+		{Method: "Register", Args: []any{svc{}, mig}},
+		{Method: "RegisterSlice", Args: []any{svc{}, migs}},
+		{Method: "RegisterFS", Args: []any{svc{}, fsys}},
+		{Method: "RunPending"},
+		{Method: "Down", Args: []any{2}},
+	}, m.Calls())
 }
 
-func TestMockMigrationManager_Methods(t *testing.T) {
+// Calls returns a copy, CallCount counts one method, and Reset forgets
+// every call; all are safe beside calls from other goroutines.
+func TestMock_Calls(t *testing.T) {
 	t.Parallel()
 
-	for _, tc := range mockCases() {
-		t.Run(tc.method, func(t *testing.T) {
-			t.Parallel()
-
-			m := &migratetest.MockMigrationManager{}
-			if err := tc.call(m); err != nil {
-				t.Errorf("default %s = %v, want nil", tc.method, err)
-			}
-			if len(m.Calls) != 1 || m.Calls[0].Method != tc.method {
-				t.Fatalf("Calls = %+v, want one %s call", m.Calls, tc.method)
-			}
-			if !reflect.DeepEqual(m.Calls[0].Args, tc.args) {
-				t.Errorf("recorded args = %#v, want %#v", m.Calls[0].Args, tc.args)
-			}
-
-			wantErr := errors.New("injected")
-			var ran bool
-			tc.setErr(m, wantErr, &ran)
-			err := tc.call(m)
-			if tc.returnsErr && !errors.Is(err, wantErr) {
-				t.Errorf("%s with Fn = %v, want %v", tc.method, err, wantErr)
-			}
-			if !ran {
-				t.Errorf("%s did not call its Fn", tc.method)
-			}
-			if got := m.CallCount(tc.method); got != 2 {
-				t.Errorf("CallCount(%s) = %d, want 2", tc.method, got)
-			}
-		})
-	}
-}
-
-func TestMockMigrationManager_Name(t *testing.T) {
-	t.Parallel()
-
-	m := &migratetest.MockMigrationManager{}
-	if got := m.Name(); got != "gas/migrate" {
-		t.Errorf("default Name() = %q, want %q", got, "gas/migrate")
-	}
-
-	m.NameFn = func() string { return "custom" }
-	if got := m.Name(); got != "custom" {
-		t.Errorf("Name() with NameFn = %q, want %q", got, "custom")
-	}
-	if got := m.CallCount("Name"); got != 2 {
-		t.Errorf("CallCount(Name) = %d, want 2", got)
-	}
-}
-
-func TestMockMigrationManager_CallCountAndReset(t *testing.T) {
-	t.Parallel()
-
-	m := &migratetest.MockMigrationManager{}
-	_ = m.RunPending()
-	_ = m.RunPending()
-	_ = m.Down(1)
-
-	if got := m.CallCount("RunPending"); got != 2 {
-		t.Errorf("CallCount(RunPending) = %d, want 2", got)
-	}
-	if got := m.CallCount("Down"); got != 1 {
-		t.Errorf("CallCount(Down) = %d, want 1", got)
-	}
-	if got := m.CallCount("Init"); got != 0 {
-		t.Errorf("CallCount(Init) = %d, want 0", got)
-	}
-
-	m.Reset()
-	if len(m.Calls) != 0 || m.CallCount("RunPending") != 0 {
-		t.Errorf("after Reset, Calls = %+v, want none", m.Calls)
-	}
-}
-
-// TestMockMigrationManager_ConcurrentCalls checks, under -race, that the mock
-// records concurrent calls without a data race and loses none.
-func TestMockMigrationManager_ConcurrentCalls(t *testing.T) {
-	t.Parallel()
-
-	const workers, perWorker = 8, 50
 	m := &migratetest.MockMigrationManager{}
 
 	var wg sync.WaitGroup
-	for range workers {
+
+	for range 8 {
 		wg.Go(func() {
-			for range perWorker {
-				_ = m.RunPending()
-				_ = m.CallCount("RunPending")
-			}
+			_ = m.RunPending()
+			_ = m.Calls()
+			_ = m.CallCount("RunPending")
 		})
 	}
+
 	wg.Wait()
 
-	if got := m.CallCount("RunPending"); got != workers*perWorker {
-		t.Errorf("CallCount(RunPending) = %d, want %d", got, workers*perWorker)
-	}
+	calls := m.Calls()
+	require.Len(t, calls, 8)
+
+	calls[0].Method = "changed"
+
+	assert.Equal(t, 8, m.CallCount("RunPending"))
+
+	m.Reset()
+	assert.Empty(t, m.Calls())
+	assert.Zero(t, m.CallCount("RunPending"))
 }

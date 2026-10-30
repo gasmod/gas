@@ -42,14 +42,13 @@
 // directory on a tmpfs.
 //
 // The connection string carries `parseTime=true`, so that the driver
-// scans `DATETIME` into time.Time, as the stores and the migrate module's
-// tracking table need, and `multiStatements=true`, since the migrate
-// module runs a migration file in one ExecContext and the stores' MySQL
-// migrations hold several statements. The driver's `loc` is left at its
-// default, UTC, which is also the container's time zone. The database
-// module accepts no `mysql` driver name in its settings, so the database
-// service gets the driver as a connector, with its driver name set to
-// `mysql`, the name the stores pick their dialect by.
+// scans `DATETIME` into time.Time, as the stores need. It leaves
+// `multiStatements` off, as gas/database does by default: the migrate
+// module sends the statements of a MySQL migration one at a time. The
+// driver's `loc` is left at its default, UTC, which is also the
+// container's time zone. The database service opens the connection
+// string with the dialect `mysql`, which its Driver reports, the name the
+// stores pick their dialect by.
 //
 // # Docker
 //

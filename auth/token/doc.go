@@ -151,8 +151,9 @@
 // Tokens live in the table `__gas_auth_tokens`, on Postgres, MySQL or
 // SQLite, chosen by the name the database provider's Driver method
 // reports: `postgres` or `pgx`, `mysql`, `sqlite` or `sqlite3`. MySQL
-// needs `parseTime=true` and `multiStatements=true` in the DSN. The
-// store's migrations create the table and then drop a redundant index on
+// needs `parseTime=true` in the DSN, which gas/database turns on itself;
+// `multiStatements` is not needed, since gas/migrate sends a MySQL
+// migration's statements one at a time. The store's migrations create the table and then drop a redundant index on
 // the token hash that its first version made; lookups use the hash's
 // unique index. Postgres and SQLite consume a token with one
 // `DELETE ... RETURNING`; MySQL selects and deletes in one transaction,

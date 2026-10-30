@@ -80,10 +80,9 @@ func SetupMySQL(tb testing.TB) *MySQLContainer {
 	myContainer := runMySQL(ctx, tb)
 
 	// parseTime makes the driver scan DATETIME into time.Time, which the
-	// stores and the migrate tracking table need; multiStatements lets a
-	// migration file hold several statements, which migrate runs in one
-	// ExecContext.
-	connStr, err := myContainer.ConnectionString(ctx, "parseTime=true", "multiStatements=true")
+	// stores need. multiStatements stays off: migrate sends a MySQL
+	// migration's statements one at a time.
+	connStr, err := myContainer.ConnectionString(ctx, "parseTime=true")
 	if err != nil {
 		tb.Fatalf(
 			"failed to get connection string: %v (%s)",
@@ -92,8 +91,7 @@ func SetupMySQL(tb testing.TB) *MySQLContainer {
 		)
 	}
 
-	// The service opens the DSN with the mysql dialect, which keeps
-	// multiStatements as the DSN sets it.
+	// The service opens the DSN with the mysql dialect.
 	dbSvc := newDatabaseService(tb, func(s *database.Settings) {
 		s.Dialect = database.DialectMySQL
 		s.DSN = connStr

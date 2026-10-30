@@ -221,7 +221,7 @@ func newDatabaseService(
 func newMigrateService(tb testing.TB, db gas.DatabaseProvider) *migrate.Service {
 	tb.Helper()
 
-	svc, err := migrate.New()(db)
+	svc, err := migrate.New()(db, NewNopLogger())
 	if err != nil {
 		tb.Fatalf("failed to build migrate service: %v", err)
 	}

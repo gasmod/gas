@@ -216,8 +216,9 @@
 // up to a second early, never late.
 // So on MySQL and SQLite a key may expire up to a second before its
 // ExpiresAt. Postgres keeps microseconds. On MySQL the DSN needs
-// `multiStatements=true`, since a migration file holds several
-// statements, and `parseTime=true`.
+// `parseTime=true`, which gas/database turns on itself; `multiStatements`
+// is not needed, since gas/migrate sends a migration file's statements one
+// at a time.
 //
 // # Concurrency
 //

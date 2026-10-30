@@ -40,10 +40,11 @@
 // `20261030150000_drop_api_keys_key_hash_index` drops it, on a new
 // database and on one that ran the first migration alike.
 //
-// On MySQL the DSN needs `multiStatements=true`, since a migration file
-// holds several statements, and `parseTime=true`, since times are scanned
-// into [time.Time]. The MySQL `scopes` column has no default: MySQL
-// refuses a literal default on a TEXT column, and every insert sets it.
+// On MySQL the DSN needs `parseTime=true`, since times are scanned into
+// [time.Time]; gas/database turns it on itself. `multiStatements` is not
+// needed: gas/migrate sends a migration file's statements one at a time.
+// The MySQL `scopes` column has no default: MySQL refuses a literal
+// default on a TEXT column, and every insert sets it.
 //
 // # Columns
 //
