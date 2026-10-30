@@ -1,51 +1,36 @@
 package providers
 
 import (
-	"fmt"
 	"io/fs"
 
 	"github.com/gasmod/gas/config/internal/sysfs"
 )
 
-// FSProvider provides file system operations by wrapping an fs.FS implementation.
-// It is used as a base provider for other file-based configuration providers.
+// FSProvider reads the file behind a file-based provider through an
+// [fs.FS], as described in the package documentation. The zero value reads
+// through [sysfs.SysFS].
 type FSProvider struct {
-	fileFS fs.FS
+	fsys fs.FS
 }
 
-// NewFSProvider creates a new FSProvider with the given fs.FS implementation.
-// If fileFS is nil, it defaults to using sysfs.NewSysFS().
-func NewFSProvider(fileFS fs.FS) *FSProvider {
-	fsOrDefault := fileFS
-	if fileFS == nil {
-		fsOrDefault = sysfs.NewSysFS()
-	}
-
-	return &FSProvider{
-		fileFS: fsOrDefault,
-	}
+// SetFS makes p read through fsys. A nil fsys restores the default,
+// [sysfs.SysFS].
+func (p *FSProvider) SetFS(fsys fs.FS) {
+	p.fsys = fsys
 }
 
-// SetFS sets the underlying fs.FS implementation.
-func (p *FSProvider) SetFS(fileFS fs.FS) {
-	p.fileFS = fileFS
-}
-
-// OpenFile opens the named file using the underlying fs.FS implementation.
-func (p *FSProvider) OpenFile(name string) (fs.File, error) {
-	f, err := p.fileFS.Open(name)
-	if err != nil {
-		return nil, fmt.Errorf("open file %s: %w", name, err)
-	}
-
-	return f, nil
-}
-
-// ReadFile reads the named file using the underlying fs.FS implementation.
+// ReadFile reads the named file whole. On an error it returns nil data and
+// the file system's error as it is.
 func (p *FSProvider) ReadFile(name string) ([]byte, error) {
-	data, err := fs.ReadFile(p.fileFS, name)
+	fsys := p.fsys
+	if fsys == nil {
+		fsys = sysfs.SysFS{}
+	}
+
+	data, err := fs.ReadFile(fsys, name)
 	if err != nil {
-		return nil, fmt.Errorf("read file %s: %w", name, err)
+		//nolint:wrapcheck // The provider wraps it with its sentinel and the file name.
+		return nil, err
 	}
 
 	return data, nil

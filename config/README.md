@@ -2,7 +2,8 @@
 
 [![Test](https://github.com/gasmod/gas/actions/workflows/test.yml/badge.svg)](https://github.com/gasmod/gas/actions/workflows/test.yml) [![Go Reference](https://pkg.go.dev/badge/github.com/gasmod/gas/config.svg)](https://pkg.go.dev/github.com/gasmod/gas/config) ![Go Version](https://img.shields.io/github/go-mod/go-version/gasmod/gas?filename=config/go.mod) [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Part of the [Gas](../README.md) monorepo · [Documentation](https://gasmod.github.io/gas) · [All modules](../README.md#modules)
+Part of the [Gas](../README.md)
+monorepo · [Documentation](https://gasmod.github.io/gas) · [All modules](../README.md#modules)
 
 Configuration for the [Gas](../README.md) framework. Loads from environment variables, JSON,
 `.env` files, and AWS Secrets Manager, and binds the result to Go structs with validation.
@@ -14,7 +15,7 @@ go get github.com/gasmod/gas/config
 ```
 
 ```go
-cfg := config.New(config.WithProvider(providers.NewEnvProvider()))
+cfg := config.New(config.WithProvider(config.NewEnvProvider()))
 if err := cfg.Load(); err != nil { log.Fatal(err) }
 
 gas.WithServiceInstance[gas.ConfigProvider](cfg),
@@ -23,12 +24,11 @@ gas.WithServiceInstance[gas.ConfigProvider](cfg),
 Nothing. Config is built and loaded before the app, so a bad configuration fails before
 anything else starts.
 
-| Package | Provides |
-|---|---|
-| `config/providers` | Environment, JSON, and `.env` providers |
-| `config/providers/secretsmanager` | AWS Secrets Manager |
-| `config/extensions/gasenv` | Environment detection: development, staging, production |
-| `config/configtest` | Mock and a real-backed fake seeded with known values |
+| Package                 | Provides                                                                         |
+|-------------------------|----------------------------------------------------------------------------------|
+| `config`                | Config; environment, JSON, and `.env` providers; environment detection extension |
+| `config/secretsmanager` | AWS Secrets Manager                                                              |
+| `config/configtest`     | Mock and a real-backed fake seeded with known values                             |
 
 ## Documentation
 

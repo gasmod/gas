@@ -6,77 +6,68 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/go-playground/validator/v10"
 
-	"github.com/gasmod/gas"
-	"github.com/gasmod/gas/config/internal/maputils"
+	"github.com/gasmod/gas/config/internal/maputil"
 	"github.com/gasmod/gas/config/internal/reflection"
-	"github.com/gasmod/gas/config/providers"
 )
 
 var (
-	// ErrProviderLoadFailed indicates failure to load configuration from a provider.
+	// ErrProviderLoadFailed indicates that a provider failed to load, or
+	// returned keys that conflict.
 	ErrProviderLoadFailed = errors.New("failed to load from provider")
 
-	// ErrExtensionPreLoadHookFailed indicates a failure while executing the pre-load hook of an extension.
+	// ErrExtensionPreLoadHookFailed indicates that an extension's PreLoad
+	// failed.
 	ErrExtensionPreLoadHookFailed = errors.New("failed to execute extension pre-load hook")
 
-	// ErrExtensionPostLoadHookFailed indicates a failure when executing the post-load hook of an extension.
+	// ErrExtensionPostLoadHookFailed indicates that an extension's PostLoad
+	// failed.
 	ErrExtensionPostLoadHookFailed = errors.New("failed to execute extension post-load hook")
 
-	// ErrNilValues is returned when a nil value is provided where non-nil input is required.
+	// ErrNilValues indicates that SetDefaults got an untyped nil or a nil
+	// pointer to a map.
 	ErrNilValues = errors.New("values cannot be nil")
+
+	// ErrInvalidKey indicates a key passed to Set or SetDefault that is
+	// empty or has an empty level, such as `a..b`.
+	ErrInvalidKey = errors.New("invalid key")
+
+	// ErrKeyPathBlocked indicates that Set cannot reach a key because a
+	// level on its path holds a value that is not a map.
+	ErrKeyPathBlocked = errors.New("a level of the key holds a value that is not a map")
+
+	// ErrKeyConflict indicates two keys of one map that become the same key
+	// once they are trimmed and lowercased, in a provider's values or in a
+	// value passed to Set, SetDefault or SetDefaults.
+	ErrKeyConflict = maputil.ErrKeyConflict
 )
 
-// Config represents the configuration loaded from various providers.
+// Config holds the configuration that its providers load, as described in
+// the package documentation. It is safe for concurrent use.
 type Config struct {
-	validate   *validator.Validate
+	validate   Validator
 	values     map[string]any
-	providers  []providers.Provider
+	providers  []Provider
 	extensions []Extension
 	mu         sync.RWMutex
-	closed     atomic.Bool
+	// loadMu orders loads: a load holds it from taking the providers until
+	// their values are merged, so a provider that LoadProvider adds during a
+	// load is merged after the ones it follows, never before. Readers and
+	// writers take only mu, so a load's provider I/O does not block them.
+	loadMu sync.Mutex
 }
 
-// Option configures the config service constructor.
-type Option func(*Config)
-
-// WithProvider adds a configuration provider (env, JSON, .env, etc.).
-func WithProvider(p providers.Provider) Option {
-	return func(c *Config) {
-		c.providers = append(c.providers, p)
-	}
-}
-
-// WithExtension registers an extension that provides pre/post-Load hooks.
-func WithExtension(ext Extension) Option {
-	return func(c *Config) {
-		c.extensions = append(c.extensions, ext)
-	}
-}
-
-// WithValidator sets a custom validator instance, allowing callers to register
-// custom validation tags before constructing the Config. If not provided, a new
-// validator.New() instance is used.
-func WithValidator(v *validator.Validate) Option {
-	return func(c *Config) {
-		if v != nil {
-			c.validate = v
-		}
-	}
-}
-
-// New creates and returns a new Config instance, applying the provided functional options.
-// If no providers are specified, an EnvProvider is added as the default.
+// New returns a Config configured by opts, holding no values until it is
+// loaded. Without a provider, it has an EnvProvider with the default
+// separator and no prefix.
 func New(opts ...Option) *Config {
 	c := &Config{
 		values:     make(map[string]any),
-		providers:  make([]providers.Provider, 0),
+		providers:  make([]Provider, 0),
 		extensions: make([]Extension, 0),
 		validate:   validator.New(),
-		closed:     atomic.Bool{},
 	}
 
 	for _, opt := range opts {
@@ -84,104 +75,131 @@ func New(opts ...Option) *Config {
 	}
 
 	if len(c.providers) == 0 {
-		c.providers = append(c.providers, providers.NewEnvProvider())
+		c.providers = append(c.providers, NewEnvProvider())
 	}
 
 	return c
 }
 
-// SetDefault sets a default value for the specified key in the configuration.
-// It creates nested maps if they do not exist, but does not override existing values.
-func (c *Config) SetDefault(key string, value any) {
-	if key == "" {
-		return
+// SetDefault stores a normalized copy of value at key unless the key holds
+// a value, or a level on its path holds a value that is not a map. A key
+// that is empty or has an empty level returns an error wrapping
+// ErrInvalidKey, and a map in value with two keys that become the same an
+// error wrapping ErrKeyConflict.
+func (c *Config) SetDefault(key string, value any) error {
+	pathParts, finalKey, err := parseKey(key)
+	if err != nil {
+		return err
 	}
 
-	pathParts, finalKey := keyToPathParts(key)
+	value, err = maputil.NormalizeValue(value)
+	if err != nil {
+		return fmt.Errorf("set default %q: %w", key, err)
+	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	finalMap := maputils.FindNestedMap(c.values, pathParts, true)
+	finalMap := maputil.FindNestedMap(c.values, pathParts, true)
 	if finalMap != nil {
-		// Only set the value if the key doesn't already exist
 		if _, exists := finalMap[finalKey]; !exists {
 			finalMap[finalKey] = value
 		}
 	}
+
+	return nil
 }
 
-// SetDefaults sets default configuration values from a struct or map without overriding existing values.
-// Returns an error if the input is invalid or nil.
+// SetDefaults adds the keys of a map[string]any, or the fields of a struct,
+// that the configuration does not hold.
 func (c *Config) SetDefaults(values any) error {
 	if values == nil {
 		return ErrNilValues
 	}
 
+	var raw map[string]any
+
+	switch val := values.(type) {
+	case map[string]any:
+		raw = val
+	case *map[string]any:
+		if val == nil {
+			return ErrNilValues
+		}
+
+		raw = *val
+	default:
+		raw = make(map[string]any)
+
+		err := maputil.Unbind(values, raw)
+		if err != nil {
+			return fmt.Errorf("unbind defaults: %w", err)
+		}
+	}
+
+	defaults, err := maputil.NormalizeKeys(raw)
+	if err != nil {
+		return fmt.Errorf("set defaults: %w", err)
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if val, ok := values.(map[string]any); ok {
-		maputils.MergeWithoutOverride(c.values, maputils.NormalizeKeys(val))
-
-		return nil
-	}
-
-	if val, ok := values.(*map[string]any); ok {
-		maputils.MergeWithoutOverride(c.values, maputils.NormalizeKeys(*val))
-
-		return nil
-	}
-
-	tempValues := make(map[string]any)
-	if err := maputils.Unbind(values, tempValues); err != nil {
-		return fmt.Errorf("unbind defaults: %w", err)
-	}
-
-	maputils.MergeWithoutOverride(c.values, maputils.NormalizeKeys(tempValues))
+	maputil.MergeWithoutOverride(c.values, defaults)
 
 	return nil
 }
 
-// Set sets a value for the specified key in the configuration, overriding any existing value.
-// It creates nested maps if they do not exist.
-func (c *Config) Set(key string, value any) {
-	if key == "" {
-		return
+// Set stores a normalized copy of value at key, replacing what the key
+// holds. A key that is empty or has an empty level returns an error
+// wrapping ErrInvalidKey, a level on the path that holds a value that is
+// not a map an error wrapping ErrKeyPathBlocked, and a map in value with
+// two keys that become the same an error wrapping ErrKeyConflict. On an
+// error the configuration is unchanged.
+func (c *Config) Set(key string, value any) error {
+	pathParts, finalKey, err := parseKey(key)
+	if err != nil {
+		return err
 	}
 
-	pathParts, finalKey := keyToPathParts(key)
+	value, err = maputil.NormalizeValue(value)
+	if err != nil {
+		return fmt.Errorf("set %q: %w", key, err)
+	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	finalMap := maputils.FindNestedMap(c.values, pathParts, true)
-	if finalMap != nil {
-		finalMap[finalKey] = value
+	// FindNestedMap adds a missing map only below the last level that
+	// exists, where nothing can block the path, so a blocked Set adds
+	// nothing.
+	finalMap := maputil.FindNestedMap(c.values, pathParts, true)
+	if finalMap == nil {
+		return fmt.Errorf("set %q: %w", key, ErrKeyPathBlocked)
 	}
+
+	finalMap[finalKey] = value
+
+	return nil
 }
 
-// Load loads configuration from all registered providers and applies pre/post-Load hooks
-// defined by extensions.
-//
-// Returns an error if any provider or extension hook fails during the loading process.
+// Load is LoadWithContext with context.Background().
 func (c *Config) Load() error {
 	return c.LoadWithContext(context.Background())
 }
 
-// LoadProvider registers the provider and loads its values into the configuration,
-// merging them over any values already present. Like the providers passed to New,
-// a provider registered here overrides the keys it defines and leaves the rest
-// alone, so registering the same name twice is allowed and the later values win.
-//
-// Returns an error if loading fails.
-func (c *Config) LoadProvider(p providers.Provider) error {
+// LoadProvider is LoadProviderContext with context.Background().
+func (c *Config) LoadProvider(p Provider) error {
 	return c.LoadProviderContext(context.Background(), p)
 }
 
-// LoadProviderContext behaves like LoadProvider, using the provided context when the provider
-// implements providers.ContextProvider.
-func (c *Config) LoadProviderContext(ctx context.Context, p providers.Provider) error {
+// LoadProviderContext loads p, merges its values over the configuration,
+// and adds it to the providers that later loads load. A failed load adds
+// nothing. Extensions do not run.
+func (c *Config) LoadProviderContext(ctx context.Context, p Provider) error {
+	c.loadMu.Lock()
+	defer c.loadMu.Unlock()
+
 	values, err := loadValues(ctx, p)
 	if err != nil {
 		return err
@@ -194,19 +212,23 @@ func (c *Config) LoadProviderContext(ctx context.Context, p providers.Provider) 
 	// load leaves nothing behind and the caller is free to retry.
 	c.providers = append(c.providers, p)
 
-	// Merge values, later providers override
-	maputils.Merge(c.values, maputils.NormalizeKeys(values))
+	maputil.Merge(c.values, values)
 
 	return nil
 }
 
 // loadValues invokes the provider, preferring context-aware loading when it is
-// supported, and wraps any failure with ErrProviderLoadFailed.
-func loadValues(ctx context.Context, p providers.Provider) (values map[string]any, err error) {
-	if cp, ok := p.(providers.ContextProvider); ok {
+// supported, normalizes the keys of its values, and wraps any failure with
+// ErrProviderLoadFailed.
+func loadValues(ctx context.Context, p Provider) (values map[string]any, err error) {
+	if cp, ok := p.(ContextProvider); ok {
 		values, err = cp.LoadContext(ctx)
 	} else {
 		values, err = p.Load()
+	}
+
+	if err == nil {
+		values, err = maputil.NormalizeKeys(values)
 	}
 
 	if err != nil {
@@ -216,42 +238,25 @@ func loadValues(ctx context.Context, p providers.Provider) (values map[string]an
 	return values, nil
 }
 
-// LoadWithContext loads configuration with the provided context, executing pre-Load and post-Load
-// hooks for extensions.
+// LoadWithContext runs each extension's PreLoad, loads every provider under
+// ctx, merges their values over the configuration in order, and runs each
+// extension's PostLoad. The first error stops it.
 func (c *Config) LoadWithContext(ctx context.Context) error {
 	for _, ext := range c.extensions {
-		if err := ext.PreLoad(ctx, c); err != nil {
+		err := ext.PreLoad(ctx, c)
+		if err != nil {
 			return fmt.Errorf("%w %s: %w", ErrExtensionPreLoadHookFailed, ext.Name(), err)
 		}
 	}
 
-	c.mu.RLock()
-	registered := make([]providers.Provider, len(c.providers))
-	copy(registered, c.providers)
-	c.mu.RUnlock()
-
-	// Every provider is loaded before anything is merged, so a reader never
-	// observes a config where an earlier provider has landed but a later one
-	// that overrides it has not, and provider I/O never runs under the lock.
-	loaded := make([]map[string]any, 0, len(registered))
-	for _, p := range registered {
-		values, err := loadValues(ctx, p)
-		if err != nil {
-			return err
-		}
-
-		loaded = append(loaded, values)
+	err := c.loadProviders(ctx)
+	if err != nil {
+		return err
 	}
-
-	c.mu.Lock()
-	for _, values := range loaded {
-		// Merge values, later providers override
-		maputils.Merge(c.values, maputils.NormalizeKeys(values))
-	}
-	c.mu.Unlock()
 
 	for _, ext := range c.extensions {
-		if err := ext.PostLoad(ctx, c); err != nil {
+		err := ext.PostLoad(ctx, c)
+		if err != nil {
 			return fmt.Errorf("%w %s: %w", ErrExtensionPostLoadHookFailed, ext.Name(), err)
 		}
 	}
@@ -259,45 +264,38 @@ func (c *Config) LoadWithContext(ctx context.Context) error {
 	return nil
 }
 
-// Bind binds the configuration to the provided struct.
-func (c *Config) Bind(dest any, options ...BindOption) error {
-	opts := BindOptions{
-		Validate: true,
-	}
-
-	for _, opt := range options {
-		opt(&opts)
-	}
-
+// Bind fills the struct dest points to from the configuration, then
+// validates it.
+func (c *Config) Bind(dest any) error {
 	c.mu.RLock()
-	err := maputils.Bind(c.values, dest)
+
+	err := maputil.Bind(c.values, dest)
 	c.mu.RUnlock()
 
 	if err != nil {
 		return fmt.Errorf("bind config: %w", err)
 	}
 
-	if opts.Validate {
-		if vErr := c.validate.Struct(dest); vErr != nil {
-			return fmt.Errorf("validate config: %w", vErr)
-		}
+	vErr := c.validate.StructCtx(context.Background(), dest)
+	if vErr != nil {
+		return fmt.Errorf("validate config: %w", vErr)
 	}
 
 	return nil
 }
 
-// Get retrieves a configuration value by key. Supports hierarchical paths like "database.host".
+// Get returns a copy of the value at key, or nil when the key holds none.
+// A key that is empty or has an empty level holds none.
 func (c *Config) Get(key string) any {
-	if key == "" {
+	pathParts, finalKey, err := parseKey(key)
+	if err != nil {
 		return nil
 	}
-
-	pathParts, finalKey := keyToPathParts(key)
 
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	finalMap := maputils.FindNestedMap(c.values, pathParts, false)
+	finalMap := maputil.FindNestedMap(c.values, pathParts, false)
 	if finalMap != nil {
 		return reflection.Clone(finalMap[finalKey])
 	}
@@ -305,21 +303,21 @@ func (c *Config) Get(key string) any {
 	return nil
 }
 
-// Find searches for and retrieves a configuration value by key.
-// Supports hierarchical paths like "database.host".
+// Find returns a copy of the value at key, and whether the key holds one.
+// A key that is empty or has an empty level holds none.
 func (c *Config) Find(key string) (value any, exist bool) {
-	if key == "" {
+	pathParts, finalKey, err := parseKey(key)
+	if err != nil {
 		return value, exist
 	}
-
-	pathParts, finalKey := keyToPathParts(key)
 
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	finalMap := maputils.FindNestedMap(c.values, pathParts, false)
+	finalMap := maputil.FindNestedMap(c.values, pathParts, false)
 	if finalMap != nil {
 		var found any
+
 		if found, exist = finalMap[finalKey]; exist {
 			value = reflection.Clone(found)
 
@@ -330,7 +328,7 @@ func (c *Config) Find(key string) (value any, exist bool) {
 	return value, exist
 }
 
-// Values returns the configuration values.
+// Values returns a copy of the whole configuration.
 func (c *Config) Values() map[string]any {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -338,26 +336,60 @@ func (c *Config) Values() map[string]any {
 	return reflection.Clone(c.values)
 }
 
-func keyToPathParts(key string) (pathParts []string, finalKey string) {
-	parts := strings.Split(strings.ToLower(key), ".")
+// parseKey splits a key on dots into its levels, each trimmed and
+// lowercased as provider keys are: the path to the map that holds the last
+// level, and the last level. A key that is empty, or has a level that is
+// empty once trimmed, returns an error wrapping ErrInvalidKey.
+func parseKey(key string) (pathParts []string, finalKey string, err error) {
+	parts := strings.Split(key, ".")
 	for i := range parts {
-		parts[i] = strings.TrimSpace(parts[i])
+		parts[i] = strings.ToLower(strings.TrimSpace(parts[i]))
+		if parts[i] == "" {
+			return nil, "", fmt.Errorf("%w %q: a level is empty", ErrInvalidKey, key)
+		}
 	}
 
-	return parts[:len(parts)-1], parts[len(parts)-1]
+	return parts[:len(parts)-1], parts[len(parts)-1], nil
 }
 
-// BindOptions holds the settings for one Bind call. It is gas.BindOptions, so
-// *Config satisfies gas.ConfigProvider.
-type BindOptions = gas.BindOptions
+// loadProviders loads every registered provider and merges their values in
+// order. It holds loadMu throughout, but not across the extensions' hooks,
+// which may call LoadProvider.
+func (c *Config) loadProviders(ctx context.Context) error {
+	c.loadMu.Lock()
+	defer c.loadMu.Unlock()
 
-// BindOption changes the BindOptions of one Bind call. It is gas.BindOption.
-type BindOption = gas.BindOption
+	c.mu.RLock()
 
-// WithValidate turns struct-tag validation after binding on or off. It is on
-// by default.
-func WithValidate(validate bool) BindOption {
-	return func(o *BindOptions) {
-		o.Validate = validate
+	registered := make([]Provider, len(c.providers))
+	copy(registered, c.providers)
+	c.mu.RUnlock()
+
+	// Every provider is loaded before anything is merged, so a reader never
+	// observes a config where an earlier provider has landed but a later one
+	// that overrides it has not, and provider I/O never runs under mu.
+	loaded := make([]map[string]any, 0, len(registered))
+	for _, p := range registered {
+		values, err := loadValues(ctx, p)
+		if err != nil {
+			return err
+		}
+
+		loaded = append(loaded, values)
+	}
+
+	c.mergeAll(loaded)
+
+	return nil
+}
+
+// mergeAll merges each of loaded into the values in order, later ones
+// overriding, under one hold of the lock.
+func (c *Config) mergeAll(loaded []map[string]any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for _, values := range loaded {
+		maputil.Merge(c.values, values)
 	}
 }
