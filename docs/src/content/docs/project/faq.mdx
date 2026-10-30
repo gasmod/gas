@@ -104,7 +104,7 @@ that takes the interface then gets yours:
 
 The same works for any provider interface in core: `gas.CacheProvider`,
 `gas.DatabaseProvider`, `gas.JobQueueProvider`, `gas.EmailProvider`,
-`gas.TemplateProvider`, `gas.UIProvider`, `gas.ConfigProvider`, `gas.Logger`,
+`gas.TemplateProvider`, `ui.Provider`, `gas.ConfigProvider`, `gas.Logger`,
 and the rest. In tests, the modules' mock packages (`queuetest`, `uitest`, and
 so on) implement the same interfaces, so a test registers a mock the same
 way. See [Testing](/gas/production/testing/).

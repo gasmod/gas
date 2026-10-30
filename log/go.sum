@@ -1,9 +1,7 @@
 github.com/gabriel-vasile/mimetype v1.4.16 h1:5izNFuvA37st1dDRAcA7TtmngBmRgiIPDmTtiEvjx1E=
 github.com/gabriel-vasile/mimetype v1.4.16/go.mod h1:3oFFwxX8kTklZwzIl2aQEDZT0lKY8xH92ST88bAwba4=
-github.com/gasmod/gas v0.5.2 h1:hnbVrHAa9Pcs3XCfIeBRkKhZ08ypI51gOmvaMESvDS4=
-github.com/gasmod/gas v0.5.2/go.mod h1:efuY+7SNrCI2Sx4+qPqco/ljdpjVmIQKmjhHmSRBT2g=
-github.com/gasmod/gas/config v0.5.2 h1:16dMMmTHtbxA6kUOiClP3wrFhn0xwTSrpXXlxSgPJJc=
-github.com/gasmod/gas/config v0.5.2/go.mod h1:VUE6I0d1fY4vi5OTtkugpF8ih5AiuVdOWX3bLB+s5gY=
+github.com/gasmod/gas v0.5.6 h1:ASwxshEbMwZOoXxVF/U4QfliZstQKLRkN6Y6jGTL9s8=
+github.com/gasmod/gas v0.5.6/go.mod h1:9i577ydQSV5i805q/VlSn7nQrEXRceFa0kUXYi3HH1E=
 github.com/go-chi/chi/v5 v5.5.0 h1:xdKQ1dJmVJsmgahrXSKhUx8NyVPzpwdlyrrQFpMPJgg=
 github.com/go-chi/chi/v5 v5.5.0/go.mod h1:d1IG7GtKPSjPyBP365PH8sAGVHk3qfB/IhjFNRH1wWM=
 github.com/go-playground/assert/v2 v2.2.0 h1:JvknZsQTYeFEAhQwI4qEt9cyV5ONwRHC+lYKSsYSR8s=

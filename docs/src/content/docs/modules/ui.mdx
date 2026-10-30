@@ -17,16 +17,15 @@ import { region } from '../../../lib/snippet';
 `gas/ui` renders HTML pages with Go's `html/template` and serves static files.
 It reads template source through `gas.TemplateProvider`, so where templates
 live is the business of [gas/template](/gas/modules/templates/), and it
-implements `gas.UIProvider`, the core interface the app's services render
-through. A service that renders pages takes `gas.UIProvider` and never imports
+implements `ui.Provider`, the core interface the app's services render
+through. A service that renders pages takes `ui.Provider` and never imports
 this module.
 
 It gives you:
 
 - a page convention with layouts and partials, compiled on first render and
   cached, or recompiled on every render in development;
-- `Render`, `RenderWithStatus`, and `RenderFragment`, which skips the layout
-  for HTMX swaps;
+- `Render` and `RenderFragment`, which skips the layout for HTMX swaps;
 - built-in template functions, plus functions any service can add;
 - a static file route, from a directory or an `fs.FS` such as an `embed.FS`.
 
@@ -49,7 +48,7 @@ go get github.com/gasmod/gas/ui github.com/gasmod/gas/template
 `gas.ConfigProvider`, and `gas.Logger` from the container. `T` is the type the
 template store is registered under, so `ui.New[gas.TemplateProvider]()` takes
 whatever store the app registered for that interface. Register the result under
-`gas.UIProvider` so consumers depend on the interface. The constructor never
+`ui.Provider` so consumers depend on the interface. The constructor never
 fails; its error result is always nil.
 
 To serve static files from an `embed.FS`, pass `ui.WithStaticFS(fsys)`. See
@@ -78,9 +77,8 @@ three kinds by its name:
 - Names under `layouts/` and `partials/` are parsed into every page.
 - Every other template is a page, rendered by its name without the `.html`
   extension: `home.html` is `"home"`, `notes/list.html` is `"notes/list"`.
-- When at least one layout exists, `Render` and `RenderWithStatus` render
-  every page through the template that `ui.layoutname` names, `base` by
-  default. A page fills the layout's
+- When at least one layout exists, `Render` render every page through the
+  template that `ui.layoutname` names, `base` by default. A page fills the layout's
   blocks with `{{define}}`. With no layouts at all, a page renders on its own.
 
 <Code code={baseLayout} lang="html" title="templates/layouts/base.html" />
@@ -95,10 +93,9 @@ define `content` without clashing.
 <Code code={region(uiSrc, 'pages')} lang="go" title="pages.go" />
 
 - `Render(w, name, data)` writes the page with status 200.
-- `RenderWithStatus(w, status, name, data)` writes it with `status`.
-- Both execute the template into a buffer first. A template error is returned
+- Executes the template into a buffer first. A template error is returned
   and nothing is written, so a failed render never sends half a page. On
-  success they set `Content-Type: text/html; charset=utf-8`.
+  success it set `Content-Type: text/html; charset=utf-8`.
 - An unknown name returns `ui: template "<name>" not found`.
 
 In development and testing, every render recompiles the templates, so edits
@@ -179,8 +176,8 @@ See [Static file serving](#static-file-serving) for how the prefix is stripped.
 
 ## Testing
 
-`uitest.MockUI` implements `gas.UIProvider`. Each method records the call in
-`Calls` and delegates to `RenderFn`, `RenderFragmentFn`, `RenderWithStatusFn`,
+`uitest.MockUI` implements `ui.Provider`. Each method records the call in
+`Calls` and delegates to `RenderFn`, `RenderFragmentFn`,
 or `RegisterFuncsFn` when set. Unset, a method returns nil and writes nothing to
 the `ResponseWriter`. `CallCount(method)` counts the calls to one method, and
 `Reset` clears them.
@@ -228,8 +225,8 @@ The package defines no sentinel errors. Errors from the service start with
 |---|---|---|
 | `gas/ui: config binding: ...` | Startup | The config cannot be bound |
 | `gas/ui: invalid configuration: ...` | Startup | A rule in [Configuration](#configuration) fails |
-| `gas/ui: service is closed` | `Render`, `RenderWithStatus`, `RenderFragment` | After `Close`; the method also writes a 503 response |
-| `gas/ui: no template engine configured` | `Render`, `RenderWithStatus`, `RenderFragment` | Before the service has started; nothing is written |
+| `gas/ui: service is closed` | `Render`, `RenderFragment` | After `Close`; the method also writes a 503 response |
+| `gas/ui: no template engine configured` | `Render`, `RenderFragment` | Before the service has started; nothing is written |
 | `ui: listing templates: ...`, `ui: loading template ...`, `ui: parsing layout ...`, `ui: parsing partial ...`, `ui: parsing page ...` | The render that compiles | The provider or a template fails |
 | `ui: template "<name>" not found` | The render methods | No page has that name |
 | `ui: executing template ...`, `ui: executing fragment ...` | The render methods | Template execution fails; nothing is written |
@@ -273,7 +270,7 @@ are not served in the meantime
 `RegisterFuncs` merges the functions into the engine and marks the templates
 for recompiling on the next render. A name that already exists is replaced,
 with a warning in the log. Called before the ui service has started, it logs a
-warning and drops the functions; a service that takes `gas.UIProvider` as a
+warning and drops the functions; a service that takes `ui.Provider` as a
 dependency always starts after it.
 
 ### Static file serving
@@ -309,4 +306,4 @@ return an error. The static route keeps serving.
 
 - [`github.com/gasmod/gas/ui`](https://pkg.go.dev/github.com/gasmod/gas/ui)
 - [`github.com/gasmod/gas/ui/uitest`](https://pkg.go.dev/github.com/gasmod/gas/ui/uitest)
-- [`gas.UIProvider`](https://pkg.go.dev/github.com/gasmod/gas#UIProvider), in core
+- [`ui.Provider`](https://pkg.go.dev/github.com/gasmod/gas#UIProvider), in core

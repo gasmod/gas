@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/gasmod/gas"
-	cache "github.com/gasmod/gas/cache"
+	"github.com/gasmod/gas/cache"
 )
 
 const serviceName = "gas/cache/memory"
@@ -31,11 +31,6 @@ type Service struct {
 
 	cfgProvider gas.ConfigProvider
 	cancel      context.CancelFunc
-
-	// testHookBeforeLock, when set by a test, runs in each cache
-	// operation before it takes mu, so a test can close the service in
-	// that window.
-	testHookBeforeLock func()
 
 	// mu guards items. A nil items map means the service is not open:
 	// it was never started, or it was closed. Every cache operation
@@ -122,8 +117,6 @@ func (s *Service) Close(context.Context) error {
 // the key does not exist or has expired. It returns cache.ErrClosed if
 // the service was never started or has been closed.
 func (s *Service) Get(_ context.Context, key string) ([]byte, error) {
-	s.runTestHookBeforeLock()
-
 	s.mu.RLock()
 	if s.items == nil {
 		s.mu.RUnlock()
@@ -155,8 +148,6 @@ func (s *Service) Get(_ context.Context, key string) ([]byte, error) {
 // returns cache.ErrClosed if the service was never started or has been
 // closed.
 func (s *Service) Set(_ context.Context, key string, value []byte, ttl time.Duration) error {
-	s.runTestHookBeforeLock()
-
 	if ttl == 0 {
 		ttl = s.cfg.Cache.DefaultTTL
 	}
@@ -190,8 +181,6 @@ func (s *Service) Set(_ context.Context, key string, value []byte, ttl time.Dura
 // Delete removes a key from the cache. It returns cache.ErrClosed if the
 // service was never started or has been closed.
 func (s *Service) Delete(_ context.Context, key string) error {
-	s.runTestHookBeforeLock()
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -205,8 +194,6 @@ func (s *Service) Delete(_ context.Context, key string) error {
 // Exists checks whether a key exists and has not expired. It returns
 // cache.ErrClosed if the service was never started or has been closed.
 func (s *Service) Exists(_ context.Context, key string) (bool, error) {
-	s.runTestHookBeforeLock()
-
 	s.mu.RLock()
 	if s.items == nil {
 		s.mu.RUnlock()
@@ -219,13 +206,6 @@ func (s *Service) Exists(_ context.Context, key string) (bool, error) {
 		return false, nil
 	}
 	return true, nil
-}
-
-// runTestHookBeforeLock runs testHookBeforeLock if a test has set it.
-func (s *Service) runTestHookBeforeLock() {
-	if s.testHookBeforeLock != nil {
-		s.testHookBeforeLock()
-	}
 }
 
 // cleanup periodically removes expired entries.

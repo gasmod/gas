@@ -24,11 +24,6 @@ type Service struct {
 
 	cfgProvider gas.ConfigProvider
 
-	// testHookBeforeCall, when set by a test, runs in each cache
-	// operation after its open check and before it uses the client, so a
-	// test can close the service in that window.
-	testHookBeforeCall func()
-
 	// client holds the current Valkey client. It is nil until Init first
 	// connects, and Close keeps it so Client still returns it. Init and
 	// Close swap and read it while operations run, so it is atomic.
@@ -216,8 +211,6 @@ func (s *Service) Get(ctx context.Context, key string) ([]byte, error) {
 		return nil, err
 	}
 
-	s.runTestHookBeforeCall()
-
 	resp := ref.c.Do(ctx, ref.c.B().Get().Key(key).Build())
 	if err = resp.Error(); err != nil {
 		if valkey.IsValkeyNil(err) {
@@ -245,8 +238,6 @@ func (s *Service) Set(ctx context.Context, key string, value []byte, ttl time.Du
 		return err
 	}
 
-	s.runTestHookBeforeCall()
-
 	var cmd valkey.Completed
 	if ttl > 0 {
 		cmd = ref.c.B().Set().Key(key).Value(string(value)).Px(ttl).Build()
@@ -271,8 +262,6 @@ func (s *Service) Delete(ctx context.Context, key string) error {
 		return err
 	}
 
-	s.runTestHookBeforeCall()
-
 	if err = ref.c.Do(ctx, ref.c.B().Del().Key(key).Build()).Error(); err != nil {
 		if s.closedDuring(ref) {
 			return cache.ErrClosed
@@ -290,8 +279,6 @@ func (s *Service) Exists(ctx context.Context, key string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-
-	s.runTestHookBeforeCall()
 
 	n, err := ref.c.Do(ctx, ref.c.B().Exists().Key(key).Build()).AsInt64()
 	if err != nil {
@@ -321,8 +308,6 @@ func (s *Service) CheckReady(ctx context.Context) error {
 		return err
 	}
 
-	s.runTestHookBeforeCall()
-
 	if err = ref.c.Do(ctx, ref.c.B().Ping().Build()).Error(); err != nil {
 		if s.closedDuring(ref) {
 			return cache.ErrClosed
@@ -330,13 +315,6 @@ func (s *Service) CheckReady(ctx context.Context) error {
 		return fmt.Errorf("%s: ping: %w", s.Name(), err)
 	}
 	return nil
-}
-
-// runTestHookBeforeCall runs testHookBeforeCall if a test has set it.
-func (s *Service) runTestHookBeforeCall() {
-	if s.testHookBeforeCall != nil {
-		s.testHookBeforeCall()
-	}
 }
 
 // Client returns the underlying valkey.Client for advanced operations.

@@ -21,9 +21,7 @@ const (
 // Config holds server-level configuration passed from the host server
 // to the App. Sensible defaults are applied via DefaultConfig().
 type Config struct {
-	// Embedded GasEnv
-	WithGasEnv
-
+	Env    Environment
 	Server ServerSettings
 }
 

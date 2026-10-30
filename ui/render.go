@@ -30,16 +30,20 @@ import (
 // in under it, so renders, AddFuncs, and concurrent rebuilds never see a
 // half-built set.
 type Engine struct {
-	provider   gas.TemplateProvider
-	funcMap    template.FuncMap
-	logger     gas.Logger
-	cache      map[string]*template.Template
-	layout     string
-	mu         sync.RWMutex
-	devMode    bool
-	built      bool
-	hasLayouts bool
+	provider      gas.TemplateProvider
+	funcMap       template.FuncMap
+	logger        gas.Logger
+	cache         map[string]*template.Template
+	defaultLayout string
+	mu            sync.RWMutex
+	devMode       bool
+	built         bool
+	hasLayouts    bool
 }
+
+const (
+	pageMarker = "__page__"
+)
 
 // templateSet is the classified content of one Build.
 type templateSet struct {
@@ -57,20 +61,20 @@ type namedContent struct {
 func NewEngine(
 	provider gas.TemplateProvider,
 	funcMap template.FuncMap,
-	layout string,
+	defaultLayout string,
 	devMode bool,
 	logger gas.Logger,
 ) *Engine {
-	if layout == "" {
-		layout = "base"
+	if defaultLayout == "" {
+		defaultLayout = "base"
 	}
 	return &Engine{
-		provider: provider,
-		funcMap:  funcMap,
-		layout:   layout,
-		devMode:  devMode,
-		cache:    make(map[string]*template.Template),
-		logger:   logger,
+		provider:      provider,
+		funcMap:       funcMap,
+		defaultLayout: defaultLayout,
+		devMode:       devMode,
+		cache:         make(map[string]*template.Template),
+		logger:        logger,
 	}
 }
 
@@ -136,51 +140,73 @@ func (e *Engine) Build() error {
 // Render executes the named page template, writing the result to w with a
 // 200 status code. The name is the page path without extension
 // (e.g. "home", "dashboard/index").
-func (e *Engine) Render(w http.ResponseWriter, name string, data any) error {
-	return e.RenderWithStatus(w, http.StatusOK, name, data)
-}
-
-// RenderWithStatus is like Render but sets the HTTP status code first.
-func (e *Engine) RenderWithStatus(w http.ResponseWriter, status int, name string, data any) error {
-	t, hasLayouts, err := e.lookup(name)
-	if err != nil {
-		return err
+func (e *Engine) Render(
+	w http.ResponseWriter,
+	name string,
+	data any,
+	op ...RenderOption,
+) error {
+	opts := &RenderOptions{
+		status: http.StatusOK,
+		layout: e.defaultLayout,
+	}
+	for _, o := range op {
+		opts.apply(o)
 	}
 
-	// Render into a buffer so a template error doesn't produce partial output.
-	var buf bytes.Buffer
-	entry := e.layout
-	if !hasLayouts {
-		entry = "__page__"
-	}
-	if execErr := t.ExecuteTemplate(&buf, entry, data); execErr != nil {
-		return fmt.Errorf("ui: executing template %q: %w", name, execErr)
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(status)
-	if _, writeErr := buf.WriteTo(w); writeErr != nil {
-		return fmt.Errorf("ui: writing response for %q: %w", name, writeErr)
-	}
-	return nil
+	return e.render(w, name, data, opts)
 }
 
 // RenderFragment renders the page template's own content, bypassing the
 // layout. Useful for HTMX partial responses.
-func (e *Engine) RenderFragment(w http.ResponseWriter, name string, data any) error {
-	t, _, err := e.lookup(name)
+func (e *Engine) RenderFragment(
+	w http.ResponseWriter,
+	name string,
+	data any,
+	op ...RenderFragmentOption,
+) error {
+	opts := &RenderOptions{
+		status: http.StatusOK,
+		layout: pageMarker,
+	}
+	opts.apply(op...)
+
+	return e.render(w, name, data, opts)
+}
+
+func (e *Engine) render(
+	w http.ResponseWriter,
+	name string,
+	data any,
+	opts *RenderOptions,
+) error {
+	t, hasLayouts, err := e.lookup(name)
 	if err != nil {
 		return err
 	}
+	if !hasLayouts {
+		if opts.block != "" {
+			// FIXME(@ahmedkamalio): build a custom layout with the block and cache it.
+			if _, err = t.Parse(""); err != nil {
+				return fmt.Errorf("ui: parsing layout %q: %w", " l.name", err)
+			}
+		} else {
+			opts.layout = pageMarker
+		}
+	}
 
+	// Render into a buffer, so it's all or nothing.
 	var buf bytes.Buffer
-	if execErr := t.ExecuteTemplate(&buf, "__page__", data); execErr != nil {
-		return fmt.Errorf("ui: executing fragment %q: %w", name, execErr)
+	if execErr := t.ExecuteTemplate(&buf, opts.layout, data); execErr != nil {
+		return fmt.Errorf("ui: executing template %q: %w", name, execErr)
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	w.WriteHeader(opts.status)
+
 	if _, writeErr := buf.WriteTo(w); writeErr != nil {
-		return fmt.Errorf("ui: writing fragment response for %q: %w", name, writeErr)
+		return fmt.Errorf("ui: writing template response for %q: %w", name, writeErr)
 	}
 	return nil
 }
@@ -230,7 +256,7 @@ func (e *Engine) compile(
 	funcs template.FuncMap,
 	page string,
 ) (*template.Template, error) {
-	t := template.New("__page__").Funcs(funcs)
+	t := template.New(pageMarker).Funcs(funcs)
 
 	for _, l := range set.layouts {
 		if _, err := t.Parse(string(l.content)); err != nil {

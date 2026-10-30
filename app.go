@@ -271,7 +271,7 @@ func (a *App) Serve() error {
 	a.srvMu.Unlock()
 
 	a.getLogger().Info("server started").
-		Str("environment", a.cfg.GasEnv.String()).
+		Str("environment", a.cfg.Env.String()).
 		Str("addr", srv.Addr).
 		Send()
 
@@ -328,7 +328,7 @@ func (a *App) Run() error {
 	}
 
 	// log route map
-	a.logRouteMap(a.cfg.GasEnv.IsDevelopment())
+	a.logRouteMap(a.cfg.Env.IsDevelopment())
 
 	srvErr := make(chan error, 1)
 	go func() {

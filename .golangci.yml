@@ -8,50 +8,25 @@ run:
     - e2e
 
 linters:
+  default: all
   enable:
-    # Bugs & correctness
-    - errcheck
-    - govet
-    - staticcheck
-    - bodyclose
-    - nilerr
-    - sqlclosecheck
-    - contextcheck
-
-    # Style & consistency
-    - revive
-    - misspell
-    - whitespace
-    - unconvert
-    - predeclared
-
-    # Complexity & maintainability
-    - gocyclo
-    - gocognit
-    - cyclop
-    - funlen
-    - nestif
-
-    # Performance
-    - prealloc
-    - gocritic
-
-    # Security
-    - gosec
-
-    # Error handling
-    - errorlint
-    - wrapcheck
-
-    # Architecture
-    - depguard
-
-    # Unused code
-    - unused
-    - unparam
-    - wastedassign
+    - gomodguard_v2
+    - wsl_v5
+  disable:
+    - exhaustruct_v5
+    - exhaustruct
+    - gomodguard
+    - wsl
+    - varnamelen
+    - nonamedreturns
+    - nilnil
+    - ireturn
+    - gochecknoglobals
 
   settings:
+    wsl_v5:
+      default: all
+
     govet:
       enable-all: true
 
@@ -62,42 +37,33 @@ linters:
 
     wrapcheck:
       ignore-sigs:
-        - .Errorf(
+        - fmt.Errorf(
         - errors.New(
-        - errors.Unwrap(
         - errors.Join(
-        - .Wrap(
-        - .Wrapf(
-        - .WithMessage(
-        - .WithMessagef(
-        - .WithStack(
-        - .WithCause(
-        - (github.com/gasmod/gas.Context).
-        - (github.com/gasmod/gas.UIProvider).
+
+    depguard:
+      rules:
+        allow-list:
+          list-mode: lax
+          allow:
+            - github.com/gasmod/gas
+            - github.com/go-playground/validator/v10
+            - github.com/aws/aws-sdk-go-v2
+            - github.com/stretchr/testify/assert
+            - github.com/stretchr/testify/require
 
     misspell:
       locale: US
 
-    depguard:
-      rules:
-        internal:
-          list-mode: lax
-          allow:
-            - github.com/gasmod/gas
-
   exclusions:
-    paths:
-      - vendor
-      - third_party
-      - testdata
-
     rules:
-      - path: _test\.go
+      - path: \_test\.go
         linters:
-          - revive
-          - cyclop
-          - funlen
           - wrapcheck
+          - tagliatelle
+          - paralleltest
+          - goconst
+          - forcetypeassert
 
 formatters:
   enable:
@@ -106,7 +72,6 @@ formatters:
     - gofumpt
     - goimports
     - golines
-    - swaggo
 
   settings:
     gci:

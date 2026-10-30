@@ -443,7 +443,7 @@ func (c *reqContext) Principal() (Principal, error) {
 // *Error. The method is not named validate because reqContext already has a
 // field by that name.
 func (c *reqContext) validateStruct(dest any) error {
-	err := c.Validator().Struct(dest)
+	err := c.Validator().StructCtx(c, dest)
 	if err == nil {
 		return nil
 	}

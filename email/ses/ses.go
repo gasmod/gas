@@ -55,6 +55,7 @@ var (
 // was injected via WithClient that is not an *ses.Client.
 func (s *Service) Client() *awsses.Client {
 	c, _ := s.client.(*awsses.Client)
+
 	return c
 }
 
@@ -92,6 +93,7 @@ func New(
 		for _, opt := range opts {
 			opt(s)
 		}
+
 		return s, nil
 	}
 }
@@ -107,9 +109,11 @@ func NewWithCustomProvider[T gas.TemplateProvider](
 			cfgProvider: cfgProvider,
 			logger:      logger.With().Str("service", serviceName).Logger(),
 		}
+
 		for _, opt := range opts {
 			opt(s)
 		}
+
 		return s, nil
 	}
 }
@@ -137,6 +141,7 @@ func (s *Service) Init(ctx context.Context) error {
 
 	s.closed.Store(false)
 	s.logger.Info("ses email service initialized").Str("region", s.cfg.Email.Region).Send()
+
 	return nil
 }
 
@@ -177,6 +182,7 @@ func (s *Service) createClient(ctx context.Context) error {
 	}
 
 	s.client = awsses.NewFromConfig(awsCfg, sesOpts...)
+
 	return nil
 }
 
@@ -187,6 +193,7 @@ func (s *Service) CheckReady(context.Context) error {
 	if s.closed.Load() {
 		return email.ErrClosed
 	}
+
 	return nil
 }
 
@@ -194,6 +201,7 @@ func (s *Service) CheckReady(context.Context) error {
 func (s *Service) Close(context.Context) error {
 	s.closed.Store(true)
 	s.logger.Info("ses email service closed").Send()
+
 	return nil
 }
 

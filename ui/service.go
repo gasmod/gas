@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html/template"
 	"io/fs"
+	"maps"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -14,7 +15,7 @@ import (
 )
 
 // Service is the gas/ui service. It provides template rendering and static
-// file serving. It satisfies the gas.UIProvider interface so other services
+// file serving. It satisfies the ui.Provider interface so other services
 // can render HTML without depending on this package directly.
 type Service struct {
 	// Infrastructure (injected via DI constructor).
@@ -34,7 +35,7 @@ type Service struct {
 
 // Compile-time checks.
 var (
-	_ gas.UIProvider    = (*Service)(nil)
+	_ Provider          = (*Service)(nil)
 	_ gas.ReadyReporter = (*Service)(nil)
 )
 
@@ -120,9 +121,7 @@ func (s *Service) bindConfig() error {
 // initEngine builds the template engine using the injected TemplateProvider.
 func (s *Service) initEngine() {
 	fm := DefaultFuncMap(s.cfg.GasEnv)
-	for k, v := range s.cfg.FuncMap {
-		fm[k] = v
-	}
+	maps.Copy(fm, s.cfg.FuncMap)
 	s.engine = NewEngine(
 		s.templates,
 		fm,
@@ -189,11 +188,16 @@ func (s *Service) Close(context.Context) error {
 }
 
 // ---------------------------------------------------------------------------
-// gas.UIProvider implementation
+// ui.Provider implementation
 // ---------------------------------------------------------------------------
 
 // Render executes the named page template with a 200 status code.
-func (s *Service) Render(w http.ResponseWriter, name string, data any) error {
+func (s *Service) Render(
+	w http.ResponseWriter,
+	name string,
+	data any,
+	opts ...RenderOption,
+) error {
 	if s.closed.Load() {
 		http.Error(w, "UI service unavailable", http.StatusServiceUnavailable)
 		return fmt.Errorf("gas/ui: service is closed")
@@ -201,24 +205,17 @@ func (s *Service) Render(w http.ResponseWriter, name string, data any) error {
 	if s.engine == nil {
 		return fmt.Errorf("gas/ui: no template engine configured")
 	}
-	return s.engine.Render(w, name, data)
-}
-
-// RenderWithStatus executes the named page template with the given status code.
-func (s *Service) RenderWithStatus(w http.ResponseWriter, status int, name string, data any) error {
-	if s.closed.Load() {
-		http.Error(w, "UI service unavailable", http.StatusServiceUnavailable)
-		return fmt.Errorf("gas/ui: service is closed")
-	}
-	if s.engine == nil {
-		return fmt.Errorf("gas/ui: no template engine configured")
-	}
-	return s.engine.RenderWithStatus(w, status, name, data)
+	return s.engine.Render(w, name, data, opts...)
 }
 
 // RenderFragment renders a page template without wrapping it in the layout.
-// Useful for HTMX partial responses. Part of the gas.UIProvider contract.
-func (s *Service) RenderFragment(w http.ResponseWriter, name string, data any) error {
+// Useful for HTMX partial responses. Part of the ui.Provider contract.
+func (s *Service) RenderFragment(
+	w http.ResponseWriter,
+	name string,
+	data any,
+	opts ...RenderFragmentOption,
+) error {
 	if s.closed.Load() {
 		http.Error(w, "UI service unavailable", http.StatusServiceUnavailable)
 		return fmt.Errorf("gas/ui: service is closed")
@@ -226,7 +223,7 @@ func (s *Service) RenderFragment(w http.ResponseWriter, name string, data any) e
 	if s.engine == nil {
 		return fmt.Errorf("gas/ui: no template engine configured")
 	}
-	return s.engine.RenderFragment(w, name, data)
+	return s.engine.RenderFragment(w, name, data, opts...)
 }
 
 // RegisterFuncs merges the given functions into the template engine's funcmap.

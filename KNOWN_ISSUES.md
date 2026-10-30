@@ -216,34 +216,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   `invalid_form` under `Route` or `Group`.
 - **Next step**: copy both fields from the parent in `newSubRouter`.
 
-## KI-046: `config.Load` does not apply the Secrets Manager provider's timeout
-
-- **Status**: open
-- **Area**: `config`, `config/providers/secretsmanager`.
-- **Found**: 2026-10-21, docs claim tests.
-- **Detail**: `Config.Load` calls `LoadWithContext(context.Background())`
-  (`config/config.go:170`), and `loadValues` prefers
-  `ContextProvider.LoadContext` (`config/config.go:206`), which uses the
-  context as is. Only the provider's own `Load`
-  (`config/providers/secretsmanager/provider.go:148-156`) applies
-  `DefaultTimeout` (10s) or `WithTimeout`, and `Config.Load` never calls
-  it. A Secrets Manager endpoint that accepts and never answers blocks
-  `config.Load` with no deadline from the provider.
-- **Next step**: apply the provider's timeout in `LoadContext` when the
-  context has no deadline, or have `Config.Load` call `Load`.
-
-## KI-047: the JSON provider accepts a file holding `null`
-
-- **Status**: open
-- **Area**: `config/providers`.
-- **Found**: 2026-10-21, docs claim tests.
-- **Detail**: `JSONProvider.Load` unmarshals into a `map[string]any`
-  (`config/providers/json_provider.go:77-78`). A file holding `null`
-  leaves the map nil with no error, so it loads as no values instead of
-  failing with `ErrJSONDecodeFailed`, as a top-level array, string, number
-  or boolean does.
-- **Next step**: reject a nil result with `ErrJSONDecodeFailed`.
-
 ## KI-048: `migrate` on MySQL requires `parseTime=true`
 
 - **Status**: open
@@ -359,26 +331,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
 - **Next step**: drop a closed service's route ops from `pendingOps` (or
   mark them dead) so a restart replays only what its Init registers.
 
-## KI-055: env and .env separators with uppercase letters never match
-
-- **Status**: open
-- **Area**: `config/providers`, `config/internal/env`.
-- **Found**: 2026-10-21, docs claim tests.
-- **Detail**: `ParseVariables` lowercases every key
-  (`config/internal/env/parse.go:19`; the prefix too, at `:16`) and then
-  calls `BuildNestedMap` with the separator as given
-  (`config/internal/env/parse.go:37`), which splits on it
-  (`config/internal/env/util.go:89`). `WithEnvSeparator` and
-  `WithDotEnvSeparator` store the separator unchanged
-  (`config/providers/env_provider.go:42`,
-  `config/providers/dotenv_provider.go:61`), so a separator with an
-  uppercase letter never occurs in a lowercased key. Repro:
-  `WithEnvSeparator("_X_")` with `PROBEA_X_B=upper` gives the flat key
-  `probea_x_b`; `WithDotEnvSeparator("_X_")` likewise; `"_y_"` nests
-  correctly.
-- **Next step**: lowercase the separator as the prefix is, or reject one
-  with uppercase letters.
-
 ## KI-056: `Routes()` misreports global named middleware for routes registered before the `Use`
 
 - **Status**: open
@@ -434,3 +386,109 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   (`core/errors.mdx`) describes the full rule; the godoc does not.
 - **Next step**: state the `json`, then `form`, then Go field name order
   in the godoc.
+
+## KI-062: `Config.Set` with a dotted key does nothing over a value
+
+- **Status**: open
+- **Area**: `config`, `config.go`.
+- **Found**: 2026-10-28, maputil rebuild.
+- **Detail**: `Set` (`config/config.go:123`) finds the parent map with
+  `maputil.FindNestedMap(c.values, pathParts, true)`
+  (`config/config.go:134`), which returns nil when a level on the way
+  holds a value rather than a map, and `Set` then returns without a word.
+  Repro: `c.Set("db", "scalar")`, then `c.Set("db.host", "h")`:
+  `Get("db")` is still `"scalar"` and `Get("db.host")` is nil. `Set` has
+  no error to report it with. `SetDefault` has the same path
+  (`config/config.go:77`), where leaving a set key alone is intended. The
+  package documentation states the behavior, and `TestConfig_SetUnderValue`
+  (`config/test/config_test.go`) pins it.
+- **Next step**: decide whether `Set` replaces the value with a map, as
+  its doc says, or reports the failure, which needs an error return.
+
+## KI-063: `Set` and `SetDefault` store map values without normalizing keys
+
+- **Status**: open
+- **Area**: `config`, `config.go`.
+- **Found**: 2026-10-28, maputil rebuild.
+- **Detail**: every other way into the tree lowercases and trims keys
+  with `maputil.NormalizeKeys`, and `Get` and `Find` lowercase the path
+  they are given (`keyToPathParts`, `config/config.go:314`). `Set` and
+  `SetDefault` store a copy of `value` with its keys as given
+  (`config/config.go:80`, `:136`), so a map value with uppercase keys
+  cannot be reached by key. Repro:
+  `c.Set("app", map[string]any{"Name": "x"})`: `Get("app")` is
+  `map[Name:x]` and `Get("app.name")` is nil. Two keys of such a map that
+  differ only in case are also not reported as a conflict, which
+  `SetDefaults` and the providers do. `Bind` still fills a field from
+  `Name`, because it matches keys without regard to case.
+- **Next step**: normalize map values in `Set` and `SetDefault` the way
+  `SetDefaults` does, which needs a way to report a conflict.
+
+## KI-071: JSON numbers lose digits and turn into exponents on the way to a field
+
+- **Status**: decision needed
+- **Area**: `config`, `internal/jsonobj` and `secretsmanager`, with the
+  exponent written by `internal/maputil`.
+- **Found**: 2026-10-28, second maputil review.
+- **Detail**: the JSON provider decodes with `jsonobj.Decode`, which
+  calls `json.Unmarshal` into an `any`
+  (`config/internal/jsonobj/jsonobj.go:13`), so every number is a
+  float64. An integer past 2⁵³ loses its last digits before `Bind` sees
+  it, with no error: `{"id": 1234567890123456789}` binds to an `int64`
+  as `1234567890123456768`. A string field takes a number formatted with
+  `fmt.Sprint` (`config/internal/maputil/convert.go:105`), which writes a
+  float64 of 10⁶ or more, or below 10⁻⁴, with an exponent:
+  `{"account": 1234567}` binds to a string as `"1.234567e+06"`. Both
+  repros ran through `config.New` with the JSON provider. The second is
+  what the package documentation says, but it is unlikely to be what a
+  user wants. The Secrets Manager provider decodes JSON secrets the same
+  way, with `jsonobj.Decode` at the root and `json.Unmarshal` at a key
+  (`config/secretsmanager/fetch.go:80`), so it hits both:
+  `{"account_id": 123456789012}` binds to a string as
+  `"1.23456789012e+11"`, reproduced through `config.New` with the provider
+  on a fake client. The env and `.env` providers give strings, so neither
+  reaches these paths.
+- **Next step**: decide where to fix it. Decoding with `UseNumber` in
+  `jsonobj` and at a key in the Secrets Manager provider keeps the digits, but leaves `json.Number` in `any`
+  fields and `Get` results unless the providers turn each one into an
+  `int64` when it is a whole number that fits and a `float64` otherwise,
+  which changes `Get` from `float64` to `int64` for whole numbers.
+  Formatting whole floats without an exponent in `toString` fixes only the
+  second.
+
+## KI-080: `Set` and `SetDefault` store a key with an empty level
+
+- **Status**: open
+- **Area**: `config`, `config.go`.
+- **Found**: 2026-10-28, config root rebuild.
+- **Detail**: `keyToPathParts` (`config/config.go:314`) splits a key on
+  dots and keeps empty levels, and `Set` and `SetDefault` add a map for
+  each one. Repro: `c.Set("a..b", 1)` makes `Values()` hold
+  `{"a": {"": {"b": 1}}}`, and `c.Set(" ", 1)` stores at the empty key.
+  No provider can produce an empty key, as `maputil.NormalizeKeys` drops
+  it, and `Bind` never reads one, so the value is reachable only by `Get`
+  with the same malformed key. The Secrets Manager provider rejects such a
+  key with `ErrInvalidKey`; `Set` has no error to report it with.
+  `TestConfig_SetEmptyLevel` (`config/test/config_test.go`) pins the
+  current behavior.
+- **Next step**: decide with KI-062, which needs the same error return:
+  report the key, or ignore it as the empty key is ignored.
+
+## KI-081: `.env` syntax errors quote a character of the value
+
+- **Status**: decision needed
+- **Area**: `config`, `internal/dotenv`.
+- **Found**: 2026-10-28, config root rebuild.
+- **Detail**: an unexpected character is quoted in the error
+  (`charErr`, used at `config/internal/dotenv/parser.go:102`, `:187`,
+  `:190`), and the package documentation shows it (`2:5: unexpected
+  character: 'y'`). When the character follows an unquoted value, it is
+  often part of what the user meant as the value: `PASSWORD=correct
+  horse` fails with `1:18: unexpected character: 'h', want newline: key:
+  "PASSWORD"`, and `PASSWORD="abc"def` with `'d'`, both reproduced
+  through `DotEnvProvider`. The package documentation says an error never
+  includes a value from the file, and the config documentation names this
+  as the one exception. The JSON and Secrets Manager providers give only
+  an offset for a syntax error (`config/internal/jsonobj/jsonobj.go`).
+- **Next step**: decide whether `.env` errors drop the character, as the
+  JSON ones do, keeping the line and column, which already locate it.

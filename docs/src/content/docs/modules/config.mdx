@@ -238,7 +238,7 @@ timeouts) from the same config; see [Deployment](/gas/production/deployment/).
 | `config.ErrExtensionPostLoadHookFailed` | An extension's `PostLoad` failed. |
 | `config.ErrNilValues` | `SetDefaults(nil)`. |
 | `providers.ErrJSONFilePathNotSet` | A JSON provider has no path. |
-| `providers.ErrJSONFileReadFailed` | The JSON file could not be read, including a path outside the working directory, a symlink, or a file over 1 MiB. |
+| `providers.ErrJSONFileReadFailed` | The JSON file could not be read, including a path or symlink that leads outside the working directory, an absolute symlink, something other than a regular file, or a file over 1 MiB. |
 | `providers.ErrJSONDecodeFailed` | The file is not valid JSON, or holds an array, string, number or boolean. A file holding `null` loads with no error and no values (KI-047 in [Known issues](/gas/project/known-issues/)). |
 | `providers.ErrDotEnvFilePathNotSet` | A `.env` provider's path was set to `""`. |
 | `providers.ErrDotEnvFileReadFailed` | The `.env` file could not be read, or is missing while missing files are errors. |
@@ -321,8 +321,9 @@ environment, except the names in the list above; it is off by default,
 because those values would then be inherited by every child process.
 
 By default the JSON and `.env` providers read through a guarded file system:
-the path must resolve inside the working directory, its last element must not
-be a symlink, and the file must be at most 1 MiB (1,048,576 bytes).
+the path must resolve inside the working directory, following only relative
+symlinks that stay inside it, and must name a regular file of at most 1 MiB
+(1,048,576 bytes).
 `WithJSONFileFS` and `WithDotEnvFileFS` read from any `fs.FS` instead, such as
 an `embed.FS`, without those checks.
 

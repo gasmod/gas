@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/gasmod/gas/storage/dir/internal/util"
@@ -126,9 +125,6 @@ func (l *ObjectsLock) acquireFile(ctx context.Context, name string) (*os.File, e
 	}
 
 	if !ok {
-		if hook := lockWaitHook.Load(); hook != nil {
-			(*hook)(name)
-		}
 		done := make(chan error, 1)
 		go func() { done <- lockBlocking(f) }()
 
@@ -165,23 +161,6 @@ func (l *ObjectsLock) openFile(ctx context.Context, name string) (*os.File, erro
 		case <-time.After(deletePendingBackoff):
 		}
 	}
-}
-
-// lockWaitHook, when set, is called with the name of every lock an
-// ObjectsLock finds held by another holder, just before it waits for it.
-// Only tests set it, to know that a caller has reached that wait.
-var lockWaitHook atomic.Pointer[func(name string)]
-
-// SetLockWaitHook sets the function called when a lock has to wait for
-// another holder, or clears it when hook is nil. It is for tests of the
-// packages that use this one, which cannot see when a call they started
-// blocks on a lock.
-func SetLockWaitHook(hook func(name string)) {
-	if hook == nil {
-		lockWaitHook.Store(nil)
-		return
-	}
-	lockWaitHook.Store(&hook)
 }
 
 // isCurrent reports whether f is still the file at name.

@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-The Gas ecosystem is pre-1.0. Only the latest released minor version of each module receives security fixes.
+The Gas ecosystem is pre-1.0. Security fixes go out in new releases.
 
 ## Reporting a vulnerability
 

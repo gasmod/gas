@@ -3,10 +3,10 @@ package gas
 import (
 	"context"
 	"database/sql"
-	"html/template"
 	"io/fs"
-	"net/http"
 	"time"
+
+	"github.com/gasmod/gas/config"
 )
 
 // DatabaseProvider abstracts database access. Implemented by gas/database
@@ -155,20 +155,6 @@ type TemplateProvider interface {
 	RegisterFS(ctx context.Context, fsys fs.FS) error
 }
 
-// UIProvider abstracts template rendering. Implemented by gas/ui or any
-// other UI service. Template storage and retrieval is handled by
-// TemplateProvider; UIProvider focuses on compilation and rendering.
-type UIProvider interface {
-	Render(w http.ResponseWriter, name string, data any) error
-	RenderFragment(
-		w http.ResponseWriter,
-		name string,
-		data any,
-	) error // renders without layout wrapper, useful for HTMX
-	RenderWithStatus(w http.ResponseWriter, status int, name string, data any) error
-	RegisterFuncs(funcs template.FuncMap)
-}
-
 // HealthReporter is implemented by services that can report their own health.
 // Answers the question "am I alive?" — a failure here signals that the process
 // is in a broken state that a restart would resolve (lost connection that
@@ -203,27 +189,4 @@ type ReadyProvider interface {
 	CheckReady(ctx context.Context) map[string]error
 }
 
-// ConfigProvider is the configuration API services depend on: reading values,
-// setting defaults, and binding into a struct. The config module's *Config
-// implements it. Loading sources is setup work the app does on the concrete
-// config before registering it, so it is not part of this interface.
-type ConfigProvider interface {
-	SetDefault(key string, value any)
-	SetDefaults(values any) error
-	Set(key string, value any)
-	// Bind fills dest from the configuration and then validates it against
-	// its validate struct tags, unless an option turns validation off.
-	Bind(dest any, options ...BindOption) error
-	Get(key string) any
-	Find(key string) (value any, exist bool)
-	Values() map[string]any
-}
-
-// BindOptions holds the settings for one ConfigProvider.Bind call.
-type BindOptions struct {
-	// Validate runs struct-tag validation after binding. It defaults to true.
-	Validate bool
-}
-
-// BindOption changes the BindOptions of one Bind call.
-type BindOption func(*BindOptions)
+type ConfigProvider config.ConfigProvider

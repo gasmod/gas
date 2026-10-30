@@ -71,9 +71,9 @@ and `/notes`. See [Routing](/gas/core/routing/),
 
 Server-rendered HTML. It registers a `template/fs` store over
 `os.DirFS("templates")` under `gas.TemplateProvider` and
-`ui.New[gas.TemplateProvider]()` under `gas.UIProvider`. A module renders
+`ui.New[gas.TemplateProvider]()` under `ui.Provider`. A module renders
 `home` through the `base` layout with header and footer partials, and a custom
-`NotFound` handler renders `404` with `RenderWithStatus`. `config.json` serves
+`NotFound` handler renders `404`. `config.json` serves
 `static/` at `/static/*`, and sets `GasEnv` to `development`, so templates are
 recompiled on every request and edits under `templates/` show on refresh.
 
