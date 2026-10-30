@@ -4,10 +4,10 @@
 
 Part of the [Gas](../README.md) monorepo · [Documentation](https://gasmod.github.io/gas) · [All modules](../README.md#modules)
 
-Structured logging for the [Gas](../README.md) framework. Two local backends, plus batched
-log shipping over HTTP with an OTLP marshaler included.
+Structured logging for the [Gas](../README.md) framework: a `log/slog` backend, a zerolog
+backend, and batched shipping of records over HTTP, with an OTLP/JSON marshaler included.
 
-Implements `gas.Logger`, `gas.LogEvent`, `gas.LoggerContext`.
+Implements `gas.Logger`; `ShippingLogger` is also a `gas.Service`.
 
 ```bash
 go get github.com/gasmod/gas/log
@@ -17,13 +17,14 @@ go get github.com/gasmod/gas/log
 gas.WithSingletonService[gas.Logger](gaslog.NewSlogLogger()),
 ```
 
-Nothing. The constructors take no dependencies.
+The constructors take no dependencies from the container. `NewShippingLogger` takes the
+endpoint and a `Marshaler`, such as `gaslog.NewOTLPMarshaler()`.
 
-| Constructor | Backend |
+| Package | Provides |
 |---|---|
-| `NewZeroLogLogger()` | [rs/zerolog](https://github.com/rs/zerolog); full level support including Trace |
-| `NewSlogLogger()` | `log/slog`; no extra dependencies, Trace maps to Debug |
-| `NewShippingLogger()` | Writes locally and batches records to an HTTP endpoint |
+| `github.com/gasmod/gas/log` | `NewSlogLogger`, `NewShippingLogger`, `NewShippingHandler`, `NewOTLPMarshaler`; standard library only |
+| `github.com/gasmod/gas/log/zerolog` | `New`, a logger over [rs/zerolog](https://github.com/rs/zerolog) |
+| `github.com/gasmod/gas/log/logtest` | `RecordingLogger`, a `gas.Logger` that records events for tests |
 
 ## Documentation
 

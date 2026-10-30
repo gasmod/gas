@@ -2,7 +2,6 @@ package test
 
 import (
 	"context"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -14,7 +13,6 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/gasmod/gas"
-	"github.com/gasmod/gas/log"
 )
 
 // countKey reports how many times key appears as a field in one JSON log
@@ -29,7 +27,7 @@ func countKey(line, key string) int {
 func newRequestLoggerApp(t *testing.T, buf *lockedBuffer) *gas.App {
 	t.Helper()
 
-	shared, _ := log.NewSlogLogger(log.WithSlogInstance(slog.New(slog.NewJSONHandler(buf, nil))))()
+	shared := newJSONLogger(buf)
 	app := gas.NewApp(gas.WithServiceInstance[gas.Logger](shared))
 	if err := app.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
@@ -120,7 +118,7 @@ type scopedRequestLogger interface{ gas.Logger }
 func newScopedPatternApp(t *testing.T, buf *lockedBuffer) *gas.App {
 	t.Helper()
 
-	shared, _ := log.NewSlogLogger(log.WithSlogInstance(slog.New(slog.NewJSONHandler(buf, nil))))()
+	shared := newJSONLogger(buf)
 	app := gas.NewApp(
 		gas.WithServiceInstance[gas.Logger](shared),
 		gas.WithScopedService[scopedRequestLogger](func(l gas.Logger) scopedRequestLogger {
@@ -202,7 +200,7 @@ func TestRequestLogger_SingletonTypeIsNotShadowed(t *testing.T) {
 	t.Parallel()
 
 	buf := &lockedBuffer{}
-	shared, _ := log.NewSlogLogger(log.WithSlogInstance(slog.New(slog.NewJSONHandler(buf, nil))))()
+	shared := newJSONLogger(buf)
 	app := gas.NewApp(gas.WithServiceInstance[gas.Logger](shared))
 	if err := app.InitServices(context.Background()); err != nil {
 		t.Fatal(err)
@@ -243,7 +241,7 @@ func TestRequestLogger_ScopedServiceIsNotReplaced(t *testing.T) {
 
 	buf := &lockedBuffer{}
 	closed := &atomic.Bool{}
-	shared, _ := log.NewSlogLogger(log.WithSlogInstance(slog.New(slog.NewJSONHandler(buf, nil))))()
+	shared := newJSONLogger(buf)
 	app := gas.NewApp(
 		gas.WithServiceInstance[gas.Logger](shared),
 		gas.WithScopedService[scopedRequestLogger](func(l gas.Logger) scopedRequestLogger {
@@ -277,7 +275,7 @@ func TestRequestLogger_ScopedServiceIsNotReplaced(t *testing.T) {
 func newStatusLoggerApp(t *testing.T, buf *lockedBuffer, opts ...gas.RequestLoggerOption) *gas.App {
 	t.Helper()
 
-	shared, _ := log.NewSlogLogger(log.WithSlogInstance(slog.New(slog.NewJSONHandler(buf, nil))))()
+	shared := newJSONLogger(buf)
 	app := gas.NewApp(gas.WithServiceInstance[gas.Logger](shared))
 	if err := app.InitServices(context.Background()); err != nil {
 		t.Fatal(err)

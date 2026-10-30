@@ -2,13 +2,11 @@ package test
 
 import (
 	"context"
-	"log/slog"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/gasmod/gas"
-	"github.com/gasmod/gas/log"
 )
 
 type panicEvent struct{ gas.Event[string] }
@@ -32,7 +30,7 @@ func TestEventBus_PanickingSubscriberRecovered(t *testing.T) {
 // owning service, the panic value, and the stack.
 func TestEventBus_PanicLoggedByWorker(t *testing.T) {
 	var buf lockedBuffer
-	shared, _ := log.NewSlogLogger(log.WithSlogInstance(slog.New(slog.NewJSONHandler(&buf, nil))))()
+	shared := newJSONLogger(&buf)
 	w := gas.NewWorker(gas.WithServiceInstance[gas.Logger](shared))
 	if err := w.Start(context.Background()); err != nil {
 		t.Fatal(err)

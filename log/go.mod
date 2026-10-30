@@ -5,6 +5,7 @@ go 1.27.3
 require (
 	github.com/gasmod/gas v0.5.6
 	github.com/rs/zerolog v1.35.1
+	github.com/stretchr/testify v1.12.1
 )
 
 require (

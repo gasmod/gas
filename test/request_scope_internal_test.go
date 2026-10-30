@@ -3,14 +3,12 @@ package test
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/gasmod/gas"
-	"github.com/gasmod/gas/log"
 )
 
 // failingScoped is a scoped Service whose Close fails.
@@ -28,7 +26,7 @@ func (*failingScoped) Close(context.Context) error {
 // method and path instead of being dropped.
 func TestRequestScope_CloseErrorIsLogged(t *testing.T) {
 	var buf lockedBuffer
-	shared, _ := log.NewSlogLogger(log.WithSlogInstance(slog.New(slog.NewJSONHandler(&buf, nil))))()
+	shared := newJSONLogger(&buf)
 	app := gas.NewApp(
 		gas.WithServiceInstance[gas.Logger](shared),
 		gas.WithService[*failingScoped](func() *failingScoped { return &failingScoped{} },
