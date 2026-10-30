@@ -116,10 +116,21 @@
 //     driver's text. A connector given to WithConnector keeps its own
 //     logger.
 //   - sqlite: the database/sql driver registered as `sqlite`, opened with
-//     the DSN as it is. The module does not import one: the app imports
-//     modernc.org/sqlite, or another driver registered under that name.
-//     Without one, Init fails with [ErrDriverNotRegistered], naming the
-//     import.
+//     the DSN as it is, except for the busy timeout. The module does not
+//     import one: the app imports modernc.org/sqlite, or another driver
+//     registered under that name. Without one, Init fails with
+//     [ErrDriverNotRegistered], naming the import. When the DSN sets no
+//     busy timeout, the service adds [DefaultSQLiteBusyTimeout], 5
+//     seconds, as modernc.org/sqlite reads it: `_pragma=busy_timeout(5000)`
+//     is appended to the DSN's query. Without a busy timeout SQLite fails
+//     at once, with SQLITE_BUSY, a statement that meets another
+//     connection's lock, so two connections of one pool writing, or one
+//     reading while another commits, fail; with it the statement waits up
+//     to that long. A DSN sets one with `_busy_timeout`, `_timeout`, or a
+//     `_pragma` value starting with `busy_timeout`, such as
+//     `_pragma=busy_timeout(0)`, which turns the wait off. A DSN whose
+//     query does not parse is left as it is, for the driver to reject.
+//     Another driver registered as `sqlite` must accept that parameter.
 //
 // # Connectors
 //
@@ -186,6 +197,12 @@
 // mysql.ErrInvalidConn or pgx's pgconn.ErrConnClosed. Calls made on
 // [Service.DB] or [Service.Pool] directly get the driver's errors as
 // they are.
+//
+// [Service.SafeError] gives code that runs statements on DB itself, such
+// as migrate, the same replacement: it returns a connection-level failure
+// as `connection: ` and a reason, wrapping ErrConnect and not the
+// driver's error, and any other error unchanged. Having no context, it
+// wraps no context error. It works in any state of the service.
 //
 // # Lifecycle
 //
@@ -290,7 +307,8 @@
 //   - [ErrDriverNotRegistered]: no `sqlite` driver is registered.
 //   - [ErrInvalidDSN]: the dialect's driver could not parse the DSN.
 //   - [ErrConnect]: connecting or pinging failed, or a call after Init
-//     failed at the connection level, as described under Connecting.
+//     failed at the connection level, or SafeError replaced such a
+//     failure, as described under Connecting.
 //   - [ErrNotInitialized]: a method ran before Init succeeded, after a
 //     failed Init, or after Close.
 //   - [ErrModeNotPgx]: a pgx transaction was asked for in ModeSQL.
@@ -364,6 +382,7 @@
 //	gas/database: failed to commit transaction: connection refused
 //	gas/database: failed to roll back transaction: connection refused
 //	gas/database: close: connection refused
+//	gas/database: connection: connection refused
 //	gas/database: close timed out: context deadline exceeded
 //	gas/database: service not initialized
 //	gas/database: mode is not pgx

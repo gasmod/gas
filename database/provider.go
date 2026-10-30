@@ -40,3 +40,20 @@ func (s *Service) Exec(ctx context.Context, query string, args ...any) (gas.Resu
 
 	return result, nil
 }
+
+// opConnection is the operation SafeError names.
+const opConnection = "connection"
+
+// SafeError returns err unchanged when it describes a statement, and, in
+// place of a connection-level failure, the error the service's own
+// methods return for one: `connection: ` and a fixed reason, wrapping
+// ErrConnect and not err, as described in the package documentation. A
+// nil err is nil. It is for code that runs statements on DB itself, such
+// as migrate, and works on a service in any state.
+func (*Service) SafeError(err error) error {
+	if err == nil || !connectionLevel(err) {
+		return err
+	}
+
+	return connectError(context.Background(), opConnection, err)
+}

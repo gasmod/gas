@@ -108,10 +108,11 @@ func sqlOpener(set *Settings, c driver.Connector) opener {
 }
 
 // sqliteOpener returns an opener of a database/sql handle on the
-// registered sqlite driver with the settings' limits applied.
+// registered sqlite driver, with the default busy timeout added to the
+// DSN when it sets none and the settings' limits applied.
 func sqliteOpener(set *Settings) opener {
 	return func(context.Context) (*sql.DB, *pgxpool.Pool, error) {
-		db, err := sql.Open(sqliteDriverName, set.DSN)
+		db, err := sql.Open(sqliteDriverName, sqliteDSN(set.DSN))
 		if err != nil {
 			return nil, nil, invalidDSN()
 		}

@@ -234,6 +234,11 @@ func TestDoc_Errors(t *testing.T) {
 		"gas/database: close: connection refused": func() error {
 			return runtimeFake(func(f *fake) { f.closeErr = refused }).Close(t.Context())
 		},
+		"gas/database: connection: connection refused": func() error {
+			s, _ := build(t)
+
+			return s.SafeError(refused)
+		},
 		"gas/database: close timed out: context deadline exceeded": func() error {
 			f := &fake{}
 			s, _ := fakeService(t, f)

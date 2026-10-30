@@ -238,6 +238,44 @@ func TestRuntime_ReconnectFails(t *testing.T) {
 	}
 }
 
+// SafeError replaces a connection-level failure, as the service's own
+// methods do, after `connection: `, and returns any other error, and nil,
+// as it is, on a service in any state.
+func TestSafeError(t *testing.T) {
+	t.Parallel()
+
+	s, _ := build(t)
+
+	cases := map[error]string{
+		refusedError():       "connection refused",
+		driver.ErrBadConn:    "failed",
+		mysql.ErrInvalidConn: "failed",
+	}
+
+	for driverErr, want := range cases {
+		assertReplaced(t, s.SafeError(driverErr), "gas/database: connection: "+want, driverErr)
+	}
+
+	for _, stmtErr := range []error{
+		&pgconn.PgError{Code: "42P01", Message: "relation \"nope\" does not exist"},
+		&mysql.MySQLError{Number: 1045, Message: "Access denied for user '" + secretUser + "'"},
+		context.Canceled,
+		errFake,
+	} {
+		assert.Equal(t, stmtErr, s.SafeError(stmtErr))
+	}
+
+	require.NoError(t, s.SafeError(nil))
+
+	live := sqliteService(t)
+	assertReplaced(
+		t,
+		live.SafeError(refusedError()),
+		"gas/database: connection: connection refused",
+		nil,
+	)
+}
+
 // Errors that describe a statement, and context errors, come back
 // wrapped, with the driver's error reachable and no ErrConnect.
 func TestRuntime_StatementErrorsPassThrough(t *testing.T) {
