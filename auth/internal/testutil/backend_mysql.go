@@ -6,7 +6,6 @@ import (
 	"os"
 	"testing"
 
-	"github.com/go-sql-driver/mysql"
 	"github.com/testcontainers/testcontainers-go"
 	tcmysql "github.com/testcontainers/testcontainers-go/modules/mysql"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -93,25 +92,14 @@ func SetupMySQL(tb testing.TB) *MySQLContainer {
 		)
 	}
 
-	cfg, err := mysql.ParseDSN(connStr)
-	if err != nil {
-		tb.Fatalf("failed to parse mysql connection string: %v", err)
-	}
-
-	connector, err := mysql.NewConnector(cfg)
-	if err != nil {
-		tb.Fatalf("failed to build mysql connector: %v", err)
-	}
-
-	// The database module validates a driver name only when no connector
-	// is given, and it does not list mysql, so the service gets the
-	// driver as a connector and reports mysqlDriver as its driver name.
+	// The service opens the DSN with the mysql dialect, which keeps
+	// multiStatements as the DSN sets it.
 	dbSvc := newDatabaseService(tb, func(s *database.Settings) {
-		s.Driver = mysqlDriver
-		s.DSN = ""
+		s.Dialect = database.DialectMySQL
+		s.DSN = connStr
 		s.ConnRetries = 5
 		s.ConnRetryInterval = connRetryInterval
-	}, database.WithConnector(connector))
+	})
 	migSvc := newMigrateService(tb, dbSvc)
 
 	return &MySQLContainer{

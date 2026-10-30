@@ -82,7 +82,7 @@ func SetupSQLite(tb testing.TB) (rawDB *sql.DB, dbSvc *database.Service, migSvc 
 	tb.Helper()
 
 	dbSvc = newDatabaseService(tb, func(s *database.Settings) {
-		s.Driver = database.DriverSQLite
+		s.Dialect = database.DialectSQLite
 		s.DSN = ":memory:"
 		s.MaxOpenConns = 1
 		s.MaxIdleConns = 1
@@ -149,7 +149,7 @@ func SetupPostgres(tb testing.TB) *PostgresContainer {
 	}
 
 	dbSvc := newDatabaseService(tb, func(s *database.Settings) {
-		s.Driver = database.DriverPgx
+		s.Dialect = database.DialectPostgres
 		s.DSN = connStr
 		s.ConnRetries = 5
 		s.ConnRetryInterval = connRetryInterval

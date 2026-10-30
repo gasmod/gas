@@ -26,7 +26,7 @@ func newTestDB(t *testing.T) gas.DatabaseProvider {
 	t.Helper()
 	dsn := filepath.Join(t.TempDir(), "test.db")
 	cfg := database.DefaultConfig()
-	cfg.Database.Driver = database.DriverSQLite
+	cfg.Database.Dialect = database.DialectSQLite
 	cfg.Database.DSN = dsn
 	factory := database.New(database.WithConfig(cfg))
 	db, err := factory(nil, &gas.NopLogger{})

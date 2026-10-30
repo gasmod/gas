@@ -1,188 +1,487 @@
-package test
+package database_test
 
 import (
+	"context"
+	"database/sql/driver"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-playground/validator/v10"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/gasmod/gas"
-	database "github.com/gasmod/gas/database"
+	"github.com/gasmod/gas/config/configtest"
+	"github.com/gasmod/gas/database"
 )
 
-// validConfig returns a Config that passes validation, as a base for mutation.
-func validConfig() *database.Config {
-	cfg := database.DefaultConfig()
-	cfg.Database.DSN = "postgres://user:pass@localhost:5432/db"
-	return cfg
+// DefaultConfig holds the documented defaults: ModeSQL, the Default
+// limits and timeouts, and no dialect or DSN.
+func TestDefaultConfig(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, &database.Config{Database: database.Settings{
+		Mode:              database.ModeSQL,
+		MaxOpenConns:      25,
+		MaxIdleConns:      5,
+		ConnMaxLifetime:   30 * time.Minute,
+		ConnMaxIdleTime:   5 * time.Minute,
+		ConnectTimeout:    5 * time.Second,
+		ConnRetries:       0,
+		ConnRetryInterval: 2 * time.Second,
+	}}, database.DefaultConfig())
+	assert.Equal(t, 30*time.Second, database.MaxConnRetryInterval)
+	assert.Equal(t, "gas/database", database.ServiceName)
 }
 
-func TestValidate(t *testing.T) {
-	tests := []struct {
-		mutate  func(*database.Config)
-		name    string
-		wantErr bool
-	}{
+// configCase is a configuration that Init accepts or rejects, the same way
+// whether it is given to WithConfig or bound from a ConfigProvider.
+type configCase struct {
+	// edit changes a valid SQLite configuration.
+	edit func(*database.Settings)
+	// connector, when set, is given to WithConnector with dialect.
+	connector driver.Connector
+	// name names the case.
+	name string
+	// dialect is the dialect given with connector.
+	dialect database.Dialect
+	// want is the error Init returns, or empty when Init succeeds.
+	want string
+	// tag reports whether want is a failed validate tag.
+	tag bool
+	// nilConnector reports whether WithConnector is given a nil connector.
+	nilConnector bool
+}
+
+// tagErr returns the error Init returns for field of Settings failing tag.
+func tagErr(field, tag string) string {
+	return "gas/database: invalid config: validate config: Key: 'Config.Database." + field +
+		"' Error:Field validation for '" + field + "' failed on the '" + tag + "' tag"
+}
+
+// ruleErr returns the error Init returns for a broken rule.
+func ruleErr(msg string) string {
+	return "gas/database: invalid config: " + msg
+}
+
+// configCases are the tags and the rules of the package documentation,
+// each at a bound it accepts and one it rejects.
+//
+//nolint:funlen // one case per rule and bound.
+func configCases() []configCase {
+	sqlite := func(*database.Settings) {}
+	f := &fake{}
+
+	return []configCase{
+		{name: "valid", edit: sqlite},
 		{
-			name:   "defaults with DSN",
-			mutate: func(*database.Config) {},
+			name: "mode empty",
+			edit: func(s *database.Settings) { s.Mode = "" },
+			want: tagErr("Mode", "oneof"),
+			tag:  true,
 		},
 		{
-			name:   "pgx mode",
-			mutate: func(c *database.Config) { c.Database.Mode = database.ModePgx },
+			name: "mode unknown",
+			edit: func(s *database.Settings) { s.Mode = "mongo" },
+			want: tagErr("Mode", "oneof"),
+			tag:  true,
 		},
 		{
-			name:    "unknown mode",
-			mutate:  func(c *database.Config) { c.Database.Mode = "mongo" },
-			wantErr: true,
+			name: "dialect unknown",
+			edit: func(s *database.Settings) { s.Dialect = "oracle" },
+			want: tagErr("Dialect", "oneof"),
+			tag:  true,
 		},
 		{
-			name:    "empty mode",
-			mutate:  func(c *database.Config) { c.Database.Mode = "" },
-			wantErr: true,
-		},
-		//{
-		//	name:    "unknown driver in sql mode",
-		//	mutate:  func(c *database.Config) { c.Database.Driver = "mysql" },
-		//	wantErr: true,
-		//},
-		{
-			// The driver is a database/sql concept, so it is not validated
-			// in pgx mode.
-			name: "unknown driver ignored in pgx mode",
-			mutate: func(c *database.Config) {
-				c.Database.Mode = database.ModePgx
-				c.Database.Driver = "mysql"
-			},
-		},
-		//{
-		//	name:    "empty DSN",
-		//	mutate:  func(c *database.Config) { c.Database.DSN = "" },
-		//	wantErr: true,
-		//},
-		{
-			name:    "MaxOpenConns below minimum",
-			mutate:  func(c *database.Config) { c.Database.MaxOpenConns = 0 },
-			wantErr: true,
+			name: "dialect empty",
+			edit: func(s *database.Settings) { s.Dialect = "" },
+			want: ruleErr("Database.Dialect is required without a connector"),
 		},
 		{
-			name:    "MaxOpenConns above maximum",
-			mutate:  func(c *database.Config) { c.Database.MaxOpenConns = 1001 },
-			wantErr: true,
-		},
-		//{
-		//	name:    "MaxIdleConns below minimum",
-		//	mutate:  func(c *database.Config) { c.Database.MaxIdleConns = 0 },
-		//	wantErr: true,
-		//},
-		//{
-		//	name: "MaxIdleConns above maximum",
-		//	mutate: func(c *database.Config) {
-		//		c.Database.MaxOpenConns = 1000
-		//		c.Database.MaxIdleConns = 1001
-		//	},
-		//	wantErr: true,
-		//},
-		//{
-		//	name: "MaxIdleConns exceeds MaxOpenConns",
-		//	mutate: func(c *database.Config) {
-		//		c.Database.MaxOpenConns = 5
-		//		c.Database.MaxIdleConns = 10
-		//	},
-		//	wantErr: true,
-		//},
-		{
-			// pgx manages idle connections itself, so the idle bounds are
-			// not enforced in pgx mode.
-			name: "MaxIdleConns unchecked in pgx mode",
-			mutate: func(c *database.Config) {
-				c.Database.Mode = database.ModePgx
-				c.Database.MaxIdleConns = 0
-			},
+			name: "dsn empty",
+			edit: func(s *database.Settings) { s.DSN = "" },
+			want: ruleErr("Database.DSN is required without a connector"),
 		},
 		{
-			name:    "ConnMaxLifetime below minimum",
-			mutate:  func(c *database.Config) { c.Database.ConnMaxLifetime = time.Millisecond },
-			wantErr: true,
+			name: "pgx with sqlite",
+			edit: func(s *database.Settings) { s.Mode = database.ModePgx },
+			want: ruleErr("Database.Mode pgx requires Database.Dialect postgres"),
 		},
 		{
-			name:    "ConnMaxLifetime above maximum",
-			mutate:  func(c *database.Config) { c.Database.ConnMaxLifetime = 3 * time.Hour },
-			wantErr: true,
+			name: "open conns 1",
+			edit: func(s *database.Settings) { s.MaxOpenConns, s.MaxIdleConns = 1, 1 },
+		},
+		{name: "open conns 1000", edit: func(s *database.Settings) { s.MaxOpenConns = 1000 }},
+		{
+			name: "open conns 0",
+			edit: func(s *database.Settings) { s.MaxOpenConns, s.MaxIdleConns = 0, 0 },
+			want: tagErr("MaxOpenConns", "min"),
+			tag:  true,
 		},
 		{
-			name: "ConnMaxIdleTime below minimum",
-			mutate: func(c *database.Config) {
-				c.Database.ConnMaxIdleTime = time.Millisecond
-			},
-			wantErr: true,
+			name: "open conns 1001",
+			edit: func(s *database.Settings) { s.MaxOpenConns = 1001 },
+			want: tagErr("MaxOpenConns", "max"),
+			tag:  true,
+		},
+		{name: "idle conns 0", edit: func(s *database.Settings) { s.MaxIdleConns = 0 }},
+		{name: "idle conns at open", edit: func(s *database.Settings) { s.MaxIdleConns = 25 }},
+		{
+			name: "idle conns negative",
+			edit: func(s *database.Settings) { s.MaxIdleConns = -1 },
+			want: tagErr("MaxIdleConns", "min"),
+			tag:  true,
 		},
 		{
-			name: "ConnMaxIdleTime above maximum",
-			mutate: func(c *database.Config) {
-				c.Database.ConnMaxLifetime = 2 * time.Hour
-				c.Database.ConnMaxIdleTime = 90 * time.Minute
-			},
-			wantErr: true,
+			name: "idle conns above open",
+			edit: func(s *database.Settings) { s.MaxIdleConns = 26 },
+			want: ruleErr("Database.MaxIdleConns must not exceed Database.MaxOpenConns"),
 		},
 		{
-			name: "ConnMaxIdleTime exceeds ConnMaxLifetime",
-			mutate: func(c *database.Config) {
-				c.Database.ConnMaxLifetime = 1 * time.Minute
-				c.Database.ConnMaxIdleTime = 5 * time.Minute
-			},
-			wantErr: true,
+			name: "lifetime 1s",
+			edit: func(s *database.Settings) { s.ConnMaxLifetime, s.ConnMaxIdleTime = time.Second, time.Second },
+		},
+		{
+			name: "lifetime 2h",
+			edit: func(s *database.Settings) { s.ConnMaxLifetime = 2 * time.Hour },
+		},
+		{
+			name: "lifetime under 1s",
+			edit: func(s *database.Settings) { s.ConnMaxLifetime = time.Second - 1 },
+			// The idle time, at least 1s, is then over the lifetime too.
+			want: tagErr("ConnMaxLifetime", "min") + "\n" +
+				strings.TrimPrefix(
+					tagErr("ConnMaxIdleTime", "ltefield"),
+					"gas/database: invalid config: validate config: ",
+				),
+			tag: true,
+		},
+		{
+			name: "lifetime over 2h",
+			edit: func(s *database.Settings) { s.ConnMaxLifetime = 2*time.Hour + 1 },
+			want: tagErr("ConnMaxLifetime", "max"),
+			tag:  true,
+		},
+		{
+			name: "idle time 1h",
+			edit: func(s *database.Settings) { s.ConnMaxLifetime, s.ConnMaxIdleTime = 2*time.Hour, time.Hour },
+		},
+		{
+			name: "idle time under 1s",
+			edit: func(s *database.Settings) { s.ConnMaxIdleTime = time.Second - 1 },
+			want: tagErr("ConnMaxIdleTime", "min"),
+			tag:  true,
+		},
+		{
+			name: "idle time over 1h",
+			edit: func(s *database.Settings) { s.ConnMaxLifetime, s.ConnMaxIdleTime = 2*time.Hour, time.Hour+1 },
+			want: tagErr("ConnMaxIdleTime", "max"),
+			tag:  true,
+		},
+		{
+			name: "idle time over lifetime",
+			edit: func(s *database.Settings) { s.ConnMaxIdleTime = s.ConnMaxLifetime + time.Second },
+			want: tagErr("ConnMaxIdleTime", "ltefield"),
+			tag:  true,
+		},
+		{
+			name: "connect timeout 1s",
+			edit: func(s *database.Settings) { s.ConnectTimeout = time.Second },
+		},
+		{
+			name: "connect timeout 1m",
+			edit: func(s *database.Settings) { s.ConnectTimeout = time.Minute },
+		},
+		{
+			name: "connect timeout under 1s",
+			edit: func(s *database.Settings) { s.ConnectTimeout = time.Second - 1 },
+			want: tagErr("ConnectTimeout", "min"),
+			tag:  true,
+		},
+		{
+			name: "connect timeout over 1m",
+			edit: func(s *database.Settings) { s.ConnectTimeout = time.Minute + 1 },
+			want: tagErr("ConnectTimeout", "max"),
+			tag:  true,
+		},
+		{name: "retries 10", edit: func(s *database.Settings) { s.ConnRetries = 10 }},
+		{
+			name: "retries negative",
+			edit: func(s *database.Settings) { s.ConnRetries = -1 },
+			want: tagErr("ConnRetries", "min"),
+			tag:  true,
+		},
+		{
+			name: "retries 11",
+			edit: func(s *database.Settings) { s.ConnRetries = 11 },
+			want: tagErr("ConnRetries", "max"),
+			tag:  true,
+		},
+		{
+			name: "interval unchecked without retries",
+			edit: func(s *database.Settings) { s.ConnRetryInterval = 0 },
+		},
+		{
+			name: "interval 100ms",
+			edit: func(s *database.Settings) { s.ConnRetries, s.ConnRetryInterval = 1, 100*time.Millisecond },
+		},
+		{
+			name: "interval 30s",
+			edit: func(s *database.Settings) { s.ConnRetries, s.ConnRetryInterval = 1, 30*time.Second },
+		},
+		{
+			name: "interval MaxConnRetryInterval",
+			edit: func(s *database.Settings) { s.ConnRetries, s.ConnRetryInterval = 10, database.MaxConnRetryInterval },
+		},
+		{
+			name: "interval under 100ms",
+			edit: func(s *database.Settings) { s.ConnRetries, s.ConnRetryInterval = 1, 100*time.Millisecond-1 },
+			want: ruleErr(
+				"Database.ConnRetryInterval must be 100ms to 30s when Database.ConnRetries is positive",
+			),
+		},
+		{
+			name: "interval over 30s",
+			edit: func(s *database.Settings) { s.ConnRetries, s.ConnRetryInterval = 1, 30*time.Second+1 },
+			want: ruleErr(
+				"Database.ConnRetryInterval must be 100ms to 30s when Database.ConnRetries is positive",
+			),
+		},
+		{
+			name: "interval 1m",
+			edit: func(s *database.Settings) { s.ConnRetries, s.ConnRetryInterval = 1, time.Minute },
+			want: ruleErr(
+				"Database.ConnRetryInterval must be 100ms to 30s when Database.ConnRetries is positive",
+			),
+		},
+		{
+			name:      "connector",
+			edit:      func(s *database.Settings) { s.Dialect, s.DSN = "", "" },
+			connector: f.connector(),
+			dialect:   database.DialectMySQL,
+		},
+		{
+			name:      "connector with its dialect",
+			edit:      func(s *database.Settings) { s.Dialect, s.DSN = database.DialectMySQL, "" },
+			connector: f.connector(),
+			dialect:   database.DialectMySQL,
+		},
+		{
+			name:         "connector nil",
+			edit:         func(s *database.Settings) { s.Dialect, s.DSN = "", "" },
+			nilConnector: true,
+			dialect:      database.DialectMySQL,
+			want:         ruleErr("WithConnector requires a connector"),
+		},
+		{
+			name:      "connector typed nil",
+			edit:      func(s *database.Settings) { s.Dialect, s.DSN = "", "" },
+			connector: (*fakeConnector)(nil),
+			dialect:   database.DialectMySQL,
+			want:      ruleErr("WithConnector requires a connector"),
+		},
+		{
+			name:      "connector without dialect",
+			edit:      func(s *database.Settings) { s.Dialect, s.DSN = "", "" },
+			connector: f.connector(),
+			dialect:   "",
+			want:      ruleErr("WithConnector requires the dialect postgres, mysql or sqlite"),
+		},
+		{
+			name:      "connector in pgx mode",
+			edit:      func(s *database.Settings) { s.Mode, s.Dialect, s.DSN = database.ModePgx, "", "" },
+			connector: f.connector(),
+			dialect:   database.DialectPostgres,
+			want:      ruleErr("a connector requires Database.Mode sql"),
+		},
+		{
+			name:      "connector with another dialect",
+			edit:      func(s *database.Settings) { s.DSN = "" },
+			connector: f.connector(),
+			dialect:   database.DialectMySQL,
+			want: ruleErr(
+				"with a connector, Database.Dialect must be empty or the connector's dialect",
+			),
+		},
+		{
+			name:      "connector with a DSN",
+			edit:      func(s *database.Settings) { s.Dialect = "" },
+			connector: f.connector(),
+			dialect:   database.DialectSQLite,
+			want:      ruleErr("with a connector, Database.DSN must be empty"),
 		},
 	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := validConfig()
-			tt.mutate(cfg)
+// options returns the options of c for a configuration given or bound.
+func (c configCase) options(given *database.Config) []database.Option {
+	var opts []database.Option
 
-			err := ValidateConfig(cfg)
-			if tt.wantErr && err == nil {
-				t.Fatal("expected validation error, got nil")
+	if given != nil {
+		opts = append(opts, database.WithConfig(given))
+	}
+
+	if c.connector != nil || c.nilConnector {
+		opts = append(opts, database.WithConnector(c.dialect, c.connector))
+	}
+
+	return opts
+}
+
+// Every tag and rule holds the same way for a configuration given to
+// WithConfig and for one bound from the ConfigProvider, with the same
+// error, which names the setting and wraps ErrInvalidConfig.
+func TestInit_ConfigRules(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range configCases() {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := withSettings(t, c.edit)
+
+			paths := map[string]func() (*database.Service, error){
+				"given": func() (*database.Service, error) {
+					return database.New(c.options(cfg)...)(nil, &gas.NopLogger{})
+				},
+				"bound": func() (*database.Service, error) {
+					return database.New(
+						c.options(nil)...)(
+						provider(t, &cfg.Database),
+						&gas.NopLogger{},
+					)
+				},
 			}
-			if !tt.wantErr && err != nil {
-				t.Fatalf("expected config to validate, got: %v", err)
+
+			for path, newService := range paths {
+				s, err := newService()
+				require.NoError(t, err)
+
+				err = s.Init(t.Context())
+				if c.want == "" {
+					require.NoError(t, err, path)
+					require.NoError(t, s.Close(context.Background()), path)
+
+					continue
+				}
+
+				require.ErrorIs(t, err, database.ErrInvalidConfig, path)
+				require.EqualError(t, err, c.want, path)
+
+				if c.tag {
+					var verrs validator.ValidationErrors
+
+					require.ErrorAs(t, err, &verrs, path)
+				}
+
+				assert.Nil(t, s.DB(), path)
 			}
 		})
 	}
 }
 
-func TestDefaultConfig_Values(t *testing.T) {
-	cfg := database.DefaultConfig()
+// Init copies the configuration given to WithConfig: it never changes the
+// caller's struct, and changes the caller makes after Init do not reach
+// the service until it is initialized again.
+func TestWithConfig_Copies(t *testing.T) {
+	t.Parallel()
 
-	if cfg.Database.Mode != database.ModeSQL {
-		t.Errorf("Mode = %q, want %q", cfg.Database.Mode, database.ModeSQL)
-	}
-	if cfg.Database.Driver != database.DriverPostgres {
-		t.Errorf("Driver = %q, want %q", cfg.Database.Driver, database.DriverPostgres)
-	}
-	if cfg.Database.MaxOpenConns != 25 {
-		t.Errorf("MaxOpenConns = %d, want 25", cfg.Database.MaxOpenConns)
-	}
-	if cfg.Database.MaxIdleConns != 5 {
-		t.Errorf("MaxIdleConns = %d, want 5", cfg.Database.MaxIdleConns)
-	}
-	if cfg.Database.ConnMaxLifetime != 30*time.Minute {
-		t.Errorf("ConnMaxLifetime = %s, want 30m", cfg.Database.ConnMaxLifetime)
-	}
-	if cfg.Database.ConnMaxIdleTime != 5*time.Minute {
-		t.Errorf("ConnMaxIdleTime = %s, want 5m", cfg.Database.ConnMaxIdleTime)
-	}
-	if cfg.Database.ConnRetries != 0 {
-		t.Errorf("ConnRetries = %d, want 0", cfg.Database.ConnRetries)
-	}
-	if cfg.Database.ConnRetryInterval != 2*time.Second {
-		t.Errorf("ConnRetryInterval = %s, want 2s", cfg.Database.ConnRetryInterval)
-	}
+	cfg := sqliteConfig(t)
+	before := *cfg
 
-	// DefaultConfig has no DSN, so it does not validate on its own.
-	s, err := database.New(database.WithConfig(cfg))(nil, &gas.NopLogger{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Init(t.Context()); err == nil {
-		t.Error("expected DefaultConfig to fail validation without a DSN")
-	}
+	s := initialized(t, database.WithConfig(cfg))
+	assert.Equal(t, before, *cfg)
+
+	cfg.Database.Dialect = "oracle"
+
+	assert.Equal(t, "sqlite", s.Driver())
+	require.NoError(t, s.Close(t.Context()))
+
+	err := s.Init(t.Context())
+	require.EqualError(t, err, tagErr("Dialect", "oneof"))
+}
+
+// A nil configuration given to WithConfig fails Init with ErrNilConfig.
+func TestWithConfig_Nil(t *testing.T) {
+	t.Parallel()
+
+	err := initErr(t, database.WithConfig(nil))
+	require.ErrorIs(t, err, database.ErrNilConfig)
+	require.EqualError(t, err, "gas/database: config is nil")
+}
+
+// Without WithConfig, Init binds DefaultConfig from the ConfigProvider, so
+// a key the configuration does not set keeps its default.
+func TestInit_BindsOverDefaults(t *testing.T) {
+	t.Parallel()
+
+	dsn := sqliteConfig(t).Database.DSN
+
+	p, err := configtest.NewMockConfigWithValues(map[string]any{
+		"database": map[string]any{
+			"dialect":      "sqlite",
+			"dsn":          dsn,
+			"maxopenconns": 3,
+			"maxidleconns": 2,
+		},
+	})
+	require.NoError(t, err)
+
+	s, err := database.New()(p, &gas.NopLogger{})
+	require.NoError(t, err)
+	require.NoError(t, s.Init(t.Context()))
+	t.Cleanup(func() { require.NoError(t, s.Close(context.Background())) })
+
+	stats := s.DB().Stats()
+	assert.Equal(t, 3, stats.MaxOpenConnections)
+	assert.Equal(t, "sqlite", s.Driver())
+}
+
+// A ConfigProvider that fails to bind fails Init with ErrInvalidConfig,
+// wrapping the provider's error.
+func TestInit_BindError(t *testing.T) {
+	t.Parallel()
+
+	p := &configtest.MockConfig{BindFn: func(any) error { return errFake }}
+
+	s, err := database.New()(p, &gas.NopLogger{})
+	require.NoError(t, err)
+
+	err = s.Init(t.Context())
+	require.ErrorIs(t, err, database.ErrInvalidConfig)
+	require.ErrorIs(t, err, errFake)
+	require.EqualError(t, err, "gas/database: invalid config: fake: not supported")
+}
+
+// Without WithConfig and without a ConfigProvider, Init fails with
+// ErrNoConfigProvider.
+func TestInit_NoConfigProvider(t *testing.T) {
+	t.Parallel()
+
+	err := initErr(t)
+	require.ErrorIs(t, err, database.ErrNoConfigProvider)
+	require.EqualError(t, err, "gas/database: no config provider")
+}
+
+// New's constructor fails with ErrNilLogger for a nil logger, rather than
+// panicking.
+func TestNew_NilLogger(t *testing.T) {
+	t.Parallel()
+
+	s, err := database.New()(nil, nil)
+	require.ErrorIs(t, err, database.ErrNilLogger)
+	require.EqualError(t, err, "gas/database: logger is nil")
+	assert.Nil(t, s)
+}
+
+// New returns the constructor in the shape the gas container expects.
+func TestNew_Shape(t *testing.T) {
+	t.Parallel()
+
+	ctor := database.New()
+
+	s, err := ctor(nil, &gas.NopLogger{})
+	require.NoError(t, err)
+	assert.Equal(t, database.ServiceName, s.Name())
 }

@@ -5,163 +5,201 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
 
-// rollbackErr normalizes a rollback failure. A transaction that fn already
-// committed or rolled back itself reports sql.ErrTxDone / pgx.ErrTxClosed;
-// that is not a failure, so it is dropped. Anything else is returned
-// wrapped, since a failed rollback can leave the connection holding an open
-// transaction; the caller decides whether to return or log it. The returned error wraps rbErr, so callers
-// can match the driver's error with errors.Is or errors.As.
-func (s *Service) rollbackErr(rbErr error) error {
-	if rbErr == nil || errors.Is(rbErr, sql.ErrTxDone) || errors.Is(rbErr, pgx.ErrTxClosed) {
-		return nil
-	}
-	return fmt.Errorf("%s: failed to roll back transaction: %w", s.Name(), rbErr)
-}
-
-// commitErr wraps a commit failure with the service name. It returns nil
-// when cErr is nil. The returned error wraps cErr, so callers can match
-// the driver's error with errors.Is or errors.As.
-func (s *Service) commitErr(cErr error) error {
-	if cErr == nil {
-		return nil
-	}
-	return fmt.Errorf("%s: failed to commit transaction: %w", s.Name(), cErr)
-}
-
-// BeginTx starts a new database transaction. The caller is responsible
-// for calling Commit or Rollback on the returned *sql.Tx.
+// BeginTx starts a transaction on DB. The caller commits or rolls it
+// back. Its errors are as Query's, after `failed to begin transaction: `.
 func (s *Service) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
-	if s.closed.Load() {
-		return nil, fmt.Errorf("%s: service is closed", s.Name())
-	}
-	if s.db == nil {
-		return nil, fmt.Errorf("%s: not initialized", s.Name())
-	}
-	tx, err := s.db.BeginTx(ctx, opts)
+	st, err := s.loaded()
 	if err != nil {
-		return nil, fmt.Errorf("%s: failed to begin transaction: %w", s.Name(), err)
+		return nil, err
 	}
+
+	tx, err := st.db.BeginTx(ctx, opts)
+	if err != nil {
+		return nil, runtimeError(ctx, opBegin, err)
+	}
+
 	return tx, nil
 }
 
-// WithTx executes fn within a transaction. If fn returns nil the
-// transaction is committed; otherwise it is rolled back and a failing
-// rollback is joined onto fn's error. Any panic inside fn also triggers a
-// rollback, whose failure is logged rather than returned so the panic
-// propagates unchanged.
-func (s *Service) WithTx(
-	ctx context.Context,
-	opts *sql.TxOptions,
-	fn func(*sql.Tx) error,
-) (err error) {
-	if s.closed.Load() {
-		return fmt.Errorf("%s: service is closed", s.Name())
-	}
-	if s.db == nil {
-		return fmt.Errorf("%s: not initialized", s.Name())
+// WithTx runs fn in a transaction on DB and commits it only when fn
+// returns nil, as described in the package documentation. An error, a
+// panic or runtime.Goexit in fn rolls it back.
+func (s *Service) WithTx(ctx context.Context, opts *sql.TxOptions, fn func(*sql.Tx) error) error {
+	if fn == nil {
+		return fmt.Errorf("%s: %w", ServiceName, ErrNilFunc)
 	}
 
-	tx, err := s.db.BeginTx(ctx, opts)
-	if err != nil {
-		return fmt.Errorf("%s: failed to begin transaction: %w", s.Name(), err)
-	}
-
-	defer func() {
-		if p := recover(); p != nil {
-			// The panic takes precedence, so a failed rollback is logged
-			// here, where it is handled, rather than returned.
-			if rbErr := s.rollbackErr(tx.Rollback()); rbErr != nil {
-				s.logger.Error("failed to roll back transaction after panic").
-					Err("error", rbErr).
-					Send()
-			}
-			panic(p)
-		}
-		if err != nil {
-			if rbErr := s.rollbackErr(tx.Rollback()); rbErr != nil {
-				err = errors.Join(err, rbErr)
-			}
-			return
-		}
-		err = s.commitErr(tx.Commit())
-	}()
-
-	err = fn(tx)
-	return err
-}
-
-// BeginPgxTx starts a new native pgx transaction. Pass nil opts for pgx
-// defaults. The caller is responsible for calling Commit or Rollback on
-// the returned pgx.Tx. It returns an error when the service is closed or
-// is not running in ModePgx.
-func (s *Service) BeginPgxTx(ctx context.Context, opts *pgx.TxOptions) (pgx.Tx, error) {
-	if s.closed.Load() {
-		return nil, fmt.Errorf("%s: service is closed", s.Name())
-	}
-	if s.pool == nil {
-		return nil, fmt.Errorf(
-			"%s: attempt to begin pgx transaction in non-pgx mode '%s'",
-			s.Name(),
-			s.cfg.Database.Mode,
-		)
-	}
-
-	var txOpts pgx.TxOptions
-	if opts != nil {
-		txOpts = *opts
-	}
-
-	tx, err := s.pool.BeginTx(ctx, txOpts)
-	if err != nil {
-		return nil, fmt.Errorf("%s: failed to begin pgx transaction: %w", s.Name(), err)
-	}
-	return tx, nil
-}
-
-// WithPgxTx executes fn within a native pgx transaction. If fn returns nil
-// the transaction is committed; otherwise it is rolled back and a failing
-// rollback is joined onto fn's error. Any panic inside fn also triggers a
-// rollback, whose failure is logged rather than returned so the panic
-// propagates unchanged. Rollback uses a context detached from ctx's
-// cancellation so it still runs when ctx is already done; the commit uses
-// ctx unchanged, so an already-canceled ctx fails the commit instead of
-// persisting work the caller abandoned. It returns an error when the
-// service is closed or is not running in ModePgx.
-func (s *Service) WithPgxTx(
-	ctx context.Context,
-	opts *pgx.TxOptions,
-	fn func(pgx.Tx) error,
-) (err error) {
-	tx, err := s.BeginPgxTx(ctx, opts)
+	tx, err := s.BeginTx(ctx, opts)
 	if err != nil {
 		return err
 	}
 
+	return s.runTx(ctx, sqlTxn{tx: tx}, func() error { return fn(tx) })
+}
+
+// BeginPgxTx starts a native pgx transaction on the pool; nil opts are
+// pgx's defaults. The caller commits or rolls it back. Outside ModePgx it
+// returns ErrModeNotPgx. Its other errors are as BeginTx's.
+func (s *Service) BeginPgxTx(ctx context.Context, opts *pgx.TxOptions) (pgx.Tx, error) {
+	tx, _, err := s.beginPgxTx(ctx, opts)
+
+	return tx, err
+}
+
+// beginPgxTx is BeginPgxTx, returning the state it began the transaction
+// on too.
+func (s *Service) beginPgxTx(ctx context.Context, opts *pgx.TxOptions) (pgx.Tx, *state, error) {
+	st, err := s.loaded()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if st.pool == nil {
+		return nil, nil, fmt.Errorf("%s: %w", ServiceName, ErrModeNotPgx)
+	}
+
+	var txOpts pgx.TxOptions
+
+	if opts != nil {
+		txOpts = *opts
+	}
+
+	tx, err := st.pool.BeginTx(ctx, txOpts)
+	if err != nil {
+		return nil, nil, runtimeError(ctx, opBegin, err)
+	}
+
+	return tx, st, nil
+}
+
+// WithPgxTx runs fn in a native pgx transaction and commits it only when
+// fn returns nil, as WithTx does. The commit uses ctx; the rollback uses
+// ctx without its cancellation, bounded by Settings.ConnectTimeout.
+func (s *Service) WithPgxTx(ctx context.Context, opts *pgx.TxOptions, fn func(pgx.Tx) error) error {
+	if fn == nil {
+		return fmt.Errorf("%s: %w", ServiceName, ErrNilFunc)
+	}
+
+	tx, st, err := s.beginPgxTx(ctx, opts)
+	if err != nil {
+		return err
+	}
+
+	t := pgxTxn{ctx: ctx, tx: tx, timeout: st.settings.ConnectTimeout}
+
+	return s.runTx(ctx, t, func() error { return fn(tx) })
+}
+
+// txn is a transaction runTx ends.
+type txn interface {
+	// commit commits the transaction.
+	commit() error
+	// rollback rolls the transaction back.
+	rollback() error
+}
+
+// sqlTxn is a database/sql transaction.
+type sqlTxn struct {
+	// tx is the transaction.
+	tx *sql.Tx
+}
+
+// commit commits tx.
+func (t sqlTxn) commit() error {
+	//nolint:wrapcheck // runTx wraps it.
+	return t.tx.Commit()
+}
+
+// rollback rolls tx back. database/sql takes no context for it.
+func (t sqlTxn) rollback() error {
+	//nolint:wrapcheck // runTx wraps it.
+	return t.tx.Rollback()
+}
+
+// pgxTxn is a pgx transaction begun with ctx.
+type pgxTxn struct {
+	// ctx is the context of WithPgxTx.
+	//nolint:containedctx // kept for the commit and rollback of one call.
+	ctx context.Context
+	// tx is the transaction.
+	tx pgx.Tx
+	// timeout bounds the rollback.
+	timeout time.Duration
+}
+
+// commit commits tx with ctx.
+func (t pgxTxn) commit() error {
+	//nolint:wrapcheck // runTx wraps it.
+	return t.tx.Commit(t.ctx)
+}
+
+// rollback rolls tx back with ctx without its cancellation, bounded by
+// the timeout, so that it runs when ctx has ended and cannot hang on a
+// dead connection.
+func (t pgxTxn) rollback() error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(t.ctx), t.timeout)
+	defer cancel()
+
+	//nolint:wrapcheck // runTx wraps it.
+	return t.tx.Rollback(ctx)
+}
+
+// The operations of the transaction errors, after the service name.
+const (
+	// opBegin is a failed begin.
+	opBegin = "failed to begin transaction"
+	// opCommit is a failed commit.
+	opCommit = "failed to commit transaction"
+	// opRollback is a failed rollback.
+	opRollback = "failed to roll back transaction"
+)
+
+// runTx runs fn, called with ctx, and ends t: it commits only when fn
+// returned nil, and rolls back when fn returned an error, panicked or
+// called runtime.Goexit. A panic or Goexit goes on once the rollback ran,
+// and a failed rollback is then logged with its reason; after an error
+// return it is joined to the error.
+func (s *Service) runTx(ctx context.Context, t txn, fn func() error) (err error) {
+	completed := false
+
 	defer func() {
-		rollbackCtx := context.WithoutCancel(ctx)
-		if p := recover(); p != nil {
-			// The panic takes precedence, so a failed rollback is logged
-			// here, where it is handled, rather than returned.
-			if rbErr := s.rollbackErr(tx.Rollback(rollbackCtx)); rbErr != nil {
-				s.logger.Error("failed to roll back transaction after panic").
-					Err("error", rbErr).
-					Send()
+		if completed && err == nil {
+			cErr := t.commit()
+			if cErr != nil {
+				err = runtimeError(ctx, opCommit, cErr)
 			}
-			panic(p)
-		}
-		if err != nil {
-			if rbErr := s.rollbackErr(tx.Rollback(rollbackCtx)); rbErr != nil {
-				err = errors.Join(err, rbErr)
-			}
+
 			return
 		}
-		err = s.commitErr(tx.Commit(ctx))
+
+		rbErr := t.rollback()
+		if !rollbackFailed(rbErr) {
+			return
+		}
+
+		if !completed {
+			s.logger.Warn("transaction rollback failed").Str("reason", reason(rbErr)).Send()
+
+			return
+		}
+
+		err = errors.Join(err, runtimeError(ctx, opRollback, rbErr))
 	}()
 
-	err = fn(tx)
+	err = fn()
+	completed = true
+
 	return err
+}
+
+// rollbackFailed reports whether err, of a rollback, is a failure: not
+// nil, and not the transaction having ended already, as when fn committed
+// or rolled it back itself.
+func rollbackFailed(err error) bool {
+	return err != nil && !errors.Is(err, sql.ErrTxDone) && !errors.Is(err, pgx.ErrTxClosed)
 }

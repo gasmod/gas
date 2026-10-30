@@ -17,12 +17,14 @@ go get github.com/gasmod/gas/database
 gas.WithSingletonService[gas.DatabaseProvider](database.New()),
 ```
 
-`database.New()` needs `gas.ConfigProvider` and `gas.Logger`.
+`database.New()` needs `gas.ConfigProvider` and `gas.Logger`. The configuration names a
+dialect, `postgres`, `mysql` or `sqlite`, and a DSN; SQLite needs the app to import
+`modernc.org/sqlite`.
 
-| Mode | Backend |
-|---|---|
-| `database.ModeSQL` (default) | Any `database/sql` driver: PostgreSQL, SQLite, MySQL |
-| `database.ModePgx` | Native `pgxpool` for PostgreSQL, for pgx types and batching |
+| Mode                         | Backend                                                                       |
+|------------------------------|-------------------------------------------------------------------------------|
+| `database.ModeSQL` (default) | `database/sql` with the dialect's driver, or a connector from `WithConnector` |
+| `database.ModePgx`           | Native `pgxpool` for PostgreSQL, for pgx types and batching                   |
 
 ## Documentation
 
