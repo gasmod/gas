@@ -1,24 +1,22 @@
 package jwt
 
 import (
-	"context"
-	"net/http"
 	"time"
 
-	"github.com/gasmod/gas"
+	"github.com/gasmod/gas/auth"
 )
 
-// Provider defines an interface for JWT authentication and signing operations.
+// Provider is what Service provides: authenticating requests, signing
+// tokens and verifying them.
 type Provider interface {
-	// Authenticate reads a Bearer token from the Authorization header, verifies
-	// it, and returns a principal with scheme "jwt".
-	Authenticate(ctx context.Context, r *http.Request) (gas.Principal, error)
-	// Sign creates a signed JWT with the given subject and custom claims using
-	// the default expiry.
+	// Authenticator authenticates a request by its bearer token.
+	auth.Authenticator
+	// Sign returns a token for subject with claims, valid for the
+	// configured expiry.
 	Sign(subject string, claims map[string]any) (string, error)
-	// SignWithExpiry creates a signed JWT with the given subject, custom claims,
-	// and explicit expiry duration.
+	// SignWithExpiry returns a token for subject with claims, valid for
+	// expiry.
 	SignWithExpiry(subject string, claims map[string]any, expiry time.Duration) (string, error)
-	// Verify parses and validates a JWT string, returning the extracted claims.
-	Verify(tokenString string) (*TokenClaims, error)
+	// Verify checks a token and returns its claims.
+	Verify(token string) (*TokenClaims, error)
 }

@@ -1,45 +1,89 @@
-// Package token provides single-use, time-limited tokens for the Gas
-// ecosystem. Tokens are used for magic links, email verification, password
-// reset, and invite links. They implement gas.Service but NOT
-// auth.Authenticator: tokens are verified once and consumed.
-package token //nolint:revive // intentional: "token" is the natural name for this domain package
+package token
 
 import (
 	"context"
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/gasmod/gas"
+	"github.com/gasmod/gas/auth"
 	"github.com/gasmod/gas/auth/internal/cryptoutil"
-	"github.com/gasmod/gas/auth/token/db"
+	"github.com/gasmod/gas/auth/internal/svcutil"
+	"github.com/gasmod/gas/auth/internal/tokenstore"
 )
 
-const serviceName = "gas/auth/token"
+// ServiceName is the name of the service, which prefixes its errors.
+const ServiceName = "gas/auth/token"
 
-// Sentinel errors for token operations.
+// cleanupTaskName names the expired-token cleanup in its log events.
+const cleanupTaskName = "token cleanup"
+
 var (
-	// ErrTokenInvalid indicates that the token does not exist or has already
-	// been consumed.
-	ErrTokenInvalid = errors.New("invalid token")
-	// ErrTokenExpired indicates that the token has expired.
-	ErrTokenExpired = errors.New("token expired")
+	// ErrTokenInvalid indicates that a token does not exist, was consumed
+	// or revoked already, or was issued for another purpose. It wraps
+	// auth.ErrUnauthenticated.
+	ErrTokenInvalid = fmt.Errorf("%w: invalid token", auth.ErrUnauthenticated)
+	// ErrTokenExpired indicates that a token was issued for the purpose
+	// asked for and has expired. It wraps auth.ErrCredentialsExpired, and
+	// so auth.ErrUnauthenticated.
+	ErrTokenExpired = fmt.Errorf("%w: token expired", auth.ErrCredentialsExpired)
+	// ErrInvalidTTL indicates that Issue was given a negative ttl.
+	ErrInvalidTTL = errors.New("invalid ttl")
+
+	// ErrNotInitialized indicates that a method was called before Init
+	// succeeded, after an Init that failed, or after Close.
+	ErrNotInitialized = svcutil.ErrNotInitialized
+	// ErrNilLogger indicates that the constructor was given a nil logger.
+	ErrNilLogger = svcutil.ErrNilLogger
+	// ErrNilConfig indicates that WithConfig was given nil.
+	ErrNilConfig = svcutil.ErrNilConfig
+	// ErrNoConfigProvider indicates that the service has neither a
+	// configuration from WithConfig nor a ConfigProvider to bind one from.
+	ErrNoConfigProvider = svcutil.ErrNoConfigProvider
+	// ErrInvalidConfig indicates that the configuration failed to bind,
+	// failed its validate tags, or broke a rule.
+	ErrInvalidConfig = svcutil.ErrInvalidConfig
 )
 
-// Service manages single-use tokens. It implements gas.Service.
+// Service issues and verifies single-use tokens, as described in the
+// package documentation. It is safe for concurrent use.
 type Service struct {
-	store  *db.Store
+	// db is the database each Init builds a store on.
+	db gas.DatabaseProvider
+	// logger receives the service's log events.
 	logger gas.Logger
-	cfg    *Config
-
+	// migMgr receives the store's migrations in Init.
+	migMgr gas.MigrationManager
+	// cfgProvider is what Init binds the configuration from when
+	// WithConfig was not used.
 	cfgProvider gas.ConfigProvider
-	done        chan struct{}
-	doneOnce    sync.Once
+	// state is what the last successful Init set up, or nil before Init
+	// succeeds, after an Init that failed, and after Close. The methods
+	// load it once per call.
+	state atomic.Pointer[state]
+	// cfgSource records the configuration given to WithConfig.
+	cfgSource svcutil.ConfigSource[Config]
+	// cleanup deletes expired tokens in the background between Init and
+	// Close.
+	cleanup svcutil.Loop
+	// lifecycle makes Init and Close one at a time, so the state they
+	// publish and the cleanup they start or stop always agree. The other
+	// methods never take it.
+	lifecycle sync.Mutex
+}
 
-	customConfigProvided bool
+// state is what one successful Init set up. It is never changed after it
+// is published, so a call that loaded it keeps a consistent view.
+type state struct {
+	// cfg is the resolved configuration.
+	cfg *Config
+	// store keeps the tokens.
+	store *tokenstore.Store
 }
 
 var (
@@ -47,197 +91,274 @@ var (
 	_ Provider    = (*Service)(nil)
 )
 
-// Option configures a Service.
-type Option func(*Service)
-
-// WithConfig sets a custom configuration, skipping auto-bind from ConfigProvider.
-func WithConfig(cfg *Config) Option {
-	return func(s *Service) {
-		s.cfg = cfg
-		s.customConfigProvided = true
-	}
-}
-
-// New captures options and returns a DI-injectable constructor.
+// New returns a constructor for a Service, in the shape the dependency
+// injection container calls. The constructor applies opts and fails only
+// for a nil logger, with an error wrapping ErrNilLogger; the
+// configuration is resolved by Init.
 func New(
 	opts ...Option,
 ) func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager, gas.ConfigProvider) (*Service, error) {
-	return func(dbProv gas.DatabaseProvider, logger gas.Logger, migMgr gas.MigrationManager, cfgProvider gas.ConfigProvider) (*Service, error) {
-		store, err := db.New()(dbProv, logger, migMgr)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", serviceName, err)
+	return func(
+		dbProv gas.DatabaseProvider,
+		logger gas.Logger,
+		migMgr gas.MigrationManager,
+		cfgProvider gas.ConfigProvider,
+	) (*Service, error) {
+		if logger == nil {
+			return nil, fmt.Errorf("%s: %w", ServiceName, ErrNilLogger)
 		}
+
 		s := &Service{
-			cfg:         DefaultConfig(),
-			store:       store,
-			logger:      logger.With().Str("service", serviceName).Logger(),
-			done:        make(chan struct{}),
+			db:          dbProv,
+			logger:      logger,
+			migMgr:      migMgr,
 			cfgProvider: cfgProvider,
 		}
+
 		for _, opt := range opts {
 			opt(s)
 		}
+
 		return s, nil
 	}
 }
 
-// Name returns the service identifier.
-func (s *Service) Name() string { return serviceName }
+// Name returns ServiceName.
+func (s *Service) Name() string { return ServiceName }
 
-// Init validates configuration, initializes the store, and starts the
-// background cleanup goroutine. The context is unused: the cleanup goroutine
-// runs until Close and deliberately does not derive from the Init context,
-// which the framework cancels as soon as Init returns.
+// Init resolves and checks the configuration, builds a new store and
+// registers its migrations, publishes them, and restarts the background
+// cleanup on the new store. Calls running at the same time use the
+// earlier Init's store until the new one is published. An Init that fails
+// leaves the service uninitialized, with its cleanup stopped. The context
+// is unused: the cleanup runs until Close, not until the context ends.
 func (s *Service) Init(context.Context) error {
-	if !s.customConfigProvided && s.cfgProvider != nil {
-		// Bind checks the validate tags.
-		if err := s.cfgProvider.Bind(s.cfg); err != nil {
-			return fmt.Errorf("%s: config binding: %w", s.Name(), err)
-		}
-	}
-	// The rules a tag cannot express hold for any config, bound or given.
-	if err := checkRules(s.cfg); err != nil {
-		return fmt.Errorf("%s: %w", s.Name(), err)
+	s.lifecycle.Lock()
+	defer s.lifecycle.Unlock()
+
+	st, err := s.newState()
+	if err != nil {
+		s.state.Store(nil)
+		s.cleanup.Stop()
+
+		return err
 	}
 
-	if err := s.store.Init(s); err != nil {
-		return fmt.Errorf("%s: store init: %w", s.Name(), err)
-	}
+	s.state.Store(st)
 
-	if s.cfg.Token.CleanupInterval > 0 {
-		go s.cleanupLoop() //nolint:gosec,contextcheck // G118: runs until Close; must not inherit the Init ctx, which is canceled when Init returns
-	}
+	//nolint:contextcheck // the cleanup outlives Init's context; Close stops it.
+	s.cleanup.Start(svcutil.Task{
+		Run:      s.deleteExpired(st.store),
+		Logger:   s.logger.With().Str("service", ServiceName).Logger(),
+		Name:     cleanupTaskName,
+		Interval: st.cfg.Token.CleanupInterval,
+		Timeout:  st.cfg.Token.CleanupTimeout,
+	})
 
-	s.logger.Info("service initialized").Send()
+	s.logger.Info("service initialized").Str("service", ServiceName).Send()
+
 	return nil
 }
 
-// Close stops the background cleanup goroutine. It does not wait for the
-// goroutine to exit, so the context is unused.
+// Close stops the background cleanup and waits for a deletion in progress
+// to end. The methods then return ErrNotInitialized until Init runs
+// again. Close never fails, and does nothing to a service that is not
+// initialized.
 func (s *Service) Close(context.Context) error {
-	s.doneOnce.Do(func() { close(s.done) })
+	s.lifecycle.Lock()
+	defer s.lifecycle.Unlock()
+
+	s.state.Store(nil)
+	s.cleanup.Stop()
+
 	return nil
 }
 
-// Issue generates a random token, stores its hash with purpose, subject, and
-// expiry, and returns the raw token. If ttl is 0, DefaultTTL is used.
+// Issue stores a new token for subject and purpose that expires ttl from
+// now, and returns it. A ttl of 0 uses Settings.DefaultTTL; a negative ttl
+// is an error wrapping ErrInvalidTTL. An empty subject is an error
+// wrapping auth.ErrEmptySubject, and a subject or purpose longer than
+// auth.MaxValueLength bytes one wrapping auth.ErrValueTooLong. Only the
+// token's hash is stored, and nothing is stored on error.
 func (s *Service) Issue(
 	ctx context.Context,
 	subject, purpose string,
 	ttl time.Duration,
 ) (string, error) {
-	if ttl == 0 {
-		ttl = s.cfg.Token.DefaultTTL
-	}
-
-	rawToken, err := cryptoutil.RandomString(s.cfg.Token.TokenLength)
+	st, err := s.current()
 	if err != nil {
-		return "", fmt.Errorf("%s: generate token: %w", s.Name(), err)
+		return "", err
 	}
 
-	id := uuid.New().String()
+	err = checkIssue(subject, purpose, ttl)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", ServiceName, err)
+	}
 
-	tokenHash := cryptoutil.SHA256Hex(rawToken)
+	if ttl == 0 {
+		ttl = st.cfg.Token.DefaultTTL
+	}
+
+	rawToken, err := cryptoutil.RandomString(st.cfg.Token.TokenLength)
+	if err != nil {
+		return "", fmt.Errorf("%s: generate token: %w", ServiceName, err)
+	}
+
 	now := time.Now()
-	expiresAt := now.Add(ttl)
 
-	if insErr := s.store.InsertToken(
+	err = st.store.InsertToken(
 		ctx,
-		id,
+		uuid.NewString(),
 		subject,
-		tokenHash,
+		cryptoutil.SHA256Hex(rawToken),
 		purpose,
 		now,
-		expiresAt,
-	); insErr != nil {
-		return "", fmt.Errorf("%s: issue token: %w", s.Name(), insErr)
+		now.Add(ttl),
+	)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", ServiceName, err)
 	}
 
 	return rawToken, nil
 }
 
-// Verify hashes the raw token, atomically fetches-and-deletes it, then checks
-// purpose match and expiry. Returns the subject on success.
-//
-// The fetch-and-delete happens in a single atomic store operation so that
-// concurrent Verify calls for the same raw token cannot both succeed: only
-// one caller observes the record, the other sees ErrTokenInvalid.
-//
-// Deletion is unconditional on validation outcome: once the raw secret has
-// been presented, it is burned regardless of whether purpose matches or the
-// token has expired. This keeps a simple invariant — once the raw secret has
-// been presented, it cannot be reused — and prevents an attacker who has the
-// hash but guesses the wrong purpose from retrying indefinitely.
-//
-// Trade-off: a bug that sends the wrong purpose string will silently consume
-// a valid token. This is the preferable failure mode — it surfaces the bug
-// immediately rather than masking cross-flow confusion.
-func (s *Service) Verify(
-	ctx context.Context,
-	rawToken, purpose string,
-) (subject string, err error) {
-	tokenHash := cryptoutil.SHA256Hex(rawToken)
-
-	record, tkErr := s.store.ConsumeTokenByHash(ctx, tokenHash)
-	if tkErr != nil {
-		return "", fmt.Errorf("%s: verify token: %w", s.Name(), tkErr)
-	}
-	if record == nil {
-		return "", ErrTokenInvalid
+// checkIssue checks Issue's arguments, in the order the package
+// documentation gives.
+func checkIssue(subject, purpose string, ttl time.Duration) error {
+	if ttl < 0 {
+		return fmt.Errorf("%w: must not be negative", ErrInvalidTTL)
 	}
 
-	if record.Purpose != purpose {
-		return "", ErrTokenInvalid
+	if subject == "" {
+		return auth.ErrEmptySubject
 	}
 
-	if time.Now().After(record.ExpiresAt) {
-		return "", ErrTokenExpired
-	}
-
-	return record.Subject, nil
-}
-
-// Revoke deletes a specific token by its raw value.
-func (s *Service) Revoke(ctx context.Context, rawToken string) error {
-	tokenHash := cryptoutil.SHA256Hex(rawToken)
-	n, err := s.store.DeleteTokenByHash(ctx, tokenHash)
+	err := auth.CheckLength("subject", subject)
 	if err != nil {
-		return fmt.Errorf("%s: revoke token: %w", s.Name(), err)
+		//nolint:wrapcheck // Issue wraps it with the service's name.
+		return err
 	}
-	if n == 0 {
-		return ErrTokenInvalid
+
+	//nolint:wrapcheck // Issue wraps it with the service's name.
+	return auth.CheckLength("purpose", purpose)
+}
+
+// Verify consumes the token and returns its subject when it was issued
+// for purpose and has not expired. The token is deleted whatever the
+// outcome, in one atomic step, so it verifies at most once. It returns an
+// error wrapping ErrTokenInvalid for a token that does not exist, was
+// consumed already, or was issued for another purpose, and one wrapping
+// ErrTokenExpired for an expired one.
+func (s *Service) Verify(ctx context.Context, rawToken, purpose string) (string, error) {
+	st, err := s.current()
+	if err != nil {
+		return "", err
 	}
+
+	rec, err := st.store.ConsumeTokenByHash(ctx, cryptoutil.SHA256Hex(rawToken))
+	if errors.Is(err, tokenstore.ErrNotFound) {
+		return "", fmt.Errorf("%s: %w", ServiceName, ErrTokenInvalid)
+	}
+
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", ServiceName, err)
+	}
+
+	// The purpose is checked first, so a token presented for the wrong
+	// flow says nothing about its expiry.
+	if rec.Purpose != purpose {
+		return "", fmt.Errorf("%s: %w", ServiceName, ErrTokenInvalid)
+	}
+
+	if !time.Now().Before(rec.ExpiresAt) {
+		return "", fmt.Errorf("%s: %w", ServiceName, ErrTokenExpired)
+	}
+
+	return rec.Subject, nil
+}
+
+// Revoke deletes the token, whatever its purpose and expiry. A token that
+// is not stored, including one consumed or revoked already, is not an
+// error, so Revoke may be called again.
+func (s *Service) Revoke(ctx context.Context, rawToken string) error {
+	st, err := s.current()
+	if err != nil {
+		return err
+	}
+
+	_, err = st.store.DeleteTokenByHash(ctx, cryptoutil.SHA256Hex(rawToken))
+	if err != nil {
+		return fmt.Errorf("%s: %w", ServiceName, err)
+	}
+
 	return nil
 }
 
-// RevokeAllByPurpose deletes all tokens for a subject with the given purpose.
+// RevokeAllByPurpose deletes every token of subject issued for purpose,
+// expired ones included. Deleting none is not an error.
 func (s *Service) RevokeAllByPurpose(ctx context.Context, subject, purpose string) error {
-	if err := s.store.DeleteTokensBySubjectPurpose(ctx, subject, purpose); err != nil {
-		return fmt.Errorf("%s: revoke all by purpose: %w", s.Name(), err)
+	st, err := s.current()
+	if err != nil {
+		return err
 	}
+
+	err = st.store.DeleteTokensBySubjectPurpose(ctx, subject, purpose)
+	if err != nil {
+		return fmt.Errorf("%s: %w", ServiceName, err)
+	}
+
 	return nil
 }
 
-func (s *Service) cleanupLoop() {
-	ticker := time.NewTicker(s.cfg.Token.CleanupInterval)
-	defer ticker.Stop()
+// newState resolves the configuration and builds and initializes a store,
+// for Init to publish.
+func (s *Service) newState() (*state, error) {
+	cfg, err := s.cfgSource.Resolve(s.cfgProvider, DefaultConfig, checkRules)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", ServiceName, err)
+	}
 
-	for {
-		select {
-		case <-s.done:
-			return
-		case <-ticker.C:
-			ctx, cancel := context.WithTimeout(context.Background(), s.cfg.Token.CleanupTimeout)
-			n, err := s.store.DeleteExpiredTokens(ctx, time.Now())
-			if err != nil {
-				cancel()
-				s.logger.Error("token cleanup failed").Err("error", err).Send()
-				continue
-			}
-			if n > 0 {
-				s.logger.Info("expired tokens cleaned up").Int64("count", n).Send()
-			}
-			cancel()
+	store, err := tokenstore.New()(s.db, s.logger, s.migMgr)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", ServiceName, err)
+	}
+
+	err = store.Init(s)
+	if err != nil {
+		//nolint:wrapcheck // Store.Init starts its errors with the service's name.
+		return nil, err
+	}
+
+	return &state{cfg: cfg, store: store}, nil
+}
+
+// current returns the state the last successful Init published, or an
+// error wrapping ErrNotInitialized.
+func (s *Service) current() (*state, error) {
+	st := s.state.Load()
+	if st == nil {
+		return nil, fmt.Errorf("%s: %w", ServiceName, ErrNotInitialized)
+	}
+
+	return st, nil
+}
+
+// deleteExpired returns one run of the background cleanup on store: it
+// deletes the tokens that have expired, and logs how many at debug level.
+// The cleanup loop logs its error.
+func (s *Service) deleteExpired(store *tokenstore.Store) func(context.Context) error {
+	return func(ctx context.Context) error {
+		n, err := store.DeleteExpiredTokens(ctx, time.Now())
+		if err != nil {
+			//nolint:wrapcheck // the store's errors name it and the operation; the loop logs them with the task's name.
+			return err
 		}
+
+		s.logger.Debug("expired tokens deleted").
+			Str("service", ServiceName).
+			Int64("count", n).
+			Send()
+
+		return nil
 	}
 }

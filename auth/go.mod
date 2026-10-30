@@ -3,22 +3,25 @@ module github.com/gasmod/gas/auth
 go 1.27.3
 
 require (
-	github.com/gasmod/gas v0.6.0
-	github.com/gasmod/gas/config v0.6.0
-	github.com/gasmod/gas/database v0.6.0
-	github.com/gasmod/gas/migrate v0.6.0
+	github.com/gasmod/gas v0.5.6
+	github.com/gasmod/gas/config v0.5.6
+	github.com/gasmod/gas/database v0.5.6
+	github.com/gasmod/gas/migrate v0.5.6
 	github.com/go-playground/validator/v10 v10.30.5
+	github.com/go-sql-driver/mysql v1.10.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/lib/pq v1.12.3
 	github.com/stretchr/testify v1.12.1
 	github.com/testcontainers/testcontainers-go v0.44.0
+	github.com/testcontainers/testcontainers-go/modules/mysql v0.44.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
-	modernc.org/sqlite v1.60.1
+	modernc.org/sqlite v1.61.0
 )
 
 require (
 	dario.cat/mergo v1.0.2 // indirect
+	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20261013165250-51075c6ea6bc // indirect
 	github.com/Microsoft/go-winio v0.6.4 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
@@ -81,7 +84,7 @@ require (
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
-	modernc.org/libc v1.79.0 // indirect
+	modernc.org/libc v1.79.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )

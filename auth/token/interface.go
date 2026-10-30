@@ -5,21 +5,19 @@ import (
 	"time"
 )
 
-// Provider defines the contract for managing and validating single-use tokens.
+// Provider is what Service offers once initialized, for code that wants to
+// depend on an interface, such as to swap in a fake in tests. The methods
+// behave as described in the package documentation.
 type Provider interface {
-	// Issue generates a random token, stores its hash with purpose, subject, and
-	// expiry, and returns the raw token. If ttl is 0, DefaultTTL is used.
+	// Issue stores a new token for subject and purpose that lives for ttl,
+	// or for the configured default when ttl is 0, and returns it.
 	Issue(ctx context.Context, subject, purpose string, ttl time.Duration) (string, error)
-	// Verify hashes the raw token, looks it up by hash, unconditionally deletes it,
-	// then checks purpose match and expiry. Returns the subject on success.
-	//
-	// The token is deleted before validation so that a single presentation always
-	// consumes it — regardless of whether the caller supplied the wrong purpose or
-	// the token has expired. This keeps a simple invariant: once the raw secret has
-	// been presented, it cannot be reused.
+	// Verify consumes the token and returns its subject when it was issued
+	// for purpose and has not expired.
 	Verify(ctx context.Context, rawToken, purpose string) (subject string, err error)
-	// Revoke deletes a specific token by its raw value.
+	// Revoke deletes the token; a token that is not stored is not an
+	// error.
 	Revoke(ctx context.Context, rawToken string) error
-	// RevokeAllByPurpose deletes all tokens for a subject with the given purpose.
+	// RevokeAllByPurpose deletes every token of subject issued for purpose.
 	RevokeAllByPurpose(ctx context.Context, subject, purpose string) error
 }

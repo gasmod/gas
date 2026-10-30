@@ -1,105 +1,114 @@
 version: "2"
 sql:
-  # --- Session ---
+  #=========================================================#
+  #                         SESSION                         #
+  #=========================================================#
+
   - engine: "postgresql"
-    schema: "session/db/postgres/*.up.sql"
-    queries: "session/db/postgres/queries.sql"
+    schema: "internal/sessionstore/postgres/*.up.sql"
+    queries: "internal/sessionstore/postgres/queries.sql"
     gen:
       go:
         package: "pgdb"
-        out: "session/db/postgres"
+        out: "internal/sessionstore/postgres"
         sql_package: "database/sql"
         emit_result_struct_pointers: true
         emit_params_struct_pointers: true
 
   - engine: "mysql"
-    schema: "session/db/mysql/*.up.sql"
-    queries: "session/db/mysql/queries.sql"
+    schema: "internal/sessionstore/mysql/*.up.sql"
+    queries: "internal/sessionstore/mysql/queries.sql"
     gen:
       go:
         package: "mydb"
-        out: "session/db/mysql"
+        out: "internal/sessionstore/mysql"
         sql_package: "database/sql"
         emit_result_struct_pointers: true
         emit_params_struct_pointers: true
 
   - engine: "sqlite"
-    schema: "session/db/sqlite/*.up.sql"
-    queries: "session/db/sqlite/queries.sql"
+    schema: "internal/sessionstore/sqlite/*.up.sql"
+    queries: "internal/sessionstore/sqlite/queries.sql"
     gen:
       go:
         package: "litedb"
-        out: "session/db/sqlite"
+        out: "internal/sessionstore/sqlite"
         sql_package: "database/sql"
         emit_result_struct_pointers: true
         emit_params_struct_pointers: true
         emit_pointers_for_null_types: true
 
-  # --- API Key ---
+  #=========================================================#
+  #                         API KEY                         #
+  #=========================================================#
+
   - engine: "postgresql"
-    schema: "apikey/db/postgres/*.up.sql"
-    queries: "apikey/db/postgres/queries.sql"
+    schema: "internal/apikeystore/postgres/*.up.sql"
+    queries: "internal/apikeystore/postgres/queries.sql"
     gen:
       go:
         package: "pgdb"
-        out: "apikey/db/postgres"
+        out: "internal/apikeystore/postgres"
         sql_package: "database/sql"
         emit_result_struct_pointers: true
         emit_params_struct_pointers: true
 
   - engine: "mysql"
-    schema: "apikey/db/mysql/*.up.sql"
-    queries: "apikey/db/mysql/queries.sql"
+    schema: "internal/apikeystore/mysql/*.up.sql"
+    queries: "internal/apikeystore/mysql/queries.sql"
     gen:
       go:
         package: "mydb"
-        out: "apikey/db/mysql"
+        out: "internal/apikeystore/mysql"
         sql_package: "database/sql"
         emit_result_struct_pointers: true
         emit_params_struct_pointers: true
 
   - engine: "sqlite"
-    schema: "apikey/db/sqlite/*.up.sql"
-    queries: "apikey/db/sqlite/queries.sql"
+    schema: "internal/apikeystore/sqlite/*.up.sql"
+    queries: "internal/apikeystore/sqlite/queries.sql"
     gen:
       go:
         package: "litedb"
-        out: "apikey/db/sqlite"
+        out: "internal/apikeystore/sqlite"
         sql_package: "database/sql"
         emit_result_struct_pointers: true
         emit_params_struct_pointers: true
         emit_pointers_for_null_types: true
 
-  # --- Token ---
+  #=========================================================#
+  #                          TOKEN                          #
+  #=========================================================#
+
   - engine: "postgresql"
-    schema: "token/db/postgres/*.up.sql"
-    queries: "token/db/postgres/queries.sql"
+    schema: "internal/tokenstore/postgres/*.up.sql"
+    queries: "internal/tokenstore/postgres/queries.sql"
     gen:
       go:
         package: "pgdb"
-        out: "token/db/postgres"
+        out: "internal/tokenstore/postgres"
         sql_package: "database/sql"
         emit_result_struct_pointers: true
         emit_params_struct_pointers: true
 
   - engine: "mysql"
-    schema: "token/db/mysql/*.up.sql"
-    queries: "token/db/mysql/queries.sql"
+    schema: "internal/tokenstore/mysql/*.up.sql"
+    queries: "internal/tokenstore/mysql/queries.sql"
     gen:
       go:
         package: "mydb"
-        out: "token/db/mysql"
+        out: "internal/tokenstore/mysql"
         sql_package: "database/sql"
         emit_result_struct_pointers: true
         emit_params_struct_pointers: true
 
   - engine: "sqlite"
-    schema: "token/db/sqlite/*.up.sql"
-    queries: "token/db/sqlite/queries.sql"
+    schema: "internal/tokenstore/sqlite/*.up.sql"
+    queries: "internal/tokenstore/sqlite/queries.sql"
     gen:
       go:
         package: "litedb"
-        out: "token/db/sqlite"
+        out: "internal/tokenstore/sqlite"
         sql_package: "database/sql"
         emit_result_struct_pointers: true
         emit_params_struct_pointers: true
