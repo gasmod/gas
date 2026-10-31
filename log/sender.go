@@ -543,7 +543,7 @@ func (s *sender) marshal(batch []Record) (body []byte, ok bool) {
 }
 
 // send posts body. Its error wraps ErrPost or ErrStatus, and names the
-// endpoint as shown, never with its user info or query.
+// endpoint as shown: its scheme and host only.
 func (s *sender) send(ctx context.Context, body []byte) error {
 	req := s.template.Clone(ctx)
 

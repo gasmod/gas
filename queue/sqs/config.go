@@ -2,12 +2,11 @@ package sqs
 
 import (
 	"errors"
-	"fmt"
-	"io"
-	"log/slog"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/gasmod/gas"
 )
 
 const (
@@ -61,38 +60,10 @@ type Settings struct {
 	MaxRetries int `validate:"min=0,max=10"`
 }
 
-// redacted is what a Secret prints, marshals and logs as.
-const redacted = "[redacted]"
-
-// Secret is a string that is never printed, marshaled or logged, such as
-// Settings.SecretAccessKey: String returns `[redacted]`, and Format writes
-// it for every verb, so `%v`, `%+v` and `%#v` of a Settings or a Config
-// hide it; MarshalText returns it, so encoding/json and YAML encoders
-// that use encoding.TextMarshaler write it; and LogValue returns it, so
-// log/slog logs it. Configuration binds into it as into a string, and
-// string(s) is the value. encoding/gob ignores MarshalText and encodes
-// the value, so a Settings or a Config must never be gob-encoded.
-type Secret string
-
-var (
-	_ fmt.Formatter  = Secret("")
-	_ slog.LogValuer = Secret("")
-)
-
-// String returns `[redacted]`, never the value.
-func (Secret) String() string { return redacted }
-
-// Format writes `[redacted]`, never the value, whatever the verb.
-func (Secret) Format(f fmt.State, _ rune) {
-	// fmt's State writes to fmt's own buffer, which does not fail.
-	_, _ = io.WriteString(f, redacted)
-}
-
-// MarshalText returns `[redacted]`, never the value.
-func (Secret) MarshalText() ([]byte, error) { return []byte(redacted), nil }
-
-// LogValue returns `[redacted]`, never the value.
-func (Secret) LogValue() slog.Value { return slog.StringValue(redacted) }
+// Secret is gas.Secret: a string that is never printed, marshaled or
+// logged, such as Settings.SecretAccessKey. Configuration binds into it as
+// into a string, and string(s) is the value.
+type Secret = gas.Secret
 
 // DefaultConfig returns the configuration a store starts from before
 // binding: no region, no endpoint, no static credentials,

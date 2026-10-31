@@ -184,7 +184,7 @@ func (s *Service) load() (*state, error) {
 		}
 
 	default: // MethodHS256; the validate tag allows no other
-		key := []byte(cfg.JWT.SigningKey)
+		key := []byte(string(cfg.JWT.SigningKey))
 
 		st.method = gojwt.SigningMethodHS256
 		st.signKey = key

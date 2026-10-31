@@ -16,7 +16,10 @@ const (
 )
 
 // EnvProvider loads configuration from the process environment, as
-// described in the package documentation.
+// described in the package documentation. Without WithEnvPrefix, the
+// configuration holds every variable it keeps, such as another tool's
+// API key or a DATABASE_URL, so use WithEnvPrefix in production and never
+// log Config.Values.
 type EnvProvider struct {
 	prefix    string
 	separator string

@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/database"
 )
 
@@ -33,7 +34,7 @@ func mysqlConfig(t *testing.T, edit func(*mysql.Config)) *database.Config {
 	}
 
 	return fakeConfig(func(s *database.Settings) {
-		s.Dialect, s.DSN = database.DialectMySQL, my.FormatDSN()
+		s.Dialect, s.DSN = database.DialectMySQL, gas.Secret(my.FormatDSN())
 		s.ConnectTimeout = 5 * time.Second
 	})
 }
@@ -105,7 +106,14 @@ func TestMySQL_ServerReasonsNoSecrets(t *testing.T) {
 		require.EqualError(t, err, "gas/database: connect: "+want)
 
 		for _, text := range []string{err.Error(), logText(log)} {
-			assertNoSecrets(t, text, cfg.Database.DSN, good.Addr, containerUser, containerDB)
+			assertNoSecrets(
+				t,
+				text,
+				string(cfg.Database.DSN),
+				good.Addr,
+				containerUser,
+				containerDB,
+			)
 		}
 	}
 }

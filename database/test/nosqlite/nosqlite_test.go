@@ -27,7 +27,7 @@ func TestInit_SQLiteNotRegistered(t *testing.T) {
 	cfg := database.DefaultConfig()
 
 	cfg.Database.Dialect = database.DialectSQLite
-	cfg.Database.DSN = filepath.Join(t.TempDir(), "test.db")
+	cfg.Database.DSN = gas.Secret(filepath.Join(t.TempDir(), "test.db"))
 	cfg.Database.ConnRetries = 3
 
 	s, err := database.New(database.WithConfig(cfg))(nil, &gas.NopLogger{})

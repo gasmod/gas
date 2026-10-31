@@ -1,11 +1,8 @@
 package ses_test
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -16,7 +13,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sesv2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.yaml.in/yaml/v3"
 
 	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/config/configtest"
@@ -35,8 +31,8 @@ func message() *gas.Email {
 	}
 }
 
-// fmt prints the secret access key and the session token of a Settings
-// or a Config as `[redacted]`, whatever the verb.
+// The secret access key and the session token are gas.Secrets, so a
+// Config prints them as `[redacted]`.
 func TestSecret_Redacted(t *testing.T) {
 	t.Parallel()
 
@@ -45,46 +41,9 @@ func TestSecret_Redacted(t *testing.T) {
 	cfg.Email.SecretAccessKey = "zqxsecret"
 	cfg.Email.SessionToken = "zqxtoken"
 
-	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x"} {
-		text := fmt.Sprintf(verb, cfg) + fmt.Sprintf(verb, cfg.Email) + fmt.Sprintf(verb, *cfg)
-		assert.NotContains(t, text, "zqx", verb)
-	}
-
-	assert.Equal(t, "[redacted]", cfg.Email.SecretAccessKey.String())
-	assert.Equal(t, "zqxsecret", string(cfg.Email.SecretAccessKey))
-}
-
-// encoding/json, a YAML encoder and log/slog write the secret access key
-// and the session token as `[redacted]`, in a Config and on their own.
-func TestSecret_Marshal(t *testing.T) {
-	t.Parallel()
-
-	cfg := ses.DefaultConfig()
-
-	cfg.Email.SecretAccessKey = "zqxsecret"
-	cfg.Email.SessionToken = "zqxtoken"
-
-	j, err := json.Marshal(cfg) //nolint:musttag // untagged: the field names an encoder writes.
-	require.NoError(t, err)
-	assert.Contains(t, string(j), `"SecretAccessKey":"[redacted]","SessionToken":"[redacted]"`)
-
-	y, err := yaml.Marshal(cfg)
-	require.NoError(t, err)
-	assert.Contains(t, string(y), "secretaccesskey: '[redacted]'")
-	assert.Contains(t, string(y), "sessiontoken: '[redacted]'")
-
-	var logs bytes.Buffer
-
-	slog.New(slog.NewJSONHandler(&logs, nil)).
-		Info("cfg", "cfg", cfg, "key", cfg.Email.SecretAccessKey)
-	slog.New(slog.NewTextHandler(&logs, nil)).
-		Info("cfg", "cfg", cfg, "key", cfg.Email.SessionToken)
-	assert.Contains(t, logs.String(), `"key":"[redacted]"`)
-	assert.Contains(t, logs.String(), `key=[redacted]`)
-
-	for _, text := range []string{string(j), string(y), logs.String()} {
-		assert.NotContains(t, text, "zqx")
-	}
+	text := fmt.Sprintf("%+v", cfg)
+	assert.NotContains(t, text, "zqx")
+	assert.Contains(t, text, "[redacted]")
 }
 
 // DefaultConfig has no region, endpoint, default sender or credentials,

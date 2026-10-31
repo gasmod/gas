@@ -42,8 +42,9 @@
 //     [DialectSQLite]. It has no default, and is required unless a
 //     connector is given.
 //   - `database.dsn`: the connection string, in the format of the
-//     dialect's driver. It has no default, and is required unless a
-//     connector is given.
+//     dialect's driver, a gas.Secret, which fmt, encoding/json, YAML
+//     encoders and log/slog write as `[redacted]`. It has no default, and
+//     is required unless a connector is given.
 //   - `database.maxopenconns`: the most open connections, 1 to 1000.
 //     Default: [DefaultMaxOpenConns].
 //   - `database.maxidleconns`: the most idle connections, 0 to

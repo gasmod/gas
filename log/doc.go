@@ -281,9 +281,10 @@
 //     earlier Close still ran. It wraps the context's error.
 //
 // Every error starts with `gas/log: `. No error names the endpoint's user
-// info, query or fragment, or a header name or value: an error names the endpoint
-// without them, and a parse error of the endpoint is replaced, not
-// wrapped. The panic value of a Marshaler is left out of its report,
+// info, path, query or fragment, or a header name or value: an error
+// names the endpoint by its scheme and host only, such as
+// `https://collector.example:4318`, and a parse error of the endpoint is
+// replaced, not wrapped. The panic value of a Marshaler is left out of its report,
 // since it can hold the records. The errors, as returned or reported:
 //
 //	gas/log: logger is nil
@@ -305,8 +306,8 @@
 //	gas/log: local handler failed: disk full
 //	gas/log: marshal failed: unsupported value
 //	gas/log: marshaler panicked
-//	gas/log: post failed: Post "https://collector.example:4318/v1/logs": connection refused
-//	gas/log: unexpected status 503 from https://collector.example:4318/v1/logs
+//	gas/log: post failed: Post "https://collector.example:4318": connection refused
+//	gas/log: unexpected status 503 from https://collector.example:4318
 //	gas/log: not delivered: 1 record
 //	gas/log: not delivered: 2 records: context deadline exceeded
 //	gas/log: still closing: context deadline exceeded

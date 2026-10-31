@@ -191,7 +191,7 @@
 //     queue.ErrInvalidReceipt.
 //   - `message not in flight`: MessageNotInflight, also wrapping
 //     queue.ErrNotInFlight.
-//   - `invalid reply`: a reply SQS does not send: a body larger than 16
+//   - `invalid reply`: a reply SQS does not send: a body larger than 64
 //     MiB, which the client Init builds stops reading at, a client of
 //     [WithClient] that returns neither an output nor an error, a
 //     ReceiveMessage or GetQueueUrl reply as under Requests and Queues.
@@ -266,8 +266,8 @@
 // come from, the names of the static keys missing, and the operation
 // timeout. fmt, encoding/json, YAML encoders that use
 // encoding.TextMarshaler, and log/slog write the secret key and the
-// session token of a [Settings] or a [Config] as `[redacted]`;
-// encoding/gob does not, so neither must be gob-encoded. Static
+// session token of a [Settings] or a [Config] as `[redacted]`, and
+// encoding/gob fails on them rather than encode them. Static
 // credentials in configuration are a secret of the app's; prefer a role,
 // which the default chain finds. An `http` endpoint sends the access key
 // ID, the session token and the payloads in clear text, as under

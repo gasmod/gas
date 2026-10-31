@@ -146,9 +146,11 @@ func TestNewShippingHandler_InvalidEndpoint(t *testing.T) {
 	}
 }
 
-// A token in the endpoint's query or user info, or a header value, never
-// appears in a report, whether the post fails on the network or with a
-// status, or in Close's error.
+// A token in the endpoint's user info, path, query or fragment, or a
+// header value, never appears in a report, whether the post fails on the
+// network or with a status, or in Close's error: a report names the
+// endpoint by its scheme and host only. A token in the path appeared in
+// every report before.
 func TestShipping_NoSecrets(t *testing.T) {
 	t.Parallel()
 
@@ -157,6 +159,7 @@ func TestShipping_NoSecrets(t *testing.T) {
 		"http://hunter2@127.0.0.1:1/v1/logs",
 		"http://127.0.0.1:1/v1/logs?api_key=hunter2",
 		"http://127.0.0.1:1/v1/logs#hunter2",
+		"http://127.0.0.1:1/receiver/v1/http/hunter2",
 	} {
 		for _, client := range []*http.Client{
 			{Timeout: time.Second},
@@ -178,7 +181,8 @@ func TestShipping_NoSecrets(t *testing.T) {
 			report := r.next(t)
 			assert.NotContains(t, report.Error(), "hunter2")
 			assert.NotContains(t, closeErr.Error(), "hunter2")
-			assert.Contains(t, report.Error(), "127.0.0.1:1/v1/logs")
+			assert.Contains(t, report.Error(), "http://127.0.0.1:1")
+			assert.NotContains(t, report.Error(), "/v1")
 		}
 	}
 }

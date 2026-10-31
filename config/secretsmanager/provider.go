@@ -3,6 +3,9 @@ package secretsmanager
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -146,6 +149,38 @@ func NewProvider(opts ...Option) *Provider {
 	return p
 }
 
+// String describes the Provider without its credentials, its endpoint or
+// its secrets' names: its region, how many secrets it has, its timeout,
+// and whether it has an endpoint and static credentials, such as
+// `secretsmanager.Provider{region: "eu-west-1", secrets: 1, timeout: 10s,
+// endpoint: false, staticCredentials: true}`.
+func (p *Provider) String() string {
+	return fmt.Sprintf(
+		"secretsmanager.Provider{region: %q, secrets: %d, timeout: %s, endpoint: %t, "+
+			"staticCredentials: %t}",
+		p.region, len(p.secrets), p.timeout, p.endpoint != "", p.staticCredentials(),
+	)
+}
+
+// Format writes String, whatever the verb, so fmt never prints the
+// secret access key.
+func (p *Provider) Format(f fmt.State, _ rune) {
+	// fmt's State writes to fmt's own buffer, which does not fail.
+	_, _ = io.WriteString(f, p.String())
+}
+
+// LogValue returns a group of what String prints, never the secret access
+// key.
+func (p *Provider) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("region", p.region),
+		slog.Int("secrets", len(p.secrets)),
+		slog.Duration("timeout", p.timeout),
+		slog.Bool("endpoint", p.endpoint != ""),
+		slog.Bool("staticCredentials", p.staticCredentials()),
+	)
+}
+
 // Name returns ProviderName.
 func (p *Provider) Name() string {
 	return ProviderName
@@ -179,4 +214,9 @@ func (p *Provider) LoadContext(ctx context.Context) (map[string]any, error) {
 	}
 
 	return p.load(ctx)
+}
+
+// staticCredentials reports whether both static credentials are set.
+func (p *Provider) staticCredentials() bool {
+	return p.accessKeyID != "" && p.secretAccessKey != ""
 }

@@ -31,7 +31,7 @@ func TestDoc_Usage(t *testing.T) {
 	cfg := database.DefaultConfig()
 
 	cfg.Database.Dialect = database.DialectSQLite
-	cfg.Database.DSN = "file:" + filepath.Join(t.TempDir(), "app.db")
+	cfg.Database.DSN = gas.Secret("file:" + filepath.Join(t.TempDir(), "app.db"))
 
 	svc, err := database.New(database.WithConfig(cfg))(nil, logger)
 	require.NoError(t, err)

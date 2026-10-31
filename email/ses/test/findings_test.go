@@ -1,9 +1,7 @@
 package ses_test
 
 import (
-	"bytes"
 	"context"
-	"encoding/gob"
 	"errors"
 	"net/http"
 	"sync/atomic"
@@ -234,22 +232,6 @@ func TestFinding_ReplyWinsOverTimeout(t *testing.T) {
 	err = s.Send(t.Context(), message())
 	require.ErrorIs(t, err, ses.ErrConnect)
 	require.EqualError(t, err, "gas/email/ses: send: timed out")
-}
-
-// encoding/gob ignores MarshalText and encodes a Secret's value, which
-// the package documentation now warns of: a Config must never be
-// gob-encoded.
-func TestSecret_GobEncodesValue(t *testing.T) {
-	t.Parallel()
-
-	cfg := ses.DefaultConfig()
-
-	cfg.Email.SecretAccessKey = "zqxsecret"
-
-	var b bytes.Buffer
-
-	require.NoError(t, gob.NewEncoder(&b).Encode(cfg))
-	assert.Contains(t, b.String(), "zqxsecret")
 }
 
 // An endpoint could hold a query, a fragment or a path, which could

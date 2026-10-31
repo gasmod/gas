@@ -150,7 +150,7 @@ func SetupPostgres(tb testing.TB) *PostgresContainer {
 
 	dbSvc := newDatabaseService(tb, func(s *database.Settings) {
 		s.Dialect = database.DialectPostgres
-		s.DSN = connStr
+		s.DSN = gas.Secret(connStr)
 		s.ConnRetries = 5
 		s.ConnRetryInterval = connRetryInterval
 	})

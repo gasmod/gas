@@ -78,7 +78,7 @@ func openDB(
 	cfg := database.DefaultConfig()
 
 	cfg.Database.Dialect = b.dialect
-	cfg.Database.DSN = dsn
+	cfg.Database.DSN = gas.Secret(dsn)
 
 	for _, e := range edit {
 		e(&cfg.Database)

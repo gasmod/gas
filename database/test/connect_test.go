@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/database"
 )
 
@@ -334,7 +335,7 @@ func TestInit_RefusedNoSecrets(t *testing.T) {
 	for name, r := range remotes {
 		dsn := dsnFor(r.dialect, "127.0.0.1:"+port)
 		cfg := fakeConfig(func(s *database.Settings) {
-			s.Mode, s.Dialect, s.DSN = r.mode, r.dialect, dsn
+			s.Mode, s.Dialect, s.DSN = r.mode, r.dialect, gas.Secret(dsn)
 			s.ConnRetries = 1
 		})
 		s, log := build(t, database.WithConfig(cfg))
@@ -359,7 +360,7 @@ func TestInit_UnknownHostNoSecrets(t *testing.T) {
 	for name, r := range remotes {
 		dsn := dsnFor(r.dialect, secretHost+".invalid:5432")
 		cfg := fakeConfig(func(s *database.Settings) {
-			s.Mode, s.Dialect, s.DSN = r.mode, r.dialect, dsn
+			s.Mode, s.Dialect, s.DSN = r.mode, r.dialect, gas.Secret(dsn)
 			s.ConnRetries = 1
 		})
 		s, log := build(t, database.WithConfig(cfg))
@@ -385,7 +386,7 @@ func TestInit_ConnectTimeout(t *testing.T) {
 			t.Parallel()
 
 			cfg := fakeConfig(func(s *database.Settings) {
-				s.Mode, s.Dialect, s.DSN = r.mode, r.dialect, dsnFor(r.dialect, addr)
+				s.Mode, s.Dialect, s.DSN = r.mode, r.dialect, gas.Secret(dsnFor(r.dialect, addr))
 			})
 
 			start := time.Now()
@@ -425,7 +426,9 @@ func fuzzDSN(t *testing.T, d database.Dialect, mode database.Mode, dsn string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	cfg := fakeConfig(func(s *database.Settings) { s.Mode, s.Dialect, s.DSN = mode, d, dsn })
+	cfg := fakeConfig(
+		func(s *database.Settings) { s.Mode, s.Dialect, s.DSN = mode, d, gas.Secret(dsn) },
+	)
 
 	s, log := build(t, database.WithConfig(cfg))
 

@@ -11,7 +11,7 @@
 //
 //	svc, err := jwt.New(jwt.WithConfig(&jwt.Config{JWT: jwt.Settings{
 //		SigningMethod: jwt.MethodHS256,
-//		SigningKey:    key, // at least 32 bytes
+//		SigningKey:    gas.Secret(key), // at least 32 bytes
 //		Expiry:        15 * time.Minute,
 //	}}))(nil, logger)
 //	if err != nil {
@@ -40,7 +40,8 @@
 //   - `jwt.signingmethod`: [MethodHS256] or [MethodRS256]. Default:
 //     [DefaultSigningMethod].
 //   - `jwt.signingkey`: the HMAC key for HS256, at least [MinHMACKeyBytes]
-//     bytes. It has no default.
+//     bytes, a gas.Secret, which fmt, encoding/json, YAML encoders and
+//     log/slog write as `[redacted]`. It has no default.
 //   - `jwt.publickeypath`, `jwt.privatekeypath`: the PEM files of the RSA
 //     keys for RS256. They have no default.
 //   - `jwt.issuer`, `jwt.audience`: when not empty, set as `iss` and `aud`

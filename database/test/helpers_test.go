@@ -47,7 +47,7 @@ func sqliteConfig(tb testing.TB) *database.Config {
 	cfg := database.DefaultConfig()
 
 	cfg.Database.Dialect = database.DialectSQLite
-	cfg.Database.DSN = filepath.Join(tb.TempDir(), "test.db")
+	cfg.Database.DSN = gas.Secret(filepath.Join(tb.TempDir(), "test.db"))
 
 	return cfg
 }
@@ -118,7 +118,7 @@ func provider(t *testing.T, s *database.Settings) gas.ConfigProvider {
 		"database": map[string]any{
 			"mode":              string(s.Mode),
 			"dialect":           string(s.Dialect),
-			"dsn":               s.DSN,
+			"dsn":               string(s.DSN),
 			"maxopenconns":      int(s.MaxOpenConns),
 			"maxidleconns":      s.MaxIdleConns,
 			"connmaxlifetime":   s.ConnMaxLifetime.String(),

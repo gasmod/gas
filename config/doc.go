@@ -53,6 +53,9 @@
 // `SSH_AUTH_SOCK` and `SUDO_USER`, `GITHUB_TOKEN`, `CI` and others. Two
 // names that become the same key, such as `Foo` and `FOO`, or where one
 // needs the other's key as a map, such as `A` and `A__B`, are an error.
+// Without a prefix, the configuration holds every variable that is not
+// left out, such as another tool's API key or a `DATABASE_URL`, so use
+// WithEnvPrefix in production and never log [Config.Values].
 //
 // [DotEnvProvider] reads a `.env` file, `.env` unless
 // [WithDotEnvFilePath] says otherwise, and turns its names into keys as
@@ -162,6 +165,12 @@
 // return a copy: maps, slices and pointers are copied at every depth, so
 // changing the result does not change the configuration. A struct is
 // copied the way Go copies it, so a map inside one is shared.
+//
+// A *Config prints, with fmt and any verb, and logs, with log/slog, only
+// how many providers, extensions and top-level keys it has, such as
+// `config.Config{providers: 1, extensions: 0, keys: 3}`, never a value.
+// What Values, Get and Find return is the values themselves, secrets
+// included: never log or print them.
 //
 // # Writing
 //

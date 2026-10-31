@@ -1,8 +1,12 @@
 package database_test
 
 import (
+	"bytes"
 	"context"
 	"database/sql/driver"
+	"encoding/json"
+	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +14,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.yaml.in/yaml/v3"
 
 	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/config/configtest"
@@ -421,7 +426,7 @@ func TestInit_BindsOverDefaults(t *testing.T) {
 	p, err := configtest.NewMockConfigWithValues(map[string]any{
 		"database": map[string]any{
 			"dialect":      "sqlite",
-			"dsn":          dsn,
+			"dsn":          string(dsn),
 			"maxopenconns": 3,
 			"maxidleconns": 2,
 		},
@@ -484,4 +489,50 @@ func TestNew_Shape(t *testing.T) {
 	s, err := ctor(nil, &gas.NopLogger{})
 	require.NoError(t, err)
 	assert.Equal(t, database.ServiceName, s.Name())
+}
+
+// The DSN printed raw with fmt, encoding/json, a YAML encoder and
+// log/slog. It is now a gas.Secret, which each writes as `[redacted]`,
+// and binds from `database.dsn` as a string: the service opens it.
+func TestConfig_DSNRedacted(t *testing.T) {
+	t.Parallel()
+
+	cfg := database.DefaultConfig()
+
+	cfg.Database.Dialect = database.DialectPostgres
+	cfg.Database.DSN = "postgres://app:zqxsecret@db.internal:5432/app"
+
+	j, err := json.Marshal(cfg) //nolint:musttag // untagged: the field names an encoder writes.
+	require.NoError(t, err)
+
+	y, err := yaml.Marshal(cfg)
+	require.NoError(t, err)
+
+	var logs bytes.Buffer
+
+	slog.New(slog.NewTextHandler(&logs, nil)).Info("cfg", "cfg", cfg, "dsn", cfg.Database.DSN)
+	slog.New(slog.NewJSONHandler(&logs, nil)).Info("cfg", "cfg", cfg, "dsn", cfg.Database.DSN)
+
+	for _, text := range []string{
+		fmt.Sprintf("%v %+v %#v %s %q %x", cfg, cfg, cfg, cfg.Database.DSN, cfg.Database.DSN, cfg.Database.DSN),
+		string(j),
+		string(y),
+		logs.String(),
+	} {
+		assert.NotContains(t, text, "zqxsecret")
+		assert.Contains(t, text, "[redacted]")
+	}
+
+	dsn := string(sqliteConfig(t).Database.DSN)
+
+	p, err := configtest.NewMockConfigWithValues(map[string]any{
+		"database": map[string]any{"dialect": "sqlite", "dsn": dsn},
+	})
+	require.NoError(t, err)
+
+	s, err := database.New()(p, &gas.NopLogger{})
+	require.NoError(t, err)
+	require.NoError(t, s.Init(t.Context()))
+	t.Cleanup(func() { require.NoError(t, s.Close(context.Background())) })
+	require.NoError(t, s.DB().PingContext(t.Context()))
 }

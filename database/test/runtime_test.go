@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/database"
 )
 
@@ -419,7 +420,7 @@ func fakePostgresService(t *testing.T, mode database.Mode) (*database.Service, *
 	p := newFakePostgres(t)
 	cfg := fakeConfig(func(s *database.Settings) {
 		s.Mode, s.Dialect = mode, database.DialectPostgres
-		s.DSN = dsnFor(database.DialectPostgres, p.addr)
+		s.DSN = gas.Secret(dsnFor(database.DialectPostgres, p.addr))
 	})
 
 	return initialized(t, database.WithConfig(cfg)), p
@@ -646,7 +647,7 @@ func TestMySQL_DriverLogRouted(t *testing.T) {
 
 	addr := l.Addr().String()
 	cfg := fakeConfig(func(s *database.Settings) {
-		s.Dialect, s.DSN = database.DialectMySQL, dsnFor(database.DialectMySQL, addr)
+		s.Dialect, s.DSN = database.DialectMySQL, gas.Secret(dsnFor(database.DialectMySQL, addr))
 	})
 	s, log := build(t, database.WithConfig(cfg))
 

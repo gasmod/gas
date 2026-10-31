@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/database"
 )
 
@@ -30,7 +31,7 @@ func postgresService(t *testing.T, mode database.Mode) (*database.Service, strin
 
 	dsn := postgresDSN(t)
 	cfg := fakeConfig(func(s *database.Settings) {
-		s.Mode, s.Dialect, s.DSN = mode, database.DialectPostgres, dsn
+		s.Mode, s.Dialect, s.DSN = mode, database.DialectPostgres, gas.Secret(dsn)
 		s.ConnectTimeout = 5 * time.Second
 	})
 	s := initialized(t, database.WithConfig(cfg))
@@ -251,7 +252,7 @@ func TestPostgres_ServerReasonsNoSecrets(t *testing.T) {
 	for bad, want := range cases {
 		for _, mode := range []database.Mode{database.ModeSQL, database.ModePgx} {
 			cfg := fakeConfig(func(s *database.Settings) {
-				s.Mode, s.Dialect, s.DSN = mode, database.DialectPostgres, bad
+				s.Mode, s.Dialect, s.DSN = mode, database.DialectPostgres, gas.Secret(bad)
 				s.ConnRetries = 1
 			})
 			s, log := build(t, database.WithConfig(cfg))
@@ -274,7 +275,7 @@ func TestPostgres_PgxRestart(t *testing.T) {
 
 	dsn := postgresDSN(t)
 	cfg := fakeConfig(func(s *database.Settings) {
-		s.Mode, s.Dialect, s.DSN = database.ModePgx, database.DialectPostgres, dsn
+		s.Mode, s.Dialect, s.DSN = database.ModePgx, database.DialectPostgres, gas.Secret(dsn)
 	})
 	s, _ := build(t, database.WithConfig(cfg))
 
@@ -330,7 +331,9 @@ func TestPostgres_PgxMinConns(t *testing.T) {
 	u.RawQuery = q.Encode()
 
 	cfg := fakeConfig(func(s *database.Settings) {
-		s.Mode, s.Dialect, s.DSN = database.ModePgx, database.DialectPostgres, u.String()
+		s.Mode, s.Dialect, s.DSN = database.ModePgx, database.DialectPostgres, gas.Secret(
+			u.String(),
+		)
 		s.ConnectTimeout = 5 * time.Second
 	})
 	s := initialized(t, database.WithConfig(cfg))

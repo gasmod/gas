@@ -29,7 +29,7 @@ func TestDoc_Usage(t *testing.T) {
 
 	svc, err := jwt.New(jwt.WithConfig(&jwt.Config{JWT: jwt.Settings{
 		SigningMethod: jwt.MethodHS256,
-		SigningKey:    key, // at least 32 bytes
+		SigningKey:    gas.Secret(key), // at least 32 bytes
 		Expiry:        15 * time.Minute,
 	}}))(nil, logger)
 	require.NoError(t, err)

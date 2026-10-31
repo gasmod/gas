@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/database"
 )
 
@@ -22,7 +23,7 @@ func TestKI038_ClosePgxClosesPool(t *testing.T) {
 
 	dsn := postgresDSN(t)
 	cfg := fakeConfig(func(s *database.Settings) {
-		s.Mode, s.Dialect, s.DSN = database.ModePgx, database.DialectPostgres, dsn
+		s.Mode, s.Dialect, s.DSN = database.ModePgx, database.DialectPostgres, gas.Secret(dsn)
 	})
 	s, _ := build(t, database.WithConfig(cfg))
 	require.NoError(t, s.Init(t.Context()))

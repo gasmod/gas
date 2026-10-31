@@ -202,7 +202,7 @@ func TestDoc_Errors(t *testing.T) {
 			&capture{err: errUnsupported},
 		),
 		"gas/log: marshaler panicked": reported(&capture{panics: true}),
-		`gas/log: post failed: Post "https://collector.example:4318/v1/logs": connection refused`: func() error {
+		`gas/log: post failed: Post "https://collector.example:4318": connection refused`: func() error {
 			r := newReports()
 
 			h, err := log.NewShippingHandler(
@@ -220,7 +220,7 @@ func TestDoc_Errors(t *testing.T) {
 
 			return r.next(t)
 		},
-		"gas/log: unexpected status 503 from https://collector.example:4318/v1/logs": reported(
+		"gas/log: unexpected status 503 from https://collector.example:4318": reported(
 			m, log.WithHTTPClient(status(http.StatusServiceUnavailable))),
 		"gas/log: not delivered: 1 record": func() error {
 			h := shippingHandler(t, m, quiet(

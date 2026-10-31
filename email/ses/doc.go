@@ -53,8 +53,8 @@
 //     a secret, but it maps to the AWS account ID, and the sender never
 //     logs it. The secret key and the token are each a [Secret], which
 //     prints, marshals to JSON or YAML, and logs with log/slog as
-//     `[redacted]`; encoding/gob ignores that and encodes the value, so a
-//     Config must never be gob-encoded. Default: none.
+//     `[redacted]`, and on which encoding/gob fails rather than encode
+//     the value. Default: none.
 //   - `email.optimeout`: the bound of each send, retries included, above
 //     0, as under Timeouts. Default: [DefaultOpTimeout] (10s).
 //   - `email.maxretries`: how many times a failed send is retried, 0 to
@@ -237,8 +237,8 @@
 // the credentials come from, the names of the static keys missing, the
 // operation timeout and the retries. fmt, encoding/json, YAML encoders
 // that use encoding.TextMarshaler, and log/slog write the secret key and
-// the session token of a [Settings] or a [Config] as `[redacted]`;
-// encoding/gob does not, so neither must be gob-encoded. Static
+// the session token of a [Settings] or a [Config] as `[redacted]`, and
+// encoding/gob fails on them rather than encode them. Static
 // credentials in configuration are a secret of the app's; prefer a role,
 // which the default chain finds. An `http` endpoint sends the access key
 // ID, the session token and the messages in clear text, as under

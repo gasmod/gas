@@ -3,6 +3,8 @@ package jwt
 import (
 	"errors"
 	"time"
+
+	"github.com/gasmod/gas"
 )
 
 const (
@@ -33,8 +35,9 @@ type Config struct {
 // documentation.
 type Settings struct {
 	// SigningKey is the HMAC key for HS256, at least MinHMACKeyBytes long.
-	// It must be empty for RS256.
-	SigningKey string
+	// It must be empty for RS256. It is a gas.Secret, which prints,
+	// marshals and logs as `[redacted]`.
+	SigningKey gas.Secret
 	// SigningMethod is MethodHS256 or MethodRS256.
 	SigningMethod string `validate:"oneof=HS256 RS256"`
 	// PublicKeyPath is the PEM file of the RSA public key that verifies

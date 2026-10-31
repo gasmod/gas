@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/database"
 )
 
@@ -36,7 +37,7 @@ func TestSQLite_BusyTimeout(t *testing.T) {
 			cfg := database.DefaultConfig()
 
 			cfg.Database.Dialect = database.DialectSQLite
-			cfg.Database.DSN = prefix + filepath.Join(t.TempDir(), "app.db") + c.query
+			cfg.Database.DSN = gas.Secret(prefix + filepath.Join(t.TempDir(), "app.db") + c.query)
 
 			s := initialized(t, database.WithConfig(cfg))
 
@@ -54,7 +55,7 @@ func TestSQLite_BusyTimeout(t *testing.T) {
 	cfg := database.DefaultConfig()
 
 	cfg.Database.Dialect = database.DialectSQLite
-	cfg.Database.DSN = filepath.Join(t.TempDir(), "app.db") + "?_pragma=foreign_keys(1)"
+	cfg.Database.DSN = gas.Secret(filepath.Join(t.TempDir(), "app.db") + "?_pragma=foreign_keys(1)")
 
 	s := initialized(t, database.WithConfig(cfg))
 
@@ -72,7 +73,7 @@ func TestSQLite_BusyTimeoutBadQuery(t *testing.T) {
 	cfg := database.DefaultConfig()
 
 	cfg.Database.Dialect = database.DialectSQLite
-	cfg.Database.DSN = filepath.Join(t.TempDir(), "app.db") + "?_pragma=%zz"
+	cfg.Database.DSN = gas.Secret(filepath.Join(t.TempDir(), "app.db") + "?_pragma=%zz")
 
 	require.Error(t, initErr(t, database.WithConfig(cfg)))
 }

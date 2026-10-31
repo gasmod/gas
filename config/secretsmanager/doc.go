@@ -97,6 +97,11 @@
 // Only a nil interface counts: a nil *secretsmanager.Client is used as it
 // is, and panics on the first fetch.
 //
+// A *Provider prints, with fmt and any verb, and logs, with log/slog, only
+// its region, how many secrets it has, its timeout, and whether it has an
+// endpoint and static credentials: never the credentials, the endpoint or
+// the secrets' names.
+//
 // # Timeouts
 //
 // Each load runs under a context that ends after [DefaultTimeout], 10

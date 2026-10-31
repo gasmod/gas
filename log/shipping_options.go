@@ -251,9 +251,10 @@ func noRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastRe
 
 // parseEndpoint checks that endpoint is an absolute http or https URL, and
 // returns the POST request every batch is cloned from, without a body,
-// and the text errors name the endpoint by: without user info, query and
-// fragment. The error never holds the endpoint or the parser's error,
-// which quotes it.
+// and the text errors name the endpoint by: its scheme and host only,
+// without user info, path, query and fragment, any of which can hold a
+// token. The error never holds the endpoint or the parser's error, which
+// quotes it.
 func parseEndpoint(endpoint string) (*http.Request, string, error) {
 	invalid := fmt.Errorf(
 		"%s: %w: must be an absolute http or https URL",
@@ -271,13 +272,7 @@ func parseEndpoint(endpoint string) (*http.Request, string, error) {
 		return nil, "", invalid
 	}
 
-	shown := *req.URL
-
-	shown.User = nil
-	shown.RawQuery, shown.ForceQuery = "", false
-	shown.Fragment, shown.RawFragment = "", ""
-
-	return req, shown.Redacted(), nil
+	return req, req.URL.Scheme + "://" + req.URL.Host, nil
 }
 
 // writeTo returns the default error handler, writing to w, standard

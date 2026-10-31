@@ -3,6 +3,8 @@ package database
 import (
 	"errors"
 	"time"
+
+	"github.com/gasmod/gas"
 )
 
 // Mode selects how the service connects, as described in the package
@@ -77,8 +79,9 @@ type Settings struct {
 	// empty only with a connector.
 	Dialect Dialect `validate:"omitempty,oneof=postgres mysql sqlite"`
 	// DSN is the connection string, in the dialect's own format. It is
-	// required without a connector and must be empty with one.
-	DSN string
+	// required without a connector and must be empty with one. It is a
+	// gas.Secret, which prints, marshals and logs as `[redacted]`.
+	DSN gas.Secret
 	// ConnMaxLifetime is the longest time a connection is reused.
 	ConnMaxLifetime time.Duration `validate:"min=1s,max=2h"`
 	// ConnMaxIdleTime is the longest time a connection stays idle. It is

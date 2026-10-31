@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"strings"
 	"sync"
 
@@ -328,12 +330,52 @@ func (c *Config) Find(key string) (value any, exist bool) {
 	return value, exist
 }
 
-// Values returns a copy of the whole configuration.
+// Values returns a copy of the whole configuration. Without a prefix, an
+// EnvProvider puts every environment variable it keeps into it, secrets
+// of other tools included, so never log or print what Values returns.
 func (c *Config) Values() map[string]any {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
 	return reflection.Clone(c.values)
+}
+
+// String returns the Config's counts of providers, extensions and
+// top-level keys, never a value, such as
+// `config.Config{providers: 1, extensions: 0, keys: 3}`.
+func (c *Config) String() string {
+	providers, extensions, keys := c.counts()
+
+	return fmt.Sprintf(
+		"config.Config{providers: %d, extensions: %d, keys: %d}", providers, extensions, keys,
+	)
+}
+
+// Format writes String, whatever the verb, so fmt never prints a value
+// from the configuration.
+func (c *Config) Format(f fmt.State, _ rune) {
+	// fmt's State writes to fmt's own buffer, which does not fail.
+	_, _ = io.WriteString(f, c.String())
+}
+
+// LogValue returns a group of the counts String prints, never a value.
+func (c *Config) LogValue() slog.Value {
+	providers, extensions, keys := c.counts()
+
+	return slog.GroupValue(
+		slog.Int("providers", providers),
+		slog.Int("extensions", extensions),
+		slog.Int("keys", keys),
+	)
+}
+
+// counts returns how many providers, extensions and top-level keys the
+// Config holds.
+func (c *Config) counts() (providers, extensions, keys int) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	return len(c.providers), len(c.extensions), len(c.values)
 }
 
 // parseKey splits a key on dots into its levels, each trimmed and

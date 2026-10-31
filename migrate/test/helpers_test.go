@@ -112,7 +112,7 @@ func openDB(t *testing.T, b backend, dsn string) *database.Service {
 	cfg := database.DefaultConfig()
 
 	cfg.Database.Dialect = b.dialect
-	cfg.Database.DSN = dsn
+	cfg.Database.DSN = gas.Secret(dsn)
 
 	db, err := database.New(database.WithConfig(cfg))(nil, &gas.NopLogger{})
 	require.NoError(t, err)

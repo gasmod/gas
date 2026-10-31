@@ -334,7 +334,7 @@ func TestShippingHandler_Status(t *testing.T) {
 
 	err := r.next(t)
 	require.ErrorIs(t, err, log.ErrStatus)
-	require.EqualError(t, err, "gas/log: unexpected status 302 from "+endpoint)
+	require.EqualError(t, err, "gas/log: unexpected status 302 from https://collector.example:4318")
 	assert.True(t, read.Load())
 }
 
@@ -810,6 +810,6 @@ func TestShippingHandler_NoRedirect(t *testing.T) {
 
 	report := r.next(t)
 	require.ErrorIs(t, report, log.ErrStatus)
-	require.EqualError(t, report, "gas/log: unexpected status 307 from "+first.URL+"/v1/logs")
+	require.EqualError(t, report, "gas/log: unexpected status 307 from "+first.URL)
 	assert.Zero(t, hits.Load())
 }

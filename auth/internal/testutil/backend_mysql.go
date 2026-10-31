@@ -10,6 +10,7 @@ import (
 	tcmysql "github.com/testcontainers/testcontainers-go/modules/mysql"
 	"github.com/testcontainers/testcontainers-go/wait"
 
+	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/database"
 	"github.com/gasmod/gas/migrate"
 )
@@ -94,7 +95,7 @@ func SetupMySQL(tb testing.TB) *MySQLContainer {
 	// The service opens the DSN with the mysql dialect.
 	dbSvc := newDatabaseService(tb, func(s *database.Settings) {
 		s.Dialect = database.DialectMySQL
-		s.DSN = connStr
+		s.DSN = gas.Secret(connStr)
 		s.ConnRetries = 5
 		s.ConnRetryInterval = connRetryInterval
 	})

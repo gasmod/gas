@@ -65,14 +65,14 @@ func (s *Service) prepare(set *Settings, dialect Dialect) (opener, error) {
 	//nolint:exhaustive // the rules allow no dialect but the three; sqlite is the default.
 	switch dialect {
 	case DialectPostgres:
-		cc, err := pgx.ParseConfig(set.DSN)
+		cc, err := pgx.ParseConfig(string(set.DSN))
 		if err != nil {
 			return nil, invalidDSN()
 		}
 
 		return sqlOpener(set, phaseConnector{stdlib.GetConnector(*cc)}), nil
 	case DialectMySQL:
-		c, err := mysqlConnector(set.DSN, s.logger)
+		c, err := mysqlConnector(string(set.DSN), s.logger)
 		if err != nil {
 			return nil, err
 		}
@@ -112,7 +112,7 @@ func sqlOpener(set *Settings, c driver.Connector) opener {
 // DSN when it sets none and the settings' limits applied.
 func sqliteOpener(set *Settings) opener {
 	return func(context.Context) (*sql.DB, *pgxpool.Pool, error) {
-		db, err := sql.Open(sqliteDriverName, sqliteDSN(set.DSN))
+		db, err := sql.Open(sqliteDriverName, sqliteDSN(string(set.DSN)))
 		if err != nil {
 			return nil, nil, invalidDSN()
 		}
@@ -134,7 +134,7 @@ func applyLimits(db *sql.DB, set *Settings) {
 // pgxOpener parses the DSN as a pool configuration with the settings'
 // limits, and returns an opener of a pool on a copy of it.
 func pgxOpener(set *Settings) (opener, error) {
-	poolCfg, err := pgxpool.ParseConfig(set.DSN)
+	poolCfg, err := pgxpool.ParseConfig(string(set.DSN))
 	if err != nil {
 		return nil, invalidDSN()
 	}

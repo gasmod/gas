@@ -1,11 +1,16 @@
 package jwt_test
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.yaml.in/yaml/v3"
 
 	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/auth/jwt"
@@ -238,4 +243,44 @@ func ruleCases(pub, priv string) []ruleCase {
 			want: "RS256 requires JWT.SigningKey to be empty",
 		},
 	}
+}
+
+// The signing key printed raw with fmt, encoding/json, a YAML encoder and
+// log/slog. It is now a gas.Secret, which each writes as `[redacted]`,
+// and binds from `jwt.signingkey` as a string: the service signs with it.
+func TestConfig_SigningKeyRedacted(t *testing.T) {
+	t.Parallel()
+
+	const key = "zqxsecret-0123456789abcdef0123456789"
+
+	cfg := jwt.DefaultConfig()
+
+	cfg.JWT.SigningKey = key
+
+	j, err := json.Marshal(cfg) //nolint:musttag // untagged: the field names an encoder writes.
+	require.NoError(t, err)
+
+	y, err := yaml.Marshal(cfg)
+	require.NoError(t, err)
+
+	var logs bytes.Buffer
+
+	slog.New(slog.NewTextHandler(&logs, nil)).Info("cfg", "cfg", cfg, "key", cfg.JWT.SigningKey)
+	slog.New(slog.NewJSONHandler(&logs, nil)).Info("cfg", "cfg", cfg, "key", cfg.JWT.SigningKey)
+
+	for _, text := range []string{
+		fmt.Sprintf("%v %+v %#v %s %q %x", cfg, cfg, cfg, cfg.JWT.SigningKey, cfg.JWT, cfg.JWT),
+		string(j),
+		string(y),
+		logs.String(),
+	} {
+		assert.NotContains(t, text, "zqxsecret")
+		assert.Contains(t, text, "[redacted]")
+	}
+
+	svc := bound(t, m{"signingkey": key})
+	require.NoError(t, svc.Init(t.Context()))
+
+	_, err = svc.Sign("user-42", nil)
+	require.NoError(t, err)
 }
