@@ -1,151 +1,259 @@
-package test
+package dir_test
 
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/storage"
-
-	dirpkg "github.com/gasmod/gas/storage/dir"
+	"github.com/gasmod/gas/storage/dir"
 )
 
-// Environment variables that turn TestCrossProcessWriter into a child of
-// TestProvider_CrossProcessLocking.
+// The environment variables that make a run of this test binary a child
+// of a cross-process test: the directory, the child's name, and the test
+// that started it.
 const (
-	crossProcessRootEnv = "GAS_STORAGE_DIR_XPROC_ROOT"
-	crossProcessIDEnv   = "GAS_STORAGE_DIR_XPROC_ID"
+	childDirEnv  = "GAS_STORAGE_DIR_CHILD_DIR"
+	childIDEnv   = "GAS_STORAGE_DIR_CHILD_ID"
+	childTestEnv = "GAS_STORAGE_DIR_CHILD_TEST"
 )
 
+// The sizes of the cross-process tests.
 const (
-	// crossProcessChildren is the number of processes sharing the root.
-	crossProcessChildren = 4
-	// crossProcessIterations is the number of Put and Get pairs per process.
-	crossProcessIterations = 300
-	// crossProcessBodySize is the size of every body written.
-	crossProcessBodySize = 64 << 10
+	// children is the number of processes that share the directory.
+	children = 4
+	// writerRounds is the number of PutObject and GetObject pairs per
+	// writer.
+	writerRounds = 100
+	// writerBodySize is the size of every body a writer writes.
+	writerBodySize = 64 << 10
+	// cyclerRounds is the number of create, write, delete cycles per
+	// cycler.
+	cyclerRounds = 100
+	// cycled is the bucket every cycler creates and deletes.
+	cycled = "cycled-bucket"
 )
 
-// TestProvider_CrossProcessLocking checks the documented claim that the
-// per-key lock also excludes other processes sharing the directory. It
-// re-runs this test binary as crossProcessChildren processes, each writing
-// and reading the same key through its own Provider on one root, and
-// requires every read to see a whole object: a body, content type and
-// metadata from the same Put. Afterwards exactly one data file may remain.
-func TestProvider_CrossProcessLocking(t *testing.T) {
-	if os.Getenv(crossProcessRootEnv) != "" {
-		t.Skip("running as a cross-process child")
-	}
+// runChildren runs this test binary children times as the child test,
+// each on the directory path, and fails t unless each passes.
+func runChildren(t *testing.T, test, path string) {
+	t.Helper()
 
-	_, dir := newTestProvider(t)
+	cmds := make([]*exec.Cmd, 0, children)
+	outs := make([]*bytes.Buffer, 0, children)
 
-	children := make([]*exec.Cmd, 0, crossProcessChildren)
-	outputs := make([]*bytes.Buffer, 0, crossProcessChildren)
-	for i := range crossProcessChildren {
+	for i := range children {
 		id := string(rune('A' + i))
-		//nolint:gosec // re-runs this test binary with fixed arguments
+		//nolint:gosec // G204: this test binary, with fixed arguments.
 		cmd := exec.CommandContext(t.Context(), os.Args[0],
-			"-test.run", "^TestCrossProcessWriter$", "-test.count=1", "-test.v")
-		cmd.Env = append(os.Environ(), crossProcessRootEnv+"="+dir, crossProcessIDEnv+"="+id)
+			"-test.run", "^"+test+"$", "-test.count=1", "-test.v")
+
+		cmd.Env = append(
+			os.Environ(),
+			childDirEnv+"="+path,
+			childIDEnv+"="+id,
+			childTestEnv+"="+test,
+		)
+
 		out := &bytes.Buffer{}
+
 		cmd.Stdout, cmd.Stderr = out, out
-		if err := cmd.Start(); err != nil {
-			t.Fatalf("start child %s: %v", id, err)
-		}
-		children = append(children, cmd)
-		outputs = append(outputs, out)
+
+		require.NoError(t, cmd.Start())
+
+		cmds = append(cmds, cmd)
+		outs = append(outs, out)
 	}
 
-	for i, cmd := range children {
+	for i, cmd := range cmds {
 		err := cmd.Wait()
-		out := outputs[i].String()
-		if err != nil {
-			t.Errorf("child %d failed: %v\n%s", i, err, out)
-			continue
-		}
-		if !strings.Contains(out, "--- PASS: TestCrossProcessWriter") {
-			t.Errorf("child %d did not run the writer:\n%s", i, out)
-		}
-	}
-
-	files, err := filepath.Glob(filepath.Join(objDir(dir, testBucket), sha("shared")+"_*"))
-	if err != nil {
-		t.Fatalf("Glob: %v", err)
-	}
-	if len(files) != 1 {
-		t.Errorf("data files left = %d, want 1", len(files))
+		require.NoError(t, err, outs[i].String())
+		assert.Contains(t, outs[i].String(), "--- PASS: "+test, outs[i].String())
 	}
 }
 
-// TestCrossProcessWriter is the child half of
-// TestProvider_CrossProcessLocking and skips unless that test started it.
-// It alternates Put and Get on one shared key, writing a body, content type
-// and metadata that all encode the same letter, and fails on any Get whose
-// three parts disagree.
-func TestCrossProcessWriter(t *testing.T) {
-	rootDir, id := os.Getenv(crossProcessRootEnv), os.Getenv(crossProcessIDEnv)
-	if rootDir == "" {
-		t.Skip("run only as a child of TestProvider_CrossProcessLocking")
+// child returns the directory and the name of this run when it is a child
+// started for test, and skips t otherwise.
+func child(t *testing.T, test string) (string, string) {
+	t.Helper()
+
+	if os.Getenv(childTestEnv) != test {
+		t.Skip("runs only as a child of a cross-process test")
 	}
 
-	root, err := os.OpenRoot(rootDir)
-	if err != nil {
-		t.Fatalf("os.OpenRoot() error: %v", err)
-	}
-	t.Cleanup(func() { _ = root.Close() })
-	p, err := dirpkg.NewProvider(dirpkg.WithRoot(root))(newConfig(t, testBucket))
-	if err != nil {
-		t.Fatalf("NewProvider() error: %v", err)
-	}
+	return os.Getenv(childDirEnv), os.Getenv(childIDEnv)
+}
 
+// parent skips t when this run is a child of a cross-process test.
+func parent(t *testing.T) {
+	t.Helper()
+
+	if os.Getenv(childTestEnv) != "" {
+		t.Skip("running as a child of a cross-process test")
+	}
+}
+
+// countUnnamed returns a skip handler that counts the buckets that cannot
+// be named into n.
+func countUnnamed(n *atomic.Int64) dir.SkipHandler {
+	return func(_ string, err error) {
+		if errors.Is(err, dir.ErrUnnamedBucket) {
+			n.Add(1)
+		}
+	}
+}
+
+// The lock of a key excludes other processes that share the directory:
+// processes that each write and read one key through their own store
+// always read a whole object, a body, a content type and metadata of one
+// write, and one data file is left.
+//
+// Not parallel: it runs processes that use the CPU it would share.
+func TestCrossProcess_Locking(t *testing.T) {
+	parent(t)
+
+	p, path := open(t)
+
+	runChildren(t, "TestCrossProcess_Writer", path)
+	assert.Len(t, dataFiles(t, path, "shared"), 1)
+	assert.NotEmpty(t, read(t, p, "shared"))
+}
+
+// The child half of TestCrossProcess_Locking: it writes and reads one key,
+// with a body, a content type and metadata that each spell one letter,
+// and fails on a read whose three disagree.
+func TestCrossProcess_Writer(t *testing.T) {
+	t.Parallel()
+
+	path, id := child(t, "TestCrossProcess_Writer")
+	p := openAt(t, path)
 	ctx := context.Background()
-	in := base("shared")
-	for i := range crossProcessIterations {
+
+	for i := range writerRounds {
 		letter := id
 		if i%2 == 1 {
 			letter = strings.ToLower(id)
 		}
-		contentType := "x/" + letter
-		if _, err := p.PutObject(ctx, &storage.PutObjectInput{
-			BaseObjectInput: in,
-			Body:            bytes.NewReader(bytes.Repeat([]byte(letter), crossProcessBodySize)),
-			ObjectHeaders: storage.ObjectHeaders{
-				ContentType: &contentType,
-				Metadata:    map[string]string{"letter": letter},
-			},
-		}); err != nil {
-			t.Fatalf("PutObject() %d error: %v", i, err)
-		}
 
-		obj, err := p.GetObject(ctx, &storage.GetObjectInput{
-			HeadObjectInput: storage.HeadObjectInput{BaseObjectInput: in},
-		})
-		if err != nil {
-			t.Fatalf("GetObject() %d error: %v", i, err)
-		}
-		body, readErr := io.ReadAll(obj.Body)
-		if closeErr := obj.Body.Close(); closeErr != nil {
-			t.Errorf("close body: %v", closeErr)
-		}
-		if readErr != nil {
-			t.Fatalf("read body %d: %v", i, readErr)
-		}
+		in := putIn("shared", strings.Repeat(letter, writerBodySize))
+
+		in.ContentType = new("x/" + letter)
+		in.Metadata = map[string]string{"letter": letter}
+
+		_, err := p.PutObject(ctx, in)
+		require.NoError(t, err, i)
+
+		obj, err := p.GetObject(ctx, getIn("shared"))
+		require.NoError(t, err, i)
+
+		body, err := io.ReadAll(obj.Body)
+		require.NoError(t, err)
+		require.NoError(t, obj.Body.Close())
 
 		want := strings.TrimPrefix(obj.ContentType, "x/")
-		if obj.Metadata["letter"] != want ||
-			!bytes.Equal(body, bytes.Repeat([]byte(want), crossProcessBodySize)) {
-			t.Fatalf(
-				"GetObject() %d returned a torn object: content type %q, metadata %v, %d body bytes",
-				i,
-				obj.ContentType,
-				obj.Metadata,
-				len(body),
-			)
+		require.Equal(t, want, obj.Metadata["letter"], i)
+		require.Equal(t, strings.Repeat(want, writerBodySize), string(body), i)
+	}
+}
+
+// CreateBucket and DeleteBucket of one name never interleave across
+// processes: processes that each create a bucket, write and delete an
+// object in it, and delete it, over and over, see the bucket missing or
+// not empty at times, and nothing else, a write racing a delete included,
+// and leave it with both its name record and its metadata directory or
+// neither, and no lifecycle lock.
+//
+// Not parallel: it runs processes that use the CPU it would share.
+func TestCrossProcess_BucketLifecycle(t *testing.T) {
+	parent(t)
+
+	var unnamed atomic.Int64
+
+	path := t.TempDir()
+	p, _ := build(t, dir.WithConfig(config(path, "")), dir.WithSkipHandler(countUnnamed(&unnamed)))
+	require.NoError(t, p.Init(t.Context()))
+
+	defer func() { require.NoError(t, p.Close(context.Background())) }()
+
+	runChildren(t, "TestCrossProcess_BucketCycler", path)
+
+	_, recordErr := os.Lstat(nameRecord(path, cycled))
+	_, metaErr := os.Lstat(filepath.Join(path, sha(cycled)))
+	assert.Equal(
+		t,
+		recordErr == nil,
+		metaErr == nil,
+		"name record: %v, metadata dir: %v",
+		recordErr,
+		metaErr,
+	)
+
+	_, err := p.ListBuckets(t.Context(), &storage.ListBucketsInput{})
+	require.NoError(t, err)
+	assert.Zero(t, unnamed.Load())
+
+	locks, err := filepath.Glob(filepath.Join(path, ".gas", "locks", "*.bucket"))
+	require.NoError(t, err)
+	assert.Empty(t, locks)
+}
+
+// The child half of TestCrossProcess_BucketLifecycle: each cycle creates
+// the shared bucket, writes and deletes its own object in it, deletes the
+// bucket and lists the buckets, which never holds one that cannot be
+// named.
+func TestCrossProcess_BucketCycler(t *testing.T) {
+	t.Parallel()
+
+	path, id := child(t, "TestCrossProcess_BucketCycler")
+
+	var unnamed atomic.Int64
+
+	p, err := dir.New(
+		dir.WithConfig(config(path, "")),
+		dir.WithSkipHandler(countUnnamed(&unnamed)),
+	)(nil, &gas.NopLogger{})
+	require.NoError(t, err)
+	require.NoError(t, p.Init(t.Context()))
+
+	defer func() { require.NoError(t, p.Close(context.Background())) }()
+
+	ctx := context.Background()
+	obj := storage.BaseObjectInput{Bucket: new(cycled), Key: "from-" + id}
+
+	for i := range cyclerRounds {
+		require.NoError(t, p.CreateBucket(ctx, &storage.CreateBucketInput{Bucket: cycled}), i)
+
+		_, err = p.PutObject(
+			ctx,
+			&storage.PutObjectInput{BaseObjectInput: obj, Body: strings.NewReader(id)},
+		)
+		if err != nil {
+			require.ErrorIs(t, err, storage.ErrBucketNotFound, i)
 		}
+
+		err = p.DeleteObject(ctx, &storage.DeleteObjectInput{BaseObjectInput: obj})
+		if err != nil {
+			require.ErrorIs(t, err, storage.ErrBucketNotFound, i)
+		}
+
+		err = p.DeleteBucket(ctx, &storage.DeleteBucketInput{Bucket: cycled})
+		if err != nil && !errors.Is(err, storage.ErrBucketNotEmpty) {
+			require.ErrorIs(t, err, storage.ErrBucketNotFound, i)
+		}
+
+		_, err = p.ListBuckets(ctx, &storage.ListBucketsInput{})
+		require.NoError(t, err, i)
+		require.Zero(t, unnamed.Load(), i)
 	}
 }

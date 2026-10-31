@@ -4,7 +4,6 @@ package vfs
 
 import (
 	"errors"
-	"fmt"
 	"os"
 )
 
@@ -28,24 +27,30 @@ const maxOpenAttempts = 10
 // os.ErrNotExist as the single open on other platforms would.
 func openInRoot(r *os.Root, name, what string) (*os.File, error) {
 	var err error
+
 	for range maxOpenAttempts {
 		var f *os.File
+
 		f, err = r.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_RDWR, filePerm)
+
 		if !errors.Is(err, os.ErrExist) {
 			return wrapOpen(f, err, what)
 		}
+
 		f, err = r.OpenFile(name, os.O_CREATE|os.O_RDWR, filePerm)
 		if !errors.Is(err, os.ErrNotExist) {
 			return wrapOpen(f, err, what)
 		}
 	}
+
 	return wrapOpen(nil, err, what)
 }
 
-// wrapOpen returns f, or err wrapped with what when the open failed.
+// wrapOpen returns f, or err as the failure to open what.
 func wrapOpen(f *os.File, err error, what string) (*os.File, error) {
 	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", what, err)
+		return nil, ioErr("open "+what, err)
 	}
+
 	return f, nil
 }

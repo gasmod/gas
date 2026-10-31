@@ -4,8 +4,9 @@
 
 Part of the [Gas](../README.md) monorepo · [Documentation](https://gasmod.github.io/gas) · [All modules](../README.md#modules)
 
-Object storage for the [Gas](../README.md) framework, on AWS S3 and S3-compatible services
-such as MinIO and LocalStack, or on a local directory.
+Object storage for the [Gas](../README.md) framework, with backends that keep one contract, Amazon
+S3's rules, checked before any I/O: Amazon S3 or a server that speaks its API, a directory on a
+local disk, and an in-memory store for tests and local development.
 
 Defines `storage.Provider` and `storage.Presigner`.
 
@@ -14,18 +15,19 @@ go get github.com/gasmod/gas/storage
 ```
 
 ```go
-gas.WithSingletonService[storage.Provider](s3.NewProvider()),
-gas.WithSingletonService[storage.Presigner](s3.NewPresigner()),
+gas.WithSingletonService[storage.Provider](memory.New()),
 ```
 
-Both constructors need a `gas.ConfigProvider`.
+Each backend is a `gas.Service`, needs `gas.ConfigProvider` and `gas.Logger`, and reads the
+`storage` section.
 
-| Package               | Provides                                                                     |
-|-----------------------|------------------------------------------------------------------------------|
-| `storage`             | The `Provider` and `Presigner` interfaces, their inputs, and sentinel errors |
-| `storage/s3`          | AWS S3 and any S3-compatible object store                                    |
-| `storage/dir`         | A directory on local disk, through an `os.Root`                              |
-| `storage/storagetest` | Recording mocks of `storage.Provider` and `storage.Presigner`                |
+| Package               | Provides                                                                          |
+|-----------------------|-----------------------------------------------------------------------------------|
+| `storage`             | The `Provider` and `Presigner` contract, its input rules, limits and sentinel errors |
+| `storage/s3`          | Amazon S3 and S3-compatible services                                              |
+| `storage/dir`         | A directory on local disk, through an `os.Root`                                   |
+| `storage/memory`      | In-process store with S3's rules, for tests and local development                 |
+| `storage/storagetest` | Recording mocks of `storage.Provider` and `storage.Presigner`                     |
 
 ## Documentation
 

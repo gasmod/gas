@@ -9,5 +9,6 @@ import (
 // their hash, so no user string ever becomes a path.
 func hash(s string) string {
 	sum := sha256.Sum256([]byte(s))
+
 	return hex.EncodeToString(sum[:])
 }

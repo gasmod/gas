@@ -1,416 +1,285 @@
-package test
+package vfs_test
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/gasmod/gas/storage/dir/internal/vfs"
 )
 
-// assertBucketGone checks that DeleteBucket left nothing of bucket "b": no
-// metadata, objects or locks dir, and no name record.
-func assertBucketGone(t *testing.T, v *vfs.VFS, dir string) {
-	t.Helper()
-	meta, obj, locks := bucketPaths(dir)
-	for _, p := range []string{meta, obj, locks, filepath.Join(dir, bucketNameFile("b"))} {
-		if _, err := os.Lstat(p); !errors.Is(err, os.ErrNotExist) {
-			t.Errorf("%s after DeleteBucket: %v, want it removed", p, err)
-		}
-	}
-	if _, err := v.OpenBucket("b"); !errors.Is(err, vfs.ErrBucketNotFound) {
-		t.Errorf("OpenBucket after DeleteBucket = %v, want ErrBucketNotFound", err)
-	}
-}
-
-// writeDebris writes name, with content, into the metadata dir of bucket
-// "b".
-func writeDebris(t *testing.T, dir, name, content string) {
-	t.Helper()
-	meta, _, _ := bucketPaths(dir)
-	if err := os.WriteFile(filepath.Join(meta, name), []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// TestDeleteBucket_Empty deletes an empty bucket and everything it kept on
-// disk.
+// DeleteBucket of an empty bucket removes its directories and name
+// record; of a missing one it is ErrBucketNotFound.
 func TestDeleteBucket_Empty(t *testing.T) {
-	v, dir := newTestVFS(t)
-	if _, err := v.CreateBucket(t.Context(), "b"); err != nil {
-		t.Fatal(err)
+	t.Parallel()
+
+	v, dir := newVFS(t)
+	bk := newBucket(t, v)
+
+	put(t, bk, strings.Repeat("k", 300), "v")
+	require.NoError(t, bk.DeleteObject(t.Context(), strings.Repeat("k", 300)))
+
+	report, got := collect()
+	require.NoError(t, v.DeleteBucket(t.Context(), testBucket, report))
+	assert.Empty(t, *got)
+
+	for _, p := range []string{
+		filepath.Join(dir, hash(testBucket)),
+		objDir(dir),
+		lockDir(dir),
+		keysDir(dir),
+		filepath.Join(dir, bucketsPath, hash(testBucket)),
+	} {
+		assert.False(t, exists(t, p), p)
 	}
-	if err := v.DeleteBucket(t.Context(), "b", nil); err != nil {
-		t.Fatalf("DeleteBucket: %v", err)
-	}
-	assertBucketGone(t, v, dir)
+
+	require.ErrorIs(t, v.DeleteBucket(t.Context(), testBucket, report), vfs.ErrBucketNotFound)
 }
 
-// TestDeleteBucket_Missing reports a bucket that does not exist.
-func TestDeleteBucket_Missing(t *testing.T) {
-	v, _ := newTestVFS(t)
-	if err := v.DeleteBucket(t.Context(), "b", nil); !errors.Is(err, vfs.ErrBucketNotFound) {
-		t.Errorf("DeleteBucket(missing) = %v, want ErrBucketNotFound", err)
-	}
-}
-
-// TestDeleteBucket_NotEmpty refuses a bucket that holds an object and
-// leaves the object readable.
+// DeleteBucket of a bucket that holds an object is ErrBucketNotEmpty and
+// removes nothing, debris included.
 func TestDeleteBucket_NotEmpty(t *testing.T) {
-	v, _ := newTestVFS(t)
-	b := newTestBucket(t, v)
-	putObject(t, b, "k", "body", "text/plain")
+	t.Parallel()
 
-	if err := v.DeleteBucket(t.Context(), "b", nil); !errors.Is(err, vfs.ErrBucketNotEmpty) {
-		t.Fatalf("DeleteBucket(not empty) = %v, want ErrBucketNotEmpty", err)
-	}
-	if body, _ := getObject(t, newOpenBucket(t, v), "k"); body != "body" {
-		t.Errorf("object after DeleteBucket(not empty) = %q, want body", body)
-	}
+	v, dir := newVFS(t)
+	bk := newBucket(t, v)
+	debris := metaPath(dir, testBucket, "x") + testUUID
+
+	writeFile(t, debris, "{}")
+	put(t, bk, "k", "v")
+
+	err := v.DeleteBucket(t.Context(), testBucket, func(vfs.Skipped) {})
+	require.ErrorIs(t, err, vfs.ErrBucketNotEmpty)
+	assert.FileExists(t, debris)
+	assert.Equal(t, "v", read(t, bk, "k"))
 }
 
-// TestDeleteBucket_Emptied deletes a bucket whose objects were all deleted.
-func TestDeleteBucket_Emptied(t *testing.T) {
-	v, dir := newTestVFS(t)
-	b := newTestBucket(t, v)
-	putObject(t, b, "k", "body", "")
-	if err := b.DeleteObject(t.Context(), &vfs.DeleteObjectInput{Key: "k"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := v.DeleteBucket(t.Context(), "b", nil); err != nil {
-		t.Fatalf("DeleteBucket: %v", err)
-	}
-	assertBucketGone(t, v, dir)
-}
-
-// TestDeleteBucket_Debris checks that entries no listing can return do not
-// keep a bucket from being deleted: metadata whose key cannot be decoded,
-// metadata whose data file is gone, and a temp file a crashed write left.
-// Each would otherwise make the bucket undeletable, since no caller can
-// name or delete them.
+// DeleteBucket removes what no read can use with the bucket, and reports
+// each piece: corrupt metadata with its data file, metadata whose data
+// file is gone, and temp metadata files.
 func TestDeleteBucket_Debris(t *testing.T) {
-	tests := []struct {
-		setup func(t *testing.T, b *vfs.Bucket, dir string)
-		name  string
-	}{
-		{
-			name: "metadata that does not decode",
-			setup: func(t *testing.T, _ *vfs.Bucket, dir string) {
-				writeDebris(t, dir, hash("k")+metaFileExt, "{")
-			},
-		},
-		{
-			name: "metadata whose data file is gone",
-			setup: func(t *testing.T, b *vfs.Bucket, dir string) {
-				putObject(t, b, "k", "body", "")
-				_, obj, _ := bucketPaths(dir)
-				if err := os.Remove(filepath.Join(obj, dataFile(t, b, "k"))); err != nil {
-					t.Fatal(err)
-				}
-			},
-		},
-		{
-			name: "temp metadata a crashed write left",
-			setup: func(t *testing.T, _ *vfs.Bucket, dir string) {
-				writeDebris(
-					t,
-					dir,
-					hash("k")+metaFileExt+"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e",
-					"{}",
-				)
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			v, dir := newTestVFS(t)
-			tt.setup(t, newTestBucket(t, v), dir)
-			if err := v.DeleteBucket(t.Context(), "b", nil); err != nil {
-				t.Fatalf("DeleteBucket: %v", err)
-			}
-			assertBucketGone(t, v, dir)
-		})
+	t.Parallel()
+
+	v, dir := newVFS(t)
+	bk := newBucket(t, v)
+
+	put(t, bk, "gone", "v")
+	require.NoError(t, os.Remove(dataFiles(t, dir, "gone")[0]))
+	writeFile(t, metaPath(dir, testBucket, "corrupt"), "{")
+	writeFile(t, filepath.Join(objDir(dir), hash("corrupt")+"_"+testUUID), "x")
+	writeFile(t, metaPath(dir, testBucket, "temp")+testUUID, "{}")
+
+	report, got := collect()
+	require.NoError(t, v.DeleteBucket(t.Context(), testBucket, report))
+	assert.False(t, exists(t, filepath.Join(dir, hash(testBucket))))
+	require.Len(t, *got, 3)
+
+	for _, s := range *got {
+		require.Error(t, s.Err)
+		assert.True(t, strings.HasPrefix(s.Path, hash(testBucket)), s.Path)
 	}
 }
 
-// TestDeleteBucket_ForeignFile refuses a bucket whose metadata dir holds a
-// file this package did not write, and removes nothing.
+// A file in the metadata directory that the package did not write stops
+// DeleteBucket, which leaves it; so does one in the objects directory,
+// which is left and reported.
 func TestDeleteBucket_ForeignFile(t *testing.T) {
-	v, dir := newTestVFS(t)
-	b := newTestBucket(t, v)
-	putObject(t, b, "k", "body", "")
-	if err := b.DeleteObject(t.Context(), &vfs.DeleteObjectInput{Key: "k"}); err != nil {
-		t.Fatal(err)
-	}
-	writeDebris(t, dir, "notes.txt", "mine")
+	t.Parallel()
 
-	err := v.DeleteBucket(t.Context(), "b", nil)
-	if err == nil || errors.Is(err, vfs.ErrBucketNotEmpty) || errors.Is(err, vfs.ErrBucketNotFound) {
-		t.Fatalf("DeleteBucket(foreign file) = %v, want a plain error", err)
-	}
-	if strings.Contains(err.Error(), "notes.txt") {
-		t.Errorf("error %q quotes the file name", err)
-	}
-	if _, oErr := v.OpenBucket("b"); oErr != nil {
-		t.Errorf("OpenBucket after a refused DeleteBucket: %v", oErr)
-	}
-	meta, _, _ := bucketPaths(dir)
-	if got := listDir(t, meta); len(got) != 1 || got[0] != "notes.txt" {
-		t.Errorf("meta dir = %q, want only notes.txt", got)
-	}
+	v, dir := newVFS(t)
+	newBucket(t, v)
+
+	foreign := filepath.Join(dir, hash(testBucket), "notes.txt")
+	writeFile(t, foreign, "x")
+
+	err := v.DeleteBucket(t.Context(), testBucket, func(vfs.Skipped) {})
+	require.ErrorIs(t, err, vfs.ErrForeign)
+	requireNoPath(t, err, dir)
+	assert.FileExists(t, foreign)
+
+	require.NoError(t, os.Remove(foreign))
+
+	other := filepath.Join(objDir(dir), "notes.txt")
+	writeFile(t, other, "x")
+
+	report, got := collect()
+	require.NoError(t, v.DeleteBucket(t.Context(), testBucket, report))
+	assert.FileExists(t, other)
+	require.NotEmpty(t, *got)
+	require.ErrorIs(t, (*got)[0].Err, vfs.ErrForeign)
 }
 
-// TestDeleteBucket_InFlightWrite checks that the sweep does not remove the
-// temp metadata file of a write in progress. A writer holds the key's lock
-// from before it writes the temp file until after it renames it, so the
-// sweep waits for it; the write then lands and the bucket is not empty.
-// Nothing is reported removed: the temp file the sweep listed was renamed
-// away by the write, not removed by the sweep.
+// DeleteBucket waits for a write in progress of a key the bucket holds;
+// once the write commits, the bucket is not empty and nothing is reported.
 func TestDeleteBucket_InFlightWrite(t *testing.T) {
-	v, dir := newTestVFS(t)
-	if _, err := v.CreateBucket(t.Context(), "b"); err != nil {
-		t.Fatal(err)
-	}
-	metaDir, objDir, locksDir := bucketPaths(dir)
+	t.Parallel()
 
-	// The writer: another holder of the key's lock, with its data file and
-	// temp metadata written but not yet committed.
-	locksRoot, err := os.OpenRoot(locksDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	writer := vfs.NewLock(locksRoot)
-	t.Cleanup(func() { _ = writer.Close() })
-	name := hash("k")
-	if lErr := writer.Lock(t.Context(), name); lErr != nil {
-		t.Fatal(lErr)
-	}
-	meta := vfs.ObjectMetadata{Key: "k", DataFile: newDataFileName(name)}
-	if wErr := os.WriteFile(
-		filepath.Join(objDir, meta.DataFile),
-		[]byte("body"),
-		0o600,
-	); wErr != nil {
-		t.Fatal(wErr)
-	}
-	data, err := json.Marshal(&meta)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tmp := filepath.Join(metaDir, name+metaFileExt+"0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e")
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	v, dir := newVFS(t)
+	newBucket(t, v)
 
+	release := holdKey(t, dir, "k")
+	data := hash("k") + "_" + testUUID
+	writeFile(t, filepath.Join(objDir(dir), data), "body")
+
+	meta, err := json.Marshal(
+		map[string]string{"key": "k", "etag": md5Hex("body"), "dataFile": data},
+	)
+	require.NoError(t, err)
+
+	tmp := metaPath(dir, testBucket, "k") + "0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e"
+	writeFile(t, tmp, string(meta))
+
+	report, got := collect()
 	done := make(chan error, 1)
-	var reports []vfs.Skipped
-	go func() {
-		done <- v.DeleteBucket(t.Context(), "b", func(s vfs.Skipped) { reports = append(reports, s) })
-	}()
+
+	go func() { done <- v.DeleteBucket(t.Context(), testBucket, report) }()
 
 	select {
-	case err := <-done:
-		t.Fatalf("DeleteBucket returned %v while the writer held the key", err)
+	case err = <-done:
+		require.FailNow(t, "DeleteBucket returned while a writer held the key", "%v", err)
 	case <-time.After(200 * time.Millisecond):
 	}
-	if _, err := os.Stat(tmp); err != nil {
-		t.Fatalf("temp metadata of the write in progress: %v, want it kept", err)
-	}
 
-	// The write commits and gives up the lock.
-	if err := os.Rename(tmp, filepath.Join(metaDir, name+metaFileExt)); err != nil {
-		t.Fatal(err)
-	}
-	if err := writer.Unlock(name); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := <-done; !errors.Is(err, vfs.ErrBucketNotEmpty) {
-		t.Fatalf("DeleteBucket after the write = %v, want ErrBucketNotEmpty", err)
-	}
-	for _, s := range reports {
-		t.Errorf("DeleteBucket reported %s: %v; want nothing reported", s.Path, s.Err)
-	}
-	if body, _ := getObject(t, newOpenBucket(t, v), "k"); body != "body" {
-		t.Errorf("object written during DeleteBucket = %q, want body", body)
-	}
+	require.NoError(t, os.Rename(tmp, metaPath(dir, testBucket, "k")))
+	release()
+	require.ErrorIs(t, <-done, vfs.ErrBucketNotEmpty)
+	assert.Empty(t, *got)
+	assert.Equal(t, "body", read(t, openBucket(t, v), "k"))
 }
 
-// TestDeleteBucket_KeepsHeldLockFile checks that cleanup never unlinks a
-// lock file another holder has locked: the bucket is deleted, and that lock
-// file and its dir stay.
-func TestDeleteBucket_KeepsHeldLockFile(t *testing.T) {
-	v, dir := newTestVFS(t)
-	if _, err := v.CreateBucket(t.Context(), "b"); err != nil {
-		t.Fatal(err)
-	}
-	_, _, locksDir := bucketPaths(dir)
-	locksRoot, err := os.OpenRoot(locksDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	holder := vfs.NewLock(locksRoot)
-	t.Cleanup(func() { _ = holder.Close() })
-	if err := holder.Lock(t.Context(), "held"); err != nil {
-		t.Fatal(err)
-	}
+// DeleteBucket leaves a lock file another holder has locked, and the data
+// file of a write of a new key in progress, and reports both; the bucket
+// is deleted.
+func TestDeleteBucket_KeepsWriteInProgress(t *testing.T) {
+	t.Parallel()
 
-	if err := v.DeleteBucket(t.Context(), "b", nil); err != nil {
-		t.Fatalf("DeleteBucket: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(locksDir, "held")); err != nil {
-		t.Errorf("held lock file after DeleteBucket: %v, want it kept", err)
-	}
-	if _, err := v.OpenBucket("b"); !errors.Is(err, vfs.ErrBucketNotFound) {
-		t.Errorf("OpenBucket after DeleteBucket = %v, want ErrBucketNotFound", err)
-	}
+	v, dir := newVFS(t)
+	newBucket(t, v)
+
+	release := holdKey(t, dir, "k")
+	defer release()
+
+	data := filepath.Join(objDir(dir), hash("k")+"_"+testUUID)
+	writeFile(t, data, "partial")
+
+	report, got := collect()
+	require.NoError(t, v.DeleteBucket(t.Context(), testBucket, report))
+	assert.FileExists(t, data)
+	assert.FileExists(t, filepath.Join(lockDir(dir), hash("k")))
+	// The data file and the lock file, and their directories.
+	assert.Len(t, *got, 4)
+	require.ErrorIs(t, v.HeadBucket(testBucket), vfs.ErrBucketNotFound)
 }
 
-// TestDeleteBucket_ThenCreate checks that a bucket created again after a
-// delete gets a new name record, so a stale CreationDate cannot survive.
+// A bucket created again after a delete gets a new name record, and so a
+// new creation time.
 func TestDeleteBucket_ThenCreate(t *testing.T) {
-	v, dir := newTestVFS(t)
-	if _, err := v.CreateBucket(t.Context(), "b"); err != nil {
-		t.Fatal(err)
-	}
-	record := filepath.Join(dir, bucketNameFile("b"))
+	t.Parallel()
+
+	v, dir := newVFS(t)
+	require.NoError(t, v.CreateBucket(t.Context(), testBucket))
+
+	record := filepath.Join(dir, bucketsPath, hash(testBucket))
 	old := time.Now().Add(-time.Hour)
-	if err := os.Chtimes(record, old, old); err != nil {
-		t.Fatal(err)
-	}
-	if err := v.DeleteBucket(t.Context(), "b", nil); err != nil {
-		t.Fatal(err)
-	}
-	entry, err := v.CreateBucket(t.Context(), "b")
-	if err != nil || !entry.Created.After(old.Add(time.Minute)) {
-		t.Errorf("CreateBucket after a delete = %+v, %v; want a new CreationDate", entry, err)
+	require.NoError(t, os.Chtimes(record, old, old))
+	require.NoError(t, v.DeleteBucket(t.Context(), testBucket, func(vfs.Skipped) {}))
+	require.NoError(t, v.CreateBucket(t.Context(), testBucket))
+
+	got, _, err := v.ListBuckets(t.Context())
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.True(t, got[0].Created.After(old.Add(time.Minute)))
+}
+
+// DeleteBucket waits for a CreateBucket of the same name, and gives up
+// when its context ends.
+func TestDeleteBucket_LifecycleLock(t *testing.T) {
+	t.Parallel()
+
+	v, dir := newVFS(t)
+	require.NoError(t, v.CreateBucket(t.Context(), testBucket))
+
+	l := newLock(t, filepath.Join(dir, locksPath))
+	require.NoError(t, l.Lock(t.Context(), hash(testBucket)+".bucket"))
+
+	ctx, cancel := ctxCanceled(t)
+	done := make(chan error, 1)
+
+	go func() { done <- v.DeleteBucket(ctx, testBucket, func(vfs.Skipped) {}) }()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	require.ErrorIs(t, <-done, ctx.Err())
+	require.NoError(t, l.Unlock(hash(testBucket)+".bucket"))
+	require.NoError(t, v.HeadBucket(testBucket))
+}
+
+// DeleteBucket fails when the metadata directory cannot be read or
+// removed, or an entry cannot be told; and reports what it cannot clean
+// up after the commit.
+func TestDeleteBucket_Failures(t *testing.T) {
+	t.Parallel()
+	skipIfRoot(t)
+
+	v, dir := newVFS(t)
+	newBucket(t, v)
+	chmod(t, filepath.Join(dir, hash(testBucket)), 0o000)
+
+	err := v.DeleteBucket(t.Context(), testBucket, func(vfs.Skipped) {})
+	require.ErrorIs(t, err, os.ErrPermission)
+	requireNoPath(t, err, dir)
+
+	v, dir = newVFS(t)
+
+	bk := newBucket(t, v)
+
+	put(t, bk, "k", "v")
+	chmod(t, objDir(dir), 0o000)
+
+	err = v.DeleteBucket(t.Context(), testBucket, func(vfs.Skipped) {})
+	require.ErrorIs(t, err, os.ErrPermission)
+
+	v, dir = newVFS(t)
+	newBucket(t, v)
+	chmod(t, dir, 0o500)
+
+	err = v.DeleteBucket(t.Context(), testBucket, func(vfs.Skipped) {})
+	require.ErrorIs(t, err, os.ErrPermission)
+	requireNoPath(t, err, dir)
+
+	v, dir = newVFS(t)
+	newBucket(t, v)
+	writeFile(t, filepath.Join(keysDir(dir), "x.d", "y"), "")
+	chmod(t, filepath.Join(keysDir(dir), "x.d"), 0o500)
+
+	report, got := collect()
+	require.NoError(t, v.DeleteBucket(t.Context(), testBucket, report))
+	assert.NotEmpty(t, *got)
+
+	for _, s := range *got {
+		requireNoPath(t, s.Err, dir)
 	}
 }
 
-// TestHeadBucket checks HeadBucket of an existing, a missing and an unnamed
-// bucket.
-func TestHeadBucket(t *testing.T) {
-	v, dir := newTestVFS(t)
-	if _, err := v.HeadBucket("b"); !errors.Is(err, vfs.ErrBucketNotFound) {
-		t.Errorf("HeadBucket(missing) = %v, want ErrBucketNotFound", err)
-	}
-	if _, err := v.CreateBucket(t.Context(), "b"); err != nil {
-		t.Fatal(err)
-	}
-	entry, err := v.HeadBucket("b")
-	if err != nil || entry.Name != "b" || entry.Created.IsZero() {
-		t.Errorf("HeadBucket = %+v, %v; want b with a CreationDate", entry, err)
-	}
-	if rErr := os.Remove(filepath.Join(dir, bucketNameFile("b"))); rErr != nil {
-		t.Fatal(rErr)
-	}
-	entry, err = v.HeadBucket("b")
-	if err != nil || entry.Name != "b" || !entry.Created.IsZero() {
-		t.Errorf("HeadBucket(unnamed) = %+v, %v; want b with no CreationDate", entry, err)
-	}
-}
+// DeleteBucket fails when the metadata of an entry cannot be read, and
+// removes nothing.
+func TestDeleteBucket_UnreadableEntry(t *testing.T) {
+	t.Parallel()
+	skipIfRoot(t)
 
-// TestBucketLifecycleLock checks that CreateBucket and DeleteBucket wait for
-// the bucket's lifecycle lock, so neither can run while the other holds it:
-// a bucket created while it is being deleted could lose its name record or
-// a data file to the delete's cleanup.
-func TestBucketLifecycleLock(t *testing.T) {
-	for name, op := range map[string]func(v *vfs.VFS) error{
-		"CreateBucket": func(v *vfs.VFS) error { _, err := v.CreateBucket(t.Context(), "b"); return err },
-		"DeleteBucket": func(v *vfs.VFS) error { return v.DeleteBucket(t.Context(), "b", nil) },
-	} {
-		t.Run(name, func(t *testing.T) {
-			v, dir := newTestVFS(t)
-			if _, err := v.CreateBucket(t.Context(), "b"); err != nil {
-				t.Fatal(err)
-			}
-			locksRoot, err := os.OpenRoot(filepath.Join(dir, locksPath))
-			if err != nil {
-				t.Fatal(err)
-			}
-			other := vfs.NewLock(locksRoot)
-			t.Cleanup(func() { _ = other.Close() })
-			if lErr := other.Lock(t.Context(), bucketLockName("b")); lErr != nil {
-				t.Fatal(lErr)
-			}
+	v, dir := newVFS(t)
+	bk := newBucket(t, v)
 
-			done := make(chan error, 1)
-			go func() { done <- op(v) }()
-			select {
-			case err := <-done:
-				t.Fatalf("%s returned %v while another holder had the bucket's lock", name, err)
-			case <-time.After(200 * time.Millisecond):
-			}
-			if rErr := other.Release(bucketLockName("b")); rErr != nil {
-				t.Fatal(rErr)
-			}
-			if err := <-done; err != nil && !errors.Is(err, vfs.ErrBucketExists) {
-				t.Errorf("%s after the lock was released: %v", name, err)
-			}
-		})
-	}
-}
+	put(t, bk, "k", "v")
+	chmod(t, metaPath(dir, testBucket, "k"), 0o000)
 
-// TestDeleteBucket_RefusedDeletesNothing checks that a DeleteBucket refused
-// for an object removes no debris either: the corrupt metadata below sorts
-// before the object, and must still be there afterwards with its data file.
-func TestDeleteBucket_RefusedDeletesNothing(t *testing.T) {
-	v, dir := newTestVFS(t)
-	b := newTestBucket(t, v)
-	putObject(t, b, "k", "body", "")
-
-	debris := strings.Repeat("0", hashLen)
-	_, objDir, _ := bucketPaths(dir)
-	debrisData := filepath.Join(objDir, newDataFileName(debris))
-	if err := os.WriteFile(debrisData, []byte("old"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	writeDebris(t, dir, debris+metaFileExt, "{")
-
-	if err := v.DeleteBucket(t.Context(), "b", nil); !errors.Is(err, vfs.ErrBucketNotEmpty) {
-		t.Fatalf("DeleteBucket = %v, want ErrBucketNotEmpty", err)
-	}
-	metaDir, _, _ := bucketPaths(dir)
-	for _, p := range []string{filepath.Join(metaDir, debris+metaFileExt), debrisData} {
-		if _, err := os.Stat(p); err != nil {
-			t.Errorf("%s after a refused DeleteBucket: %v, want it kept", p, err)
-		}
-	}
-}
-
-// TestDeleteBucket_KeepsDataFileOfWriteInProgress checks that the cleanup
-// leaves the data file of a write still in progress: one whose writer holds
-// the key's lock and has not written metadata yet, so the sweep never saw
-// it.
-func TestDeleteBucket_KeepsDataFileOfWriteInProgress(t *testing.T) {
-	v, dir := newTestVFS(t)
-	if _, err := v.CreateBucket(t.Context(), "b"); err != nil {
-		t.Fatal(err)
-	}
-	_, objDir, locksDir := bucketPaths(dir)
-	locksRoot, err := os.OpenRoot(locksDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	writer := vfs.NewLock(locksRoot)
-	t.Cleanup(func() { _ = writer.Close() })
-	name := hash("k")
-	if lErr := writer.Lock(t.Context(), name); lErr != nil {
-		t.Fatal(lErr)
-	}
-	data := filepath.Join(objDir, newDataFileName(name))
-	if wErr := os.WriteFile(data, []byte("partial"), 0o600); wErr != nil {
-		t.Fatal(wErr)
-	}
-
-	if dErr := v.DeleteBucket(t.Context(), "b", nil); dErr != nil {
-		t.Fatalf("DeleteBucket: %v", dErr)
-	}
-	if _, sErr := os.Stat(data); sErr != nil {
-		t.Errorf("data file of the write in progress: %v, want it kept", sErr)
-	}
+	err := v.DeleteBucket(t.Context(), testBucket, func(vfs.Skipped) {})
+	require.ErrorIs(t, err, os.ErrPermission)
+	assert.FileExists(t, metaPath(dir, testBucket, "k"))
 }

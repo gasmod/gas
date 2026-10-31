@@ -1,170 +1,231 @@
-package test
+package dir_test
 
 import (
-	"bytes"
 	"context"
-	"errors"
 	"io"
+	"slices"
+	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
+	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/storage"
+	"github.com/gasmod/gas/storage/dir"
 )
 
-// FuzzProviderInput drives PutObject, HeadObject, GetObject and DeleteObject
-// with an arbitrary key, bucket name, metadata pair, content type, body and
-// declared ContentLength, all through the public API. No input may panic. A
-// key or bucket name that fails validation must be reported as
-// storage.ErrInvalidKey or storage.ErrInvalidBucket, a ContentLength that
-// does not match the body as storage.ErrContentLengthMismatch, and an object
-// that was stored must read back with the body it was given.
-func FuzzProviderInput(f *testing.F) {
-	f.Add("k", testBucket, "mk", "mv", "text/plain", []byte("data"), false, int64(0))
-	f.Add("../x", "B!", "\xff", "\x00", "", []byte{}, true, int64(0))
-	f.Add("a/./b", testBucket, "", "", "\r\n", []byte("<html>"), true, int64(6))
-	f.Add("/abs", testBucket, "Trace-ID", "\xc3\x28", "image/png", []byte{0, 1, 2}, true, int64(2))
-	f.Add("k", testBucket, "", "", "", []byte("data"), true, int64(5))
-	f.Add("k", testBucket, "", "", "", []byte("data"), true, int64(-1))
+// fuzzStore returns a store on a new directory of f, with bucket
+// configured, initialized and closed when f ends.
+func fuzzStore(f *testing.F) *dir.Provider {
+	f.Helper()
 
-	f.Fuzz(func(t *testing.T, key, bucket, metaKey, metaValue, contentType string, body []byte,
-		setLength bool, length int64,
-	) {
-		p, _ := newTestProvider(t)
-		ctx := context.Background()
-		in := storage.BaseObjectInput{Bucket: &bucket, Key: key}
+	p, err := dir.New(dir.WithConfig(config(f.TempDir(), bucket)))(nil, &gas.NopLogger{})
+	require.NoError(f, err)
+	require.NoError(f, p.Init(context.Background()))
+	f.Cleanup(func() { require.NoError(f, p.Close(context.Background())) })
 
-		var contentLength *int64
-		if setLength {
-			contentLength = &length
-		}
-		_, putErr := p.PutObject(ctx, &storage.PutObjectInput{
-			BaseObjectInput: in,
-			Body:            bytes.NewReader(body),
-			ContentLength:   contentLength,
-			ContentType:     &contentType,
-			Metadata:        map[string]string{metaKey: metaValue},
-		})
-		if putErr == nil && setLength && length != int64(len(body)) {
-			t.Errorf(
-				"PutObject() with ContentLength %d for %d bytes succeeded, want ErrContentLengthMismatch",
-				length,
-				len(body),
-			)
-		}
-		_, headErr := p.HeadObject(ctx, &storage.HeadObjectInput{BaseObjectInput: in})
-		obj, getErr := p.GetObject(ctx, &storage.GetObjectInput{
-			HeadObjectInput: storage.HeadObjectInput{BaseObjectInput: in},
-		})
-		if getErr == nil {
-			got, readErr := io.ReadAll(obj.Body)
-			if closeErr := obj.Body.Close(); closeErr != nil {
-				t.Errorf("close body: %v", closeErr)
-			}
-			if readErr != nil {
-				t.Fatalf("read body: %v", readErr)
-			}
-			if putErr == nil && !bytes.Equal(got, body) {
-				t.Errorf("GetObject() body = %q, want %q", got, body)
-			}
-		}
-		_, delErr := p.DeleteObject(ctx, &storage.DeleteObjectInput{BaseObjectInput: in})
-
-		for op, err := range map[string]error{
-			"PutObject":    putErr,
-			"HeadObject":   headErr,
-			"GetObject":    getErr,
-			"DeleteObject": delErr,
-		} {
-			if err != nil && !fuzzErrAllowed(op, err, putErr) {
-				t.Errorf(
-					"%s() error = %v, want nil or an invalid-input, bucket-not-found, "+
-						"content-length or (after a rejected put) not-found sentinel",
-					op,
-					err,
-				)
-			}
-		}
-		// Every iteration uses a fresh provider, so the key is new: a put
-		// rejected for its length must leave nothing to read.
-		if errors.Is(putErr, storage.ErrContentLengthMismatch) &&
-			!errors.Is(headErr, storage.ErrNotFound) {
-			t.Errorf("HeadObject() after a rejected put error = %v, want ErrNotFound", headErr)
-		}
-		if putErr == nil && (headErr != nil || getErr != nil) {
-			t.Errorf("stored object not readable: head %v, get %v", headErr, getErr)
-		}
-	})
+	return p
 }
 
-// fuzzErrAllowed reports whether err is an error FuzzProviderInput accepts
-// from op: an invalid key or bucket, a missing bucket, a content-length
-// mismatch from PutObject, or, when the put was rejected, a not-found from
-// the reads that follow it.
-func fuzzErrAllowed(op string, err, putErr error) bool {
-	switch {
-	case errors.Is(err, storage.ErrInvalidKey),
-		errors.Is(err, storage.ErrInvalidBucket),
-		errors.Is(err, storage.ErrBucketNotFound):
-		return true
-	case op == "PutObject":
-		return errors.Is(err, storage.ErrContentLengthMismatch)
-	default:
-		return putErr != nil &&
-			(errors.Is(err, storage.ErrKeyNotFound) || errors.Is(err, storage.ErrNotFound))
+// fuzzData is the object FuzzGetObjectRange reads.
+const fuzzData = "0123456789abcdef"
+
+// FuzzGetObjectRange reads an object with any Range. The invariants: a
+// Range ParseRange refuses is storage.ErrInvalidRange, one that selects
+// nothing storage.ErrRangeNotSatisfiable, each with its fixed text, and
+// any other reads exactly the bytes Resolve selects, with Size their
+// length, from GetObject and HeadObject alike.
+func FuzzGetObjectRange(f *testing.F) {
+	p := fuzzStore(f)
+
+	_, err := p.PutObject(context.Background(), putIn("k", fuzzData))
+	require.NoError(f, err)
+
+	for _, s := range []string{
+		"bytes=0-4", "bytes=5-", "bytes=-3", "bytes=8-100", " Bytes=1-1\t", "bytes=0-99999999999999999999",
+		"bytes=16-", "bytes=-0", "bytes=5-1", "items=0-1", "bytes=0-1,3-4", "bytes=+1-2", "", "bytes=-",
+	} {
+		f.Add(s)
 	}
+
+	f.Fuzz(func(t *testing.T, rng string) {
+		in := getIn("k")
+
+		in.Range = &rng
+
+		obj, err := p.GetObject(t.Context(), in)
+		_, headErr := p.HeadObject(t.Context(), &in.HeadObjectInput)
+
+		r, parseErr := storage.ParseRange(rng)
+		if parseErr != nil {
+			require.EqualError(
+				t,
+				err,
+				"gas/storage/dir: get object: invalid range: not one byte range",
+			)
+			require.ErrorIs(t, headErr, storage.ErrInvalidRange)
+
+			return
+		}
+
+		off, n, resolveErr := r.Resolve(int64(len(fuzzData)))
+		if resolveErr != nil {
+			require.EqualError(t, err, "gas/storage/dir: get object: range not satisfiable")
+			require.ErrorIs(t, headErr, storage.ErrRangeNotSatisfiable)
+
+			return
+		}
+
+		require.NoError(t, err)
+		require.NoError(t, headErr)
+
+		b, err := io.ReadAll(obj.Body)
+		require.NoError(t, err)
+		require.NoError(t, obj.Body.Close())
+		require.Equal(t, fuzzData[off:off+n], string(b))
+		require.Equal(t, n, obj.Size)
+	})
 }
 
-// FuzzMetadataOnDisk overwrites an object's metadata file with arbitrary
-// bytes, then reads, overwrites and deletes the object. Data read back from
-// disk is untrusted: no content may panic, a DataFile naming a path outside
-// the object's own data files must not be followed, and a PutObject over any
-// metadata must replace it, as the package documents.
-func FuzzMetadataOnDisk(f *testing.F) {
-	f.Add([]byte(`{}`))
-	f.Add([]byte(`null`))
-	f.Add([]byte(`{"Key":"k","DataFile":"../../../../etc/passwd","Metadata":{"a":"b"}}`))
-	f.Add([]byte(`{"Key":"k","DataFile":"` + sha("k") + `_00000000-0000-0000-0000-000000000000"}`))
-	f.Add([]byte(`{"Key":"other","DataFile":"` + sha("other") + `_x","ContentType":5}`))
-	f.Add([]byte("\x00\xff{"))
+// FuzzListObjectsToken lists with any continuation token. The invariants:
+// no panic; an empty token is refused as empty, and any other that the
+// store did not issue as not one it issued, with fixed texts that never
+// quote it.
+func FuzzListObjectsToken(f *testing.F) {
+	p := fuzzStore(f)
 
-	f.Fuzz(func(t *testing.T, raw []byte) {
-		p, dir := newTestProvider(t)
-		put(t, p, "k", []byte("orig"))
-		writeFile(t, metaFile(dir, "k"), raw)
+	for _, k := range []string{"a", "b", "c"} {
+		_, err := p.PutObject(context.Background(), putIn(k, "v"))
+		require.NoError(f, err)
+	}
 
-		ctx := context.Background()
-		in := base("k")
-		_, _ = p.HeadObject(ctx, &storage.HeadObjectInput{BaseObjectInput: in})
-		obj, err := p.GetObject(ctx, &storage.GetObjectInput{
-			HeadObjectInput: storage.HeadObjectInput{BaseObjectInput: in},
-		})
-		if err == nil {
-			got, readErr := io.ReadAll(obj.Body)
-			if closeErr := obj.Body.Close(); closeErr != nil {
-				t.Errorf("close body: %v", closeErr)
-			}
-			if readErr == nil && !bytes.Equal(got, []byte("orig")) {
-				t.Errorf(
-					"GetObject() over rewritten metadata body = %q, want %q or an error",
-					got,
-					"orig",
-				)
-			}
-		}
+	out, err := p.ListObjects(
+		context.Background(),
+		&storage.ListObjectsInput{MaxKeys: new(int32(1))},
+	)
+	require.NoError(f, err)
 
-		if _, err := p.PutObject(ctx, &storage.PutObjectInput{
-			BaseObjectInput: in,
-			Body:            bytes.NewReader([]byte("new")),
-		}); err != nil {
-			t.Fatalf(
-				"PutObject() over rewritten metadata error: %v, want the metadata replaced",
+	issued := out.NextContinuationToken
+
+	for _, s := range []string{
+		issued, issued[:len(issued)-1], issued + "A", "", "YQ", "AAAA", strings.Repeat("A", 4096), "@@@",
+	} {
+		f.Add(s)
+	}
+
+	f.Fuzz(func(t *testing.T, token string) {
+		in := &storage.ListObjectsInput{ContinuationToken: &token, MaxKeys: new(int32(1))}
+
+		page, err := p.ListObjects(t.Context(), in)
+
+		switch token {
+		case issued:
+			require.NoError(t, err)
+			require.Equal(t, "b", page.Objects[0].Key)
+		case "":
+			require.EqualError(
+				t,
 				err,
+				"gas/storage/dir: list objects: invalid continuation token: empty",
+			)
+		default:
+			require.EqualError(
+				t,
+				err,
+				"gas/storage/dir: list objects: invalid continuation token: "+
+					"not one this backend issued for this listing",
 			)
 		}
-		if _, got := get(t, p, "k"); !bytes.Equal(got, []byte("new")) {
-			t.Errorf("GetObject() after replacing metadata = %q, want %q", got, "new")
-		}
-		if _, err := del(p, "k"); err != nil {
-			t.Errorf("DeleteObject() error: %v", err)
-		}
 	})
+}
+
+// FuzzKeyLayout writes, lists, reads and deletes two objects under any
+// keys. The invariants: a key CheckKey refuses is storage.ErrInvalidKey;
+// the others read back, are listed once each in byte order, with a Prefix
+// and with a Delimiter as the listing rules say, and are gone, from the
+// listing too, once deleted.
+func FuzzKeyLayout(f *testing.F) {
+	p := fuzzStore(f)
+
+	long := strings.Repeat("a", 120)
+
+	for _, seed := range [][2]string{
+		{"a", "a/b"},
+		{long, long + "b"},
+		{long[:119], long},
+		{strings.Repeat("z", 1024), "z"},
+		{"../x", "a\\b"},
+		{"", "x"},
+		{"a\x00b", "c"},
+		{"é/ü", "é"},
+		{"a/.", "b"},
+	} {
+		f.Add(seed[0], seed[1])
+	}
+
+	f.Fuzz(func(t *testing.T, k1, k2 string) {
+		keys := putKeys(t, p, k1, k2)
+
+		require.Equal(
+			t,
+			keys,
+			nilIfEmpty(listKeys(t, p, &storage.ListObjectsInput{MaxKeys: new(int32(1))})),
+		)
+
+		if len(keys) > 0 {
+			runes := []rune(keys[0])
+			prefix := string(runes[:len(runes)/2])
+			require.Equal(
+				t,
+				rollUp(keys, prefix, "/"),
+				nilIfEmpty(listKeys(t, p, &storage.ListObjectsInput{
+					Prefix: &prefix, Delimiter: new("/"),
+				})),
+			)
+		}
+
+		for _, k := range keys {
+			require.Equal(t, k, read(t, p, k))
+			require.NoError(t, p.DeleteObject(t.Context(), &storage.DeleteObjectInput{
+				Key: k,
+			}))
+		}
+
+		require.Empty(t, listKeys(t, p, &storage.ListObjectsInput{}))
+	})
+}
+
+// putKeys writes an object under each key, its body the key, checks that
+// a key CheckKey refuses is storage.ErrInvalidKey, and returns the keys
+// written, sorted, once each.
+func putKeys(t *testing.T, p *dir.Provider, keys ...string) []string {
+	t.Helper()
+
+	var out []string
+
+	for _, k := range keys {
+		_, err := p.PutObject(t.Context(), putIn(k, k))
+		if storage.CheckKey(k) != nil {
+			require.ErrorIs(t, err, storage.ErrInvalidKey)
+
+			continue
+		}
+
+		require.NoError(t, err)
+
+		out = append(out, k)
+	}
+
+	slices.Sort(out)
+
+	return slices.Compact(out)
+}
+
+// nilIfEmpty returns s, or nil when it is empty.
+func nilIfEmpty(s []string) []string {
+	if len(s) == 0 {
+		return nil
+	}
+
+	return s
 }

@@ -1,234 +1,304 @@
-package test
+package vfs_test
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"io"
 	"os"
 	"path/filepath"
-	"runtime"
-	"slices"
+	"regexp"
+	"strings"
 	"testing"
-	"uuid"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/gasmod/gas/storage/dir/internal/vfs"
 )
 
-// The on-disk layout of a VFS root, as the package writes it.
+// The layout of a root, as the package writes it.
 const (
-	objectsPath   = ".gas/objects"
-	locksPath     = ".gas/locks"
-	bucketsPath   = ".gas/buckets"
-	metaFileExt   = ".gas.json"
-	bucketLockExt = ".bucket"
-	fileHeadSize  = 512
-	hashLen       = 64
+	// objectsPath holds the objects directories.
+	objectsPath = ".gas/objects"
+	// locksPath holds the locks directories and the lifecycle locks.
+	locksPath = ".gas/locks"
+	// bucketsPath holds the name records.
+	bucketsPath = ".gas/buckets"
+	// keysPath holds the key indexes.
+	keysPath = ".gas/keys"
+	// layoutPath is the layout marker.
+	layoutPath = ".gas/layout"
+	// metaExt ends the name of a metadata file.
+	metaExt = ".gas.json"
+	// testBucket is the bucket most tests use.
+	testBucket = "bucket"
+	// testUUID is a UUID for the names of fixtures.
+	testUUID = "0b8e6f39-8a7c-4f0e-9a52-3b7f2d1c9e44"
 )
 
-// hash returns the hex SHA-256 of s, the name a bucket or key is stored
+// hashLike matches a name hash, which no error may hold.
+var hashLike = regexp.MustCompile(`[0-9a-f]{64}`)
+
+// hash returns the hex SHA-256 of s, the name a bucket or a key is stored
 // under.
 func hash(s string) string {
 	sum := sha256.Sum256([]byte(s))
+
 	return hex.EncodeToString(sum[:])
 }
 
-// bucketDirs returns the metadata, objects and locks directories of the
-// bucket name, relative to the VFS root.
-func bucketDirs(name string) (meta, obj, locks string) {
-	h := hash(name)
-	return h, filepath.Join(objectsPath, h), filepath.Join(locksPath, h)
+// metaPath returns the metadata file of key in bucket, under dir.
+func metaPath(dir, bucket, key string) string {
+	return filepath.Join(dir, hash(bucket), hash(key)+metaExt)
 }
 
-// bucketNameFile returns the name record of the bucket name, relative to the
-// VFS root.
-func bucketNameFile(name string) string {
-	return filepath.Join(bucketsPath, hash(name))
-}
+// objDir returns the objects directory of testBucket, under dir.
+func objDir(dir string) string { return filepath.Join(dir, objectsPath, hash(testBucket)) }
 
-// bucketLockName returns the name of the lifecycle lock of the bucket name,
-// relative to the shared locks directory.
-func bucketLockName(name string) string {
-	return hash(name) + bucketLockExt
-}
+// lockDir returns the locks directory of testBucket, under dir.
+func lockDir(dir string) string { return filepath.Join(dir, locksPath, hash(testBucket)) }
 
-// newDataFileName returns a fresh data file name for the object whose key
-// hashes to name: the hash, "_", and a new UUID.
-func newDataFileName(name string) string {
-	return name + "_" + uuid.New().String()
-}
+// keysDir returns the keys directory of testBucket, under dir.
+func keysDir(dir string) string { return filepath.Join(dir, keysPath, hash(testBucket)) }
 
-// newTestVFS returns a VFS on a fresh temp dir and the dir's path.
-func newTestVFS(t *testing.T) (*vfs.VFS, string) {
+// newVFS returns a VFS on a new temp dir, and the dir.
+func newVFS(t *testing.T) (*vfs.VFS, string) {
 	t.Helper()
+
 	dir := t.TempDir()
+
+	return openVFS(t, dir), dir
+}
+
+// openVFS returns a VFS on dir, whose root is closed when t ends.
+func openVFS(t *testing.T, dir string) *vfs.VFS {
+	t.Helper()
+
 	root, err := os.OpenRoot(dir)
-	if err != nil {
-		t.Fatalf("OpenRoot: %v", err)
-	}
+	require.NoError(t, err)
 	t.Cleanup(func() { _ = root.Close() })
-	v, err := vfs.NewVFS(root)
-	if err != nil {
-		t.Fatalf("NewVFS: %v", err)
-	}
-	return v, dir
+
+	v, err := vfs.Open(root)
+	require.NoError(t, err)
+
+	return v
 }
 
-// newTestBucket creates bucket "b" and opens it.
-func newTestBucket(t *testing.T, v *vfs.VFS) *vfs.Bucket {
+// newBucket creates testBucket in v and opens it, closed when t ends.
+func newBucket(t *testing.T, v *vfs.VFS) *vfs.Bucket {
 	t.Helper()
-	if _, err := v.CreateBucket(t.Context(), "b"); err != nil {
-		t.Fatalf("CreateBucket: %v", err)
-	}
-	return newOpenBucket(t, v)
+
+	require.NoError(t, v.CreateBucket(t.Context(), testBucket))
+
+	return openBucket(t, v)
 }
 
-// newOpenBucket opens the existing bucket "b" and closes it on cleanup.
-func newOpenBucket(t *testing.T, v *vfs.VFS) *vfs.Bucket {
+// openBucket opens testBucket of v, closed when t ends.
+func openBucket(t *testing.T, v *vfs.VFS) *vfs.Bucket {
 	t.Helper()
-	b, err := v.OpenBucket("b")
-	if err != nil {
-		t.Fatalf("OpenBucket: %v", err)
-	}
-	t.Cleanup(func() { _ = b.Close() })
-	return b
+
+	bk, err := v.OpenBucket(testBucket)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = bk.Close() })
+
+	return bk
 }
 
-// writeMeta writes content as the metadata file of key in bucket "b".
-func writeMeta(t *testing.T, dir, key, content string) {
+// write returns a Write of body under key that is never done.
+func write(key, body string) *vfs.Write {
+	return &vfs.Write{Key: key, Body: strings.NewReader(body), Done: func() error { return nil }}
+}
+
+// put writes body under key in bk.
+func put(t *testing.T, bk *vfs.Bucket, key, body string) vfs.Written {
 	t.Helper()
-	m, _, _ := bucketPaths(dir)
-	if err := os.WriteFile(
-		filepath.Join(m, hash(key)+metaFileExt),
-		[]byte(content),
-		0o600,
-	); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
+
+	out, err := bk.CreateObject(t.Context(), write(key, body))
+	require.NoError(t, err)
+
+	return out
 }
 
-// bucketPaths returns the absolute meta, object and lock dirs of bucket "b".
-func bucketPaths(dir string) (meta, obj, locks string) {
-	m, o, l := bucketDirs("b")
-	return filepath.Join(dir, m), filepath.Join(dir, o), filepath.Join(dir, l)
-}
-
-// listDir returns the sorted names in path.
-func listDir(t *testing.T, path string) []string {
+// read returns the contents of the object key of bk.
+func read(t *testing.T, bk *vfs.Bucket, key string) string {
 	t.Helper()
-	entries, err := os.ReadDir(path)
-	if err != nil {
-		t.Fatalf("ReadDir(%s): %v", path, err)
-	}
-	names := make([]string, 0, len(entries))
-	for _, e := range entries {
-		names = append(names, e.Name())
-	}
-	slices.Sort(names)
-	return names
+
+	obj, err := bk.OpenObject(t.Context(), key)
+	require.NoError(t, err)
+
+	defer func() { require.NoError(t, obj.File.Close()) }()
+
+	b, err := os.ReadFile(obj.File.Name())
+	require.NoError(t, err)
+
+	return string(b)
 }
 
-// putObject writes key with body and contentType (sniffed when empty),
-// failing the test on error.
-func putObject(t *testing.T, b *vfs.Bucket, key, body, contentType string) {
+// dataFiles returns the names of the data files of key in testBucket,
+// under dir.
+func dataFiles(t *testing.T, dir, key string) []string {
 	t.Helper()
-	in := &vfs.CreateObjectInput{Key: key, Body: bytes.NewReader([]byte(body))}
-	if contentType != "" {
-		in.ContentType = &contentType
-	}
-	if _, err := b.CreateObject(context.Background(), in); err != nil {
-		t.Fatalf("CreateObject(%q): %v", key, err)
-	}
+
+	files, err := filepath.Glob(filepath.Join(objDir(dir), hash(key)+"_*"))
+	require.NoError(t, err)
+
+	return files
 }
 
-// dataFile returns the data file name key's committed metadata points to.
-func dataFile(t *testing.T, b *vfs.Bucket, key string) string {
+// requireNoPath fails t unless err holds neither dir nor a name hash.
+func requireNoPath(t *testing.T, err error, dir string) {
 	t.Helper()
-	obj, err := b.OpenObject(context.Background(), &vfs.OpenObjectInput{Key: key})
-	if err != nil {
-		t.Fatalf("OpenObject(%q): %v", key, err)
-	}
-	if err := obj.File.Close(); err != nil {
-		t.Fatalf("Close(%q): %v", key, err)
-	}
-	return obj.DataFile
+
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), dir)
+	assert.NotRegexp(t, hashLike, err.Error())
 }
 
-// getObject reads key in full, failing the test on error.
-func getObject(t *testing.T, b *vfs.Bucket, key string) (string, *vfs.Object) {
+// skipIfRoot skips t when it runs as root, whom no mode stops.
+func skipIfRoot(t *testing.T) {
 	t.Helper()
-	obj, err := b.OpenObject(context.Background(), &vfs.OpenObjectInput{Key: key})
-	if err != nil {
-		t.Fatalf("OpenObject(%q): %v", key, err)
+
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores file modes")
 	}
-	defer func() { _ = obj.File.Close() }()
-	body, err := io.ReadAll(obj.File)
-	if err != nil {
-		t.Fatalf("ReadAll(%q): %v", key, err)
-	}
-	return string(body), obj
 }
 
-// noPanic turns a panic in fn into a test failure, so one regression does not
-// take down the whole test binary.
-func noPanic(t *testing.T, fn func()) {
+// chmod sets the mode of path, and restores it when t ends.
+func chmod(t *testing.T, path string, mode os.FileMode) {
 	t.Helper()
-	defer func() {
-		if r := recover(); r != nil {
-			t.Fatalf("panic: %v", r)
-		}
-	}()
-	fn()
+
+	fi, err := os.Stat(path)
+	require.NoError(t, err)
+	require.NoError(t, os.Chmod(path, mode))
+	t.Cleanup(func() { _ = os.Chmod(path, fi.Mode().Perm()) })
 }
 
-// skipIfNoPermissions skips tests that rely on unix permission bits being
-// enforced.
-func skipIfNoPermissions(t *testing.T) {
+// collect returns a report function that appends to a list, and the list.
+func collect() (func(vfs.Skipped), *[]vfs.Skipped) {
+	var got []vfs.Skipped
+
+	return func(s vfs.Skipped) { got = append(got, s) }, &got
+}
+
+// listKeys returns the keys of bk within bounds.
+func listKeys(t *testing.T, bk *vfs.Bucket, bounds vfs.Bounds) []string {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("unix permission bits do not apply on windows")
-	}
-	if os.Getuid() == 0 {
-		t.Skip("root bypasses file permissions")
-	}
+
+	var keys []string
+
+	err := bk.ListKeys(
+		t.Context(),
+		bounds,
+		func(string) bool { return false },
+		func(k string) bool {
+			keys = append(keys, k)
+
+			return true
+		},
+		func(s vfs.Skipped) { t.Errorf("unexpected report: %v", s) },
+	)
+	require.NoError(t, err)
+
+	return keys
 }
 
-// readOnlyDir makes dir read-only and restores its mode on cleanup so
-// TempDir removal works.
-func readOnlyDir(t *testing.T, dir string) {
+// lockAsync locks name with l in a goroutine, and returns its result.
+func lockAsync(ctx context.Context, l *vfs.ObjectsLock, name string) <-chan error {
+	done := make(chan error, 1)
+
+	go func() { done <- l.Lock(ctx, name) }()
+
+	return done
+}
+
+// recv waits for a Lock result, at most 5 seconds.
+func recv(t *testing.T, ch <-chan error) error {
 	t.Helper()
-	fi, err := os.Stat(dir)
-	if err != nil {
-		t.Fatalf("Stat(%s): %v", dir, err)
+
+	select {
+	case err := <-ch:
+		return err
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "Lock did not return")
+
+		return nil
 	}
-	//nolint:gosec // a directory needs the search bit; this one is read-only
-	if err := os.Chmod(dir, 0o500); err != nil {
-		t.Fatalf("Chmod(%s): %v", dir, err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(dir, fi.Mode().Perm()) })
 }
 
-// slotCount returns the number of in-process slots l holds.
-//func slotCount(l *vfs.ObjectsLock) int {
-//	l.mu.Lock()
-//	defer l.mu.Unlock()
-//	return len(l.slots)
-//}
+// requireBlocked fails t if a Lock result arrives within 50ms.
+func requireBlocked(t *testing.T, ch <-chan error) {
+	t.Helper()
 
-// errReader returns data together with err on the first read, then io.EOF.
-type errReader struct {
-	err  error
-	data []byte
-	done bool
+	select {
+	case err := <-ch:
+		require.FailNow(t, "Lock returned while the name was held", "%v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
 }
 
-// Read returns r.data with r.err on the first call, then io.EOF.
-func (r *errReader) Read(p []byte) (int, error) {
-	if r.done {
-		return 0, io.EOF
+// newLock returns an ObjectsLock on its own root on dir, closed when t
+// ends.
+func newLock(t *testing.T, dir string) *vfs.ObjectsLock {
+	t.Helper()
+
+	root, err := os.OpenRoot(dir)
+	require.NoError(t, err)
+
+	l := vfs.NewLock(root)
+
+	t.Cleanup(func() { _ = l.Close() })
+
+	return l
+}
+
+// holdKey takes the lock of key in testBucket, under dir, with a lock of
+// its own, as another process would, and returns the function that gives
+// it up.
+func holdKey(t *testing.T, dir, key string) func() {
+	t.Helper()
+
+	l := newLock(t, lockDir(dir))
+	require.NoError(t, l.Lock(t.Context(), hash(key)))
+
+	return func() { require.NoError(t, l.Unlock(hash(key))) }
+}
+
+// writeFile writes data to path, creating its directory.
+func writeFile(t *testing.T, path, data string) {
+	t.Helper()
+
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
+	require.NoError(t, os.WriteFile(path, []byte(data), 0o600))
+}
+
+// exists reports whether path exists.
+func exists(t *testing.T, path string) bool {
+	t.Helper()
+
+	_, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return false
 	}
-	r.done = true
-	n := copy(p, r.data)
-	return n, r.err
+
+	require.NoError(t, err)
+
+	return true
+}
+
+// ctxCanceled returns a context of t and its cancel function.
+func ctxCanceled(t *testing.T) (context.Context, context.CancelFunc) {
+	t.Helper()
+
+	return context.WithCancel(t.Context())
+}
+
+// readFile returns the contents of path.
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+
+	b, err := os.ReadFile(path) //nolint:gosec // G304: a path of the test.
+	require.NoError(t, err)
+
+	return string(b)
 }

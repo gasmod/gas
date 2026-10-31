@@ -17,9 +17,11 @@ func tryLock(f *os.File) (bool, error) {
 	if errors.Is(err, unix.EWOULDBLOCK) {
 		return false, nil
 	}
+
 	if err != nil {
 		return false, fmt.Errorf("flock: %w", err)
 	}
+
 	return true, nil
 }
 
@@ -31,9 +33,11 @@ func lockBlocking(f *os.File) error {
 		if errors.Is(err, unix.EINTR) {
 			continue
 		}
+
 		if err != nil {
 			return fmt.Errorf("flock: %w", err)
 		}
+
 		return nil
 	}
 }

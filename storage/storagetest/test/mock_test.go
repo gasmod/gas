@@ -1,377 +1,324 @@
-package test
+package storagetest_test
 
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/gasmod/gas/storage"
 	"github.com/gasmod/gas/storage/storagetest"
 )
 
-var (
-	_ storage.Provider  = (*storagetest.MockProvider)(nil)
-	_ storage.Presigner = (*storagetest.MockPresigner)(nil)
-)
+// errOffline is what the fields of the tests return.
+var errOffline = errors.New("offline")
 
-// TestMockProvider_Defaults checks that unset Fn fields return nil, nil and
-// calls are recorded in order.
+// The example in the package documentation's Usage section.
+func TestDoc_Usage(t *testing.T) {
+	t.Parallel()
+
+	m := &storagetest.MockProvider{
+		GetObjectFn: func(context.Context, *storage.GetObjectInput) (*storage.Object, error) {
+			return nil, errOffline
+		},
+	}
+
+	_, err := m.GetObject(t.Context(), &storage.GetObjectInput{})
+	require.ErrorIs(t, err, errOffline)
+	assert.Equal(t, 1, m.CallCount("GetObject"))
+}
+
+// With its fields nil, every method succeeds with a zero output, but
+// HeadObject and GetObject, which return ErrObjectNotFound.
 func TestMockProvider_Defaults(t *testing.T) {
 	t.Parallel()
 
-	m := &storagetest.MockProvider{}
-	ctx := context.Background()
+	var m storagetest.MockProvider
 
-	if info, err := m.CreateBucket(ctx, nil); info != nil || err != nil {
-		t.Errorf("CreateBucket() = %v, %v, want nil, nil", info, err)
-	}
-	if info, err := m.HeadObject(ctx, nil); info != nil || err != nil {
-		t.Errorf("HeadObject() = %v, %v, want nil, nil", info, err)
-	}
-	if info, err := m.PutObject(ctx, nil); info != nil || err != nil {
-		t.Errorf("PutObject() = %v, %v, want nil, nil", info, err)
-	}
-	if obj, err := m.GetObject(ctx, nil); obj != nil || err != nil {
-		t.Errorf("GetObject() = %v, %v, want nil, nil", obj, err)
-	}
-	if info, err := m.DeleteObject(ctx, nil); info != nil || err != nil {
-		t.Errorf("DeleteObject() = %v, %v, want nil, nil", info, err)
-	}
-	if out, err := m.ListBuckets(ctx, nil); out != nil || err != nil {
-		t.Errorf("ListBuckets() = %v, %v, want nil, nil", out, err)
-	}
-	if out, err := m.ListObjects(ctx, nil); out != nil || err != nil {
-		t.Errorf("ListObjects() = %v, %v, want nil, nil", out, err)
-	}
-	if b, err := m.HeadBucket(ctx, nil); b != nil || err != nil {
-		t.Errorf("HeadBucket() = %v, %v, want nil, nil", b, err)
-	}
-	if err := m.DeleteBucket(ctx, nil); err != nil {
-		t.Errorf("DeleteBucket() = %v, want nil", err)
-	}
+	ctx := t.Context()
 
-	order := []string{
-		"CreateBucket", "HeadObject", "PutObject", "GetObject", "DeleteObject",
-		"ListBuckets", "ListObjects", "HeadBucket", "DeleteBucket",
-	}
-	for _, method := range order {
-		if n := m.CallCount(method); n != 1 {
-			t.Errorf("CallCount(%s) = %d, want 1", method, n)
-		}
-	}
-	if n := m.CallCount("Unknown"); n != 0 {
-		t.Errorf("CallCount(Unknown) = %d, want 0", n)
-	}
-	if len(m.Calls) != len(order) {
-		t.Fatalf("len(Calls) = %d, want %d", len(m.Calls), len(order))
-	}
-	for i, c := range m.Calls {
-		if c.Method != order[i] {
-			t.Errorf("Calls[%d].Method = %q, want %q", i, c.Method, order[i])
-		}
-	}
-}
+	require.NoError(t, m.CreateBucket(ctx, &storage.CreateBucketInput{Bucket: "b"}))
+	require.NoError(t, m.DeleteBucket(ctx, &storage.DeleteBucketInput{Bucket: "b"}))
+	require.NoError(t, m.DeleteObject(ctx, &storage.DeleteObjectInput{Key: "k"}))
 
-// TestMockProvider_DelegatesAndRecords checks that each method delegates to
-// its Fn field and records its input.
-func TestMockProvider_DelegatesAndRecords(t *testing.T) {
-	t.Parallel()
+	b, err := m.HeadBucket(ctx, &storage.HeadBucketInput{Bucket: "b"})
+	require.NoError(t, err)
+	assert.Equal(t, &storage.Bucket{Name: "b"}, b)
 
-	errBoom := errors.New("boom")
-	createIn := &storage.CreateBucketInput{Bucket: "b"}
-	headIn := &storage.HeadObjectInput{BaseObjectInput: storage.BaseObjectInput{Key: "h"}}
-	putIn := &storage.PutObjectInput{BaseObjectInput: storage.BaseObjectInput{Key: "p"}}
-	getIn := &storage.GetObjectInput{HeadObjectInput: *headIn}
-	delIn := &storage.DeleteObjectInput{BaseObjectInput: storage.BaseObjectInput{Key: "d"}}
+	b, err = m.HeadBucket(ctx, nil)
+	require.NoError(t, err)
+	assert.Equal(t, &storage.Bucket{}, b)
 
-	type ctxKey struct{}
-	ctx := context.WithValue(context.Background(), ctxKey{}, "v")
+	buckets, err := m.ListBuckets(ctx, &storage.ListBucketsInput{})
+	require.NoError(t, err)
+	assert.Equal(t, &storage.ListBucketsOutput{}, buckets)
 
-	m := &storagetest.MockProvider{
-		CreateBucketFn: func(c context.Context, in *storage.CreateBucketInput) (*storage.Bucket, error) {
-			if c.Value(ctxKey{}) != "v" || in != createIn {
-				t.Error("CreateBucketFn received wrong arguments")
-			}
-			return nil, storage.ErrBucketExists
-		},
-		HeadObjectFn: func(c context.Context, in *storage.HeadObjectInput) (*storage.ObjectInfo, error) {
-			if c.Value(ctxKey{}) != "v" || in != headIn {
-				t.Error("HeadObjectFn received wrong arguments")
-			}
-			return &storage.ObjectInfo{Size: 1}, nil
-		},
-		PutObjectFn: func(c context.Context, in *storage.PutObjectInput) (*storage.ObjectInfo, error) {
-			if c.Value(ctxKey{}) != "v" || in != putIn {
-				t.Error("PutObjectFn received wrong arguments")
-			}
-			return &storage.ObjectInfo{Version: "v1"}, nil
-		},
-		GetObjectFn: func(c context.Context, in *storage.GetObjectInput) (*storage.Object, error) {
-			if c.Value(ctxKey{}) != "v" || in != getIn {
-				t.Error("GetObjectFn received wrong arguments")
-			}
-			return nil, errBoom
-		},
-		DeleteObjectFn: func(c context.Context, in *storage.DeleteObjectInput) (*storage.ObjectInfo, error) {
-			if c.Value(ctxKey{}) != "v" || in != delIn {
-				t.Error("DeleteObjectFn received wrong arguments")
-			}
-			return &storage.ObjectInfo{Version: "gone"}, nil
-		},
-	}
+	objects, err := m.ListObjects(ctx, &storage.ListObjectsInput{})
+	require.NoError(t, err)
+	assert.Equal(t, &storage.ListObjectsOutput{}, objects)
 
-	if info, err := m.CreateBucket(ctx, createIn); !errors.Is(err, storage.ErrBucketExists) ||
-		info != nil {
-		t.Errorf("CreateBucket() = %+v, %v, want nil, ErrBucketExists", info, err)
-	}
-	if info, err := m.HeadObject(ctx, headIn); err != nil || info.Size != 1 {
-		t.Errorf("HeadObject() = %+v, %v", info, err)
-	}
-	if info, err := m.PutObject(ctx, putIn); err != nil || info.Version != "v1" {
-		t.Errorf("PutObject() = %+v, %v", info, err)
-	}
-	if _, err := m.GetObject(ctx, getIn); !errors.Is(err, errBoom) {
-		t.Errorf("GetObject() error = %v, want %v", err, errBoom)
-	}
-	if info, err := m.DeleteObject(ctx, delIn); err != nil || info.Version != "gone" {
-		t.Errorf("DeleteObject() = %+v, %v", info, err)
-	}
-
-	wantArgs := []any{createIn, headIn, putIn, getIn, delIn}
-	if len(m.Calls) != len(wantArgs) {
-		t.Fatalf("len(Calls) = %d, want %d", len(m.Calls), len(wantArgs))
-	}
-	for i, c := range m.Calls {
-		if len(c.Args) != 1 || c.Args[0] != wantArgs[i] {
-			t.Errorf("Calls[%d].Args = %v, want [%v]", i, c.Args, wantArgs[i])
-		}
-	}
-}
-
-// TestMockProvider_DelegatesList checks that the list methods delegate to
-// their Fn fields and record their inputs.
-func TestMockProvider_DelegatesList(t *testing.T) {
-	t.Parallel()
-
-	bucketsIn := &storage.ListBucketsInput{Prefix: new("b")}
-	objectsIn := &storage.ListObjectsInput{Prefix: new("o")}
-
-	type ctxKey struct{}
-	ctx := context.WithValue(context.Background(), ctxKey{}, "v")
-
-	m := &storagetest.MockProvider{
-		ListBucketsFn: func(
-			c context.Context,
-			in *storage.ListBucketsInput,
-		) (*storage.ListBucketsOutput, error) {
-			if c.Value(ctxKey{}) != "v" || in != bucketsIn {
-				t.Error("ListBucketsFn received wrong arguments")
-			}
-			return &storage.ListBucketsOutput{NextContinuationToken: "next"}, nil
-		},
-		ListObjectsFn: func(
-			c context.Context,
-			in *storage.ListObjectsInput,
-		) (*storage.ListObjectsOutput, error) {
-			if c.Value(ctxKey{}) != "v" || in != objectsIn {
-				t.Error("ListObjectsFn received wrong arguments")
-			}
-			return &storage.ListObjectsOutput{IsTruncated: true}, nil
-		},
-	}
-
-	if out, err := m.ListBuckets(
+	out, err := m.PutObject(
 		ctx,
-		bucketsIn,
-	); err != nil ||
-		out.NextContinuationToken != "next" {
-		t.Errorf("ListBuckets() = %+v, %v", out, err)
-	}
-	if out, err := m.ListObjects(ctx, objectsIn); err != nil || !out.IsTruncated {
-		t.Errorf("ListObjects() = %+v, %v", out, err)
-	}
+		&storage.PutObjectInput{Key: "k", Body: strings.NewReader("unread")},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, &storage.PutObjectOutput{}, out)
 
-	want := []storagetest.Call{
-		{Method: "ListBuckets", Args: []any{bucketsIn}},
-		{Method: "ListObjects", Args: []any{objectsIn}},
-	}
-	if len(m.Calls) != len(want) {
-		t.Fatalf("len(Calls) = %d, want %d", len(m.Calls), len(want))
-	}
-	for i, c := range m.Calls {
-		if c.Method != want[i].Method || len(c.Args) != 1 || c.Args[0] != want[i].Args[0] {
-			t.Errorf("Calls[%d] = %+v, want %+v", i, c, want[i])
-		}
-	}
+	_, err = m.HeadObject(ctx, &storage.HeadObjectInput{Key: "k"})
+	require.ErrorIs(t, err, storage.ErrObjectNotFound)
+
+	obj, err := m.GetObject(ctx, &storage.GetObjectInput{Key: "k"})
+	require.ErrorIs(t, err, storage.ErrObjectNotFound)
+	assert.Nil(t, obj)
+
+	var p storagetest.MockPresigner
+
+	up, err := p.PresignUploadURL(ctx, &storage.PresignUploadURLInput{})
+	require.NoError(t, err)
+	assert.Equal(t, &storage.PresignURLResponse{Method: "PUT"}, up)
+
+	down, err := p.PresignDownloadURL(ctx, &storage.PresignDownloadURLInput{})
+	require.NoError(t, err)
+	assert.Equal(t, &storage.PresignURLResponse{Method: "GET"}, down)
 }
 
-// TestMockProvider_Reset checks that Reset clears the recorded calls.
-func TestMockProvider_Reset(t *testing.T) {
-	t.Parallel()
-
-	m := &storagetest.MockProvider{}
-	_, _ = m.HeadObject(context.Background(), nil)
-	_, _ = m.HeadObject(context.Background(), nil)
-	if m.CallCount("HeadObject") != 2 {
-		t.Fatalf("CallCount = %d, want 2", m.CallCount("HeadObject"))
-	}
-	m.Reset()
-	if m.CallCount("HeadObject") != 0 || len(m.Calls) != 0 {
-		t.Errorf(
-			"after Reset: CallCount = %d, len(Calls) = %d",
-			m.CallCount("HeadObject"),
-			len(m.Calls),
-		)
-	}
-	// Reset on a fresh mock is a no-op.
-	(&storagetest.MockProvider{}).Reset()
-}
-
-// TestMockProvider_Concurrent checks concurrent calls under -race.
-func TestMockProvider_Concurrent(t *testing.T) {
+// Each method returns what its field returns.
+//
+//nolint:funlen // one assertion per method.
+func TestMockProvider_Fields(t *testing.T) {
 	t.Parallel()
 
 	m := &storagetest.MockProvider{
-		PutObjectFn: func(context.Context, *storage.PutObjectInput) (*storage.ObjectInfo, error) {
-			return &storage.ObjectInfo{}, nil
+		CreateBucketFn: func(context.Context, *storage.CreateBucketInput) error { return errOffline },
+		HeadBucketFn: func(context.Context, *storage.HeadBucketInput) (*storage.Bucket, error) {
+			return nil, errOffline
+		},
+		DeleteBucketFn: func(context.Context, *storage.DeleteBucketInput) error { return errOffline },
+		ListBucketsFn: func(context.Context, *storage.ListBucketsInput) (*storage.ListBucketsOutput, error) {
+			return nil, errOffline
+		},
+		HeadObjectFn: func(context.Context, *storage.HeadObjectInput) (*storage.ObjectInfo, error) {
+			return &storage.ObjectInfo{Size: 3}, nil
+		},
+		PutObjectFn: func(context.Context, *storage.PutObjectInput) (*storage.PutObjectOutput, error) {
+			return nil, errOffline
+		},
+		DeleteObjectFn: func(context.Context, *storage.DeleteObjectInput) error { return errOffline },
+		ListObjectsFn: func(context.Context, *storage.ListObjectsInput) (*storage.ListObjectsOutput, error) {
+			return nil, errOffline
 		},
 	}
-	const n = 100
-	var wg sync.WaitGroup
-	for range n {
-		wg.Go(func() {
-			_, _ = m.PutObject(context.Background(), nil)
-			_ = m.CallCount("PutObject")
-		})
-		wg.Go(func() { _, _ = m.HeadObject(context.Background(), nil) })
+	ctx := t.Context()
+
+	require.ErrorIs(t, m.CreateBucket(ctx, nil), errOffline)
+	require.ErrorIs(t, m.DeleteBucket(ctx, nil), errOffline)
+	require.ErrorIs(t, m.DeleteObject(ctx, nil), errOffline)
+
+	_, err := m.HeadBucket(ctx, nil)
+	require.ErrorIs(t, err, errOffline)
+
+	_, err = m.ListBuckets(ctx, nil)
+	require.ErrorIs(t, err, errOffline)
+
+	_, err = m.PutObject(ctx, nil)
+	require.ErrorIs(t, err, errOffline)
+
+	_, err = m.ListObjects(ctx, nil)
+	require.ErrorIs(t, err, errOffline)
+
+	info, err := m.HeadObject(ctx, nil)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), info.Size)
+
+	p := &storagetest.MockPresigner{
+		PresignUploadURLFn: func(context.Context, *storage.PresignUploadURLInput) (*storage.PresignURLResponse, error) {
+			return nil, errOffline
+		},
+		PresignDownloadURLFn: func(
+			context.Context,
+			*storage.PresignDownloadURLInput,
+		) (*storage.PresignURLResponse, error) {
+			return nil, errOffline
+		},
 	}
-	wg.Wait()
-	if m.CallCount("PutObject") != n || m.CallCount("HeadObject") != n {
-		t.Errorf(
-			"CallCount Put=%d Head=%d, want %d each",
-			m.CallCount("PutObject"),
-			m.CallCount("HeadObject"),
-			n,
-		)
-	}
+
+	_, err = p.PresignUploadURL(ctx, nil)
+	require.ErrorIs(t, err, errOffline)
+
+	_, err = p.PresignDownloadURL(ctx, nil)
+	require.ErrorIs(t, err, errOffline)
+	assert.Equal(t, 1, p.CallCount("PresignDownloadURL"))
 }
 
-// TestMockPresigner_Defaults checks that unset Fn fields return nil, nil and
-// calls are recorded.
-func TestMockPresigner_Defaults(t *testing.T) {
+// A recorded call holds a copy of its input, which a caller that reuses
+// the input does not change, and Calls returns a copy again; a nil input
+// is recorded as nil of its type.
+//
+//nolint:funlen // the copies of one sequence of calls.
+func TestMock_CallsAreCopies(t *testing.T) {
 	t.Parallel()
 
-	m := &storagetest.MockPresigner{}
-	ctx := context.Background()
-	if res, err := m.PresignUploadURL(ctx, nil); res != nil || err != nil {
-		t.Errorf("PresignUploadURL() = %v, %v, want nil, nil", res, err)
-	}
-	if res, err := m.PresignDownloadURL(ctx, nil); res != nil || err != nil {
-		t.Errorf("PresignDownloadURL() = %v, %v, want nil, nil", res, err)
-	}
-	if m.CallCount("PresignUploadURL") != 1 || m.CallCount("PresignDownloadURL") != 1 {
-		t.Errorf("CallCount upload=%d download=%d, want 1 each",
-			m.CallCount("PresignUploadURL"), m.CallCount("PresignDownloadURL"))
-	}
-}
+	var m storagetest.MockProvider
 
-// TestMockPresigner_DelegatesAndRecords checks delegation, recording, and
-// Reset.
-func TestMockPresigner_DelegatesAndRecords(t *testing.T) {
-	t.Parallel()
-
-	errBoom := errors.New("boom")
-	upIn := &storage.PresignUploadURLInput{}
-	downIn := &storage.PresignDownloadURLInput{}
-	m := &storagetest.MockPresigner{
-		PresignUploadURLFn: func(_ context.Context, in *storage.PresignUploadURLInput) (*storage.PresignURLResponse, error) {
-			if in != upIn {
-				t.Error("PresignUploadURLFn received wrong input")
-			}
-			return &storage.PresignURLResponse{URL: "https://up", Method: "PUT"}, nil
-		},
-		PresignDownloadURLFn: func(_ context.Context, in *storage.PresignDownloadURLInput) (*storage.PresignURLResponse, error) {
-			if in != downIn {
-				t.Error("PresignDownloadURLFn received wrong input")
-			}
-			return nil, errBoom
-		},
+	ctx := t.Context()
+	token := "t1"
+	in := &storage.ListObjectsInput{
+		Bucket: new("b"), ContinuationToken: &token, Delimiter: new("/"),
+		MaxKeys: new(int32(2)), Prefix: new("p"), StartAfter: new("s"),
 	}
 
-	res, err := m.PresignUploadURL(context.Background(), upIn)
-	if err != nil || res.URL != "https://up" || res.Method != "PUT" {
-		t.Errorf("PresignUploadURL() = %+v, %v", res, err)
+	_, err := m.ListObjects(ctx, in)
+	require.NoError(t, err)
+
+	token = "t2"
+
+	_, err = m.ListObjects(ctx, in)
+	require.NoError(t, err)
+
+	put := &storage.PutObjectInput{
+		Key: "k", Bucket: new("b"), ContentLength: new(int64(1)),
+		Metadata: map[string]string{"a": "1"}, ContentType: new("text/plain"), IfMatch: new("e"),
 	}
-	if _, err := m.PresignDownloadURL(context.Background(), downIn); !errors.Is(err, errBoom) {
-		t.Errorf("PresignDownloadURL() error = %v, want %v", err, errBoom)
-	}
-	if len(m.Calls) != 2 || m.Calls[0].Args[0] != upIn || m.Calls[1].Args[0] != downIn {
-		t.Errorf("Calls = %+v", m.Calls)
-	}
+
+	_, err = m.PutObject(ctx, put)
+	require.NoError(t, err)
+
+	put.Metadata["a"] = "changed"
+	*put.ContentType = "changed"
+
+	_, err = m.GetObject(ctx, nil)
+	require.ErrorIs(t, err, storage.ErrObjectNotFound)
+
+	calls := m.Calls()
+	require.Len(t, calls, 4)
+
+	first, ok := calls[0].Args[0].(*storage.ListObjectsInput)
+	require.True(t, ok)
+	assert.Equal(t, "t1", *first.ContinuationToken)
+
+	second, ok := calls[1].Args[0].(*storage.ListObjectsInput)
+	require.True(t, ok)
+	assert.Equal(t, "t2", *second.ContinuationToken)
+
+	recorded, ok := calls[2].Args[0].(*storage.PutObjectInput)
+	require.True(t, ok)
+	assert.Equal(t, "1", recorded.Metadata["a"])
+	assert.Equal(t, "text/plain", *recorded.ContentType)
+
+	recorded.Metadata["a"] = "changed again"
+	*first.Prefix = "changed"
+
+	again := m.Calls()
+	assert.Equal(t, "1", again[2].Args[0].(*storage.PutObjectInput).Metadata["a"])
+	assert.Equal(t, "p", *again[0].Args[0].(*storage.ListObjectsInput).Prefix)
+	assert.Equal(t, (*storage.GetObjectInput)(nil), again[3].Args[0])
+
+	assert.Equal(t, 2, m.CallCount("ListObjects"))
 
 	m.Reset()
-	if len(m.Calls) != 0 || m.CallCount("PresignUploadURL") != 0 {
-		t.Errorf("after Reset: %+v", m.Calls)
-	}
+	assert.Empty(t, m.Calls())
+	assert.Zero(t, m.CallCount("ListObjects"))
 }
 
-// TestMockPresigner_Concurrent checks concurrent calls under -race.
-func TestMockPresigner_Concurrent(t *testing.T) {
+// Every input type is recorded as a copy of its own type.
+func TestMock_EveryInput(t *testing.T) {
 	t.Parallel()
 
-	m := &storagetest.MockPresigner{}
-	const n = 100
-	var wg sync.WaitGroup
-	for range n {
-		wg.Go(func() { _, _ = m.PresignUploadURL(context.Background(), nil) })
+	var (
+		m storagetest.MockProvider
+		p storagetest.MockPresigner
+	)
+
+	ctx := t.Context()
+
+	_ = m.CreateBucket(ctx, &storage.CreateBucketInput{Bucket: "b"})
+	_, _ = m.HeadBucket(ctx, &storage.HeadBucketInput{Bucket: "b"})
+	_ = m.DeleteBucket(ctx, &storage.DeleteBucketInput{Bucket: "b"})
+	_, _ = m.ListBuckets(ctx, &storage.ListBucketsInput{Prefix: new("p")})
+	_, _ = m.HeadObject(ctx, &storage.HeadObjectInput{Key: "k", Range: new("bytes=0-1")})
+	_, _ = m.GetObject(ctx, &storage.GetObjectInput{Key: "k", Version: new("v")})
+	_ = m.DeleteObject(ctx, &storage.DeleteObjectInput{Key: "k", Version: new("v")})
+	_, _ = p.PresignUploadURL(ctx, &storage.PresignUploadURLInput{Key: "k", TTL: new(time.Minute)})
+	_, _ = p.PresignDownloadURL(ctx, &storage.PresignDownloadURLInput{
+		Key: "k", ResponseContentType: new("text/plain"),
+	})
+
+	want := []string{
+		"CreateBucket",
+		"HeadBucket",
+		"DeleteBucket",
+		"ListBuckets",
+		"HeadObject",
+		"GetObject",
+		"DeleteObject",
+	}
+
+	calls := m.Calls()
+	require.Len(t, calls, len(want))
+
+	for i, c := range calls {
+		assert.Equal(t, want[i], c.Method)
+		require.Len(t, c.Args, 1)
+	}
+
+	assert.Equal(t, &storage.GetObjectInput{Key: "k", Version: new("v")}, calls[5].Args[0])
+
+	pcalls := p.Calls()
+	require.Len(t, pcalls, 2)
+	assert.Equal(
+		t,
+		&storage.PresignDownloadURLInput{Key: "k", ResponseContentType: new("text/plain")},
+		pcalls[1].Args[0],
+	)
+	assert.Equal(
+		t,
+		&storage.PresignUploadURLInput{Key: "k", TTL: new(time.Minute)},
+		pcalls[0].Args[0],
+	)
+}
+
+// The methods may be called from several goroutines, for -race.
+func TestMock_Concurrent(t *testing.T) {
+	t.Parallel()
+
+	var (
+		m  storagetest.MockProvider
+		wg sync.WaitGroup
+	)
+
+	for range 8 {
 		wg.Go(func() {
-			_, _ = m.PresignDownloadURL(context.Background(), nil)
-			m.CallCount("PresignDownloadURL")
+			_, _ = m.HeadObject(context.Background(), &storage.HeadObjectInput{Key: "k"})
+			_ = m.Calls()
+			_ = m.CallCount("HeadObject")
 		})
 	}
+
 	wg.Wait()
-	if m.CallCount("PresignUploadURL") != n || m.CallCount("PresignDownloadURL") != n {
-		t.Errorf("CallCount upload=%d download=%d, want %d each",
-			m.CallCount("PresignUploadURL"), m.CallCount("PresignDownloadURL"), n)
-	}
+	assert.Equal(t, 8, m.CallCount("HeadObject"))
 }
 
-// TestMockProvider_BucketMethods checks that HeadBucket and DeleteBucket
-// delegate to their Fn fields and record their inputs.
-func TestMockProvider_BucketMethods(t *testing.T) {
+// Survey 2.18: Calls was an exported field read without the lock, the
+// recorded inputs were the caller's own pointers, and an unset GetObject
+// returned a nil object with a nil error. Calls is now a method returning
+// copies, and an unset GetObject returns ErrObjectNotFound.
+func TestFindings_Mocks(t *testing.T) {
 	t.Parallel()
 
-	headIn := &storage.HeadBucketInput{Bucket: "h"}
-	delIn := &storage.DeleteBucketInput{Bucket: "d"}
-	m := &storagetest.MockProvider{
-		HeadBucketFn: func(_ context.Context, in *storage.HeadBucketInput) (*storage.Bucket, error) {
-			if in != headIn {
-				t.Error("HeadBucketFn received wrong arguments")
-			}
-			return &storage.Bucket{Name: "h"}, nil
-		},
-		DeleteBucketFn: func(_ context.Context, in *storage.DeleteBucketInput) error {
-			if in != delIn {
-				t.Error("DeleteBucketFn received wrong arguments")
-			}
-			return storage.ErrBucketNotEmpty
-		},
-	}
+	var m storagetest.MockProvider
 
-	if b, err := m.HeadBucket(context.Background(), headIn); err != nil || b.Name != "h" {
-		t.Errorf("HeadBucket() = %+v, %v", b, err)
-	}
-	if err := m.DeleteBucket(
-		context.Background(),
-		delIn,
-	); !errors.Is(
-		err,
-		storage.ErrBucketNotEmpty,
-	) {
-		t.Errorf("DeleteBucket() = %v, want ErrBucketNotEmpty", err)
-	}
-	if m.CallCount("HeadBucket") != 1 || m.CallCount("DeleteBucket") != 1 {
-		t.Errorf("Calls = %+v, want one HeadBucket and one DeleteBucket", m.Calls)
-	}
+	obj, err := m.GetObject(t.Context(), &storage.GetObjectInput{Key: "k"})
+	require.Error(t, err)
+	assert.Nil(t, obj)
+
+	in := &storage.GetObjectInput{Key: "k"}
+
+	_, _ = m.GetObject(t.Context(), in)
+
+	assert.NotSame(t, in, m.Calls()[1].Args[0])
 }

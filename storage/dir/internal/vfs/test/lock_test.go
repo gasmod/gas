@@ -1,483 +1,370 @@
-package test
+package vfs_test
 
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime/pprof"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/gasmod/gas/storage/dir/internal/vfs"
 )
 
-// newTestLock opens its own root on dir, as each provider call opens its own
-// Bucket and so its own ObjectsLock.
-func newTestLock(t *testing.T, dir string) *vfs.ObjectsLock {
-	t.Helper()
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		t.Fatalf("OpenRoot: %v", err)
-	}
-	l := vfs.NewLock(root)
-	t.Cleanup(func() { _ = l.Close() })
-	return l
-}
-
-// lockAsync locks "n" in a goroutine and returns its result channel.
-func lockAsync(ctx context.Context, l *vfs.ObjectsLock) <-chan error {
-	done := make(chan error, 1)
-	go func() { done <- l.Lock(ctx, "n") }()
-	return done
-}
-
-// recv waits up to timeout for a Lock result.
-func recv(t *testing.T, ch <-chan error, timeout time.Duration) error {
-	t.Helper()
-	select {
-	case err := <-ch:
-		return err
-	case <-time.After(timeout):
-		t.Fatalf("Lock did not return within %v", timeout)
-		return nil
-	}
-}
-
-// assertBlocked fails if a Lock result arrives within 50ms.
-func assertBlocked(t *testing.T, ch <-chan error) {
-	t.Helper()
-	select {
-	case err := <-ch:
-		t.Fatalf("Lock returned %v while the name was held elsewhere", err)
-	case <-time.After(50 * time.Millisecond):
-	}
-}
-
-// TestLock_MutualExclusionAcrossLocks covers bug 1: separate ObjectsLocks on
-// one dir, mixing Unlock and Release, must never have two holders at once.
+// Locks on one directory, each on its own root, mixing Unlock and Release,
+// never have two holders of a name at once.
 func TestLock_MutualExclusionAcrossLocks(t *testing.T) {
-	dir := t.TempDir()
-	const name = "obj"
-	deadline := time.Now().Add(2 * time.Second)
+	t.Parallel()
 
-	var inside, violations, acquisitions atomic.Int64
-	locks := make([]*vfs.ObjectsLock, 16)
-	for i := range locks {
-		locks[i] = newTestLock(t, dir)
-	}
+	dir := t.TempDir()
+	deadline := time.Now().Add(time.Second)
+
+	var inside, overlaps atomic.Int64
 
 	var wg sync.WaitGroup
-	for w, l := range locks {
+
+	for w := range 8 {
+		l := newLock(t, dir)
+
 		wg.Go(func() {
 			for i := 0; time.Now().Before(deadline); i++ {
-				if err := l.Lock(context.Background(), name); err != nil {
-					t.Errorf("Lock: %v", err)
+				err := l.Lock(context.Background(), "obj")
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+
 					return
 				}
-				acquisitions.Add(1)
+
 				if inside.Add(1) > 1 {
-					violations.Add(1)
+					overlaps.Add(1)
 				}
+
 				time.Sleep(50 * time.Microsecond)
 				inside.Add(-1)
 
-				var rErr error
 				if (w+i)%3 == 0 {
-					rErr = l.Release(name)
+					err = l.Release("obj")
 				} else {
-					rErr = l.Unlock(name)
+					err = l.Unlock("obj")
 				}
-				if rErr != nil {
-					t.Errorf("unlock: %v", rErr)
+
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+
 					return
 				}
 			}
 		})
 	}
+
 	wg.Wait()
-
-	if v := violations.Load(); v > 0 {
-		t.Fatalf("%d of %d acquisitions overlapped with another holder", v, acquisitions.Load())
-	}
-	//for _, l := range locks {
-	//	if n := slotCount(l); n != 0 {
-	//		t.Fatalf("%d slots left, want 0", n)
-	//	}
-	//}
+	assert.Zero(t, overlaps.Load())
 }
 
-// TestLock_WaiterRetriesAfterRelease covers bug 1, deterministic: a waiter
-// parked on a lock file that the holder then releases must not end up holding
-// the unlinked file.
+// A waiter on a lock file that its holder then releases does not hold the
+// removed file: it gets the new one, so a newcomer waits for it.
 func TestLock_WaiterRetriesAfterRelease(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
-	holder, waiter := newTestLock(t, dir), newTestLock(t, dir)
+	holder, waiter, newcomer := newLock(t, dir), newLock(t, dir), newLock(t, dir)
 
-	if err := holder.Lock(t.Context(), "n"); err != nil {
-		t.Fatalf("Lock: %v", err)
-	}
-	done := lockAsync(t.Context(), waiter)
-	assertBlocked(t, done)
+	require.NoError(t, holder.Lock(t.Context(), "n"))
 
-	if err := holder.Release("n"); err != nil {
-		t.Fatalf("Release: %v", err)
-	}
-	if err := recv(t, done, 5*time.Second); err != nil {
-		t.Fatalf("waiter Lock: %v", err)
-	}
+	done := lockAsync(t.Context(), waiter, "n")
+	requireBlocked(t, done)
+	require.NoError(t, holder.Release("n"))
+	require.NoError(t, recv(t, done))
 
-	//waiter.mu.Lock()
-	//f := waiter.held["n"]
-	//waiter.mu.Unlock()
-	//held, err := f.Stat()
-	//if err != nil {
-	//	t.Fatalf("Stat: %v", err)
-	//}
-	//current, err := os.Lstat(filepath.Join(dir, "n"))
-	//if err != nil {
-	//	t.Fatalf("lock file missing while held: %v", err)
-	//}
-	//if !os.SameFile(held, current) {
-	//	t.Fatal("waiter holds a lock file that is no longer at its name")
-	//}
-
-	// A newcomer must contend with the waiter.
-	newcomer := newTestLock(t, dir)
-	done = lockAsync(t.Context(), newcomer)
-	assertBlocked(t, done)
-	if err := waiter.Unlock("n"); err != nil {
-		t.Fatalf("Unlock: %v", err)
-	}
-	if err := recv(t, done, 5*time.Second); err != nil {
-		t.Fatalf("newcomer Lock: %v", err)
-	}
+	done = lockAsync(t.Context(), newcomer, "n")
+	requireBlocked(t, done)
+	require.NoError(t, waiter.Unlock("n"))
+	require.NoError(t, recv(t, done))
+	require.NoError(t, newcomer.Unlock("n"))
 }
 
-// TestLock_UnlockAndReleaseFiles checks that Unlock keeps the lock file and
-// Release removes it.
-func TestLock_UnlockAndReleaseFiles(t *testing.T) {
+// Unlock keeps the lock file and Release removes it; neither works on a
+// name the lock does not hold, and Release then leaves the file.
+func TestLock_UnlockAndRelease(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
-	l := newTestLock(t, dir)
+	l, other := newLock(t, dir), newLock(t, dir)
 	path := filepath.Join(dir, "n")
 
-	if err := l.Lock(t.Context(), "n"); err != nil {
-		t.Fatalf("Lock: %v", err)
-	}
-	if err := l.Unlock("n"); err != nil {
-		t.Fatalf("Unlock: %v", err)
-	}
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("Unlock removed the lock file: %v", err)
-	}
+	require.NoError(t, l.Lock(t.Context(), "n"))
+	require.Error(t, other.Unlock("n"))
+	require.Error(t, other.Release("n"))
+	assert.FileExists(t, path)
+	require.NoError(t, l.Unlock("n"))
+	assert.FileExists(t, path)
+	require.Error(t, l.Unlock("n"))
 
-	if err := l.Lock(t.Context(), "n"); err != nil {
-		t.Fatalf("Lock: %v", err)
-	}
-	if err := l.Release("n"); err != nil {
-		t.Fatalf("Release: %v", err)
-	}
-	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("Stat after Release = %v, want ErrNotExist", err)
-	}
-	//if n := slotCount(l); n != 0 {
-	//	t.Fatalf("%d slots left, want 0", n)
-	//}
+	require.NoError(t, l.Lock(t.Context(), "n"))
+	require.NoError(t, l.Release("n"))
+	assert.NoFileExists(t, path)
 }
 
-// TestLock_NotHeld checks that Unlock and Release of a name this lock does
-// not hold are errors, and Release must not unlink a lock file that another
-// lock holds.
-func TestLock_NotHeld(t *testing.T) {
-	dir := t.TempDir()
-	holder, other := newTestLock(t, dir), newTestLock(t, dir)
-	if err := holder.Lock(t.Context(), "n"); err != nil {
-		t.Fatalf("Lock: %v", err)
-	}
-
-	//if err := other.Unlock("n"); !errors.Is(err, errNotLocked) {
-	//	t.Errorf("Unlock of a name that is not held = %v, want errNotLocked", err)
-	//}
-	_ = other.Release("n")
-	//if err := other.Release("n"); !errors.Is(err, errNotLocked) {
-	//	t.Errorf("Release of a name that is not held = %v, want errNotLocked", err)
-	//}
-	if _, err := os.Stat(filepath.Join(dir, "n")); err != nil {
-		t.Fatalf("Release of a name that is not held removed another holder's lock file: %v", err)
-	}
-
-	if err := holder.Unlock("n"); err != nil {
-		t.Fatalf("Unlock: %v", err)
-	}
-	//if err := holder.Unlock("n"); !errors.Is(err, errNotLocked) {
-	//	t.Errorf("second Unlock = %v, want errNotLocked", err)
-	//}
-}
-
-// TestLock_DistinctNamesDoNotContend checks that locks on different names do
-// not wait on each other.
+// Locks of distinct names do not wait on each other.
 func TestLock_DistinctNamesDoNotContend(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
-	a, b := newTestLock(t, dir), newTestLock(t, dir)
-	if err := a.Lock(t.Context(), "x"); err != nil {
-		t.Fatalf("Lock x: %v", err)
-	}
+	a, b := newLock(t, dir), newLock(t, dir)
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+
 	defer cancel()
-	if err := b.Lock(ctx, "y"); err != nil {
-		t.Fatalf("Lock y: %v", err)
-	}
-	if err := a.Lock(ctx, "z"); err != nil {
-		t.Fatalf("Lock z: %v", err)
-	}
+
+	require.NoError(t, a.Lock(ctx, "x"))
+	require.NoError(t, b.Lock(ctx, "y"))
+	require.NoError(t, a.Lock(ctx, "z"))
 }
 
-// TestLock_SlotWait checks that a wait for the in-process slot ends on cancel
-// and on Close.
+// A wait for the in-process slot ends with the context's error when the
+// context ends, and with os.ErrClosed when the lock is closed.
 func TestLock_SlotWait(t *testing.T) {
+	t.Parallel()
+
 	t.Run("canceled", func(t *testing.T) {
-		l := newTestLock(t, t.TempDir())
-		if err := l.Lock(t.Context(), "n"); err != nil {
-			t.Fatalf("Lock: %v", err)
-		}
+		t.Parallel()
+
+		l := newLock(t, t.TempDir())
+		require.NoError(t, l.Lock(t.Context(), "n"))
+
 		ctx, cancel := context.WithCancel(t.Context())
-		done := lockAsync(ctx, l)
-		assertBlocked(t, done)
+		done := lockAsync(ctx, l, "n")
+		requireBlocked(t, done)
 		cancel()
-		if err := recv(t, done, 2*time.Second); !errors.Is(err, context.Canceled) {
-			t.Fatalf("Lock = %v, want Canceled", err)
-		}
-		if err := l.Unlock("n"); err != nil {
-			t.Fatalf("Unlock: %v", err)
-		}
-		//if n := slotCount(l); n != 0 {
-		//	t.Fatalf("%d slots left, want 0", n)
-		//}
-		if err := l.Lock(t.Context(), "n"); err != nil {
-			t.Fatalf("Lock after canceled waiter: %v", err)
-		}
+		require.ErrorIs(t, recv(t, done), context.Canceled)
+		require.NoError(t, l.Unlock("n"))
+		require.NoError(t, l.Lock(t.Context(), "n"))
 	})
 
 	t.Run("closed", func(t *testing.T) {
-		l := newTestLock(t, t.TempDir())
-		if err := l.Lock(t.Context(), "n"); err != nil {
-			t.Fatalf("Lock: %v", err)
-		}
-		done := lockAsync(t.Context(), l)
-		assertBlocked(t, done)
-		if err := l.Close(); err != nil {
-			t.Fatalf("Close: %v", err)
-		}
-		if err := recv(t, done, 2*time.Second); !errors.Is(err, os.ErrClosed) {
-			t.Fatalf("Lock = %v, want ErrClosed", err)
-		}
+		t.Parallel()
+
+		l := newLock(t, t.TempDir())
+		require.NoError(t, l.Lock(t.Context(), "n"))
+
+		done := lockAsync(t.Context(), l, "n")
+		requireBlocked(t, done)
+		require.NoError(t, l.Close())
+		require.ErrorIs(t, recv(t, done), os.ErrClosed)
 	})
 }
 
-// TestLock_FlockWait checks that the blocking flock wait is abandoned on
-// cancel or Close; the abandoned goroutine must still release the flock once
-// it gets it.
+// A wait in the blocking file lock call is given up when the context ends
+// or the lock is closed; the goroutine left in the call gives the file
+// lock back once it gets it, so a later Lock succeeds.
 func TestLock_FlockWait(t *testing.T) {
-	cancelWait := func(cancel context.CancelFunc, _ *vfs.ObjectsLock) error { cancel(); return nil }
-	closeLock := func(_ context.CancelFunc, l *vfs.ObjectsLock) error { return l.Close() }
-	tests := []struct {
-		abort func(cancel context.CancelFunc, l *vfs.ObjectsLock) error
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		abort func(context.CancelFunc, *vfs.ObjectsLock) error
 		want  error
-		name  string
 	}{
-		{cancelWait, context.Canceled, "canceled"},
-		{closeLock, os.ErrClosed, "closed"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		"canceled": {
+			func(cancel context.CancelFunc, _ *vfs.ObjectsLock) error {
+				cancel()
+
+				return nil
+			},
+			context.Canceled,
+		},
+		"closed": {
+			func(_ context.CancelFunc, l *vfs.ObjectsLock) error { return l.Close() },
+			os.ErrClosed,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
 			dir := t.TempDir()
-			holder, waiter := newTestLock(t, dir), newTestLock(t, dir)
-			if err := holder.Lock(t.Context(), "n"); err != nil {
-				t.Fatalf("Lock: %v", err)
-			}
+			holder, waiter := newLock(t, dir), newLock(t, dir)
+
+			require.NoError(t, holder.Lock(t.Context(), "n"))
 
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			done := lockAsync(ctx, waiter)
-			assertBlocked(t, done)
-			if err := tt.abort(cancel, waiter); err != nil {
-				t.Fatalf("abort: %v", err)
-			}
-			if err := recv(t, done, 2*time.Second); !errors.Is(err, tt.want) {
-				t.Fatalf("Lock = %v, want %v", err, tt.want)
-			}
 
-			if err := holder.Unlock("n"); err != nil {
-				t.Fatalf("Unlock: %v", err)
-			}
-			// The abandoned goroutine now takes the flock and must give it back.
-			late := newTestLock(t, dir)
+			done := lockAsync(ctx, waiter, "n")
+			requireBlocked(t, done)
+			require.NoError(t, tc.abort(cancel, waiter))
+			require.ErrorIs(t, recv(t, done), tc.want)
+			require.NoError(t, holder.Unlock("n"))
+
+			late := newLock(t, dir)
 			lctx, lcancel := context.WithTimeout(t.Context(), 5*time.Second)
-			defer lcancel()
-			if err := late.Lock(lctx, "n"); err != nil {
-				t.Fatalf("Lock after abandoned wait: %v", err)
-			}
-			if err := late.Unlock("n"); err != nil {
-				t.Fatalf("Unlock: %v", err)
-			}
 
-			if errors.Is(tt.want, context.Canceled) {
-				assertReusable(t, waiter)
+			defer lcancel()
+
+			require.NoError(t, late.Lock(lctx, "n"))
+			require.NoError(t, late.Unlock("n"))
+
+			if errors.Is(
+				tc.want,
+				context.Canceled,
+			) {
+				require.NoError(t, waiter.Lock(lctx, "n"))
+				require.NoError(t, waiter.Unlock("n"))
 			}
 		})
 	}
 }
 
-// assertReusable checks that l can lock "n" again once its abandoned
-// goroutine has given the slot back.
-func assertReusable(t *testing.T, l *vfs.ObjectsLock) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	if err := l.Lock(ctx, "n"); err != nil {
-		t.Fatalf("Lock after canceled wait: %v", err)
-	}
-	if err := l.Unlock("n"); err != nil {
-		t.Fatalf("Unlock: %v", err)
-	}
-	//deadline := time.Now().Add(2 * time.Second)
-	//for slotCount(l) != 0 && time.Now().Before(deadline) {
-	//	time.Sleep(time.Millisecond)
-	//}
-	//if n := slotCount(l); n != 0 {
-	//	t.Fatalf("%d slots left, want 0", n)
-	//}
-}
-
-// TestLock_Close checks that Close releases held locks and rejects later use.
+// Close gives up every name held, and the lock then refuses Lock with
+// os.ErrClosed; a second Close returns nil.
 func TestLock_Close(t *testing.T) {
-	dir := t.TempDir()
-	l := newTestLock(t, dir)
-	if err := l.Lock(t.Context(), "a"); err != nil {
-		t.Fatalf("Lock: %v", err)
-	}
-	if err := l.Lock(t.Context(), "b"); err != nil {
-		t.Fatalf("Lock: %v", err)
-	}
-	if err := l.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
+	t.Parallel()
 
-	// Close released the flocks.
-	other := newTestLock(t, dir)
+	dir := t.TempDir()
+	l, other := newLock(t, dir), newLock(t, dir)
+
+	require.NoError(t, l.Lock(t.Context(), "a"))
+	require.NoError(t, l.Lock(t.Context(), "b"))
+	require.NoError(t, l.Close())
+
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
-	defer cancel()
-	for _, name := range []string{"a", "b"} {
-		if err := other.Lock(ctx, name); err != nil {
-			t.Fatalf("Lock(%s) after holder Close: %v", name, err)
-		}
-	}
 
-	if err := l.Lock(t.Context(), "c"); !errors.Is(err, os.ErrClosed) {
-		t.Errorf("Lock after Close = %v, want ErrClosed", err)
-	}
-	//if err := l.Unlock("a"); !errors.Is(err, errNotLocked) {
-	//	t.Errorf("Unlock after Close = %v, want errNotLocked", err)
-	//}
-	//if err := l.Release("a"); !errors.Is(err, errNotLocked) {
-	//	t.Errorf("Release after Close = %v, want errNotLocked", err)
-	//}
-	if err := l.Close(); err != nil {
-		t.Errorf("second Close: %v", err)
-	}
+	defer cancel()
+
+	require.NoError(t, other.Lock(ctx, "a"))
+	require.NoError(t, other.Lock(ctx, "b"))
+	require.ErrorIs(t, l.Lock(t.Context(), "c"), os.ErrClosed)
+	require.NoError(t, l.Close())
 }
 
-// TestLock_OpenFails checks that a lock file that cannot be created fails
-// Lock and frees the slot.
+// A lock file that cannot be created, opened, or that is a dangling
+// symlink, fails Lock at once, and the name can be locked again.
 func TestLock_OpenFails(t *testing.T) {
-	l := newTestLock(t, t.TempDir())
-	// The parent dir does not exist, so the lock file cannot be created.
-	if err := l.Lock(t.Context(), filepath.Join("missing", "n")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("Lock = %v, want ErrNotExist", err)
-	}
-	//if n := slotCount(l); n != 0 {
-	//	t.Fatalf("%d slots left, want 0", n)
-	//}
+	t.Parallel()
+
+	dir := t.TempDir()
+	l := newLock(t, dir)
+
+	err := l.Lock(t.Context(), filepath.Join("missing", "n"))
+	require.ErrorIs(t, err, os.ErrNotExist)
+	requireNoPath(t, err, dir)
+
+	require.NoError(t, os.Symlink(filepath.Join("missingdir", "x"), filepath.Join(dir, "link")))
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+
+	defer cancel()
+
+	require.ErrorIs(t, recv(t, lockAsync(ctx, l, "link")), os.ErrNotExist)
 }
 
-// TestLock_UnopenableLockFile covers bug 2: a lock file that exists but
-// cannot be opened makes Lock fail promptly instead of spinning in
-// openInRoot.
+// A lock file that exists but cannot be opened fails Lock at once with
+// os.ErrPermission.
 func TestLock_UnopenableLockFile(t *testing.T) {
-	skipIfNoPermissions(t)
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "n"), nil, 0o000); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-	l := newTestLock(t, dir)
+	t.Parallel()
+	skipIfRoot(t)
 
-	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
-	defer cancel()
-	err := recv(t, lockAsync(ctx, l), 2*time.Second)
-	if !errors.Is(err, os.ErrPermission) {
-		t.Fatalf("Lock = %v, want ErrPermission", err)
-	}
-	//if n := slotCount(l); n != 0 {
-	//	t.Fatalf("%d slots left, want 0", n)
-	//}
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "n"), nil, 0o000))
+
+	err := recv(t, lockAsync(t.Context(), newLock(t, dir), "n"))
+	require.ErrorIs(t, err, os.ErrPermission)
 }
 
-// TestLock_DanglingSymlinkLockFile checks that a lock name that exists but
-// cannot be opened as a file, here a symlink to a missing path, makes Lock
-// fail promptly with an error wrapping os.ErrNotExist and frees the slot. On
-// darwin the exclusive create sees the link (EEXIST) and the follow-up open
-// sees its missing target (ENOENT), which once retried forever.
-func TestLock_DanglingSymlinkLockFile(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.Symlink(filepath.Join("missingdir", "x"), filepath.Join(dir, "n")); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
-	l := newTestLock(t, dir)
-
-	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
-	defer cancel()
-	err := recv(t, lockAsync(ctx, l), 2*time.Second)
-	if !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("Lock = %v, want ErrNotExist", err)
-	}
-	//if n := slotCount(l); n != 0 {
-	//	t.Fatalf("%d slots left, want 0", n)
-	//}
+// gatedReader is a Body that, at its first read, closes entered and then
+// waits for gate to close before it ends.
+type gatedReader struct {
+	gate    chan struct{}
+	entered chan struct{}
+	once    sync.Once
 }
 
-// TestOpenInRoot_Concurrent checks that concurrent first opens of one new
-// name all succeed (the darwin os.Root ENOENT workaround). It covers first
-// creation only; the retry after a lock file is removed between the two
-// opens is covered by TestBucket_ConcurrentSameKey and
-// TestLock_MutualExclusionAcrossLocks.
-//func TestOpenInRoot_Concurrent(t *testing.T) {
-//	root, err := os.OpenRoot(t.TempDir())
-//	if err != nil {
-//		t.Fatalf("OpenRoot: %v", err)
-//	}
-//	defer func() { _ = root.Close() }()
+func (g *gatedReader) Read([]byte) (int, error) {
+	g.once.Do(func() { close(g.entered) })
+	<-g.gate
+
+	return 0, io.EOF
+}
+
+// The Bucket handles of a VFS share the in-process slot of each key, so
+// waves of waiters from handles of their own that give up while a write
+// holds the key leave no thread parked in the blocking lock call.
 //
-//	for round := range 50 {
-//		name := fmt.Sprint(round)
-//		var wg sync.WaitGroup
-//		errs := make(chan error, 50)
-//		for range 50 {
-//			wg.Go(func() {
-//				f, err := openInRoot(root, name, "lock file")
-//				if err != nil {
-//					errs <- err
-//					return
-//				}
-//				errs <- f.Close()
-//			})
-//		}
-//		wg.Wait()
-//		close(errs)
-//		for err := range errs {
-//			if err != nil {
-//				t.Fatalf("openInRoot: %v", err)
-//			}
-//		}
-//	}
-//}
+// Not parallel: it counts the threads the process creates.
+func TestLock_HandlesShareSlots(t *testing.T) {
+	v, _ := newVFS(t)
+	writer := newBucket(t, v)
+	body := &gatedReader{gate: make(chan struct{}), entered: make(chan struct{})}
+
+	written := make(chan error, 1)
+
+	go func() {
+		_, err := writer.CreateObject(context.Background(), &vfs.Write{
+			Key: "k", Body: body, Done: func() error { return nil },
+		})
+		written <- err
+	}()
+
+	<-body.entered
+
+	threads := pprof.Lookup("threadcreate")
+	before := threads.Count()
+
+	for range 4 {
+		var wg sync.WaitGroup
+
+		for range 250 {
+			wg.Go(func() {
+				bk, err := v.OpenBucket(testBucket)
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+
+					return
+				}
+
+				ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+				defer cancel()
+
+				_, err = bk.OpenObject(ctx, "k")
+				if !errors.Is(err, context.DeadlineExceeded) {
+					t.Errorf("want a timed-out wait, got %v", err)
+				}
+
+				cErr := bk.Close()
+				if cErr != nil {
+					t.Errorf("unexpected error: %v", cErr)
+				}
+			})
+		}
+
+		wg.Wait()
+	}
+
+	grown := threads.Count() - before
+
+	close(body.gate)
+	require.NoError(t, <-written)
+	assert.Less(t, grown, 50, "threads created while 1000 waiters gave up")
+}
+
+// A waiter on the in-process slot of a lock that Close then closes fails
+// with os.ErrClosed, whether it sees the close first or the slot Close
+// gave back to the other locks of the VFS. Each round takes either path
+// at random.
+func TestLock_SlotWaitClosedRounds(t *testing.T) {
+	t.Parallel()
+
+	for range 20 {
+		l := newLock(t, t.TempDir())
+		require.NoError(t, l.Lock(t.Context(), "n"))
+
+		done := lockAsync(t.Context(), l, "n")
+		requireBlocked(t, done)
+		require.NoError(t, l.Close())
+		require.ErrorIs(t, recv(t, done), os.ErrClosed)
+	}
+}

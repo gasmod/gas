@@ -2,273 +2,188 @@ package dir
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/gasmod/gas/storage"
 	"github.com/gasmod/gas/storage/dir/internal/vfs"
-	"github.com/gasmod/gas/storage/internal"
+	"github.com/gasmod/gas/storage/internal/listing"
 )
 
-// ListBuckets returns one page of the buckets under the root, in name order.
-// CreationDate is when CreateBucket first ran for the bucket. Nil MaxBuckets
-// is a page of 10000, as on S3. A ContinuationToken that is not unpadded
-// base64url, or that decodes to an empty name, returns an error wrapping
-// storage.ErrInvalidContinuationToken. A well-formed token this backend did
-// not issue is accepted and resumes after the name it decodes to.
-//
-// Each call reads every bucket's name record. A bucket whose record is
-// missing (created by a version of this backend that kept none) or does not
-// hold its name (such as one a crash left empty) cannot be named and is left
-// out of the listing until CreateBucket of that bucket runs again, which
-// rewrites it; its objects stay reachable through the other methods
-// meanwhile. It is counted in Skipped and passed to the skip handler with
-// an error wrapping ErrUnnamedBucket. A record that cannot be read at all,
-// or that is not a regular file, fails the call instead.
-func (p *Provider) ListBuckets(
-	ctx context.Context,
-	input *storage.ListBucketsInput,
-) (*storage.ListBucketsOutput, error) {
-	if err := p.checkReady(); err != nil {
-		return nil, err
-	}
+// objectScope is the first part of the scope of a ListObjects token, so
+// that it never opens as a ListBuckets one.
+const objectScope = "objects"
 
-	if input == nil {
-		return nil, internal.Errorf(mod, "list buckets: %w", storage.ErrInputRequired)
-	}
-
-	maxBuckets, inErr := internal.ValidateListBuckets(input)
-	if inErr != nil {
-		return nil, internal.Errorf(mod, "list buckets: %w", inErr)
-	}
-
-	after, tErr := decodeToken(input.ContinuationToken)
-	if tErr != nil {
-		return nil, internal.Errorf(mod, "list buckets: %w", tErr)
-	}
-
-	entries, skipped, err := p.vfs.ListBuckets(ctx)
-	if err != nil {
-		return nil, internal.Errorf(mod, "list buckets: %w", err)
-	}
-	p.reportAll(skipped)
-
-	prefix := valueOf(input.Prefix)
-	created := make(map[string]vfs.BucketEntry, len(entries))
-	names := make([]string, 0, len(entries))
-	for _, e := range entries {
-		if strings.HasPrefix(e.Name, prefix) {
-			created[e.Name] = e
-			names = append(names, e.Name)
-		}
-	}
-
-	pg, truncated := page(names, after, maxBuckets)
-	out := &storage.ListBucketsOutput{
-		Buckets: make([]storage.Bucket, 0, len(pg)),
-		Skipped: len(skipped),
-	}
-	for _, name := range pg {
-		out.Buckets = append(out.Buckets, storage.Bucket{
-			Name:         name,
-			CreationDate: created[name].Created,
-		})
-	}
-	if truncated {
-		out.NextContinuationToken = encodeToken(pg[len(pg)-1])
-	}
-	return out, nil
-}
-
-// ListObjects returns one page of the bucket's objects, in key order, with
-// the semantics of S3 ListObjectsV2: Prefix filters keys, StartAfter skips
-// keys up to and including it, Delimiter rolls keys up into common prefixes,
-// and objects and common prefixes together fill at most MaxKeys entries. A
-// missing bucket returns an error wrapping storage.ErrBucketNotFound, and a
-// ContinuationToken that is not unpadded base64url, or that decodes to an
-// empty name, one wrapping storage.ErrInvalidContinuationToken. A
-// well-formed token this backend did not issue is accepted and resumes after
-// the name it decodes to.
-//
-// Each call reads the metadata of every object in the bucket, and stats its
-// data file, so a page costs time in proportion to the bucket, not the
-// page. An object deleted while the page is built is left out. An object
-// that cannot be read (see ErrCorrupt) is left out too, counted in Skipped
-// for the whole bucket, and passed to the skip handler; an I/O error
-// reading metadata or stating a data file fails the call.
+// ListObjects returns one page of the objects of a bucket, as described
+// in the package documentation. It walks the key index from where the
+// page starts and reads the metadata of the objects of the page only. An
+// object that cannot be read is left out and passed to the skip handler.
 func (p *Provider) ListObjects(
 	ctx context.Context,
-	input *storage.ListObjectsInput,
+	in *storage.ListObjectsInput,
 ) (*storage.ListObjectsOutput, error) {
-	if err := p.checkReady(); err != nil {
-		return nil, err
+	if in == nil {
+		return nil, opError(opListObjects, storage.ErrNilInput)
 	}
 
-	if input == nil {
-		return nil, internal.Errorf(mod, "list: %w", storage.ErrInputRequired)
+	sess, err := p.begin(ctx)
+	if err != nil {
+		return nil, opError(opListObjects, err)
+	}
+	defer sess.End()
+
+	req, err := storage.CheckListObjects(in, sess.Value.settings.Bucket)
+	if err != nil {
+		return nil, opError(opListObjects, err)
 	}
 
-	bucket, maxKeys, inErr := internal.ValidateListObjects(input, p.config.Storage.Bucket)
-	if inErr != nil {
-		return nil, internal.Errorf(mod, "list: %w", inErr)
+	codec := sess.Value.codec
+	scope := listing.Scope(objectScope, req.Bucket, req.Prefix, req.Delimiter, req.StartAfter)
+	q := listing.Query{
+		Prefix:     req.Prefix,
+		Delimiter:  req.Delimiter,
+		StartAfter: req.StartAfter,
+		Max:        req.MaxKeys,
 	}
 
-	after, tErr := decodeToken(input.ContinuationToken)
-	if tErr != nil {
-		return nil, internal.Errorf(mod, "list: %w", tErr)
+	if req.ContinuationToken != "" {
+		q.After, err = codec.Open(scope, req.ContinuationToken)
+		if err != nil {
+			return nil, opError(opListObjects, err)
+		}
 	}
 
-	bk, bkErr := p.vfs.OpenBucket(bucket)
-	if bkErr != nil {
-		return nil, opError("list", nil, bkErr)
+	cctx, stop := callContext(ctx, sess)
+	defer stop()
+
+	var out *page
+
+	err = withBucket(sess.Value, req.Bucket, func(bk *vfs.Bucket) error {
+		var pErr error
+
+		out, pErr = p.page(cctx, bk, q)
+
+		return pErr
+	})
+	if err != nil {
+		return nil, opError(opListObjects, failure(ctx, sess, err, !isRead))
 	}
 
-	out, err := p.listObjects(ctx, bk, input, after, maxKeys)
-	if err = errors.Join(p.removedErr(bk, err), bk.Close()); err != nil {
-		return nil, opError("list", nil, err)
+	if out.IsTruncated {
+		// A key is shorter than listing.MaxCursorLength, so Seal fails
+		// only if that rule changes.
+		tok, sErr := codec.Seal(scope, out.last)
+		if sErr != nil {
+			return nil, opError(opListObjects, fmt.Errorf("%w: %w", storage.ErrBackend, sErr))
+		}
+
+		out.NextContinuationToken = tok
 	}
-	return out, nil
+
+	return &out.ListObjectsOutput, nil
 }
 
-// listObjects builds the page of bk that input selects, starting after the
-// entry after (a key or a common prefix) and holding at most maxKeys
-// entries.
-func (p *Provider) listObjects(
-	ctx context.Context,
-	bk *vfs.Bucket,
-	input *storage.ListObjectsInput,
-	after string,
-	maxKeys int,
-) (*storage.ListObjectsOutput, error) {
-	keys, skipped, err := bk.Keys(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("read keys: %w", err)
-	}
-	p.reportAll(skipped)
+// page is a page of ListObjects, and the entry it ends with.
+//
+//nolint:govet // fieldalignment: the embedded fields come first, as embeddedstructfieldcheck wants.
+type page struct {
+	storage.ListObjectsOutput
 
-	names, common := rollUp(keys, input)
-	pg, truncated := page(names, after, maxKeys)
-	out := &storage.ListObjectsOutput{
-		IsTruncated:    truncated,
-		Objects:        make([]storage.ObjectSummary, 0, len(pg)),
-		CommonPrefixes: make([]string, 0),
-		Skipped:        len(skipped),
+	// last is the last entry of the page.
+	last listing.Cursor
+}
+
+// page returns the page q selects from bk.
+func (p *Provider) page(ctx context.Context, bk *vfs.Bucket, q listing.Query) (*page, error) {
+	var walkErr error
+
+	keys := func(yield func(string) bool) {
+		s := &passer{q: &q}
+		bounds := vfs.Bounds{Prefix: q.Prefix, After: max(q.StartAfter, q.After.After)}
+
+		walkErr = bk.ListKeys(ctx, bounds, s.pass, func(key string) bool {
+			s.yielded(key)
+
+			return yield(key)
+		}, p.report)
 	}
-	for _, name := range pg {
-		if common[name] {
-			out.CommonPrefixes = append(out.CommonPrefixes, name)
+
+	entries, truncated := listing.Page(keys, q)
+
+	if walkErr != nil {
+		return nil, walkErr //nolint:wrapcheck // ListObjects classifies it.
+	}
+
+	out := &page{IsTruncated: truncated}
+
+	for _, e := range entries {
+		if e.Prefix {
+			out.CommonPrefixes = append(out.CommonPrefixes, e.Name)
+
 			continue
 		}
-		sum, sErr := summary(ctx, bk, name)
+
+		st, err := bk.Stat(ctx, e.Name)
+
 		switch {
-		case errors.Is(sErr, vfs.ErrObjectNotFound):
+		case errors.Is(err, vfs.ErrObjectNotFound):
 			// Deleted since its key was read.
-		case errors.Is(sErr, vfs.ErrCorrupt):
-			// Damaged since its key was read: left out like the others.
-			p.report(vfs.Skipped{Path: bk.MetaPath(name), Err: sErr})
-			out.Skipped++
-		case sErr != nil:
-			return nil, sErr
-		default:
-			out.Objects = append(out.Objects, sum)
+			continue
+		case errors.Is(err, vfs.ErrCorrupt):
+			p.report(vfs.Skipped{Path: bk.MetaPath(e.Name), Err: err})
+
+			continue
+		case err != nil:
+			return nil, err //nolint:wrapcheck // ListObjects classifies it.
 		}
+
+		out.Objects = append(out.Objects, storage.ObjectSummary{
+			LastModified: st.LastModified,
+			Key:          e.Name,
+			ETag:         st.ETag,
+			Size:         st.Size,
+		})
 	}
+
 	if truncated {
-		out.NextContinuationToken = encodeToken(pg[len(pg)-1])
+		last := entries[len(entries)-1]
+
+		out.last = listing.Cursor{After: last.Name, Prefix: last.Prefix}
 	}
+
 	return out, nil
 }
 
-// rollUp returns the names input lists from keys, unsorted and possibly
-// repeated: each key under Prefix and after StartAfter, or the common
-// prefix Delimiter rolls it up into. common holds the names that are common
-// prefixes. A common prefix ends in a delimiter that follows Prefix, so it
-// never equals a key that is listed as itself.
-func rollUp(keys []string, input *storage.ListObjectsInput) ([]string, map[string]bool) {
-	prefix := valueOf(input.Prefix)
-	delim := valueOf(input.Delimiter)
-	startAfter := valueOf(input.StartAfter)
-
-	common := map[string]bool{}
-	names := make([]string, 0, len(keys))
-	for _, k := range keys {
-		if !strings.HasPrefix(k, prefix) || k <= startAfter {
-			continue
-		}
-		if delim != "" {
-			if i := strings.Index(k[len(prefix):], delim); i >= 0 {
-				k = k[:len(prefix)+i+len(delim)]
-				common[k] = true
-			}
-		}
-		names = append(names, k)
-	}
-	return names, common
+// passer tells the keys a page of q passes over without checking that
+// they hold an object: those after a common prefix the previous page
+// ended with that roll up into it, and those that roll up into the common
+// prefix of the last key yielded, which the page lists once. The keys of a
+// walk come in byte order, so the keys of one common prefix come in a row.
+type passer struct {
+	// q is the page.
+	q *listing.Query
+	// last is the common prefix of the last key yielded, or "" when it
+	// rolls up into none.
+	last string
 }
 
-// summary returns the summary of the object key in bk. An object deleted
-// since its key was read returns an error wrapping vfs.ErrObjectNotFound,
-// and one damaged since, vfs.ErrCorrupt.
-func summary(ctx context.Context, bk *vfs.Bucket, key string) (storage.ObjectSummary, error) {
-	obj, err := bk.OpenObject(ctx, &vfs.OpenObjectInput{Key: key})
-	if err != nil {
-		return storage.ObjectSummary{}, fmt.Errorf("open object: %w", err)
-	}
-	if cErr := obj.File.Close(); cErr != nil {
-		return storage.ObjectSummary{}, fmt.Errorf("close data file: %w", cErr)
-	}
-	return storage.ObjectSummary{
-		Key:          key,
-		LastModified: obj.LastModified,
-		ETag:         obj.ETag,
-		Size:         obj.Size,
-	}, nil
+// pass reports whether the page passes over key.
+func (s *passer) pass(key string) bool {
+	return (s.q.After.Prefix && strings.HasPrefix(key, s.q.After.After)) ||
+		(s.last != "" && strings.HasPrefix(key, s.last))
 }
 
-// page sorts names, drops duplicates, and returns at most n of those after
-// the name after, in order, with whether more follow.
-func page(names []string, after string, n int) ([]string, bool) {
-	slices.Sort(names)
-	names = slices.Compact(names)
-	i, found := slices.BinarySearch(names, after)
-	if found {
-		i++
-	}
-	names = names[i:]
-	if len(names) > n {
-		return names[:n], true
-	}
-	return names, false
-}
+// yielded records key as yielded.
+func (s *passer) yielded(key string) {
+	s.last = ""
 
-// encodeToken returns the continuation token that resumes a listing after
-// the entry name.
-func encodeToken(name string) string {
-	return base64.RawURLEncoding.EncodeToString([]byte(name))
-}
+	if s.q.Delimiter == "" {
+		return
+	}
 
-// decodeToken returns the entry a continuation token resumes after: "" for a
-// nil token, or a bare storage.ErrInvalidContinuationToken for one that is
-// not unpadded base64url or that decodes to an empty name. Any other token
-// is accepted, whether or not encodeToken returned it.
-func decodeToken(token *string) (string, error) {
-	if token == nil {
-		return "", nil
+	i := strings.Index(key[len(s.q.Prefix):], s.q.Delimiter)
+	if i >= 0 {
+		s.last = key[:len(s.q.Prefix)+i+len(s.q.Delimiter)]
 	}
-	b, err := base64.RawURLEncoding.DecodeString(*token)
-	if err != nil || len(b) == 0 {
-		return "", storage.ErrInvalidContinuationToken
-	}
-	return string(b), nil
-}
-
-// valueOf returns the string s points to, or "" when s is nil.
-func valueOf(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
 }

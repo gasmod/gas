@@ -1,244 +1,353 @@
-package test
+package vfs_test
 
 import (
-	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/gasmod/gas/storage/dir/internal/vfs"
 )
 
-// TestNewVFS_ClosedRoot checks that NewVFS on a closed root fails with
-// os.ErrClosed.
-func TestNewVFS_ClosedRoot(t *testing.T) {
-	root, err := os.OpenRoot(t.TempDir())
-	if err != nil {
-		t.Fatalf("OpenRoot: %v", err)
+// Open of a fresh root creates the directories of the package and the
+// layout marker; Open again accepts it.
+func TestOpen_Fresh(t *testing.T) {
+	t.Parallel()
+
+	_, dir := newVFS(t)
+
+	for _, d := range []string{objectsPath, locksPath, bucketsPath, keysPath} {
+		assert.DirExists(t, filepath.Join(dir, d))
 	}
-	if err := root.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
-	if _, err := vfs.NewVFS(root); !errors.Is(err, os.ErrClosed) {
-		t.Fatalf("NewVFS on a closed root = %v, want ErrClosed", err)
+
+	b := readFile(t, filepath.Join(dir, layoutPath))
+	assert.Equal(t, "2\n", b)
+
+	openVFS(t, dir)
+}
+
+// A root that holds a bucket directory but no layout marker is an earlier
+// layout, and a marker with other contents is refused too.
+func TestOpen_OtherLayouts(t *testing.T) {
+	t.Parallel()
+
+	old := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(old, hash("b")), 0o750))
+
+	other := t.TempDir()
+	writeFile(t, filepath.Join(other, layoutPath), "1\n")
+
+	for dir, want := range map[string]error{old: vfs.ErrOldLayout, other: nil} {
+		root, err := os.OpenRoot(dir)
+		require.NoError(t, err)
+
+		_, err = vfs.Open(root)
+		require.Error(t, err)
+
+		if want != nil {
+			require.ErrorIs(t, err, want)
+		}
+
+		requireNoPath(t, err, dir)
+		require.NoError(t, root.Close())
 	}
 }
 
-// TestNewVFS_DirIsFile checks that a regular file where an internal directory
-// belongs makes NewVFS fail with the filesystem error for that directory.
-func TestNewVFS_DirIsFile(t *testing.T) {
-	for _, rel := range []string{objectsPath, locksPath} {
-		t.Run(rel, func(t *testing.T) {
-			dir := t.TempDir()
-			path := filepath.Join(dir, rel)
-			if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-				t.Fatalf("MkdirAll: %v", err)
-			}
-			if err := os.WriteFile(path, nil, 0o600); err != nil {
-				t.Fatalf("WriteFile: %v", err)
-			}
-			root, err := os.OpenRoot(dir)
-			if err != nil {
-				t.Fatalf("OpenRoot: %v", err)
-			}
-			t.Cleanup(func() { _ = root.Close() })
+// Open fails when the root is closed or the marker cannot be read or
+// written.
+func TestOpen_Failures(t *testing.T) {
+	t.Parallel()
 
-			_, err = vfs.NewVFS(root)
-			var pe *os.PathError
-			if !errors.As(err, &pe) {
-				t.Fatalf("NewVFS = %v, want a *os.PathError", err)
+	closed, err := os.OpenRoot(t.TempDir())
+	require.NoError(t, err)
+	require.NoError(t, closed.Close())
+
+	_, err = vfs.Open(closed)
+	require.Error(t, err)
+
+	marker := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(marker, layoutPath), 0o750))
+
+	root, err := os.OpenRoot(marker)
+	require.NoError(t, err)
+
+	defer func() { require.NoError(t, root.Close()) }()
+
+	_, err = vfs.Open(root)
+	requireNoPath(t, err, marker)
+
+	gas := t.TempDir()
+	writeFile(t, filepath.Join(gas, ".gas"), "")
+
+	groot, err := os.OpenRoot(gas)
+	require.NoError(t, err)
+
+	defer func() { require.NoError(t, groot.Close()) }()
+
+	_, err = vfs.Open(groot)
+	requireNoPath(t, err, gas)
+}
+
+// Open fails without writing the marker when its directory is read only.
+func TestOpen_MarkerUnwritable(t *testing.T) {
+	t.Parallel()
+	skipIfRoot(t)
+
+	dir := t.TempDir()
+	for _, d := range []string{objectsPath, locksPath, bucketsPath, keysPath} {
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, d), 0o750))
+	}
+
+	chmod(t, filepath.Join(dir, ".gas"), 0o500)
+
+	root, err := os.OpenRoot(dir)
+	require.NoError(t, err)
+
+	defer func() { require.NoError(t, root.Close()) }()
+
+	_, err = vfs.Open(root)
+	require.ErrorIs(t, err, os.ErrPermission)
+	requireNoPath(t, err, dir)
+}
+
+// Check fails once the layout marker is gone.
+func TestVFS_Check(t *testing.T) {
+	t.Parallel()
+
+	v, dir := newVFS(t)
+
+	require.NoError(t, v.Check())
+	require.NoError(t, os.Remove(filepath.Join(dir, layoutPath)))
+
+	err := v.Check()
+	require.ErrorIs(t, err, os.ErrNotExist)
+	requireNoPath(t, err, dir)
+}
+
+// CreateBucket makes the bucket's directories and name record, again is
+// not an error, and completes a bucket whose directories were removed.
+func TestCreateBucket(t *testing.T) {
+	t.Parallel()
+
+	v, dir := newVFS(t)
+	ctx := t.Context()
+
+	require.NoError(t, v.CreateBucket(ctx, testBucket))
+	require.NoError(t, v.CreateBucket(ctx, testBucket))
+	require.NoError(t, v.HeadBucket(testBucket))
+	require.NoError(t, os.Remove(keysDir(dir)))
+	require.NoError(t, v.CreateBucket(ctx, testBucket))
+	assert.DirExists(t, keysDir(dir))
+
+	b := readFile(t, filepath.Join(dir, bucketsPath, hash(testBucket)))
+	assert.Equal(t, testBucket, b)
+}
+
+// CreateBucket rewrites a name record that holds another name, keeps one
+// that holds the name, and refuses one that is not a regular file.
+func TestCreateBucket_NameRecord(t *testing.T) {
+	t.Parallel()
+
+	v, dir := newVFS(t)
+	record := filepath.Join(dir, bucketsPath, hash(testBucket))
+
+	writeFile(t, record, "other")
+	require.NoError(t, v.CreateBucket(t.Context(), testBucket))
+
+	b := readFile(t, record)
+	assert.Equal(t, testBucket, b)
+
+	old := time.Now().Add(-time.Hour)
+	require.NoError(t, os.Chtimes(record, old, old))
+	require.NoError(t, v.CreateBucket(t.Context(), testBucket))
+
+	fi, err := os.Stat(record)
+	require.NoError(t, err)
+	assert.WithinDuration(t, old, fi.ModTime(), time.Second)
+
+	other := filepath.Join(dir, bucketsPath, hash("other"))
+	require.NoError(t, os.Mkdir(other, 0o750))
+
+	err = v.CreateBucket(t.Context(), "other")
+	require.Error(t, err)
+	requireNoPath(t, err, dir)
+}
+
+// CreateBucket fails when a file is where the metadata directory goes,
+// and HeadBucket says it is not a directory.
+func TestCreateBucket_FileInPlace(t *testing.T) {
+	t.Parallel()
+
+	v, dir := newVFS(t)
+	writeFile(t, filepath.Join(dir, hash(testBucket)), "")
+
+	err := v.CreateBucket(t.Context(), testBucket)
+	requireNoPath(t, err, dir)
+
+	err = v.HeadBucket(testBucket)
+	requireNoPath(t, err, dir)
+
+	_, err = v.OpenBucket(testBucket)
+	requireNoPath(t, err, dir)
+	require.NotErrorIs(t, err, vfs.ErrBucketNotFound)
+}
+
+// CreateBucket fails when its directories cannot be made, or its lifecycle
+// lock cannot be taken before the context ends.
+func TestCreateBucket_Failures(t *testing.T) {
+	t.Parallel()
+	skipIfRoot(t)
+
+	for _, sub := range []string{objectsPath, locksPath, keysPath, bucketsPath, "."} {
+		t.Run(sub, func(t *testing.T) {
+			t.Parallel()
+
+			v, dir := newVFS(t)
+			if sub != locksPath {
+				chmod(t, filepath.Join(dir, sub), 0o500)
+			} else {
+				// The lifecycle lock is taken first: let it be, and fail the
+				// bucket's own locks directory.
+				writeFile(t, filepath.Join(dir, locksPath, hash(testBucket)), "")
 			}
+
+			err := v.CreateBucket(t.Context(), testBucket)
+			requireNoPath(t, err, dir)
 		})
 	}
+
+	v, dir := newVFS(t)
+	release := newLock(t, filepath.Join(dir, locksPath))
+	require.NoError(t, release.Lock(t.Context(), hash(testBucket)+".bucket"))
+
+	ctx, cancel := ctxCanceled(t)
+	cancel()
+	require.ErrorIs(t, v.CreateBucket(ctx, testBucket), ctx.Err())
 }
 
-// TestVFS_Root checks that Root returns the root the VFS was created on.
-func TestVFS_Root(t *testing.T) {
-	v, dir := newTestVFS(t)
-	if got := v.Root().Name(); got != dir {
-		t.Fatalf("Root().Name() = %q, want %q", got, dir)
-	}
-}
+// HeadBucket of a missing bucket is ErrBucketNotFound; OpenBucket of one
+// whose directories are gone in part is too.
+func TestBucket_Missing(t *testing.T) {
+	t.Parallel()
 
-// TestCreateBucket_Errors checks that a file in place of a bucket dir is an
-// I/O error, not ErrBucketExists.
-func TestCreateBucket_Errors(t *testing.T) {
-	for i, name := range []string{"meta dir", "object dir", "locks dir"} {
-		t.Run(name, func(t *testing.T) {
-			v, dir := newTestVFS(t)
-			m, o, l := bucketPaths(dir)
-			// A regular file where the directory should go makes the bucket
-			// impossible to create; it is an I/O error, not "exists".
-			if err := os.WriteFile([]string{m, o, l}[i], nil, 0o600); err != nil {
-				t.Fatalf("WriteFile: %v", err)
-			}
-			_, err := v.CreateBucket(t.Context(), "b")
-			if err == nil {
-				t.Fatal("CreateBucket succeeded with a file in place of a bucket dir")
-			}
-			if errors.Is(err, vfs.ErrBucketExists) {
-				t.Fatalf("CreateBucket = %v, want an I/O error, not ErrBucketExists", err)
-			}
-			var pe *os.PathError
-			if !errors.As(err, &pe) {
-				t.Fatalf("CreateBucket = %v, want a *os.PathError", err)
-			}
-		})
+	v, dir := newVFS(t)
+
+	require.ErrorIs(t, v.HeadBucket(testBucket), vfs.ErrBucketNotFound)
+
+	_, err := v.OpenBucket(testBucket)
+	require.ErrorIs(t, err, vfs.ErrBucketNotFound)
+
+	for _, d := range []string{objDir(dir), lockDir(dir), keysDir(dir)} {
+		require.NoError(t, v.CreateBucket(t.Context(), testBucket))
+		require.NoError(t, os.Remove(d))
+
+		_, err = v.OpenBucket(testBucket)
+		require.ErrorIs(t, err, vfs.ErrBucketNotFound)
+		requireNoPath(t, err, dir)
 	}
 }
 
-// TestCreateBucket_Exists checks that CreateBucket of an existing bucket is
-// ErrBucketExists and changes nothing.
-func TestCreateBucket_Exists(t *testing.T) {
-	v, _ := newTestVFS(t)
-	b := newTestBucket(t, v)
-	putObject(t, b, "k", "x", "")
+// Removed reports a bucket deleted under an open Bucket, and one created
+// again since, but not one that is still there.
+func TestVFS_Removed(t *testing.T) {
+	t.Parallel()
 
-	for range 2 {
-		if _, err := v.CreateBucket(t.Context(), "b"); !errors.Is(err, vfs.ErrBucketExists) {
-			t.Fatalf("CreateBucket of an existing bucket = %v, want ErrBucketExists", err)
-		}
-	}
-	// The existing bucket and its objects are untouched.
-	if body, _ := getObject(t, b, "k"); body != "x" {
-		t.Fatalf("body = %q, want x", body)
-	}
+	v, _ := newVFS(t)
+	bk := newBucket(t, v)
+
+	assert.False(t, v.Removed(bk))
+	require.NoError(t, v.DeleteBucket(t.Context(), testBucket, func(vfs.Skipped) {}))
+	assert.True(t, v.Removed(bk))
+	require.NoError(t, v.CreateBucket(t.Context(), testBucket))
+	assert.True(t, v.Removed(bk))
 }
 
-// TestCreateBucket_CompletesPartialBucket checks that a bucket whose creation
-// stopped before the metadata dir was made (the commit point) is created
-// normally on the next attempt.
-func TestCreateBucket_CompletesPartialBucket(t *testing.T) {
-	v, dir := newTestVFS(t)
-	_, o, l := bucketPaths(dir)
-	for _, p := range []string{o, l} {
-		if err := os.MkdirAll(p, 0o750); err != nil {
-			t.Fatalf("MkdirAll: %v", err)
-		}
+// ListBuckets returns the named buckets with their creation time, in UTC
+// to the second, and passes over a bucket whose name record is missing or
+// holds another name, reporting it; a record that is not a file fails.
+func TestListBuckets(t *testing.T) {
+	t.Parallel()
+
+	v, dir := newVFS(t)
+	ctx := t.Context()
+
+	for _, n := range []string{"a-bucket", "b-bucket", "c-bucket"} {
+		require.NoError(t, v.CreateBucket(ctx, n))
 	}
-	if _, err := v.OpenBucket("b"); !errors.Is(err, vfs.ErrBucketNotFound) {
-		t.Fatalf("OpenBucket of a partial bucket = %v, want ErrBucketNotFound", err)
+
+	require.NoError(t, os.Remove(filepath.Join(dir, bucketsPath, hash("b-bucket"))))
+	writeFile(t, filepath.Join(dir, bucketsPath, hash("c-bucket")), "other")
+	writeFile(t, filepath.Join(dir, "not-a-bucket"), "")
+
+	got, skipped, err := v.ListBuckets(ctx)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "a-bucket", got[0].Name)
+	assert.Equal(t, time.UTC, got[0].Created.Location())
+	assert.Equal(t, got[0].Created, got[0].Created.Truncate(time.Second))
+	require.Len(t, skipped, 2)
+
+	for _, s := range skipped {
+		require.ErrorIs(t, s.Err, vfs.ErrUnnamed)
 	}
-	if _, err := v.CreateBucket(t.Context(), "b"); err != nil {
-		t.Fatalf("CreateBucket: %v", err)
-	}
-	b := newOpenBucket(t, v)
-	putObject(t, b, "k", "x", "")
+
+	require.NoError(t, os.Remove(filepath.Join(dir, bucketsPath, hash("c-bucket"))))
+	require.NoError(t, os.Mkdir(filepath.Join(dir, bucketsPath, hash("c-bucket")), 0o750))
+
+	_, _, err = v.ListBuckets(ctx)
+	requireNoPath(t, err, dir)
+
+	ended, cancel := ctxCanceled(t)
+	cancel()
+
+	_, _, err = v.ListBuckets(ended)
+	require.ErrorIs(t, err, ended.Err())
 }
 
-// TestOpenBucket_Missing checks that any missing bucket dir is
-// ErrBucketNotFound.
-func TestOpenBucket_Missing(t *testing.T) {
-	tests := []struct {
-		name   string
-		remove int // index of the dir to remove after creating the bucket; -1 creates nothing
-	}{
-		{"whole bucket", -1},
-		{"meta dir", 0},
-		{"object dir", 1},
-		{"locks dir", 2},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			v, dir := newTestVFS(t)
-			if tt.remove >= 0 {
-				if _, err := v.CreateBucket(t.Context(), "b"); err != nil {
-					t.Fatalf("CreateBucket: %v", err)
-				}
-				m, o, l := bucketPaths(dir)
-				if err := os.Remove([]string{m, o, l}[tt.remove]); err != nil {
-					t.Fatalf("Remove: %v", err)
-				}
-			}
-			b, err := v.OpenBucket("b")
-			if err == nil {
-				_ = b.Close()
-				t.Fatal("OpenBucket succeeded on a missing bucket")
-			}
-			if !errors.Is(err, vfs.ErrBucketNotFound) {
-				t.Fatalf("OpenBucket error = %v, want ErrBucketNotFound", err)
-			}
-			if !errors.Is(err, os.ErrNotExist) {
-				t.Fatalf("OpenBucket error = %v, want ErrNotExist", err)
-			}
-		})
-	}
+// ListBuckets fails when a name record cannot be read.
+func TestListBuckets_Unreadable(t *testing.T) {
+	t.Parallel()
+	skipIfRoot(t)
+
+	v, dir := newVFS(t)
+	require.NoError(t, v.CreateBucket(t.Context(), testBucket))
+	chmod(t, filepath.Join(dir, bucketsPath, hash(testBucket)), 0o000)
+
+	_, _, err := v.ListBuckets(t.Context())
+	require.ErrorIs(t, err, os.ErrPermission)
+	requireNoPath(t, err, dir)
+
+	chmod(t, filepath.Join(dir, bucketsPath), 0o000)
+
+	_, _, err = v.ListBuckets(t.Context())
+	requireNoPath(t, err, dir)
 }
 
-// TestOpenBucket_NotADirectory checks that a bucket dir that exists but
-// cannot be opened is an I/O error, not a missing bucket.
-func TestOpenBucket_NotADirectory(t *testing.T) {
-	for i, name := range []string{"meta dir", "object dir", "locks dir"} {
-		t.Run(name, func(t *testing.T) {
-			v, dir := newTestVFS(t)
-			if _, err := v.CreateBucket(t.Context(), "b"); err != nil {
-				t.Fatalf("CreateBucket: %v", err)
-			}
-			m, o, l := bucketPaths(dir)
-			path := []string{m, o, l}
-			if err := os.Remove(path[i]); err != nil {
-				t.Fatalf("Remove: %v", err)
-			}
-			if err := os.WriteFile(path[i], nil, 0o600); err != nil {
-				t.Fatalf("WriteFile: %v", err)
-			}
-			b, err := v.OpenBucket("b")
-			if err == nil {
-				_ = b.Close()
-				t.Fatal("OpenBucket succeeded with a file in place of a bucket dir")
-			}
-			if errors.Is(err, vfs.ErrBucketNotFound) {
-				t.Fatalf("OpenBucket = %v, want an I/O error, not ErrBucketNotFound", err)
-			}
-		})
-	}
+// A BodyError reads and unwraps as its reader's error; a JoinedError
+// reads its errors `; ` apart and unwraps to each.
+func TestErrors_Types(t *testing.T) {
+	t.Parallel()
+
+	be := &vfs.BodyError{Err: io.ErrUnexpectedEOF}
+	assert.Equal(t, io.ErrUnexpectedEOF.Error(), be.Error())
+	require.ErrorIs(t, be, io.ErrUnexpectedEOF)
+
+	je := &vfs.JoinedError{Errs: []error{io.EOF, os.ErrClosed}}
+	assert.Equal(t, "EOF; file already closed", je.Error())
+	require.ErrorIs(t, je, io.EOF)
+	require.ErrorIs(t, je, os.ErrClosed)
 }
 
-// TestFileModes covers bug 9: directories must not be group-writable or
-// world-accessible, and metadata, data and lock files must be private to the
-// owner.
-func TestFileModes(t *testing.T) {
-	skipIfNoPermissions(t)
-	v, dir := newTestVFS(t)
-	b := newTestBucket(t, v)
-	putObject(t, b, "k", "x", "")
-	data := dataFile(t, b, "k")
-	m, o, l := bucketPaths(dir)
-	// Keep the lock file around by holding the lock.
-	holder := newTestLock(t, l)
-	if err := holder.Lock(t.Context(), hash("k")); err != nil {
-		t.Fatalf("Lock: %v", err)
-	}
-	defer func() { _ = holder.Unlock(hash("k")) }()
+// IsMissing accepts os.ErrNotExist and refuses other errors.
+func TestIsMissing(t *testing.T) {
+	t.Parallel()
 
-	dirs := []string{
-		filepath.Join(dir, ".gas"),
-		filepath.Join(dir, objectsPath),
-		filepath.Join(dir, locksPath),
-		m, o, l,
-	}
-	for _, p := range dirs {
-		fi, err := os.Stat(p)
-		if err != nil {
-			t.Fatalf("Stat(%s): %v", p, err)
-		}
-		if perm := fi.Mode().Perm(); perm&0o027 != 0 {
-			t.Errorf("dir %s mode = %o, want no bits outside 0o750", p, perm)
-		}
-	}
-
-	files := []string{
-		filepath.Join(m, hash("k")+metaFileExt),
-		filepath.Join(o, data),
-		filepath.Join(l, hash("k")),
-	}
-	for _, p := range files {
-		fi, err := os.Stat(p)
-		if err != nil {
-			t.Fatalf("Stat(%s): %v", p, err)
-		}
-		if perm := fi.Mode().Perm(); perm&0o077 != 0 {
-			t.Errorf("file %s mode = %o, want no bits outside 0o600", p, perm)
-		}
-	}
+	_, err := os.Stat(filepath.Join(t.TempDir(), "missing"))
+	assert.True(t, vfs.IsMissing(err))
+	assert.False(t, vfs.IsMissing(os.ErrPermission))
+	assert.False(t, vfs.IsMissing(nil))
 }

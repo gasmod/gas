@@ -1,219 +1,411 @@
-package test
+package s3_test
 
 import (
-	"errors"
+	"bufio"
+	"context"
 	"fmt"
-	"io"
-	"net/http"
-	"net/http/httptest"
+	"maps"
+	"net"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/stretchr/testify/require"
 
 	"github.com/gasmod/gas"
-	"github.com/gasmod/gas/config/configtest"
 	"github.com/gasmod/gas/storage"
-	s3svc "github.com/gasmod/gas/storage/s3"
+	s3store "github.com/gasmod/gas/storage/s3"
 )
 
-const (
-	testBucket = "test-bucket"
-	testRegion = "us-east-1"
-	testAKID   = "AKIDTEST"
-	testSecret = "SECRETTEST"
-)
-
-// recordedRequest is a snapshot of an HTTP request received by fakeS3.
-type recordedRequest struct {
-	Header http.Header
-	Query  map[string][]string
-	Method string
-	Path   string
-	Body   []byte
-}
-
-// fakeS3 is an httptest-backed S3 endpoint whose responses are scripted per
-// test. All received requests are recorded.
-type fakeS3 struct {
-	srv     *httptest.Server
-	handler func(w http.ResponseWriter, r *http.Request, body []byte)
-	reqs    []recordedRequest
-	mu      sync.Mutex
-}
-
-// newFakeS3 starts a fake S3 endpoint that records every request and answers
-// with handler, or 200 OK when handler is nil.
-func newFakeS3(
-	t *testing.T,
-	handler func(w http.ResponseWriter, r *http.Request, body []byte),
-) *fakeS3 {
+// build returns a store built with opts and a recording logger, not
+// initialized, closed when the test ends.
+func build(t *testing.T, opts ...s3store.Option) (*s3store.Provider, *recorder) {
 	t.Helper()
-	f := &fakeS3{handler: handler}
-	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		f.mu.Lock()
-		f.reqs = append(f.reqs, recordedRequest{
-			Method: r.Method,
-			Path:   r.URL.Path,
-			Query:  r.URL.Query(),
-			Header: r.Header.Clone(),
-			Body:   body,
-		})
-		f.mu.Unlock()
-		if f.handler == nil {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		f.handler(w, r, body)
-	}))
-	t.Cleanup(f.srv.Close)
-	return f
+
+	log := newRecorder()
+
+	p, err := s3store.New(opts...)(nil, log)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, p.Close(context.Background())) })
+
+	return p, log
 }
 
-// requests returns a copy of the requests received so far.
-func (f *fakeS3) requests() []recordedRequest {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]recordedRequest(nil), f.reqs...)
-}
-
-// lastRequest returns the most recent request, failing the test when there is
-// none.
-func (f *fakeS3) lastRequest(t *testing.T) recordedRequest {
+// open returns a store with cfg, initialized, closed when the test ends.
+func open(t *testing.T, cfg *s3store.Config) *s3store.Provider {
 	t.Helper()
-	reqs := f.requests()
-	if len(reqs) == 0 {
-		t.Fatal("no request received by fake S3")
-	}
-	return reqs[len(reqs)-1]
+
+	p, _ := build(t, s3store.WithConfig(cfg))
+	require.NoError(t, p.Init(t.Context()))
+
+	return p
 }
 
-// clientInRegion is client with the client's region set to region.
-func (f *fakeS3) clientInRegion(t *testing.T, region string) *s3.Client {
+// initErr returns the error of Init of a store built with opts.
+func initErr(t *testing.T, opts ...s3store.Option) error {
 	t.Helper()
-	c := f.client(t)
-	return s3.New(c.Options(), func(o *s3.Options) { o.Region = region })
+
+	p, _ := build(t, opts...)
+
+	return p.Init(t.Context())
 }
 
-// client returns an S3 client pointed at the fake server with path-style
-// addressing, static credentials, no retries, and request checksums only
-// when required so that request bodies are sent verbatim.
-func (f *fakeS3) client(t *testing.T) *s3.Client {
+// buildSigner returns a presigner built with opts and a recording logger,
+// not initialized, closed when the test ends.
+func buildSigner(t *testing.T, opts ...s3store.PresignerOption) (*s3store.Presigner, *recorder) {
 	t.Helper()
-	return s3.New(s3.Options{
-		Region:       testRegion,
-		BaseEndpoint: aws.String(f.srv.URL),
-		UsePathStyle: true,
-		Credentials: credentials.NewStaticCredentialsProvider(
-			testAKID,
-			testSecret,
-			"",
-		),
-		HTTPClient:                 f.srv.Client(),
-		Retryer:                    aws.NopRetryer{},
-		RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired,
-		ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,
+
+	log := newRecorder()
+
+	p, err := s3store.NewPresigner(opts...)(nil, log)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, p.Close(context.Background())) })
+
+	return p, log
+}
+
+// openSigner returns a presigner with cfg, initialized, closed when the
+// test ends.
+func openSigner(t *testing.T, cfg *s3store.Config) *s3store.Presigner {
+	t.Helper()
+
+	p, _ := buildSigner(t, s3store.WithPresignerConfig(cfg))
+	require.NoError(t, p.Init(t.Context()))
+
+	return p
+}
+
+// withBucket returns a fresh store on f, initialized, with a bucket of
+// that name created and configured.
+func (f *fakeS3) withBucket(t *testing.T, bucket string) *s3store.Provider {
+	t.Helper()
+
+	p := open(t, f.config(bucket))
+	require.NoError(t, p.CreateBucket(t.Context(), &storage.CreateBucketInput{Bucket: bucket}))
+
+	return p
+}
+
+// putString writes body under key in the configured bucket of p.
+func putString(t *testing.T, p storage.Provider, key, body string) *storage.PutObjectOutput {
+	t.Helper()
+
+	out, err := p.PutObject(t.Context(), &storage.PutObjectInput{
+		Key:  key,
+		Body: strings.NewReader(body),
 	})
+	require.NoError(t, err)
+
+	return out
 }
 
-// newConfig returns a gas.ConfigProvider seeded with the given storage
-// settings.
-func newConfig(t *testing.T, storageCfg map[string]any) gas.ConfigProvider {
+// closedAddr returns a loopback address with nothing listening on it.
+func closedAddr(t *testing.T) string {
 	t.Helper()
-	mock, err := configtest.NewMockConfigWithValues(map[string]any{"storage": storageCfg})
-	if err != nil {
-		t.Fatalf("NewMockConfigWithValues() error: %v", err)
-	}
-	return mock
+
+	l, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	addr := l.Addr().String()
+	require.NoError(t, l.Close())
+
+	return addr
 }
 
-// newTestProvider builds a Provider on the fake endpoint with testBucket
-// configured.
-func newTestProvider(t *testing.T, f *fakeS3) *s3svc.Provider {
+// blackhole returns the address of a loopback listener that accepts
+// connections and never answers, closed when the test ends.
+func blackhole(t *testing.T) string {
 	t.Helper()
-	p, err := s3svc.NewProvider(
-		s3svc.WithClient(f.client(t)),
-	)(
-		newConfig(t, map[string]any{"bucket": testBucket}),
+
+	l, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	var (
+		mu    sync.Mutex
+		conns []net.Conn
+		wg    sync.WaitGroup
 	)
-	if err != nil {
-		t.Fatalf("NewProvider() error: %v", err)
-	}
-	return p
+
+	wg.Go(func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+
+			mu.Lock()
+
+			conns = append(conns, c)
+			mu.Unlock()
+		}
+	})
+
+	t.Cleanup(func() {
+		_ = l.Close()
+
+		wg.Wait()
+		mu.Lock()
+		defer mu.Unlock()
+
+		for _, c := range conns {
+			_ = c.Close()
+		}
+	})
+
+	return l.Addr().String()
 }
 
-// newTestPresigner builds a Presigner on the fake endpoint with bucket
-// configured.
-func newTestPresigner(t *testing.T, f *fakeS3, bucket string) *s3svc.Presigner {
+// assertNoSecrets fails the test when text holds a distinctive value of
+// the tests, a host, or any of extra.
+func assertNoSecrets(t *testing.T, text string, extra ...string) {
 	t.Helper()
-	p, err := s3svc.NewPresigner(
-		s3svc.WithPresignerS3Client(f.client(t)),
-	)(
-		newConfig(t, map[string]any{"bucket": bucket}),
-	)
-	if err != nil {
-		t.Fatalf("NewPresigner() error: %v", err)
+
+	for _, v := range append([]string{
+		"zqx", "127.0.0.1", "localhost", "http://", testKeyID, "x-id=",
+	}, extra...) {
+		if strings.Contains(text, v) {
+			t.Errorf("%q holds %q", text, v)
+		}
 	}
-	return p
 }
 
-// base returns an input for key in the configured bucket.
-func base(key string) storage.BaseObjectInput {
-	return storage.BaseObjectInput{Key: key}
-}
-
-// inBucket returns an input for key "k" in the given bucket.
-func inBucket(bucket string) storage.BaseObjectInput {
-	return storage.BaseObjectInput{Bucket: new(bucket), Key: "k"}
-}
-
-// writeS3Error writes an S3 REST-XML error document.
-func writeS3Error(w http.ResponseWriter, status int, code string) {
-	w.Header().Set("Content-Type", "application/xml")
-	w.WriteHeader(status)
-	_, _ = fmt.Fprintf(
-		w,
-		`<?xml version="1.0" encoding="UTF-8"?><Error><Code>%s</Code><Message>%s message</Message><RequestId>req-1</RequestId><HostId>host-1</HostId></Error>`,
-		code,
-		code,
-	)
-}
-
-// assertOnlySentinel checks that err matches want (nil for none) and none of
-// the other backend sentinels (the not-found ones, ErrVersionNotFound,
-// ErrBucketExists, and ErrInvalidRange).
-func assertOnlySentinel(t *testing.T, err, want error) {
+// isolateAWS clears the ambient AWS configuration for the test: the
+// shared files, the instance metadata, and the AWS variables.
+func isolateAWS(t *testing.T) {
 	t.Helper()
-	for _, s := range []error{
-		storage.ErrKeyNotFound,
-		storage.ErrBucketNotFound,
-		storage.ErrNotFound,
-		storage.ErrVersionNotFound,
-		storage.ErrBucketExists,
-		storage.ErrInvalidRange,
+
+	empty := filepath.Join(t.TempDir(), "empty")
+	require.NoError(t, os.WriteFile(empty, nil, 0o600))
+
+	t.Setenv("AWS_CONFIG_FILE", empty)
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", empty)
+	t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
+
+	for _, name := range []string{
+		"AWS_PROFILE",
+		"AWS_DEFAULT_PROFILE",
+		"AWS_REGION",
+		"AWS_DEFAULT_REGION",
+		"AWS_ACCESS_KEY_ID",
+		"AWS_SECRET_ACCESS_KEY",
+		"AWS_SESSION_TOKEN",
+		"AWS_ENDPOINT_URL",
+		"AWS_ENDPOINT_URL_S3",
+		"AWS_WEB_IDENTITY_TOKEN_FILE",
+		"AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+		"AWS_CONTAINER_CREDENTIALS_FULL_URI",
+		"AWS_MAX_ATTEMPTS",
+		"AWS_RETRY_MODE",
 	} {
-		wantIs := errors.Is(s, want)
-		if got := errors.Is(err, s); got != wantIs {
-			t.Errorf("errors.Is(%v, %v) = %v, want %v", err, s, got, wantIs)
-		}
+		t.Setenv(name, "")
+		require.NoError(t, os.Unsetenv(name))
 	}
 }
 
-// headerHasToken reports whether the semicolon-separated header value h
-// contains token, ignoring case.
-func headerHasToken(h, token string) bool {
-	for part := range strings.SplitSeq(h, ";") {
-		if strings.EqualFold(strings.TrimSpace(part), token) {
-			return true
+// entry is one log event a recorder received.
+type entry struct {
+	// fields are the event's fields, the logger's own included.
+	fields map[string]any
+	// level is `info`, `warn` and so on.
+	level string
+	// msg is the event's message.
+	msg string
+}
+
+// recorder is a gas.Logger that records every event it sends. It is safe
+// for concurrent use.
+type recorder struct {
+	// fields are the fields of the logger, from With.
+	fields map[string]any
+	// shared holds the events of the recorder and the loggers derived
+	// from it.
+	shared *recorded
+}
+
+// recorded is the event list a recorder and its derived loggers share.
+type recorded struct {
+	// entries are the events sent, in order.
+	entries []entry
+	// mu guards entries.
+	mu sync.Mutex
+}
+
+var _ gas.Logger = (*recorder)(nil)
+
+// newRecorder returns an empty recorder.
+func newRecorder() *recorder { return &recorder{shared: &recorded{}} }
+
+// Trace starts a trace event.
+func (r *recorder) Trace(msg string) gas.LogEvent { return r.event("trace", msg) }
+
+// Debug starts a debug event.
+func (r *recorder) Debug(msg string) gas.LogEvent { return r.event("debug", msg) }
+
+// Info starts an info event.
+func (r *recorder) Info(msg string) gas.LogEvent { return r.event("info", msg) }
+
+// Warn starts a warn event.
+func (r *recorder) Warn(msg string) gas.LogEvent { return r.event("warn", msg) }
+
+// Error starts an error event.
+func (r *recorder) Error(msg string) gas.LogEvent { return r.event("error", msg) }
+
+// With returns a context that derives a logger sharing r's events.
+func (r *recorder) With() gas.LoggerContext {
+	fields := map[string]any{}
+	maps.Copy(fields, r.fields)
+
+	return &recContext{parent: r, fields: fields}
+}
+
+// Flush does nothing.
+func (*recorder) Flush() {}
+
+// event returns an event of level and msg, with the logger's fields.
+func (r *recorder) event(level, msg string) gas.LogEvent {
+	fields := map[string]any{}
+	maps.Copy(fields, r.fields)
+
+	return &recEvent{r: r, e: entry{level: level, msg: msg, fields: fields}}
+}
+
+// entries returns a copy of the events sent so far.
+func (r *recorder) entries() []entry {
+	r.shared.mu.Lock()
+	defer r.shared.mu.Unlock()
+
+	return slices.Clone(r.shared.entries)
+}
+
+// text returns the events sent so far as text, fields included.
+func (r *recorder) text() string {
+	var b strings.Builder
+
+	for _, e := range r.entries() {
+		fmt.Fprintf(&b, "%s %s %v\n", e.level, e.msg, e.fields)
+	}
+
+	return b.String()
+}
+
+// recEvent is an event of a recorder being built.
+type recEvent struct {
+	// r is the recorder that sends it.
+	r *recorder
+	// e is the event.
+	e entry
+}
+
+// Str adds a string field.
+func (e *recEvent) Str(k, v string) gas.LogEvent { return e.set(k, v) }
+
+// Int adds an int field.
+func (e *recEvent) Int(k string, v int) gas.LogEvent { return e.set(k, v) }
+
+// Int64 adds an int64 field.
+func (e *recEvent) Int64(k string, v int64) gas.LogEvent { return e.set(k, v) }
+
+// Float64 adds a float64 field.
+func (e *recEvent) Float64(k string, v float64) gas.LogEvent { return e.set(k, v) }
+
+// Bool adds a bool field.
+func (e *recEvent) Bool(k string, v bool) gas.LogEvent { return e.set(k, v) }
+
+// Err adds an error field.
+func (e *recEvent) Err(k string, v error) gas.LogEvent { return e.set(k, v) }
+
+// Duration adds a duration field.
+func (e *recEvent) Duration(k string, v time.Duration) gas.LogEvent { return e.set(k, v) }
+
+// Any adds a field of any type.
+func (e *recEvent) Any(k string, v any) gas.LogEvent { return e.set(k, v) }
+
+// Send records the event.
+func (e *recEvent) Send() {
+	e.r.shared.mu.Lock()
+
+	e.r.shared.entries = append(e.r.shared.entries, e.e)
+	e.r.shared.mu.Unlock()
+}
+
+// set adds a field.
+func (e *recEvent) set(k string, v any) gas.LogEvent {
+	e.e.fields[k] = v
+
+	return e
+}
+
+// recContext builds a logger derived from a recorder.
+type recContext struct {
+	// parent is the recorder derived from.
+	parent *recorder
+	// fields are the fields of the derived logger.
+	fields map[string]any
+}
+
+// Str adds a string field.
+func (c *recContext) Str(k, v string) gas.LoggerContext { return c.set(k, v) }
+
+// Int adds an int field.
+func (c *recContext) Int(k string, v int) gas.LoggerContext { return c.set(k, v) }
+
+// Int64 adds an int64 field.
+func (c *recContext) Int64(k string, v int64) gas.LoggerContext { return c.set(k, v) }
+
+// Float64 adds a float64 field.
+func (c *recContext) Float64(k string, v float64) gas.LoggerContext { return c.set(k, v) }
+
+// Bool adds a bool field.
+func (c *recContext) Bool(k string, v bool) gas.LoggerContext { return c.set(k, v) }
+
+// Err adds an error field.
+func (c *recContext) Err(k string, v error) gas.LoggerContext { return c.set(k, v) }
+
+// Duration adds a duration field.
+func (c *recContext) Duration(k string, v time.Duration) gas.LoggerContext {
+	return c.set(k, v)
+}
+
+// Any adds a field of any type.
+func (c *recContext) Any(k string, v any) gas.LoggerContext { return c.set(k, v) }
+
+// Logger returns the derived logger, which shares the parent's events.
+func (c *recContext) Logger() gas.Logger {
+	return &recorder{fields: c.fields, shared: c.parent.shared}
+}
+
+// set adds a field.
+func (c *recContext) set(k string, v any) gas.LoggerContext {
+	c.fields[k] = v
+
+	return c
+}
+
+// docLines returns the code lines of the doc comments in the Go file at
+// path, without the comment marker and the tab, that start with prefix.
+func docLines(t *testing.T, path, prefix string) []string {
+	t.Helper()
+
+	f, err := os.Open(path) //nolint:gosec // G304: the package's own doc.go.
+	require.NoError(t, err)
+
+	defer func() { require.NoError(t, f.Close()) }()
+
+	var out []string
+
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		code, ok := strings.CutPrefix(sc.Text(), "//\t")
+		if ok && strings.HasPrefix(code, prefix) {
+			out = append(out, code)
 		}
 	}
-	return false
+
+	require.NoError(t, sc.Err())
+
+	return out
 }

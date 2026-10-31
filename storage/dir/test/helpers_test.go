@@ -1,316 +1,503 @@
-package test
+package dir_test
 
 import (
-	"bytes"
+	"bufio"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"io"
-	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/gasmod/gas"
-	"github.com/gasmod/gas/config/configtest"
 	"github.com/gasmod/gas/storage"
-
-	dirpkg "github.com/gasmod/gas/storage/dir"
+	"github.com/gasmod/gas/storage/dir"
 )
 
-const testBucket = "test-bucket"
+// bucket is the bucket the helpers configure and create.
+const bucket = "photos"
 
-// openRoot opens an os.Root on a fresh temp dir and closes it on cleanup.
-func openRoot(t *testing.T) (*os.Root, string) {
-	t.Helper()
-	dir := t.TempDir()
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		t.Fatalf("os.OpenRoot() error: %v", err)
-	}
-	t.Cleanup(func() { _ = root.Close() })
-	return root, dir
-}
-
-// newConfig returns a gas.ConfigProvider seeded with the given storage bucket.
-func newConfig(t *testing.T, bucket string) gas.ConfigProvider {
+// build returns a store built with opts and a recording logger, not
+// initialized.
+func build(t *testing.T, opts ...dir.Option) (*dir.Provider, *recorder) {
 	t.Helper()
 
-	mock, err := configtest.NewMockConfigWithValues(map[string]any{
-		"storage": map[string]any{"bucket": bucket},
-	})
-	if err != nil {
-		t.Fatalf("NewMockConfigWithValues() error: %v", err)
-	}
-	return mock
+	log := newRecorder()
+
+	p, err := dir.New(opts...)(nil, log)
+	require.NoError(t, err)
+
+	return p, log
 }
 
-// newProvider builds a Provider through NewProvider over a fresh root with
-// cfgBucket as the configured bucket, and creates no bucket. It returns the
-// provider and the absolute path of the root directory.
-func newProvider(t *testing.T, cfgBucket string) (*dirpkg.Provider, string) {
+// config returns DefaultConfig with path as the directory and b as the
+// configured bucket.
+func config(path, b string) *dir.Config {
+	cfg := dir.DefaultConfig()
+
+	cfg.Storage.Dir = path
+	cfg.Storage.Bucket = b
+
+	return cfg
+}
+
+// open returns a store on a new directory, with bucket configured and
+// created, initialized and closed when t ends, and the directory's path.
+func open(t *testing.T) (*dir.Provider, string) {
 	t.Helper()
-	root, dir := openRoot(t)
-	p, err := dirpkg.NewProvider(dirpkg.WithRoot(root))(newConfig(t, cfgBucket))
-	if err != nil {
-		t.Fatalf("NewProvider() error: %v", err)
-	}
-	return p, dir
+
+	path := t.TempDir()
+
+	return openAt(t, path), path
 }
 
-// newTestProvider is newProvider with testBucket configured and created.
-func newTestProvider(t *testing.T) (*dirpkg.Provider, string) {
+// openAt returns a store on the directory path, as open does.
+func openAt(t *testing.T, path string, opts ...dir.Option) *dir.Provider {
 	t.Helper()
-	p, dir := newProvider(t, testBucket)
-	createBucket(t, p, testBucket)
-	return p, dir
+
+	p, _ := build(t, append([]dir.Option{dir.WithConfig(config(path, bucket))}, opts...)...)
+	require.NoError(t, p.Init(t.Context()))
+	t.Cleanup(func() { require.NoError(t, p.Close(context.Background())) })
+
+	return p
 }
 
-// createBucket creates bucket through the provider.
-func createBucket(t *testing.T, p *dirpkg.Provider, bucket string) {
-	t.Helper()
-	_, err := p.CreateBucket(context.Background(), &storage.CreateBucketInput{Bucket: bucket})
-	if err != nil {
-		t.Fatalf("CreateBucket(%q) error: %v", bucket, err)
-	}
-}
-
-// base returns an input for key in the configured bucket.
-func base(key string) storage.BaseObjectInput {
-	return storage.BaseObjectInput{Key: key}
-}
-
-// inBucket returns an input for key "k" in the given bucket.
-func inBucket(bucket string) storage.BaseObjectInput {
-	return storage.BaseObjectInput{Bucket: new(bucket), Key: "k"}
-}
-
-// randomBytes returns n random bytes.
-func randomBytes(t *testing.T, n int) []byte {
-	t.Helper()
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		t.Fatal(err)
-	}
-	return b
-}
-
-// putWith puts key with the given body, content type and metadata.
-func putWith(p *dirpkg.Provider, key string, body io.Reader, ct *string, meta map[string]string) (
-	*storage.ObjectInfo, error,
-) {
-	return p.PutObject(context.Background(), &storage.PutObjectInput{
-		BaseObjectInput: base(key),
-		Body:            body,
-		ObjectHeaders:   storage.ObjectHeaders{ContentType: ct, Metadata: meta},
-	})
-}
-
-// put puts key with body and fails the test on error.
-func put(t *testing.T, p *dirpkg.Provider, key string, body []byte) *storage.ObjectInfo {
-	t.Helper()
-	info, err := putWith(p, key, bytes.NewReader(body), nil, nil)
-	if err != nil {
-		t.Fatalf("PutObject(%q) error: %v", key, err)
-	}
-	return info
-}
-
-// get reads key in full and fails the test on error.
-func get(t *testing.T, p *dirpkg.Provider, key string) (*storage.Object, []byte) {
-	t.Helper()
-	obj, err := p.GetObject(context.Background(), &storage.GetObjectInput{
-		HeadObjectInput: storage.HeadObjectInput{BaseObjectInput: base(key)},
-	})
-	if err != nil {
-		t.Fatalf("GetObject(%q) error: %v", key, err)
-	}
-	data, err := io.ReadAll(obj.Body)
-	if cErr := obj.Body.Close(); cErr != nil {
-		t.Errorf("Body.Close() error: %v", cErr)
-	}
-	if err != nil {
-		t.Fatalf("ReadAll(%q) error: %v", key, err)
-	}
-	return obj, data
-}
-
-// head heads key in the configured bucket.
-func head(p *dirpkg.Provider, key string) (*storage.ObjectInfo, error) {
-	return p.HeadObject(context.Background(), &storage.HeadObjectInput{BaseObjectInput: base(key)})
-}
-
-// getIn gets in, closes any body, and returns the error.
-func getIn(p *dirpkg.Provider, in storage.BaseObjectInput) error {
-	obj, err := p.GetObject(context.Background(), &storage.GetObjectInput{
-		HeadObjectInput: storage.HeadObjectInput{BaseObjectInput: in},
-	})
-	if obj != nil && obj.Body != nil {
-		_ = obj.Body.Close()
-	}
-	return err
-}
-
-// getErr gets key in the configured bucket and returns the error.
-func getErr(p *dirpkg.Provider, key string) error {
-	return getIn(p, base(key))
-}
-
-// del deletes key in the configured bucket.
-func del(p *dirpkg.Provider, key string) (*storage.ObjectInfo, error) {
-	return p.DeleteObject(
-		context.Background(),
-		&storage.DeleteObjectInput{BaseObjectInput: base(key)},
-	)
-}
-
-// allOps runs Head, Put, Get and Delete of in and returns their errors by
-// operation name.
-func allOps(ctx context.Context, p *dirpkg.Provider, in storage.BaseObjectInput) map[string]error {
-	errs := map[string]error{}
-	_, errs["head"] = p.HeadObject(ctx, &storage.HeadObjectInput{BaseObjectInput: in})
-	_, errs["put"] = p.PutObject(ctx, &storage.PutObjectInput{
-		BaseObjectInput: in,
-		Body:            strings.NewReader("x"),
-	})
-	obj, err := p.GetObject(ctx, &storage.GetObjectInput{
-		HeadObjectInput: storage.HeadObjectInput{BaseObjectInput: in},
-	})
-	if obj != nil {
-		_ = obj.Body.Close()
-	}
-	errs["get"] = err
-	_, errs["delete"] = p.DeleteObject(ctx, &storage.DeleteObjectInput{BaseObjectInput: in})
-	return errs
-}
-
-// sha returns the hex SHA-256 of s, the on-disk name of a bucket or key.
+// sha returns the hex SHA-256 of s, the name a bucket or a key is stored
+// under.
 func sha(s string) string {
 	sum := sha256.Sum256([]byte(s))
+
 	return hex.EncodeToString(sum[:])
 }
 
-// metaDir is the absolute metadata directory of bucket under dir.
-func metaDir(dir, bucket string) string {
-	return filepath.Join(dir, sha(bucket))
+// metaFile returns the path of the metadata file of key in the
+// configured bucket of the directory path.
+func metaFile(path, key string) string {
+	return filepath.Join(path, sha(bucket), sha(key)+".gas.json")
 }
 
-// objDir is the absolute objects directory of bucket under dir.
-func objDir(dir, bucket string) string {
-	return filepath.Join(dir, ".gas", "objects", sha(bucket))
+// objectsDir returns the path of the objects directory of the bucket b.
+func objectsDir(path, b string) string {
+	return filepath.Join(path, ".gas", "objects", sha(b))
 }
 
-// lockDir is the absolute locks directory of bucket under dir.
-func lockDir(dir, bucket string) string {
-	return filepath.Join(dir, ".gas", "locks", sha(bucket))
+// keysDir returns the path of the keys directory of the configured
+// bucket.
+func keysDir(path string) string {
+	return filepath.Join(path, ".gas", "keys", sha(bucket))
 }
 
-// metaFile is the absolute metadata file of key in testBucket under dir.
-func metaFile(dir, key string) string {
-	return filepath.Join(metaDir(dir, testBucket), sha(key)+".gas.json")
+// locksDir returns the path of the locks directory of the bucket b.
+func locksDir(path, b string) string {
+	return filepath.Join(path, ".gas", "locks", sha(b))
 }
 
-// dataFile is the absolute path of the one data file of key in testBucket.
-func dataFile(t *testing.T, dir, key string) string {
+// nameRecord returns the path of the name record of the bucket b.
+func nameRecord(path, b string) string {
+	return filepath.Join(path, ".gas", "buckets", sha(b))
+}
+
+// dataFiles returns the names of the data files of key in the configured
+// bucket.
+func dataFiles(t *testing.T, path, key string) []string {
 	t.Helper()
-	matches, err := filepath.Glob(filepath.Join(objDir(dir, testBucket), sha(key)+"_*"))
-	if err != nil {
-		t.Fatalf("Glob: %v", err)
-	}
-	if len(matches) != 1 {
-		t.Fatalf("data files of %q = %v, want exactly one", key, matches)
-	}
-	return matches[0]
+
+	files, err := filepath.Glob(filepath.Join(objectsDir(path, bucket), sha(key)+"_*"))
+	require.NoError(t, err)
+
+	return files
 }
 
-// listDir returns the sorted names in path.
-func listDir(t *testing.T, path string) []string {
-	t.Helper()
-	entries, err := os.ReadDir(path)
-	if err != nil {
-		t.Fatalf("ReadDir(%s): %v", path, err)
+// putIn returns the PutObjectInput of body under key in the configured
+// bucket.
+func putIn(key, body string) *storage.PutObjectInput {
+	return &storage.PutObjectInput{
+		Key:  key,
+		Body: strings.NewReader(body),
 	}
-	names := make([]string, 0, len(entries))
-	for _, e := range entries {
-		names = append(names, e.Name())
-	}
-	slices.Sort(names)
-	return names
 }
 
-// assertEmptyBucket fails if the metadata or objects directory of testBucket
-// holds anything, temp files included.
-func assertEmptyBucket(t *testing.T, dir string) {
+// put writes body under key in the configured bucket of p.
+func put(t *testing.T, p *dir.Provider, key, body string) *storage.PutObjectOutput {
 	t.Helper()
-	for _, d := range []string{metaDir(dir, testBucket), objDir(dir, testBucket)} {
-		if got := listDir(t, d); len(got) != 0 {
-			t.Errorf("%s = %v, want empty", d, got)
+
+	out, err := p.PutObject(t.Context(), putIn(key, body))
+	require.NoError(t, err)
+
+	return out
+}
+
+// getIn returns the GetObjectInput of key in the configured bucket.
+func getIn(key string) *storage.GetObjectInput {
+	return &storage.GetObjectInput{
+		Key: key,
+	}
+}
+
+// headIn returns the HeadObjectInput of key in the configured bucket.
+func headIn(key string) *storage.HeadObjectInput {
+	return &getIn(key).HeadObjectInput
+}
+
+// read returns the contents of key in the configured bucket of p.
+func read(t *testing.T, p *dir.Provider, key string) string {
+	t.Helper()
+
+	obj, err := p.GetObject(t.Context(), getIn(key))
+	require.NoError(t, err)
+
+	defer func() { require.NoError(t, obj.Body.Close()) }()
+
+	b, err := io.ReadAll(obj.Body)
+	require.NoError(t, err)
+
+	return string(b)
+}
+
+// listKeys returns every key and common prefix of in, page by page, in
+// byte order, the prefixes ending with `*`.
+func listKeys(t *testing.T, p *dir.Provider, in *storage.ListObjectsInput) []string {
+	t.Helper()
+
+	var got []string
+
+	for {
+		out, err := p.ListObjects(t.Context(), in)
+		require.NoError(t, err)
+
+		page := make([]string, 0, len(out.Objects)+len(out.CommonPrefixes))
+
+		for _, o := range out.Objects {
+			page = append(page, o.Key)
+		}
+
+		for _, cp := range out.CommonPrefixes {
+			page = append(page, cp+"*")
+		}
+
+		slices.SortFunc(page, func(a, b string) int {
+			return strings.Compare(strings.TrimSuffix(a, "*"), strings.TrimSuffix(b, "*"))
+		})
+
+		got = append(got, page...)
+
+		if !out.IsTruncated {
+			return got
+		}
+
+		in.ContinuationToken = &out.NextContinuationToken
+	}
+}
+
+// skip is an entry a skip handler got.
+type skip struct {
+	// err says why.
+	err error
+	// path is the entry's path.
+	path string
+}
+
+// skips records what a skip handler gets. It is safe for concurrent use.
+type skips struct {
+	// got are the entries, in order.
+	got []skip
+	// mu guards got.
+	mu sync.Mutex
+}
+
+// handler returns the skip handler that records into s.
+func (s *skips) handler() dir.SkipHandler {
+	return func(path string, err error) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+
+		s.got = append(s.got, skip{path: path, err: err})
+	}
+}
+
+// all returns a copy of the entries so far.
+func (s *skips) all() []skip {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return slices.Clone(s.got)
+}
+
+// hexHash matches a name hash, which no error may hold.
+var hexHash = regexp.MustCompile(`[0-9a-f]{64}`)
+
+// requireClean fails t when err is nil, or its text holds a name hash,
+// path or any of secrets, those that are not empty.
+func requireClean(t *testing.T, err error, path string, secrets ...string) {
+	t.Helper()
+
+	require.Error(t, err)
+	require.NotRegexp(t, hexHash, err.Error())
+
+	for _, s := range append(secrets, path) {
+		if s != "" {
+			require.NotContains(t, err.Error(), s)
 		}
 	}
 }
 
-// assertNoTempFiles fails if a metadata temp file is left anywhere under dir.
-// A committed metadata file ends in the extension; a temp file has a UUID
-// after it.
-func assertNoTempFiles(t *testing.T, dir string) {
+// blockingBody is a body whose Read blocks until its context ends.
+type blockingBody struct {
+	// ctx ends the Read.
+	ctx context.Context //nolint:containedctx // what ends the Read.
+	// entered is closed when the first Read starts.
+	entered chan struct{}
+	// once closes entered once.
+	once sync.Once
+}
+
+// newBlockingBody returns a blockingBody that blocks until ctx ends.
+func newBlockingBody(ctx context.Context) *blockingBody {
+	return &blockingBody{ctx: ctx, entered: make(chan struct{})}
+}
+
+// Read blocks until ctx ends, then fails with its error.
+func (b *blockingBody) Read([]byte) (int, error) {
+	b.once.Do(func() { close(b.entered) })
+	<-b.ctx.Done()
+
+	return 0, b.ctx.Err()
+}
+
+// slowBody is an endless body that yields a byte at a time, slowly.
+type slowBody struct {
+	// entered is closed when the first Read starts.
+	entered chan struct{}
+	// once closes entered once.
+	once sync.Once
+}
+
+// newSlowBody returns a slowBody that has not been read.
+func newSlowBody() *slowBody { return &slowBody{entered: make(chan struct{})} }
+
+// Read waits a moment and yields one byte.
+func (b *slowBody) Read(p []byte) (int, error) {
+	b.once.Do(func() { close(b.entered) })
+	time.Sleep(5 * time.Millisecond)
+
+	if len(p) == 0 {
+		return 0, nil
+	}
+
+	p[0] = 'x'
+
+	return 1, nil
+}
+
+// entry is one log event a recorder received.
+type entry struct {
+	// fields are the event's fields, the logger's own included.
+	fields map[string]any
+	// level is `info`, `warn` and so on.
+	level string
+	// msg is the event's message.
+	msg string
+}
+
+// recorder is a gas.Logger that records every event it sends. It is safe
+// for concurrent use.
+type recorder struct {
+	// fields are the fields of the logger, from With.
+	fields map[string]any
+	// shared holds the events of the recorder and the loggers derived
+	// from it.
+	shared *recorded
+}
+
+// recorded is the event list a recorder and its derived loggers share.
+type recorded struct {
+	// entries are the events sent, in order.
+	entries []entry
+	// mu guards entries.
+	mu sync.Mutex
+}
+
+var _ gas.Logger = (*recorder)(nil)
+
+// newRecorder returns an empty recorder.
+func newRecorder() *recorder { return &recorder{shared: &recorded{}} }
+
+// Trace starts a trace event.
+func (r *recorder) Trace(msg string) gas.LogEvent { return r.event("trace", msg) }
+
+// Debug starts a debug event.
+func (r *recorder) Debug(msg string) gas.LogEvent { return r.event("debug", msg) }
+
+// Info starts an info event.
+func (r *recorder) Info(msg string) gas.LogEvent { return r.event("info", msg) }
+
+// Warn starts a warn event.
+func (r *recorder) Warn(msg string) gas.LogEvent { return r.event("warn", msg) }
+
+// Error starts an error event.
+func (r *recorder) Error(msg string) gas.LogEvent { return r.event("error", msg) }
+
+// With returns a context that derives a logger sharing r's events.
+func (r *recorder) With() gas.LoggerContext {
+	fields := map[string]any{}
+	maps.Copy(fields, r.fields)
+
+	return &recContext{parent: r, fields: fields}
+}
+
+// Flush does nothing.
+func (*recorder) Flush() {}
+
+// event returns an event of level and msg, with the logger's fields.
+func (r *recorder) event(level, msg string) gas.LogEvent {
+	fields := map[string]any{}
+	maps.Copy(fields, r.fields)
+
+	return &recEvent{r: r, e: entry{level: level, msg: msg, fields: fields}}
+}
+
+// entries returns a copy of the events sent so far.
+func (r *recorder) entries() []entry {
+	r.shared.mu.Lock()
+	defer r.shared.mu.Unlock()
+
+	return slices.Clone(r.shared.entries)
+}
+
+// recEvent is an event of a recorder being built.
+type recEvent struct {
+	// r is the recorder that sends it.
+	r *recorder
+	// e is the event.
+	e entry
+}
+
+// Str adds a string field.
+func (e *recEvent) Str(k, v string) gas.LogEvent { return e.set(k, v) }
+
+// Int adds an int field.
+func (e *recEvent) Int(k string, v int) gas.LogEvent { return e.set(k, v) }
+
+// Int64 adds an int64 field.
+func (e *recEvent) Int64(k string, v int64) gas.LogEvent { return e.set(k, v) }
+
+// Float64 adds a float64 field.
+func (e *recEvent) Float64(k string, v float64) gas.LogEvent { return e.set(k, v) }
+
+// Bool adds a bool field.
+func (e *recEvent) Bool(k string, v bool) gas.LogEvent { return e.set(k, v) }
+
+// Err adds an error field.
+func (e *recEvent) Err(k string, v error) gas.LogEvent { return e.set(k, v) }
+
+// Duration adds a duration field.
+func (e *recEvent) Duration(k string, v time.Duration) gas.LogEvent { return e.set(k, v) }
+
+// Any adds a field of any type.
+func (e *recEvent) Any(k string, v any) gas.LogEvent { return e.set(k, v) }
+
+// Send records the event.
+func (e *recEvent) Send() {
+	e.r.shared.mu.Lock()
+
+	e.r.shared.entries = append(e.r.shared.entries, e.e)
+	e.r.shared.mu.Unlock()
+}
+
+// set adds a field.
+func (e *recEvent) set(k string, v any) gas.LogEvent {
+	e.e.fields[k] = v
+
+	return e
+}
+
+// recContext builds a logger derived from a recorder.
+type recContext struct {
+	// parent is the recorder derived from.
+	parent *recorder
+	// fields are the fields of the derived logger.
+	fields map[string]any
+}
+
+// Str adds a string field.
+func (c *recContext) Str(k, v string) gas.LoggerContext { return c.set(k, v) }
+
+// Int adds an int field.
+func (c *recContext) Int(k string, v int) gas.LoggerContext { return c.set(k, v) }
+
+// Int64 adds an int64 field.
+func (c *recContext) Int64(k string, v int64) gas.LoggerContext { return c.set(k, v) }
+
+// Float64 adds a float64 field.
+func (c *recContext) Float64(k string, v float64) gas.LoggerContext { return c.set(k, v) }
+
+// Bool adds a bool field.
+func (c *recContext) Bool(k string, v bool) gas.LoggerContext { return c.set(k, v) }
+
+// Err adds an error field.
+func (c *recContext) Err(k string, v error) gas.LoggerContext { return c.set(k, v) }
+
+// Duration adds a duration field.
+func (c *recContext) Duration(k string, v time.Duration) gas.LoggerContext {
+	return c.set(k, v)
+}
+
+// Any adds a field of any type.
+func (c *recContext) Any(k string, v any) gas.LoggerContext { return c.set(k, v) }
+
+// Logger returns the derived logger, which shares the parent's events.
+func (c *recContext) Logger() gas.Logger {
+	return &recorder{fields: c.fields, shared: c.parent.shared}
+}
+
+// set adds a field.
+func (c *recContext) set(k string, v any) gas.LoggerContext {
+	c.fields[k] = v
+
+	return c
+}
+
+// docLines returns the code lines of the doc comments in the Go file at
+// path, without the comment marker and the tab, that start with prefix.
+func docLines(t *testing.T, path, prefix string) []string {
 	t.Helper()
-	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
+
+	f, err := os.Open(path) //nolint:gosec // G304: the package's own doc.go.
+	require.NoError(t, err)
+
+	defer func() { require.NoError(t, f.Close()) }()
+
+	var out []string
+
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		code, ok := strings.CutPrefix(sc.Text(), "//\t")
+		if ok && strings.HasPrefix(code, prefix) {
+			out = append(out, code)
 		}
-		if strings.Contains(d.Name(), ".gas.json") && !strings.HasSuffix(d.Name(), ".gas.json") {
-			t.Errorf("temp file left behind: %s", path)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walk %s: %v", dir, err)
 	}
+
+	require.NoError(t, sc.Err())
+
+	return out
 }
 
-// writeFile writes data to path, creating parent directories.
-func writeFile(t *testing.T, path string, data []byte) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	//nolint:gosec // G703: test paths are built under t.TempDir()
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
-}
-
-// wantErrIs fails the test unless errors.Is(err, target).
-func wantErrIs(t *testing.T, op string, err, target error) {
-	t.Helper()
-	if !errors.Is(err, target) {
-		t.Fatalf("%s error = %v, want errors.Is(_, %v)", op, err, target)
-	}
-}
-
-// notFoundSentinels are the storage errors a caller treats as "absent".
-var notFoundSentinels = []error{
-	storage.ErrNotFound,
-	storage.ErrKeyNotFound,
-	storage.ErrBucketNotFound,
-	storage.ErrVersionNotFound,
-}
-
-// wantPresentError fails the test unless err is an error that matches none
-// of the not-found sentinels: corruption and I/O failures must never read as
-// a missing object or bucket.
-func wantPresentError(t *testing.T, op string, err error) {
-	t.Helper()
-	if err == nil {
-		t.Fatalf("%s error = nil, want an error", op)
-	}
-	for _, s := range notFoundSentinels {
-		if errors.Is(err, s) {
-			t.Fatalf("%s error = %v, must not match %v", op, err, s)
+// find returns the first event with msg, and whether there is one.
+func (r *recorder) find(msg string) (entry, bool) {
+	for _, e := range r.entries() {
+		if e.msg == msg {
+			return e, true
 		}
 	}
+
+	return entry{}, false
 }
