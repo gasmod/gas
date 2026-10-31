@@ -31,7 +31,8 @@ type MigrationManager interface {
 	// RegisterFS reads .up.sql/.down.sql files from an fs.FS and registers
 	// them as migrations for the given service. Files must follow the naming
 	// convention: {version}_{description}.up.sql / {version}_{description}.down.sql
-	// (e.g. 20250216_001_create_users.up.sql).
+	// (e.g. 20250216120000_create_users.up.sql). The version is the text
+	// before the first underscore.
 	RegisterFS(service Service, fsys fs.FS) error
 
 	// RunPendingContext applies all unapplied migrations in global version

@@ -21,7 +21,7 @@ if err := cfg.Load(); err != nil { log.Fatal(err) }
 gas.WithServiceInstance[gas.ConfigProvider](cfg),
 ```
 
-Nothing. Config is built and loaded before the app, so a bad configuration fails before
+Config needs nothing from the container: it is built and loaded before the app, so a bad configuration fails before
 anything else starts.
 
 | Package                 | Provides                                                                         |

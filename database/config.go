@@ -87,8 +87,8 @@ type Settings struct {
 	// ConnMaxIdleTime is the longest time a connection stays idle. It is
 	// at most ConnMaxLifetime.
 	ConnMaxIdleTime time.Duration `validate:"min=1s,max=1h,ltefield=ConnMaxLifetime"`
-	// ConnectTimeout bounds each connect attempt, open and ping, and each
-	// later ping.
+	// ConnectTimeout bounds each connect attempt, open and ping, each
+	// later ping, and each pgx rollback.
 	ConnectTimeout time.Duration `validate:"min=1s,max=1m"`
 	// ConnRetryInterval is the wait before the first connect retry. It is
 	// checked only when ConnRetries is positive.

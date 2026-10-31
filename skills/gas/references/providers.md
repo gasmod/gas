@@ -11,7 +11,6 @@ logging types, or supporting structs like Email and Migration.
 - [EmailProvider](#emailprovider)
 - [ConfigProvider](#configprovider)
 - [TemplateProvider](#templateprovider)
-- [UIProvider](#uiprovider)
 - [HealthProvider & HealthReporter](#healthprovider--healthreporter)
 - [ReadyProvider & ReadyReporter](#readyprovider--readyreporter)
 - [Logger](#logger)
@@ -73,16 +72,18 @@ gas.WithDedupeID(id string)                 // deduplication (SQS: MessageDedupl
 gas.WithJobAttributes(attrs map[string]string) // provider-specific metadata
 ```
 
-Implementations unpack options via `gas.ApplyEnqueueOptions(opts)`.
+Implementations unpack options via
+`gas.ApplyEnqueueOptions(opts) (delay, groupID, dedupeID, attrs)`, each the zero
+value when no option sets it.
 
 ### Job
 
 ```go
 type Job struct {
 	ID            string
-	Body          []byte
 	ReceiptHandle string            // opaque token used by Ack/Nack
 	Attributes    map[string]string // provider-specific metadata
+	Body          []byte
 }
 ```
 
@@ -105,30 +106,33 @@ gas-storage skill for their signatures, input types, and sentinel errors.
 
 ```go
 type ConfigProvider interface {
-	SetDefault(key string, value any)
-	SetDefaults(values any) error
-	Set(key string, value any)
-	Bind(dest any, options ...BindOption) error
-	Get(key string) any
+	SetDefault(key string, value any) error // sets key unless the config holds one
+	SetDefaults(values any) error           // struct or map, as SetDefault per key
+	Set(key string, value any) error
+	Bind(dest any) error                    // fills a struct pointer and validates it
+	Get(key string) any                     // nil if absent
 	Find(key string) (value any, exist bool)
-	Values() map[string]any
+	Values() map[string]any                 // a copy of every value
 }
-
-type BindOptions struct{ Validate bool } // Validate defaults to true
-type BindOption func(*BindOptions)
 ```
 
-`*config.Config` implements it; `config.BindOption` and `config.WithValidate`
-are aliases of and helpers for these core types. Loading sources
-(`LoadProvider`) is done on the concrete config before registering it and is
-not part of the interface.
+Core defines it so the root module imports no gas module; `*config.Config`
+implements it structurally. There are no bind options: `Bind` always
+validates. Loading sources is done on the concrete config before registering
+it and is not part of the interface (see the gas-config skill).
+
+An App binds its `gas.Config` through it at `Start`: `Env` from the key
+`gasenv`, where the config module's `EnvExtension` stores what it resolved from
+`GAS_ENV`. A provider that resolves the environment another way must store it
+at `gasenv`.
 
 ## TemplateProvider
 
 Abstracts template storage and retrieval. Implementations may be backed by a
 filesystem, database, memory, or any combination. Consumers such as
-`UIProvider` (HTML rendering) and `EmailProvider` (email templating) resolve
-raw template content through this interface.
+the ui module (HTML rendering) and `EmailProvider` (email templating) resolve
+raw template content through this interface. HTML rendering is not a core
+interface: `ui.Provider` lives in the gas/ui module (see the gas-ui skill).
 
 ```go
 type TemplateProvider interface {
@@ -139,29 +143,16 @@ type TemplateProvider interface {
 }
 ```
 
-## UIProvider
-
-Abstracts template compilation and rendering. Template storage and retrieval
-is handled by `TemplateProvider`; `UIProvider` focuses on compilation and
-rendering.
-
-```go
-type UIProvider interface {
-	Render(w http.ResponseWriter, name string, data any) error
-	RenderFragment(w http.ResponseWriter, name string, data any) error // renders without layout wrapper, useful for HTMX
-	RegisterFuncs(funcs template.FuncMap)
-}
-```
-
 ## HealthProvider & HealthReporter
 
 Services opt into health reporting by implementing `HealthReporter`. The
 `Worker` satisfies `HealthProvider`: it walks all active services and
 concurrently invokes `CheckHealth` on any that implement `HealthReporter`,
-returning a map of service name to result (nil = healthy). Panics inside a
-reporter are recovered and surfaced as errors. `HealthProvider` and
-`ReadyProvider` are pre-registered in the DI container — resolve the narrow
-interface instead of depending on `*Worker`.
+returning a map of service name to result (nil = healthy); the results of two
+services with one name are joined. A panic inside a reporter is recovered and
+reported as an error wrapping `gas.ErrPanic`. `HealthProvider` and
+`ReadyProvider` are pre-registered in the DI container: resolve the narrow
+interface instead of depending on `*Worker`. Core registers no health routes.
 
 ```go
 // Implemented by services that can report their own health.
@@ -180,7 +171,7 @@ type HealthProvider interface {
 ## ReadyProvider & ReadyReporter
 
 Same shape as health, but for readiness (a service can be healthy yet not
-ready — warming caches, pending migrations, etc.).
+ready: warming caches, pending migrations, etc.).
 
 ```go
 type ReadyReporter interface {
@@ -205,6 +196,12 @@ type Logger interface {
 	Flush()
 }
 ```
+
+A Worker flushes its Logger at the end of `Shutdown`, after the final
+`shutdown complete` line, and closes it last when it is a service.
+
+`gas.NopLogger` discards everything; its zero value is ready to use and there
+is no constructor function (`&gas.NopLogger{}`).
 
 Context helpers for storing/retrieving a Logger in `context.Context`:
 
@@ -253,7 +250,8 @@ Terminal: `Logger() Logger` returns the new sub-logger.
 ## LogEvent
 
 A single structured log entry. Same field methods as LoggerContext, finalized
-with `Send()`.
+with `Send()`. Call `Send` once; do not use an event after `Send` or from two
+goroutines.
 
 ```go
 type LogEvent interface {
@@ -277,10 +275,16 @@ type MigrationManager interface {
 	Register(service Service, m Migration)
 	RegisterSlice(service Service, migrations []Migration)
 	RegisterFS(service Service, fsys fs.FS) error
-	RunPending() error
-	Down(n int) error
+	RunPendingContext(ctx context.Context) error // apply unapplied migrations in global version order
+	DownContext(ctx context.Context, n int) error // reverse the last n applied
 }
 ```
+
+`Worker.Start` resolves exactly `gas.MigrationManager` and calls
+`RunPendingContext` with its own ctx, after `SystemAllServicesInitialized`
+and before the ready hooks; a failure fails `Start`
+(`gas: run migrations: ...`). Services register their migrations in `Init`.
+A dirty migration blocks the run until it is resolved.
 
 ## Principal & Metadata
 
@@ -343,11 +347,11 @@ type Email struct {
 }
 
 type TemplatedEmail struct {
+	Data            any
 	SubjectTemplate string
 	TextTemplate    string
 	HTMLTemplate    string
-	Data            any
-	Email
+	Email           // embedded; its fields are promoted
 }
 
 type Migration struct {
@@ -372,16 +376,16 @@ type Result interface {
 
 type Job struct {
 	ID            string
-	Body          []byte
 	ReceiptHandle string            // opaque token used by Ack/Nack
 	Attributes    map[string]string // provider-specific metadata
+	Body          []byte
 }
 
 type EnqueueOption func(*enqueueOptions) // see WithDelay, WithGroupID, WithDedupeID, WithJobAttributes
 
 type RegisteredRoute struct {
 	Method     string
-	Path       string
-	Middleware []string
+	Path       string   // full path
+	Middleware []string // names of the named middleware that apply, top-level first
 }
 ```

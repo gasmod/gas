@@ -2,18 +2,20 @@
 name: gas-auth
 description: >
   Reference documentation for the gas/auth Go package
-  (github.com/gasmod/gas/auth) — authentication, authorization, and credential
+  (github.com/gasmod/gas/auth): authentication, authorization, and credential
   management for the Gas ecosystem. Use this skill when writing, reviewing, or
   debugging Go code that uses gas/auth for JWT, server-side sessions, API keys,
   or single-use tokens. Covers the jwt, session, apikey, and token sub-packages,
   Provider interfaces (jwt.Provider, session.Provider, apikey.Provider, token.Provider),
-  authtest mocks, auth.Authenticator/auth.PrincipalRevoker implementations,
-  scheme constants, middleware, MiddlewareOption, WithOnError, Chain composite authenticator, BasePrincipal,
-  session.Session public type, sentinel errors, DI wiring, configuration binding,
+  authtest mocks, auth.Authenticator/auth.Authorizer/auth.PrincipalRevoker implementations,
+  the authenticator error contract (ErrNoCredentials vs ErrUnauthenticated vs infrastructure
+  errors), scheme constants, Middleware, WithOnError, WithChallenge, RequireScheme,
+  RequireAuthorization, session.RequireSameOrigin, Chain composite authenticator, BasePrincipal,
+  session.Session and Rotate, sentinel errors, DI wiring, configuration binding,
   multi-dialect database support (PostgreSQL, MySQL, SQLite), background cleanup goroutines, cookie
   management, and credential revocation. Make sure to use this skill whenever
   working with authentication or authorization in the Gas ecosystem, even if the
-  user doesn't explicitly mention gas/auth — any code that imports
+  user doesn't explicitly mention gas/auth; any code that imports
   gasmod/gas/auth or references auth.Authenticator, auth.PrincipalRevoker, or
   gas.Principal should trigger this skill.
 ---
@@ -35,36 +37,36 @@ import "github.com/gasmod/gas/auth/authtest"
 
 ## Packages
 
-| Package    | Service name         | Implements                                                 | Provider Interface |
-|------------|----------------------|------------------------------------------------------------|--------------------|
-| `auth`     | --                   | `auth.Authenticator` (Chain)                                | --                 |
-| `jwt`      | `gas/auth/jwt`       | `auth.Authenticator`, `gas.Service`                         | `jwt.Provider`     |
+| Package    | ServiceName          | Implements                                                   | Provider Interface |
+|------------|----------------------|--------------------------------------------------------------|--------------------|
+| `auth`     | --                   | `auth.Authenticator` (Chain), middleware, sentinels          | --                 |
+| `jwt`      | `gas/auth/jwt`       | `auth.Authenticator`, `gas.Service`                          | `jwt.Provider`     |
 | `session`  | `gas/auth/session`   | `auth.Authenticator`, `auth.PrincipalRevoker`, `gas.Service` | `session.Provider` |
 | `apikey`   | `gas/auth/apikey`    | `auth.Authenticator`, `auth.PrincipalRevoker`, `gas.Service` | `apikey.Provider`  |
-| `token`    | `gas/auth/token`     | `gas.Service`                                              | `token.Provider`   |
-| `authtest` | --                   | Test mocks                                                 | --                 |
+| `token`    | `gas/auth/token`     | `gas.Service` (not an Authenticator)                         | `token.Provider`   |
+| `authtest` | --                   | Test mocks                                                   | --                 |
+
+Each service package exports `ServiceName`, returned by `Name()` and prefixed
+to every error the service returns.
 
 ## Interfaces
 
-Package `auth` defines the three authentication interfaces. Core keeps only
-`gas.Principal`, its metadata types, and the context helpers
-(`gas.WithPrincipal`, `gas.PrincipalFromContext`, `gas.Context.Principal`).
+Package `auth` defines the three interfaces. Core keeps `gas.Principal`, its
+metadata types (`gas.PrincipalMetadata`, `gas.BasePrincipalMetadata`), and the
+context helpers (`gas.WithPrincipal`, `gas.PrincipalFromContext`,
+`gas.Context.Principal`).
 
 ```go
-// Authenticator extracts a principal from an HTTP request. It returns a
-// non-nil principal on success and an error otherwise; Middleware and Chain
-// treat (nil, nil) as ErrUnauthenticated.
 type Authenticator interface {
     Authenticate(ctx context.Context, r *http.Request) (gas.Principal, error)
 }
 
-// Authorizer decides whether a principal may perform an action on a resource.
 type Authorizer interface {
+    // nil allows, an error matching ErrForbidden denies, any other error
+    // means it could not decide.
     Authorize(ctx context.Context, principal gas.Principal, action, resource string) error
 }
 
-// PrincipalRevoker invalidates one credential, every credential for a
-// subject, or every credential of one scheme for a subject.
 type PrincipalRevoker interface {
     Revoke(ctx context.Context, principal gas.Principal) error
     RevokeAll(ctx context.Context, subject string) error
@@ -72,51 +74,68 @@ type PrincipalRevoker interface {
 }
 ```
 
-Handlers read the authenticated principal with `ctx.Principal()`, which
-returns a 401 `*gas.Error` (`gas.CodeUnauthorized`) when none is present.
+### Authenticator error contract
 
-## Scheme Constants
+An Authenticator returns a principal, or nil and one of:
+
+- `auth.ErrNoCredentials`: the request carries no credentials for it (no
+  header, no cookie). It does **not** wrap `ErrUnauthenticated`. `Chain` skips
+  such members.
+- An error matching `auth.ErrUnauthenticated`: credentials present but not
+  valid. `ErrCredentialsExpired` and `ErrCredentialRevoked` wrap it.
+- Any other error: an infrastructure error (e.g. database down).
+
+Sentinels may be wrapped; match with `errors.Is`. A nil principal with a nil
+error (a typed nil pointer included) counts as `ErrUnauthenticated`
+everywhere, never as success.
+
+Handlers read the authenticated principal with `gas.PrincipalFromContext(ctx)`
+or `ctx.Principal()` on a `gas.Context`, which returns a 401 `*gas.Error`
+(`gas.CodeUnauthorized`) when none is present.
+
+## Scheme Constants and Limits
 
 ```go
 auth.SchemeJWT     = "jwt"
 auth.SchemeSession = "session"
 auth.SchemeAPIKey  = "apikey"
+
+auth.MaxValueLength = 255 // bytes in a subject, API key name, or token purpose
+func CheckLength(field, value string) error // wraps ErrValueTooLong, names field, never value
 ```
 
-Use these constants in `RequireScheme`, `RevokeAllByScheme`, and when
+Use the scheme constants in `RequireScheme`, `RevokeAllByScheme`, and when
 constructing principals.
 
 ## Provider Interfaces
 
 Each service package exports a `Provider` interface capturing its public
-contract. Use these for dependency injection and mocking in consumer code.
+contract, for dependency injection and mocking. They embed the auth
+interfaces.
 
 ```go
 // jwt.Provider
 type Provider interface {
-    Authenticate(ctx context.Context, r *http.Request) (gas.Principal, error)
+    auth.Authenticator
     Sign(subject string, claims map[string]any) (string, error)
     SignWithExpiry(subject string, claims map[string]any, expiry time.Duration) (string, error)
-    Verify(tokenString string) (*TokenClaims, error)
+    Verify(token string) (*TokenClaims, error)
 }
 
 // session.Provider
 type Provider interface {
-    Authenticate(ctx context.Context, r *http.Request) (gas.Principal, error)
-    Revoke(ctx context.Context, principal gas.Principal) error
-    RevokeAll(ctx context.Context, subject string) error
-    RevokeAllByScheme(ctx context.Context, subject, scheme string) error
+    auth.Authenticator
+    auth.PrincipalRevoker
     Create(ctx context.Context, subject string, meta gas.BasePrincipalMetadata, r *http.Request) (*Session, error)
-    SetCookie(w http.ResponseWriter, session *Session)
-    ClearCookie(w http.ResponseWriter)
+    Rotate(ctx context.Context, r *http.Request) (*Session, error)
+    SetCookie(w http.ResponseWriter, sess *Session) error
+    ClearCookie(w http.ResponseWriter) error
 }
 
 // apikey.Provider
 type Provider interface {
-    Authenticate(ctx context.Context, r *http.Request) (gas.Principal, error)
-    Revoke(ctx context.Context, principal gas.Principal) error
-    RevokeAll(ctx context.Context, subject string) error
-    RevokeAllByScheme(ctx context.Context, subject, scheme string) error
+    auth.Authenticator
+    auth.PrincipalRevoker
     Delete(ctx context.Context, principal gas.Principal) error
     DeleteAll(ctx context.Context, subject string) error
     Generate(ctx context.Context, subject, name string, scopes []string, opts ...GenerateOption) (key string, info *KeyInfo, err error)
@@ -133,45 +152,57 @@ type Provider interface {
 }
 ```
 
-Compile-time assertions: `var _ Provider = (*Service)(nil)` in each package.
-
 ## Sentinel Errors
 
 ```go
-// Root package
-auth.ErrUnauthenticated  // no valid credentials provided
-auth.ErrForbidden        // principal lacks permission
-auth.ErrCredentialsExpired // credentials have expired
-auth.ErrCredentialRevoked  // credentials have been revoked
-
-// Token package
-token.ErrTokenInvalid    // token does not exist or has been consumed
-token.ErrTokenExpired    // token has expired
+// Root package, matched with errors.Is
+auth.ErrNoCredentials      // "no credentials"; request carries none for the authenticator
+auth.ErrUnauthenticated    // "unauthenticated"; every credential denial matches it
+auth.ErrCredentialsExpired // "unauthenticated: credentials expired"; wraps ErrUnauthenticated
+auth.ErrCredentialRevoked  // "unauthenticated: credential revoked"; wraps ErrUnauthenticated
+auth.ErrForbidden          // "forbidden"; an Authorizer denied the action
+auth.ErrEmptySubject       // "empty subject"; a credential was to be issued for ""
+auth.ErrValueTooLong       // "value too long"; over MaxValueLength bytes
+auth.ErrSchemeMismatch     // "principal scheme mismatch"; Revoke/Delete got another scheme
+auth.ErrNilPrincipal       // "nil principal"; Revoke/Delete got nil or a nil pointer
 ```
+
+Shared service sentinels, re-exported by every service package
+(`jwt.ErrNotInitialized`, `session.ErrNotInitialized`, ...); they are the same
+values, so they match across services:
+
+| Sentinel              | Meaning                                                           |
+|-----------------------|-------------------------------------------------------------------|
+| `ErrNotInitialized`   | method called before `Init` succeeded, after a failed Init, or after `Close` |
+| `ErrNilLogger`        | constructor got a nil `gas.Logger`                                |
+| `ErrNilConfig`        | `WithConfig(nil)`; Init fails with it                              |
+| `ErrNoConfigProvider` | neither `WithConfig` nor a `gas.ConfigProvider`                    |
+| `ErrInvalidConfig`    | config failed to bind, its `validate` tags, or a package rule      |
+
+Every service error starts with its `ServiceName`, e.g.
+`gas/auth/token: unauthenticated: invalid token`. No error includes a token,
+key, session ID, cookie value, or configuration value.
 
 ## BasePrincipal
 
-Concrete implementation of `gas.Principal`.
+Concrete implementation of `gas.Principal`, returned by the authenticators.
 
 ```go
 func NewPrincipal(subject, scheme, credentialID string, meta gas.PrincipalMetadata) *BasePrincipal
 ```
 
-If `meta` is nil, an empty `gas.BasePrincipalMetadata{}` is used.
+A nil `meta` becomes an empty `gas.BasePrincipalMetadata{}`. A non-nil `meta`
+is kept, not copied: changing the map later shows through, and changing it
+while requests read it is a data race.
 
-| Method           | Returns                 |
-|------------------|-------------------------|
-| `Subject()`      | Stable user identifier  |
-| `Scheme()`       | Auth method name        |
-| `CredentialID()` | Specific credential ID  |
-| `Metadata()`     | `gas.PrincipalMetadata` |
+| Method           | Returns                            |
+|------------------|------------------------------------|
+| `Subject()`      | Stable user identifier             |
+| `Scheme()`       | Auth method name                   |
+| `CredentialID()` | Specific credential ID             |
+| `Metadata()`     | `gas.PrincipalMetadata`, never nil |
 
 ## Chain
-
-Composite authenticator. Tries each authenticator in order, returns the first
-success or the last error. Empty chain returns `ErrUnauthenticated`. A member
-that returns a nil principal with a nil error has failed with
-`ErrUnauthenticated`, and the chain moves on.
 
 ```go
 type Chain []auth.Authenticator
@@ -179,198 +210,324 @@ type Chain []auth.Authenticator
 func (c Chain) Authenticate(ctx context.Context, r *http.Request) (gas.Principal, error)
 ```
 
+Tries members in order and returns the first success; later members are not
+called. Members returning `ErrNoCredentials` are skipped. When none succeeds:
+
+1. Every member returned `ErrNoCredentials`, or the chain is empty:
+   `ErrNoCredentials`.
+2. Otherwise, if any member returned an infrastructure error: those errors
+   joined with `errors.Join`, in member order (an outage is never hidden by a
+   denial).
+3. Otherwise: the error of the first member that denied the credentials it saw
+   (an expired JWT stays `ErrCredentialsExpired`).
+
+Errors are returned unwrapped. A nil member panics when the chain reaches it.
+
 ## Middleware
 
 ```go
-func Middleware(provider auth.Authenticator, opts ...MiddlewareOption) func(http.Handler) http.Handler
-```
-
-Calls `provider.Authenticate`, sets principal in context via
-`gas.WithPrincipal` on success, invokes the error handler on failure
-(defaults to plain 401 Unauthorized). A nil principal with a nil error is a
-failure with `ErrUnauthenticated`; the next handler never runs without a
-principal. Panics if `provider` is nil.
-
-### MiddlewareOption
-
-```go
-type MiddlewareOption func(*middlewareOptions)
-
+func Middleware(a Authenticator, opts ...MiddlewareOption) func(http.Handler) http.Handler
 func WithOnError(fn func(w http.ResponseWriter, r *http.Request, err error)) MiddlewareOption
+func WithChallenge(value string) MiddlewareOption
 ```
 
-`WithOnError` sets a custom error handler invoked when authentication fails.
-The callback receives the original error and is responsible for writing the
-HTTP response.
+On success, stores the principal with `gas.WithPrincipal` and calls the next
+handler. Otherwise it does not call next and answers:
+
+- **401** `Unauthorized` (plain text, via `http.Error`) for `ErrNoCredentials`
+  or an error matching `ErrUnauthenticated`.
+- **500** `Internal Server Error` for any other error, `ErrForbidden` from an
+  authenticator included. If the request context carries a `gas.Logger` (as
+  `gas.RequestLogger` arranges), it is logged at error level with message
+  `authentication failed` and the error under `error`; nothing is logged once
+  the request context has ended.
+
+`WithOnError` replaces both responses; the callback gets the authenticator's
+error and owns the response and its logging. A nil fn keeps the default.
+`WithChallenge` sets a `WWW-Authenticate` header on 401-class responses,
+before the error function runs (which may change it); default none.
+`Middleware` panics at construction when the Authenticator is nil or a nil
+pointer.
 
 ```go
-// Example: JSON error response
-auth.Middleware(chain, auth.WithOnError(func(w http.ResponseWriter, r *http.Request, err error) {
-    w.Header().Set("Content-Type", "application/json")
-    w.WriteHeader(http.StatusUnauthorized)
-    json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-}))
+// Example: JSON error response that keeps 401 vs 500 apart
+mw := auth.Middleware(chain,
+    auth.WithChallenge(`Bearer realm="api"`),
+    auth.WithOnError(func(w http.ResponseWriter, r *http.Request, err error) {
+        status := http.StatusInternalServerError
+        if errors.Is(err, auth.ErrNoCredentials) || errors.Is(err, auth.ErrUnauthenticated) {
+            status = http.StatusUnauthorized
+        }
+        w.Header().Set("Content-Type", "application/json")
+        w.WriteHeader(status)
+        _ = json.NewEncoder(w).Encode(map[string]string{"error": http.StatusText(status)})
+    }),
+)
 ```
+
+Do not echo `err.Error()` to clients for 500s; it may describe internals.
+
+### RequireScheme and RequireAuthorization
 
 ```go
 func RequireScheme(scheme string) func(http.Handler) http.Handler
+func RequireAuthorization(a Authorizer, action, resource string) func(http.Handler) http.Handler
 ```
 
-Reads principal from context via `gas.PrincipalFromContext`. Writes 403 if
-absent or scheme doesn't match (case-sensitive comparison).
+Both read the principal `Middleware` stored, so put them inside it.
+`RequireScheme` compares exactly: no principal is 401 `Unauthorized`, another
+scheme 403 `Forbidden`. `RequireAuthorization` runs the Authorizer with a
+fixed action and resource: no principal 401, denial (`ErrForbidden`) 403, any
+other error 500 (logged like Middleware, message `authorization failed`). It
+panics at construction for a nil or nil-pointer Authorizer.
+
+```go
+authn := auth.Middleware(auth.Chain{jwtSvc, sessionSvc}, auth.WithChallenge(`Bearer realm="api"`))
+reports := auth.RequireAuthorization(authorizer, "read", "reports")
+mux.Handle("/reports", authn(reports(reportsHandler)))
+```
+
+## Common Service Behavior
+
+All four services share these rules:
+
+- **Constructor.** `New(opts...)` returns the constructor the DI container
+  calls. It fails only for a nil logger (`ErrNilLogger`). A nil
+  `gas.ConfigProvider` is accepted; `Init` then requires `WithConfig`.
+- **Config resolution.** `Init` binds `DefaultConfig()` from the
+  `gas.ConfigProvider` (section `jwt`, `session`, `apikey`, or `token`), or
+  with `WithConfig(cfg)` uses a copy of `*cfg`, never mutating it. Either way
+  the `validate` tags and the package rules are checked; failure is
+  `ErrInvalidConfig`.
+- **Lifecycle.** `Init` may run again, with or without `Close` between, and
+  re-reads the config. A failed `Init` leaves the service uninitialized and
+  stops its cleanup. Every method but `Name`, `Init`, `Close` (and apikey's
+  `WithTx`) returns `ErrNotInitialized` when uninitialized, which
+  `auth.Middleware` answers with a 500. `Close` never fails.
+- **Subjects.** Issuing for an empty subject is `ErrEmptySubject`; a subject
+  (and API key name, token purpose) over 255 bytes is `ErrValueTooLong`.
+- **Principal methods.** `Revoke`/`Delete` return `ErrNilPrincipal` for nil
+  and `ErrSchemeMismatch` for another scheme. `RevokeAllByScheme` with another
+  scheme is a no-op (after the initialization check).
+- **Concurrency.** Every Service is safe for concurrent use, `Init` and
+  `Close` included.
 
 ## JWT Service
 
-Stateless JWT authentication supporting HS256 (HMAC) and RS256 (RSA).
+Stateless JWT authentication with HS256 (HMAC) or RS256 (RSA). No database.
 
-### Constructor
+### Constructor and options
 
 ```go
 func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) (*Service, error)
+func WithConfig(cfg *Config) Option
 ```
 
-### Options
+There is no `WithSigningMethod`; set `SigningMethod` in the config.
 
-| Option                             | Description                                     |
-|------------------------------------|-------------------------------------------------|
-| `WithConfig(cfg *Config)`          | Set config explicitly (skips DI config binding) |
-| `WithSigningMethod(method string)` | Override signing method                         |
-
-### Lifecycle (gas.Service)
-
-| Method  | Signature     | Description                  |
-|---------|---------------|------------------------------|
-| `Name`  | `() string`   | Returns `"gas/auth/jwt"`     |
-| `Init`  | `(ctx) error` | Validates config, loads keys |
-| `Close` | `(ctx) error` | No-op (stateless)            |
-
-### Methods
+### Constants
 
 ```go
-func (s *Service) Authenticate(ctx context.Context, r *http.Request) (gas.Principal, error)
-```
-
-Reads `Authorization: Bearer <token>` header (case-insensitive "Bearer").
-Returns principal with scheme `auth.SchemeJWT`. Maps `jwt.ErrTokenExpired` to
-`auth.ErrCredentialsExpired`.
-
-```go
-func (s *Service) Sign(subject string, claims map[string]any) (string, error)
-func (s *Service) SignWithExpiry(subject string, claims map[string]any, expiry time.Duration) (string, error)
-func (s *Service) Verify(tokenString string) (*TokenClaims, error)
-```
-
-`Sign` creates a JWT with the default expiry. `Verify` parses and validates,
-enforcing `WithValidMethods`, issuer, and audience if configured.
-
-### TokenClaims
-
-```go
-type TokenClaims struct {
-    ExpiresAt    time.Time
-    IssuedAt     time.Time
-    CustomClaims map[string]any
-    Subject      string
-    TokenID      string
-    Issuer       string
-    Audience     []string
-}
+jwt.MethodHS256, jwt.MethodRS256        // "HS256", "RS256"
+jwt.DefaultSigningMethod = MethodHS256
+jwt.DefaultExpiry        = 15 * time.Minute
+jwt.MinHMACKeyBytes      = 32
+jwt.MinRSAKeyBits        = 2048
 ```
 
 ### Config
 
 ```go
 type Config struct {
-    gas.WithGasEnv
     JWT Settings
 }
 
 type Settings struct {
-    SigningKey      string        // HMAC key for HS256
-    SigningMethod   string        // "HS256" (default) or "RS256"
-    PublicKeyPath   string        // RSA public key PEM path
-    PrivateKeyPath  string        // RSA private key PEM path (required by Init for RS256)
-    Issuer          string        // expected "iss" claim
-    Audience        string        // expected "aud" claim
-    Expiry          time.Duration // default 15m
+    SigningKey     gas.Secret    // HS256 key, >= 32 bytes; must be empty for RS256; prints as [redacted]
+    SigningMethod  string        `validate:"oneof=HS256 RS256"`
+    PublicKeyPath  string        // RS256 required; HS256 must be empty
+    PrivateKeyPath string        // RS256 optional: without it, verify-only; HS256 must be empty
+    Issuer         string        // set as iss and required on verify, when not empty
+    Audience       string        // set as aud and required on verify, when not empty
+    Expiry         time.Duration `validate:"gt=0s"`  // default 15m
+    Leeway         time.Duration `validate:"gte=0s"` // clock skew for exp/nbf/iat; default 0
 }
 
 func DefaultConfig() *Config
 ```
 
-Tags: `SigningMethod` `oneof=HS256 RS256`, `Expiry` `gt=0s`. `ConfigProvider.Bind`
-checks them; a config passed with `WithConfig` is not checked against them. The
-key material the method needs (HS256: `SigningKey` of 32+ bytes; RS256:
-`PublicKeyPath`) is checked in `Init` for every config, since a tag cannot
-express it.
+Keys `jwt.signingkey`, `jwt.signingmethod`, `jwt.publickeypath`,
+`jwt.privatekeypath`, `jwt.issuer`, `jwt.audience`, `jwt.expiry`,
+`jwt.leeway`. A setting the method does not use is an error, not ignored. RSA
+key files are read up to 64 KiB (PKIX/PKCS #1 public, PKCS #8/PKCS #1
+private, unencrypted), must be >= 2048 bits, and the private key must match
+the public one; failures wrap `ErrKeyLoadFailed` (and `ErrKeyTooSmall`).
 
-Validation: HS256 requires `SigningKey`, RS256 requires `PublicKeyPath`.
-`Init` also fails with `jwt: signing key not configured` when there is no
-signing key: an RS256 config without `PrivateKeyPath` (there is no verify-only
-mode), or an unknown signing method in a `WithConfig` config.
+### Methods
+
+```go
+func (s *Service) Sign(subject string, claims map[string]any) (string, error)
+func (s *Service) SignWithExpiry(subject string, claims map[string]any, expiry time.Duration) (string, error)
+func (s *Service) Verify(token string) (*TokenClaims, error)
+func (s *Service) Authenticate(ctx context.Context, r *http.Request) (gas.Principal, error)
+```
+
+**Sign** adds `sub`, a random `jti`, `iat`, `exp`, and `iss`/`aud` when
+configured; times are whole seconds. It fails with `ErrSigningKeyNotConfigured`
+(RS256 verify-only), `ErrEmptySubject`, `ErrValueTooLong`, `ErrInvalidTTL`
+(expiry not positive), `ErrReservedClaim` (a custom claim named `aud`, `exp`,
+`iat`, `iss`, `jti`, `nbf`, or `sub`), or `ErrInvalidClaim` (not
+JSON-encodable). Nil claims means none.
+
+**Verify** requires the exact configured `alg`, a valid signature, `exp`
+(now before `exp` + leeway), a non-empty string `sub`, `iat`/`nbf` not in the
+future beyond leeway, and matching `iss`/`aud` when configured. `jti` is
+optional. Denials wrap `ErrTokenInvalid` (wraps `auth.ErrUnauthenticated`),
+or `ErrTokenExpired` (wraps `auth.ErrCredentialsExpired`) when only `exp`
+fails. Custom claims decode as JSON does (numbers are `float64`).
+
+**Authenticate** reads `Authorization: Bearer <token>` (`Bearer` in any
+case). No bearer header, or a nil request: `auth.ErrNoCredentials`. More than
+one bearer header, or one without a token: `ErrTokenInvalid`. The principal
+has scheme `auth.SchemeJWT`, `CredentialID` = the `jti` (or empty), and the
+custom claims as metadata. JWTs cannot be revoked; keep the expiry short.
+
+```go
+type TokenClaims struct {
+    ExpiresAt    time.Time
+    IssuedAt     time.Time      // zero when absent
+    CustomClaims map[string]any // never nil
+    Subject      string
+    TokenID      string         // jti, or empty
+    Issuer       string
+    Audience     []string
+}
+```
+
+### Errors
+
+`ErrKeyLoadFailed`, `ErrKeyTooSmall`, `ErrSigningKeyNotConfigured`,
+`ErrEmptySubject`, `ErrValueTooLong`, `ErrInvalidTTL`, `ErrReservedClaim`,
+`ErrInvalidClaim`, `ErrTokenInvalid`, `ErrTokenExpired`, plus the shared
+service sentinels.
+
+### By hand
+
+```go
+svc, err := jwt.New(jwt.WithConfig(&jwt.Config{JWT: jwt.Settings{
+    SigningMethod: jwt.MethodHS256,
+    SigningKey:    gas.Secret(key), // at least 32 bytes
+    Expiry:        15 * time.Minute,
+}}))(nil, logger)
+if err != nil {
+    return err
+}
+if err := svc.Init(ctx); err != nil {
+    return err
+}
+tok, err := svc.Sign("user-42", map[string]any{"role": "admin"})
+```
 
 ## Session Service
 
 Server-side session authentication backed by a database.
 
-### Constructor
+### Constructor and options
 
 ```go
 func New(opts ...Option) func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager, gas.ConfigProvider) (*Service, error)
+func WithConfig(cfg *Config) Option
+func RequireSameOrigin() func(http.Handler) http.Handler
 ```
-
-### Options
-
-| Option                    | Description                                     |
-|---------------------------|-------------------------------------------------|
-| `WithConfig(cfg *Config)` | Set config explicitly (skips DI config binding) |
-
-### Lifecycle (gas.Service)
-
-| Method  | Signature     | Description                                   |
-|---------|---------------|-----------------------------------------------|
-| `Name`  | `() string`   | Returns `"gas/auth/session"`                  |
-| `Init`  | `(ctx) error` | Validates config, inits store, starts cleanup |
-| `Close` | `(ctx) error` | Stops cleanup goroutine                       |
 
 ### Methods
 
 ```go
-func (s *Service) Authenticate(ctx context.Context, r *http.Request) (gas.Principal, error)
-```
-
-Reads session ID from the configured cookie, looks it up in the database,
-validates expiry, optionally extends TTL. Returns principal with scheme
-`auth.SchemeSession`, `CredentialID` = session ID.
-
-```go
 func (s *Service) Create(ctx context.Context, subject string, meta gas.BasePrincipalMetadata, r *http.Request) (*Session, error)
-func (s *Service) SetCookie(w http.ResponseWriter, session *Session)
-func (s *Service) ClearCookie(w http.ResponseWriter)
-```
-
-`Create` generates a cryptographically random session ID, stores it in the
-database, captures IP and user agent from the request, and returns a
-`*session.Session` (public type). Caller must call `SetCookie` afterward.
-
-```go
+func (s *Service) Rotate(ctx context.Context, r *http.Request) (*Session, error)
+func (s *Service) SetCookie(w http.ResponseWriter, sess *Session) error
+func (s *Service) ClearCookie(w http.ResponseWriter) error
+func (s *Service) Authenticate(ctx context.Context, r *http.Request) (gas.Principal, error)
 func (s *Service) Revoke(ctx context.Context, principal gas.Principal) error
 func (s *Service) RevokeAll(ctx context.Context, subject string) error
 func (s *Service) RevokeAllByScheme(ctx context.Context, subject, scheme string) error
 ```
 
-`RevokeAllByScheme` delegates to `RevokeAll` if scheme is `auth.SchemeSession`,
-otherwise no-op.
+**Create** makes a 32-byte random ID (43 chars base64url), stores its
+**SHA-256 hash** (never the ID), records the request's remote address and
+User-Agent (cleaned, capped at 255 and 512 bytes), and returns a
+`*session.Session`. A nil request is `ErrNilRequest`. Metadata is stored as
+JSON (numbers read back as `float64`); nil meta is empty. The caller must call
+`SetCookie` afterward and check its error.
 
-### Session (public type, `session.Session`)
+**SetCookie** writes the configured cookie with `Expires` at the session's
+absolute expiry (`CreatedAt + MaxLifetime`). A nil session, or one not from
+`Create`/`Rotate`, is `ErrInvalidSession` and writes nothing. **ClearCookie**
+writes an empty value with `Max-Age=0`; it does not delete the session.
+
+**Authenticate** returns `auth.ErrNoCredentials` (nil request, no/empty/
+unparseable cookie), `auth.ErrUnauthenticated` (malformed or unknown ID),
+`auth.ErrCredentialsExpired` (past idle or absolute expiry), each prefixed
+with `gas/auth/session: `. On success: scheme `auth.SchemeSession`,
+`CredentialID` = the **SHA-256 hex of the session ID** (not the ID), and the
+stored metadata. A database failure is an infrastructure error (500).
+
+**Rotate** moves the session named by the request's cookie to a new ID in one
+`UPDATE`, keeping subject, metadata, and creation time (so the absolute expiry
+never moves); the old ID stops working. Call `SetCookie` with the result.
+Rotate after privilege changes (role change, step-up) and after a login that
+keeps an existing session, against session fixation.
+
+**Revoke** deletes the principal's session; **RevokeAll** every session of a
+subject; **RevokeAllByScheme** acts only for `auth.SchemeSession`. Revoking
+what is gone is not an error. Revoking does not clear the cookie.
+
+### Expiry
+
+Two expiries: idle (`Session.ExpiresAt`, `SessionTTL` after creation) and
+absolute (`MaxLifetime` after creation). With `ExtendOnAccess`,
+`Authenticate` moves the idle expiry to `SessionTTL` from now, capped by the
+absolute one, only when less than half of `SessionTTL` remains; the write is
+best-effort (failure logged at warn, `session extend failed`). A cleanup
+deletes expired sessions every `CleanupInterval`, each run bounded by
+`CleanupTimeout`; first run one interval after `Init`.
+
+### CSRF: RequireSameOrigin
+
+Middleware that lets GET, HEAD, OPTIONS, TRACE through and answers other
+methods with a 403 `Forbidden` when `Sec-Fetch-Site` is present and not
+`same-origin`/`none`, or `Origin` is present and its host:port differs from
+the request's Host. Requests with neither header pass. It does not need the
+Service.
+
+```go
+login := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+    // ... check the user's password ...
+    sess, err := sessions.Create(r.Context(), "user-42", nil, r)
+    if err != nil {
+        http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+        return
+    }
+    if err := sessions.SetCookie(w, sess); err != nil {
+        http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+        return
+    }
+})
+
+sameOrigin := session.RequireSameOrigin()
+mux.Handle("POST /login", sameOrigin(login))
+mux.Handle("/", sameOrigin(auth.Middleware(sessions)(appHandler)))
+```
+
+### Session (public type)
 
 ```go
 type Session struct {
     CreatedAt  time.Time
-    ExpiresAt  time.Time
+    ExpiresAt  time.Time // idle expiry
     LastActive time.Time
     Metadata   gas.BasePrincipalMetadata
-    ID         string
+    ID         string    // the secret the cookie carries; stored nowhere else
     Subject    string
     IPAddress  string
     UserAgent  string
@@ -381,18 +538,18 @@ type Session struct {
 
 ```go
 type Config struct {
-    gas.WithGasEnv
     Session Settings
 }
 
 type Settings struct {
-    CookieName      string        // default "session_id"
-    CookiePath      string        // default "/"
-    CookieDomain    string
-    CookieSameSite  http.SameSite // default LaxMode
-    SessionTTL      time.Duration // default 24h
-    CleanupInterval time.Duration // default 1h; 0 disables
-    CleanupTimeout  time.Duration // default 30s; per-run cleanup query timeout
+    CookieName      string        `validate:"required"` // default DefaultCookieName "session_id"
+    CookiePath      string        // default DefaultCookiePath "/"
+    CookieDomain    string        // default empty
+    CookieSameSite  http.SameSite // default http.SameSiteLaxMode
+    SessionTTL      time.Duration `validate:"gt=0s"` // default 24h; <= MaxLifetime
+    MaxLifetime     time.Duration `validate:"gt=0s"` // default 30 days
+    CleanupInterval time.Duration // default 1h; 0 disables; negative is an error
+    CleanupTimeout  time.Duration // default 30s; positive when cleanup is on
     CookieSecure    bool          // default true
     CookieHTTPOnly  bool          // default true
     ExtendOnAccess  bool          // default true
@@ -401,65 +558,60 @@ type Settings struct {
 func DefaultConfig() *Config
 ```
 
-Tags: `CookieName` `required`, `SessionTTL` `gt=0s`. `Init` also requires a
-positive `CleanupTimeout` when `CleanupInterval` is set.
+Constants: `DefaultCookieName`, `DefaultCookiePath`, `DefaultSessionTTL`,
+`DefaultMaxLifetime`, `DefaultCleanupInterval`, `DefaultCleanupTimeout`.
+`Init` also checks that name, path, and domain make a valid cookie, and logs a
+warning per insecure attribute (not Secure, not HttpOnly, SameSite not
+Lax/Strict).
+
+### Errors
+
+`ErrNilRequest`, `ErrInvalidSession`, `ErrEmptySubject`, plus the auth
+denial sentinels, `auth.ErrValueTooLong`, `auth.ErrNilPrincipal`,
+`auth.ErrSchemeMismatch`, and the shared service sentinels. Unlike the other
+services, session's operation errors name the operation:
+`gas/auth/session: create: empty subject`, `gas/auth/session: revoke: nil principal`.
 
 ## API Key Service
 
-API key authentication with SHA-256 hashing and scope support.
+API key authentication with SHA-256 hashing and scopes.
 
-### Constructor
+### Constructor and options
 
 ```go
 func New(opts ...Option) func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager, gas.ConfigProvider) (*Service, error)
+func WithConfig(cfg *Config) Option
 ```
 
-### Options
+Constants: `ServiceName`, `PrincipalMetadataKeyScopes = "scopes"`,
+`DefaultHeaderName = "X-API-Key"`, `DefaultKeyLength = 32`,
+`DefaultCleanupTimeout = 30 * time.Second`.
 
-| Option                    | Description                                     |
-|---------------------------|-------------------------------------------------|
-| `WithConfig(cfg *Config)` | Set config explicitly (skips DI config binding) |
-
-### Lifecycle (gas.Service)
-
-| Method  | Signature     | Description                   |
-|---------|---------------|-------------------------------|
-| `Name`  | `() string`   | Returns `"gas/auth/apikey"`   |
-| `Init`  | `(ctx) error` | Validates config, inits store |
-| `Close` | `(ctx) error` | No-op (stateless)             |
-
-### Methods
-
-```go
-func (s *Service) Authenticate(ctx context.Context, r *http.Request) (gas.Principal, error)
-```
-
-Reads API key from the configured header, hashes it, looks up by hash,
-validates expiry, updates `last_used`. Returns principal with scheme
-`auth.SchemeAPIKey`. Scopes are included in metadata under `"scopes"` key.
+### Generate
 
 ```go
 func (s *Service) Generate(ctx context.Context, subject, name string, scopes []string, opts ...GenerateOption) (key string, info *KeyInfo, err error)
 ```
 
-Generates a random key, hashes it for storage, and returns the full key
-exactly once along with the `KeyInfo` that mirrors the persisted row (ID,
-subject, name, key hash, prefix, scopes, metadata, expiry, createdAt). The
-plaintext key is only available from this call — only its hash is stored.
-The key is prefixed with the configured prefix. `info.Metadata` is a defensive
-copy of the caller's map.
+The key is `Prefix` + `KeyLength` random bytes as unpadded base64url (43
+chars by default). Only its SHA-256 hash is stored; the plaintext key is
+returned exactly once. `info.KeyPrefix` is `Prefix` plus the first eight
+characters of the random part, for display.
 
-Optional `GenerateOption` values customize the new key:
+Checks, in this order, storing nothing on failure: subject non-empty
+(`ErrEmptySubject`); subject and name at most 255 bytes (`ErrValueTooLong`,
+name may be empty); expiry; scopes non-empty, no comma, no leading/trailing
+white space (`ErrInvalidScope`); metadata without the reserved key `scopes`
+(`ErrReservedMetadataKey`) and JSON-encodable (`ErrInvalidMetadata`).
 
-| Option                            | Effect                                                                   |
-|-----------------------------------|--------------------------------------------------------------------------|
-| `WithMetadata(map[string]any)`    | JSON-encoded and stored in the `metadata` column; nil/empty is ignored.  |
-| `WithTTL(time.Duration)`          | Sets `expires_at` to `time.Now().Add(ttl)`; non-positive is ignored.     |
-| `WithExpiresAt(time.Time)`        | Sets an explicit `expires_at`; zero time is ignored.                     |
+| Option                         | Effect                                                              |
+|--------------------------------|---------------------------------------------------------------------|
+| `WithMetadata(map[string]any)` | Stored as JSON; nil/empty stores none. Values read back as JSON decodes them. |
+| `WithTTL(time.Duration)`       | Expires ttl after the call; not positive is `ErrInvalidTTL`.         |
+| `WithExpiresAt(time.Time)`     | Expires at t; not after now (zero included) is `ErrInvalidExpiry`.   |
 
-If both `WithTTL` and `WithExpiresAt` are supplied, the last one wins. Expired
-keys fail `Authenticate` with `auth.ErrCredentialsExpired`. A scope containing a
-comma makes `Generate` return an error.
+Of `WithTTL` and `WithExpiresAt`, the last one given applies. Without either
+the key never expires.
 
 ```go
 key, info, err := svc.Generate(ctx, "user-1", "ci-token", []string{"read"},
@@ -468,48 +620,62 @@ key, info, err := svc.Generate(ctx, "user-1", "ci-token", []string{"read"},
 )
 ```
 
+### Authenticate
+
+Reads the first value of `HeaderName`, compared exactly (white space is part
+of the key):
+
+1. Missing or empty header: `auth.ErrNoCredentials`.
+2. Unknown key: `auth.ErrUnauthenticated`.
+3. Revoked key (even if also expired): `auth.ErrCredentialRevoked`.
+4. Expired key (`ExpiresAt` not after now): `auth.ErrCredentialsExpired`.
+5. Success: scheme `auth.SchemeAPIKey`, `CredentialID` = `KeyInfo.ID`,
+   metadata = the key's metadata plus its scopes as `[]string` under
+   `apikey.PrincipalMetadataKeyScopes`.
+
+The `LastUsed` write is best-effort (failure logged at warn). A database
+failure is an infrastructure error (500).
+
+### List, revoke, delete
+
 ```go
 func (s *Service) List(ctx context.Context, subject string, opts ...ListOption) ([]KeyInfo, error)
-```
-
-Returns non-sensitive info about keys for a subject (ID, name, prefix, scopes,
-timestamps). Ordered by `created_at DESC`. By default, soft-deleted (revoked)
-keys are excluded. Pass `apikey.WithIncludeRevoked()` to include them — revoked
-rows come back with a non-nil `KeyInfo.DeletedAt`.
-
-```go
-active, _ := svc.List(ctx, "user-1")
-all, _    := svc.List(ctx, "user-1", apikey.WithIncludeRevoked())
-```
-
-```go
 func (s *Service) Revoke(ctx context.Context, principal gas.Principal) error
 func (s *Service) RevokeAll(ctx context.Context, subject string) error
 func (s *Service) RevokeAllByScheme(ctx context.Context, subject, scheme string) error
+func (s *Service) Delete(ctx context.Context, principal gas.Principal) error
+func (s *Service) DeleteAll(ctx context.Context, subject string) error
 ```
 
-`RevokeAllByScheme` delegates to `RevokeAll` if scheme is `auth.SchemeAPIKey`,
-otherwise no-op. `Revoke` and `RevokeAll` soft-delete (the row keeps
-`deleted_at` and no longer authenticates); `Delete(ctx, principal)` and
-`DeleteAll(ctx, subject)` remove rows permanently.
+`List` returns newest first (ties by ID descending), revoked keys excluded
+unless `apikey.WithIncludeRevoked()`; expired keys are listed until deleted.
+`Revoke`/`RevokeAll` soft-delete (row stays with `DeletedAt` set and fails
+with `ErrCredentialRevoked`); revoking twice keeps the first time.
+`Delete`/`DeleteAll` remove rows; a deleted key then fails as unknown. Unknown
+keys are no-ops.
+
+```go
+active, err := svc.List(ctx, "user-1")
+all, err := svc.List(ctx, "user-1", apikey.WithIncludeRevoked())
+```
+
+### Transactions
 
 ```go
 func (s *Service) WithTx(tx *sql.Tx) Provider
 ```
 
-Returns a `Provider` whose operations execute against `tx`, letting callers
-compose API key writes atomically with their own application writes. The
-caller owns the transaction (`BeginTx`/`Commit`/`Rollback` via
-`gas.DatabaseProvider`); the returned `Provider` is scoped to the lifetime of
-`tx` and must not be cached. All Provider methods work on the tx-scoped
-variant.
+Returns a `Provider` whose operations run in `tx`, so key writes commit or
+roll back with the caller's writes. The caller owns `tx`; the Provider must
+not outlive it, and `tx` must not be nil. It checks the parent service's
+initialization at each call.
 
 ```go
-_ = dbProv.WithTx(ctx, nil, func(tx *sql.Tx) error {
-    if err := userRepo.WithTx(tx).Insert(ctx, user); err != nil {
+err := db.WithTx(ctx, nil, func(tx *sql.Tx) error {
+    if _, err := tx.ExecContext(ctx, "INSERT INTO users (id) VALUES ($1)", userID); err != nil {
         return err
     }
-    _, _, err := apiKeySvc.WithTx(tx).Generate(ctx, user.ID, "initial", []string{"read"})
+    _, _, err := keys.WithTx(tx).Generate(ctx, userID, "initial", []string{"read"})
     return err
 })
 ```
@@ -520,160 +686,143 @@ _ = dbProv.WithTx(ctx, nil, func(tx *sql.Tx) error {
 type KeyInfo struct {
     CreatedAt time.Time
     LastUsed  *time.Time
-    ExpiresAt *time.Time
-    DeletedAt *time.Time
-    Metadata  map[string]any
-    ID        string
+    ExpiresAt *time.Time     // nil: never expires
+    DeletedAt *time.Time     // non-nil: revoked
+    Metadata  map[string]any // never nil
+    ID        string         // the principal's CredentialID
     Subject   string
-    KeyHash   string
     Name      string
     KeyPrefix string
-    Scopes    []string
+    Scopes    []string       // never nil
 }
 ```
+
+It holds neither the key nor its hash.
 
 ### Config
 
 ```go
 type Config struct {
-    gas.WithGasEnv
     APIKey Settings
 }
 
 type Settings struct {
-    HeaderName string // default "X-API-Key"
-    Prefix     string // prepended to generated keys
-    KeyLength  int    // default 32; minimum 16
+    HeaderName      string        `validate:"required"` // default "X-API-Key"
+    Prefix          string        // prepended to generated keys, e.g. "gas_"
+    KeyLength       int           `validate:"min=16"`   // default 32
+    CleanupInterval time.Duration // default 0: cleanup off; negative is an error
+    CleanupTimeout  time.Duration // default 30s; positive when cleanup is on
 }
 
 func DefaultConfig() *Config
 ```
 
-Tag: `KeyLength` `min=16`, checked by `ConfigProvider.Bind` only; a config
-passed with `WithConfig` is not checked.
+The cleanup (off by default) deletes expired keys, revoked or not.
+
+### Errors
+
+`ErrInvalidScope`, `ErrReservedMetadataKey`, `ErrInvalidMetadata`,
+`ErrInvalidTTL`, `ErrInvalidExpiry`, and aliases `ErrEmptySubject`,
+`ErrValueTooLong`, `ErrNilPrincipal`, `ErrSchemeMismatch` (the auth ones),
+plus the shared service sentinels.
 
 ## Token Service
 
 Single-use, time-limited tokens for magic links, email verification, password
-resets, and invite links. Tokens are NOT authenticators -- they are verified
-once and consumed.
+resets, and invite links. Tokens are NOT authenticators: verified once and
+consumed.
 
-### Constructor
+### Constructor and options
 
 ```go
 func New(opts ...Option) func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager, gas.ConfigProvider) (*Service, error)
+func WithConfig(cfg *Config) Option
 ```
-
-### Options
-
-| Option                    | Description                                     |
-|---------------------------|-------------------------------------------------|
-| `WithConfig(cfg *Config)` | Set config explicitly (skips DI config binding) |
-
-### Lifecycle (gas.Service)
-
-| Method  | Signature     | Description                                   |
-|---------|---------------|-----------------------------------------------|
-| `Name`  | `() string`   | Returns `"gas/auth/token"`                    |
-| `Init`  | `(ctx) error` | Validates config, inits store, starts cleanup |
-| `Close` | `(ctx) error` | Stops cleanup goroutine                       |
 
 ### Methods
 
 ```go
 func (s *Service) Issue(ctx context.Context, subject, purpose string, ttl time.Duration) (string, error)
-```
-
-Generates a random token, hashes it (SHA-256), stores the hash. Returns the
-raw token exactly once. If `ttl == 0`, uses `DefaultTTL`.
-
-```go
-func (s *Service) Verify(ctx context.Context, rawToken, purpose string) (subject string, err error)
-```
-
-Hashes the raw token, looks up by hash, **deletes the token regardless of
-outcome** (single-use), then validates purpose and expiry. Returns
-`ErrTokenInvalid` if not found or purpose mismatch, `ErrTokenExpired` if
-expired.
-
-```go
+func (s *Service) Verify(ctx context.Context, rawToken, purpose string) (string, error)
 func (s *Service) Revoke(ctx context.Context, rawToken string) error
 func (s *Service) RevokeAllByPurpose(ctx context.Context, subject, purpose string) error
 ```
 
-`Revoke` returns `ErrTokenInvalid` when no stored token matches `rawToken`.
+**Issue** makes `TokenLength` random bytes as unpadded base64url (43 chars by
+default, URL-safe), stores its SHA-256 hash, and returns the raw token once.
+`ttl == 0` uses `DefaultTTL`; a negative ttl is `ErrInvalidTTL`. Empty
+subject is `auth.ErrEmptySubject`; subject or purpose over 255 bytes is
+`auth.ErrValueTooLong`. The purpose may be empty.
+
+**Verify** atomically deletes the stored token and reads it, so at most one
+call succeeds, **whatever the outcome**. Then: not found (or already
+consumed/revoked) or purpose mismatch is `ErrTokenInvalid`; expired is
+`ErrTokenExpired`; otherwise the subject. Purpose is checked before expiry.
+`errors.Is(err, auth.ErrUnauthenticated)` holds for every denial.
+
+**Revoke** deletes one token; an unknown token is **not** an error.
+**RevokeAllByPurpose** deletes every token of a subject for a purpose,
+expired ones included (e.g. cancel outstanding reset links after a reset).
+
+```go
+raw, err := tokens.Issue(ctx, userID, "password-reset", 0)
+// ... send the link; later, in the handler it leads to:
+subject, err := tokens.Verify(ctx, r.FormValue("token"), "password-reset")
+if errors.Is(err, auth.ErrUnauthenticated) {
+    // unknown, used, expired, or not a reset token: ask for a new link
+}
+```
 
 ### Config
 
 ```go
 type Config struct {
-    gas.WithGasEnv
     Token Settings
 }
 
 type Settings struct {
-    DefaultTTL      time.Duration // default 15m
-    TokenLength     int           // default 32; minimum 16
-    CleanupInterval time.Duration // default 1h; 0 disables
-    CleanupTimeout  time.Duration // default 30s; per-run cleanup query timeout
+    DefaultTTL      time.Duration `validate:"gt=0s"`  // default 15m
+    TokenLength     int           `validate:"min=16"` // default 32
+    CleanupInterval time.Duration // default 1h; 0 disables; negative is an error
+    CleanupTimeout  time.Duration // default 30s; positive when cleanup is on
 }
 
 func DefaultConfig() *Config
 ```
 
-Tags: `DefaultTTL` `gt=0s`, `TokenLength` `min=16`. `Init` also requires a
-positive `CleanupTimeout` when `CleanupInterval` is set.
+Constants: `DefaultTTL`, `DefaultTokenLength`, `DefaultCleanupInterval`,
+`DefaultCleanupTimeout`.
+
+### Errors
+
+`ErrTokenInvalid` (wraps `auth.ErrUnauthenticated`), `ErrTokenExpired`
+(wraps `auth.ErrCredentialsExpired`), `ErrInvalidTTL`, plus the shared
+service sentinels.
 
 ## Test Mocks
 
-The `authtest` package provides configurable mocks for use in unit tests.
-All mocks are thread-safe and record calls for assertions.
+The `authtest` package provides mocks of the three auth interfaces. They are
+safe to call from several goroutines; setting a field while a method runs is a
+data race.
 
 ```go
 import "github.com/gasmod/gas/auth/authtest"
 ```
 
-### MockAuthenticator
+| Mock                | Field(s)                                         | Default when nil                              |
+|---------------------|--------------------------------------------------|-----------------------------------------------|
+| `MockAuthenticator` | `AuthenticateFn`                                 | `(nil, auth.ErrNoCredentials)` (fails closed) |
+| `MockAuthorizer`    | `AuthorizeFn`                                    | `auth.ErrForbidden` (fails closed)            |
+| `MockRevoker`       | `RevokeFn`, `RevokeAllFn`, `RevokeAllBySchemeFn` | `nil`                                         |
 
-```go
-type MockAuthenticator struct {
-    AuthenticateFn func(ctx context.Context, r *http.Request) (gas.Principal, error)
-    Calls          []Call
-}
-```
-
-If `AuthenticateFn` is nil, returns `(nil, auth.ErrUnauthenticated)`.
-
-### MockAuthorizer
-
-```go
-type MockAuthorizer struct {
-    AuthorizeFn func(ctx context.Context, principal gas.Principal, action, resource string) error
-    Calls       []Call
-}
-```
-
-If `AuthorizeFn` is nil, returns `nil`.
-
-### MockRevoker
-
-```go
-type MockRevoker struct {
-    RevokeFn            func(ctx context.Context, principal gas.Principal) error
-    RevokeAllFn         func(ctx context.Context, subject string) error
-    RevokeAllBySchemeFn func(ctx context.Context, subject, scheme string) error
-    Calls               []Call
-}
-```
-
-All `Fn` fields default to returning `nil`.
-
-### Common Methods
+Each method records a `Call{Method string; Args []any}` (context included)
+before calling its field.
 
 | Method                  | Description                                        |
 |-------------------------|----------------------------------------------------|
-| `Reset()`               | Clear all recorded calls                           |
+| `Calls() []Call`        | Copy of recorded calls, in order                   |
 | `CallCount(method) int` | Count calls by method name (e.g. `"Authenticate"`) |
+| `Reset()`               | Forget all recorded calls                          |
 
 ## DI Wiring Patterns
 
@@ -687,10 +836,10 @@ app := gas.NewApp(
 
 ### Multiple authenticators with Chain
 
-The session, apikey, and token constructors inject `gas.DatabaseProvider`,
-`gas.Logger`, `gas.MigrationManager`, and `gas.ConfigProvider` (jwt only the
-last two), so register gas/database and gas/migrate under those interfaces,
-not as `*database.Service` / `*migrate.Service`.
+`jwt.New()` needs `gas.ConfigProvider` and `gas.Logger`. The session, apikey,
+and token constructors also inject `gas.DatabaseProvider` and
+`gas.MigrationManager`, so register gas/database and gas/migrate under those
+interfaces, not as `*database.Service` / `*migrate.Service`.
 
 ```go
 app := gas.NewApp(
@@ -714,6 +863,9 @@ func (s *MyService) Init(context.Context) error {
 }
 ```
 
+Members that find no credentials are skipped, so a request without a bearer
+token falls through to the session cookie, then the API key header.
+
 ### Using Provider interfaces
 
 Accept `Provider` interfaces instead of concrete `*Service` types to decouple
@@ -734,13 +886,14 @@ mock := &authtest.MockAuthenticator{
         return auth.NewPrincipal("user-1", auth.SchemeJWT, "tok-1", nil), nil
     },
 }
-// inject mock as auth.Authenticator in tests
+handler := auth.Middleware(mock)(next)
+// mock.CallCount("Authenticate") is how many requests handler served
 ```
 
 ## Database Support
 
-Session, API key, and token services support three SQL dialects. The dialect
-is selected automatically from `gas.DatabaseProvider.Driver()`:
+Session, API key, and token services support three SQL dialects, selected
+from `gas.DatabaseProvider.Driver()`:
 
 | Driver              | Dialect    |
 |---------------------|------------|
@@ -748,21 +901,20 @@ is selected automatically from `gas.DatabaseProvider.Driver()`:
 | `mysql`             | MySQL      |
 | `sqlite`, `sqlite3` | SQLite     |
 
-MySQL caveats. The MySQL dialect is chosen only when the provider's `Driver()`
-returns `mysql`: gas/database rejects `Database.Driver` `mysql` unless it is
-given `WithConnector`, so use that or your own `gas.DatabaseProvider`. The
-migrations hold several statements, so the DSN needs `multiStatements=true`,
-and the stores scan `DATETIME` columns into `time.Time`, so it also needs
-`parseTime=true`. With both, session and token work on MySQL 8.4; the apikey
-migration fails there (a `TEXT` column with a default,
-`auth/apikey/db/mysql/20250323002_create_api_keys.up.sql:8`; KI-044 in
-KNOWN_ISSUES.md).
+MySQL needs `parseTime=true` in the DSN, which gas/database turns on itself;
+`multiStatements` is not needed, since gas/migrate sends a migration's
+statements one at a time. The session migrations need MySQL 8.0.13 or later
+(expression defaults). MySQL and SQLite keep whole seconds and the stores
+truncate written times, so a credential may expire up to one second early,
+never late; Postgres keeps microseconds.
 
-Each service registers its own migration with `gas.MigrationManager` during
-`Init`. Tables created:
+Each service registers its migrations with `gas.MigrationManager` during
+`Init`; the manager runs them after every service's `Init`. Upgrading session
+from a version that stored raw IDs runs a migration that deletes every stored
+session, signing every user out once. Tables created:
 
-| Service | Table           |
-|---------|-----------------|
+| Service | Table                 |
+|---------|-----------------------|
 | Session | `__gas_auth_sessions` |
 | API Key | `__gas_auth_api_keys` |
 | Token   | `__gas_auth_tokens`   |
