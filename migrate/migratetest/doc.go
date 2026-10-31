@@ -15,8 +15,10 @@
 // # Defaults
 //
 // With a field nil, its method succeeds and does nothing: Name returns
-// migrate.ServiceName, and Init, Close, RegisterFS, RunPending and Down
-// return nil. Register and RegisterSlice return nothing.
+// migrate.ServiceName, and Init, Close, RegisterFS, RunPending,
+// RunPendingContext, Down and DownContext return nil. Register and
+// RegisterSlice return nothing. RunPendingContext returns what
+// RunPendingFn returns, and DownContext what DownFn returns.
 //
 // # Calls
 //

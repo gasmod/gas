@@ -1,4 +1,4 @@
-package test
+package gas_test
 
 import (
 	"context"
@@ -16,6 +16,7 @@ func TestNewWorker_Basic(t *testing.T) {
 	if w.EventBus() == nil {
 		t.Fatal("expected non-nil EventBus")
 	}
+
 	if w.ServiceContainer() == nil {
 		t.Fatal("expected non-nil ServiceContainer")
 	}
@@ -27,7 +28,8 @@ func TestNewWorker_WithOptions(t *testing.T) {
 		gas.WithServiceInstance[*testService](svc),
 	)
 
-	if err := w.InitServices(context.Background()); err != nil {
+	err := w.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -45,7 +47,7 @@ func TestNewWorker_PanicsOnAppOption(t *testing.T) {
 	}()
 
 	gas.NewWorker(
-		gas.WithErrorHandler(func(ctx gas.Context, err error) {}),
+		gas.WithErrorHandler(func(_ gas.Context, _ error) {}),
 	)
 }
 
@@ -55,7 +57,8 @@ func TestWorker_StartAndShutdown(t *testing.T) {
 		gas.WithSingletonService[*testService](func() *testService { return svc }),
 	)
 
-	if err := w.Start(context.Background()); err != nil {
+	err := w.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -64,7 +67,8 @@ func TestWorker_StartAndShutdown(t *testing.T) {
 		t.Fatalf("expected Init called once, got %d", svc.initCount.Load())
 	}
 
-	if err := w.Shutdown(context.Background()); err != nil {
+	err = w.Shutdown(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -105,13 +109,14 @@ func TestWorker_ConfigProvider_NilWhenUnregistered(t *testing.T) {
 
 // Run returns Start's error without blocking for a signal.
 func TestWorker_Run_StartFailure(t *testing.T) {
-	initErr := errors.New("init failed")
+	initErr := errInitFailed2
 	w := gas.NewWorker(
 		gas.WithServiceInstance[*testService](&testService{name: "bad", initErr: initErr}),
 	)
 
 	done := make(chan error, 1)
 	go func() { done <- w.Run() }()
+
 	select {
 	case err := <-done:
 		if !errors.Is(err, initErr) {

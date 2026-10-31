@@ -235,9 +235,9 @@
 // given to [WithErrorFunc]; the service logs it at error level.
 //
 // Through the service's routes, a method other than GET and HEAD never
-// reaches the handler: the router of gas, on chi, answers 405 with an
-// empty body and one `Allow` field per method of the route, GET and
-// HEAD, in no fixed order. The dotfile rule applies to the URL path, not
+// reaches the handler: the router of gas answers 405 in its unified
+// error shape, with one `Allow` field per method of the route, GET and
+// HEAD. The dotfile rule applies to the URL path, not
 // to where a symlink leads: a symlink inside the root named without a
 // dot, to a dotfile inside the root, serves that file.
 //

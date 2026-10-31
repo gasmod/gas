@@ -37,7 +37,9 @@ func MetadataValue[T any](m PrincipalMetadata, key string) (T, bool) {
 	if v, ok := m.Value(key).(T); ok {
 		return v, true
 	}
+
 	var v T
+
 	return v, false
 }
 
@@ -58,11 +60,13 @@ func PrincipalFromContext(ctx context.Context) (Principal, bool) {
 	if !ok || isNilPointer(principal) {
 		return nil, false
 	}
+
 	return principal, true
 }
 
 // isNilPointer reports whether p holds a nil pointer.
 func isNilPointer(p Principal) bool {
 	v := reflect.ValueOf(p)
+
 	return v.Kind() == reflect.Pointer && v.IsNil()
 }

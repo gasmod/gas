@@ -1,4 +1,4 @@
-package test
+package gas_test
 
 import (
 	"context"
@@ -28,10 +28,14 @@ var managementHosts = []struct {
 // startHost builds a host holding svc and initializes it.
 func startHost(t *testing.T, build func(...gas.Option) *gas.Worker, svc *testService) *gas.Worker {
 	t.Helper()
+
 	w := build(gas.WithServiceInstance[*testService](svc))
-	if err := w.InitServices(context.Background()); err != nil {
+
+	err := w.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	return w
 }
 
@@ -44,21 +48,26 @@ func TestCloseService(t *testing.T) {
 			w := startHost(t, h.build, svc)
 
 			var closedName string
+
 			w.EventBus().Subscribe[gas.SystemServiceClosed](
 				func(data gas.SystemServiceClosedPayload) {
 					closedName = data.ServiceName
 				},
 			)
 
-			if err := w.CloseService[*testService](context.Background()); err != nil {
+			err := w.CloseService[*testService](context.Background())
+			if err != nil {
 				t.Fatal(err)
 			}
+
 			if !svc.closed.Load() {
 				t.Error("service not closed")
 			}
+
 			if closedName != "test-svc" {
 				t.Errorf("service-closed event for %q, want test-svc", closedName)
 			}
+
 			if slices.Contains(w.ActiveServices(), "test-svc") {
 				t.Error("test-svc still active")
 			}
@@ -70,18 +79,25 @@ func TestCloseService(t *testing.T) {
 func TestApp_CloseService_RoutesAnswer503(t *testing.T) {
 	svc := &testService{name: "test-svc"}
 	app := gas.NewApp(gas.WithServiceInstance[*testService](svc))
-	if err := app.InitServices(context.Background()); err != nil {
+
+	err := app.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	app.Router().Handle(svc, http.MethodGet, "/test", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	if err := app.CloseService[*testService](context.Background()); err != nil {
+	err = app.CloseService[*testService](context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	rr := httptest.NewRecorder()
-	app.Router().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/test", nil))
+	app.Router().
+		ServeHTTP(rr, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil))
+
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Errorf("GET /test = %d, want 503", rr.Code)
 	}
@@ -94,31 +110,39 @@ func TestRestartService(t *testing.T) {
 		t.Run(h.name, func(t *testing.T) {
 			svc := &testService{name: "test-svc"}
 			w := startHost(t, h.build, svc)
-			if err := w.CloseService[*testService](context.Background()); err != nil {
+
+			err := w.CloseService[*testService](context.Background())
+			if err != nil {
 				t.Fatal(err)
 			}
 
 			var restartedName string
+
 			w.EventBus().Subscribe[gas.SystemServiceInitialized](
 				func(data gas.SystemServiceInitializedPayload) {
 					restartedName = data.ServiceName
 				},
 			)
 
-			if err := w.RestartService[*testService](context.Background()); err != nil {
+			err = w.RestartService[*testService](context.Background())
+			if err != nil {
 				t.Fatal(err)
 			}
+
 			// The container initializes a pre-registered instance like any
 			// other service, so Init has run once at boot and once on restart.
 			if got := svc.initCount.Load(); got != 2 {
 				t.Errorf("Init called %d times, want 2 (boot + restart)", got)
 			}
+
 			if svc.closed.Load() {
 				t.Error("service closed after restart")
 			}
+
 			if restartedName != "test-svc" {
 				t.Errorf("service-initialized event for %q, want test-svc", restartedName)
 			}
+
 			if !slices.Contains(w.ActiveServices(), "test-svc") {
 				t.Error("test-svc not active after restart")
 			}
@@ -130,26 +154,37 @@ func TestRestartService(t *testing.T) {
 func TestServiceManagement_WrongState(t *testing.T) {
 	for _, h := range managementHosts {
 		t.Run(h.name, func(t *testing.T) {
-			if err := h.build().CloseService[*testService](context.Background()); err == nil {
+			err := h.build().CloseService[*testService](context.Background())
+			if err == nil {
 				t.Error("CloseService of a service never started = nil, want an error")
 			}
 
 			w := startHost(t, h.build, &testService{name: "test-svc"})
-			if err := w.RestartService[*testService](context.Background()); err == nil {
+
+			err = w.RestartService[*testService](context.Background())
+			if err == nil {
 				t.Error("RestartService of an active service = nil, want an error")
 			}
-			if err := w.CloseService[*testService](context.Background()); err != nil {
+
+			err = w.CloseService[*testService](context.Background())
+			if err != nil {
 				t.Fatal(err)
 			}
-			if err := w.CloseService[*testService](context.Background()); err == nil {
+
+			err = w.CloseService[*testService](context.Background())
+			if err == nil {
 				t.Error("CloseService of a closed service = nil, want an error")
 			}
 
 			empty := h.build()
-			if err := empty.InitServices(context.Background()); err != nil {
+
+			err = empty.Start(context.Background())
+			if err != nil {
 				t.Fatal(err)
 			}
-			if err := empty.RestartService[*testService](context.Background()); err == nil {
+
+			err = empty.RestartService[*testService](context.Background())
+			if err == nil {
 				t.Error("RestartService of an unregistered service = nil, want an error")
 			}
 		})
@@ -168,22 +203,22 @@ func TestActiveServices(t *testing.T) {
 	}
 }
 
-// A failing Close is logged, not returned: CloseService has already torn the
-// service down, so it still returns nil and drops the service from the
-// active set.
+// A failing Close is returned, wrapped with the service's name, and the
+// service counts as closed: CloseService has already torn it down.
 func TestCloseService_CloseError(t *testing.T) {
 	for _, h := range managementHosts {
 		t.Run(h.name, func(t *testing.T) {
-			svc := &testService{name: "failing-close", closeErr: errors.New("close failed")}
+			svc := &testService{name: "failing-close", closeErr: errCloseFailed2}
 			w := startHost(t, h.build, svc)
 
-			if err := w.CloseService[*testService](context.Background()); err != nil {
-				t.Errorf("CloseService() = %v, want nil when Close fails", err)
+			err := w.CloseService[*testService](context.Background())
+			if err == nil || err.Error() != "gas: close failing-close: close failed" {
+				t.Errorf("CloseService() = %v, want the wrapped Close error", err)
 			}
-			// FIXME(@ahmedkamalio)
-			//if _, ok := w.ActiveServicesMap()["failing-close"]; ok {
-			//	t.Error("service still active after a failing Close")
-			//}
+
+			if slices.Contains(w.ActiveServices(), "failing-close") {
+				t.Error("service still active after a failing Close")
+			}
 		})
 	}
 }
@@ -262,6 +297,7 @@ func (s *slowReporter[K]) CheckHealth(ctx context.Context) error {
 		default:
 		}
 	}
+
 	select {
 	case <-time.After(s.delay):
 		return nil
@@ -299,6 +335,7 @@ func (s *ctxObservingReporter[K]) Close(context.Context) error { return nil }
 
 func (s *ctxObservingReporter[K]) CheckHealth(ctx context.Context) error {
 	s.seen <- ctx
+
 	return nil
 }
 
@@ -310,7 +347,7 @@ var (
 
 func TestWorker_CheckHealth(t *testing.T) {
 	healthy := &reporterService[tagA]{name: "healthy"}
-	sick := &reporterService[tagB]{name: "sick", healthErr: errors.New("down")}
+	sick := &reporterService[tagB]{name: "sick", healthErr: errDown}
 	plain := &testService{name: "plain"}
 
 	w := gas.NewWorker(
@@ -318,7 +355,9 @@ func TestWorker_CheckHealth(t *testing.T) {
 		gas.WithServiceInstance[*reporterService[tagB]](sick),
 		gas.WithServiceInstance[*testService](plain),
 	)
-	if err := w.InitServices(context.Background()); err != nil {
+
+	err := w.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -326,12 +365,17 @@ func TestWorker_CheckHealth(t *testing.T) {
 	if len(results) != 2 {
 		t.Fatalf("expected 2 reporters, got %d: %v", len(results), results)
 	}
-	if err, ok := results["healthy"]; !ok || err != nil {
+
+	err, ok := results["healthy"]
+	if !ok || err != nil {
 		t.Fatalf("expected healthy=nil, got ok=%v err=%v", ok, err)
 	}
-	if err, ok := results["sick"]; !ok || err == nil || err.Error() != "down" {
+
+	err, ok = results["sick"]
+	if !ok || err == nil || err.Error() != "down" {
 		t.Fatalf("expected sick=down, got ok=%v err=%v", ok, err)
 	}
+
 	if _, ok := results["plain"]; ok {
 		t.Fatal("plain service should be omitted (no HealthReporter)")
 	}
@@ -339,13 +383,15 @@ func TestWorker_CheckHealth(t *testing.T) {
 
 func TestWorker_CheckReady(t *testing.T) {
 	ready := &reporterService[tagA]{name: "ready"}
-	waiting := &reporterService[tagB]{name: "waiting", readyErr: errors.New("warming")}
+	waiting := &reporterService[tagB]{name: "waiting", readyErr: errWarming}
 
 	w := gas.NewWorker(
 		gas.WithServiceInstance[*reporterService[tagA]](ready),
 		gas.WithServiceInstance[*reporterService[tagB]](waiting),
 	)
-	if err := w.InitServices(context.Background()); err != nil {
+
+	err := w.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -353,22 +399,30 @@ func TestWorker_CheckReady(t *testing.T) {
 	if len(results) != 2 {
 		t.Fatalf("expected 2 reporters, got %d: %v", len(results), results)
 	}
-	if err, ok := results["ready"]; !ok || err != nil {
+
+	err, ok := results["ready"]
+	if !ok || err != nil {
 		t.Fatalf("expected ready=nil, got ok=%v err=%v", ok, err)
 	}
-	if err, ok := results["waiting"]; !ok || err == nil || err.Error() != "warming" {
+
+	err, ok = results["waiting"]
+	if !ok || err == nil || err.Error() != "warming" {
 		t.Fatalf("expected waiting=warming, got ok=%v err=%v", ok, err)
 	}
 }
 
 func TestWorker_CheckHealth_EmptyWhenNoReporters(t *testing.T) {
 	w := gas.NewWorker(gas.WithServiceInstance[*testService](&testService{name: "plain"}))
-	if err := w.InitServices(context.Background()); err != nil {
+
+	err := w.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	if got := w.CheckHealth(context.Background()); len(got) != 0 {
 		t.Fatalf("expected empty map, got %v", got)
 	}
+
 	if got := w.CheckReady(context.Background()); len(got) != 0 {
 		t.Fatalf("expected empty map, got %v", got)
 	}
@@ -377,7 +431,9 @@ func TestWorker_CheckHealth_EmptyWhenNoReporters(t *testing.T) {
 func TestWorker_CheckHealth_ResolvableAsProvider(t *testing.T) {
 	svc := &reporterService[tagA]{name: "svc"}
 	w := gas.NewWorker(gas.WithServiceInstance[*reporterService[tagA]](svc))
-	if err := w.InitServices(context.Background()); err != nil {
+
+	err := w.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -385,7 +441,9 @@ func TestWorker_CheckHealth_ResolvableAsProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve HealthProvider: %v", err)
 	}
-	if hErr, ok := hp.CheckHealth(context.Background())["svc"]; !ok || hErr != nil {
+
+	hErr, ok := hp.CheckHealth(context.Background())["svc"]
+	if !ok || hErr != nil {
 		t.Fatalf("expected svc=nil from HealthProvider, got ok=%v err=%v", ok, hErr)
 	}
 
@@ -393,18 +451,19 @@ func TestWorker_CheckHealth_ResolvableAsProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve ReadyProvider: %v", err)
 	}
+
 	if _, ok := rp.CheckReady(context.Background())["svc"]; !ok {
 		t.Fatal("expected svc entry from ReadyProvider")
 	}
 }
 
-func TestWorker_CheckHealth_BeforeInitServices(t *testing.T) {
+func TestWorker_CheckHealth_BeforeStart(t *testing.T) {
 	w := gas.NewWorker(
 		gas.WithServiceInstance[*reporterService[tagA]](&reporterService[tagA]{name: "a"}),
 	)
-	// Note: InitServices NOT called — activeServices is empty.
+	// Note: Start is not called, so no service is active.
 	if got := w.CheckHealth(context.Background()); len(got) != 0 {
-		t.Fatalf("expected empty map before InitServices, got %v", got)
+		t.Fatalf("expected empty map before Start, got %v", got)
 	}
 }
 
@@ -415,16 +474,22 @@ func TestWorker_CheckHealth_AfterCloseService(t *testing.T) {
 		gas.WithServiceInstance[*reporterService[tagA]](a),
 		gas.WithServiceInstance[*reporterService[tagB]](b),
 	)
-	if err := w.InitServices(context.Background()); err != nil {
+
+	err := w.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := w.CloseService[*reporterService[tagA]](context.Background()); err != nil {
+
+	err = w.CloseService[*reporterService[tagA]](context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	results := w.CheckHealth(context.Background())
 	if _, ok := results["a"]; ok {
 		t.Fatal("closed service should not appear in health results")
 	}
+
 	if _, ok := results["b"]; !ok {
 		t.Fatal("active service should still appear")
 	}
@@ -440,7 +505,9 @@ func TestWorker_CheckHealth_HealthOnlyReporter(t *testing.T) {
 		gas.WithServiceInstance[*readyOnlyService[tagB]](ro),
 		gas.WithServiceInstance[*reporterService[tagC]](both),
 	)
-	if err := w.InitServices(context.Background()); err != nil {
+
+	err := w.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -448,9 +515,11 @@ func TestWorker_CheckHealth_HealthOnlyReporter(t *testing.T) {
 	if _, ok := health["h-only"]; !ok {
 		t.Fatal("health-only service missing from CheckHealth")
 	}
+
 	if _, ok := health["r-only"]; ok {
 		t.Fatal("ready-only service should not appear in CheckHealth")
 	}
+
 	if _, ok := health["both"]; !ok {
 		t.Fatal("both-reporter missing from CheckHealth")
 	}
@@ -459,9 +528,11 @@ func TestWorker_CheckHealth_HealthOnlyReporter(t *testing.T) {
 	if _, ok := ready["r-only"]; !ok {
 		t.Fatal("ready-only service missing from CheckReady")
 	}
+
 	if _, ok := ready["h-only"]; ok {
 		t.Fatal("health-only service should not appear in CheckReady")
 	}
+
 	if _, ok := ready["both"]; !ok {
 		t.Fatal("both-reporter missing from CheckReady")
 	}
@@ -475,21 +546,28 @@ func TestWorker_CheckHealth_PanicRecovered(t *testing.T) {
 		gas.WithServiceInstance[*reporterService[tagA]](good),
 		gas.WithServiceInstance[*panicReporter[tagB]](boom),
 	)
-	if err := w.InitServices(context.Background()); err != nil {
+
+	err := w.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
 
 	results := w.CheckHealth(context.Background())
-	if err, ok := results["good"]; !ok || err != nil {
+	err, ok := results["good"]
+
+	if !ok || err != nil {
 		t.Fatalf("good should be healthy despite sibling panic, got ok=%v err=%v", ok, err)
 	}
-	err, ok := results["boom"]
+
+	err, ok = results["boom"]
 	if !ok {
 		t.Fatal("panicking reporter should still produce a result")
 	}
+
 	if err == nil {
 		t.Fatal("expected panic to surface as error")
 	}
+
 	if !strings.Contains(err.Error(), "kaboom") {
 		t.Fatalf("expected error to mention panic message, got %q", err.Error())
 	}
@@ -506,12 +584,16 @@ func TestWorker_CheckHealth_RunsConcurrently(t *testing.T) {
 		gas.WithServiceInstance[*slowReporter[tagB]](b),
 		gas.WithServiceInstance[*slowReporter[tagC]](c),
 	)
-	if err := w.InitServices(context.Background()); err != nil {
+
+	err := w.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
 
 	start := time.Now()
+
 	_ = w.CheckHealth(context.Background())
+
 	elapsed := time.Since(start)
 
 	// Sequential would be ~3*delay = 240ms. Concurrent should be ~delay.
@@ -525,12 +607,16 @@ func TestWorker_CheckHealth_RunsConcurrently(t *testing.T) {
 func TestWorker_CheckHealth_ContextPropagates(t *testing.T) {
 	obs := &ctxObservingReporter[tagA]{name: "obs", seen: make(chan context.Context, 1)}
 	w := gas.NewWorker(gas.WithServiceInstance[*ctxObservingReporter[tagA]](obs))
-	if err := w.InitServices(context.Background()); err != nil {
+
+	err := w.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
 
 	type key struct{}
+
 	ctx := context.WithValue(context.Background(), key{}, "payload")
+
 	_ = w.CheckHealth(ctx)
 
 	got := <-obs.seen
@@ -546,12 +632,15 @@ func TestWorker_CheckHealth_ContextCancellation(t *testing.T) {
 		started: make(chan struct{}, 1),
 	}
 	w := gas.NewWorker(gas.WithServiceInstance[*slowReporter[tagA]](slow))
-	if err := w.InitServices(context.Background()); err != nil {
+
+	err := w.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan map[string]error, 1)
+
 	go func() { done <- w.CheckHealth(ctx) }()
 
 	<-slow.started // ensure reporter is inside its select
@@ -563,6 +652,7 @@ func TestWorker_CheckHealth_ContextCancellation(t *testing.T) {
 		if !ok {
 			t.Fatal("slow reporter missing from results")
 		}
+
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("expected context.Canceled, got %v", err)
 		}
@@ -581,7 +671,9 @@ func TestWorker_CheckHealth_Concurrent(t *testing.T) {
 		gas.WithServiceInstance[*reporterService[tagB]](b),
 		gas.WithServiceInstance[*reporterService[tagC]](c),
 	)
-	if err := w.InitServices(context.Background()); err != nil {
+
+	err := w.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -615,14 +707,17 @@ func (s *mountService[K]) Init(context.Context) error {
 			})
 		})
 	}
+
 	s.router.Route("/api", func(sub *gas.Router) {
 		if s.middleware != "" {
 			sub.Use(gas.MiddlewareByName(s.middleware))
 		}
+
 		sub.Handle(s, http.MethodGet, s.path, func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		})
 	})
+
 	return nil
 }
 
@@ -636,8 +731,11 @@ type (
 // On an App, two services that mount blocks on the same prefix are torn down
 // and restarted independently: closing one 503s only its route, restarting it
 // brings the route back, and its middleware never runs on the other's route.
+//
+//nolint:funlen // one scenario or table, read in order
 func TestApp_KillSwitchOnSharedRoutePrefix(t *testing.T) {
 	var ran atomic.Int32
+
 	app := gas.NewApp(
 		gas.WithSingletonService[*mountService[notesMount]](
 			func(r *gas.Router) *mountService[notesMount] {
@@ -656,19 +754,25 @@ func TestApp_KillSwitchOnSharedRoutePrefix(t *testing.T) {
 			},
 		),
 	)
-	if err := app.Start(context.Background()); err != nil {
+
+	err := app.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	t.Cleanup(func() { _ = app.Stop(context.Background()) })
 
 	check := func(stage string, wantNotes, wantPlans int, wantRan int32) {
 		t.Helper()
+
 		if got := ksStatus(t, app.Handler(), "/api/notes"); got != wantNotes {
 			t.Errorf("%s: /api/notes = %d, want %d", stage, got, wantNotes)
 		}
+
 		if got := ksStatus(t, app.Handler(), "/api/plans"); got != wantPlans {
 			t.Errorf("%s: /api/plans = %d, want %d", stage, got, wantPlans)
 		}
+
 		if got := ran.Load(); got != wantRan {
 			t.Errorf("%s: notes-only ran %d times in total, want %d", stage, got, wantRan)
 		}
@@ -676,18 +780,24 @@ func TestApp_KillSwitchOnSharedRoutePrefix(t *testing.T) {
 
 	check("after start", http.StatusOK, http.StatusOK, 1)
 
-	if err := app.CloseService[*mountService[notesMount]](context.Background()); err != nil {
+	err = app.CloseService[*mountService[notesMount]](context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	check("notes closed", http.StatusServiceUnavailable, http.StatusOK, 1)
 
-	if err := app.RestartService[*mountService[notesMount]](context.Background()); err != nil {
+	err = app.RestartService[*mountService[notesMount]](context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	check("notes restarted", http.StatusOK, http.StatusOK, 2)
 
-	if err := app.CloseService[*mountService[billingMount]](context.Background()); err != nil {
+	err = app.CloseService[*mountService[billingMount]](context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	check("billing closed", http.StatusOK, http.StatusServiceUnavailable, 3)
 }

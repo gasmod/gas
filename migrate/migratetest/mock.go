@@ -123,6 +123,30 @@ func (m *MockMigrationManager) RunPending() error {
 	return nil
 }
 
+// RunPendingContext records the call, with ctx, and returns RunPendingFn's
+// result.
+func (m *MockMigrationManager) RunPendingContext(ctx context.Context) error {
+	m.record("RunPendingContext", ctx)
+
+	if m.RunPendingFn != nil {
+		return m.RunPendingFn()
+	}
+
+	return nil
+}
+
+// DownContext records the call, with ctx and n, and returns DownFn's
+// result.
+func (m *MockMigrationManager) DownContext(ctx context.Context, n int) error {
+	m.record("DownContext", ctx, n)
+
+	if m.DownFn != nil {
+		return m.DownFn(n)
+	}
+
+	return nil
+}
+
 // Down records the call and returns DownFn's result.
 func (m *MockMigrationManager) Down(n int) error {
 	m.record("Down", n)

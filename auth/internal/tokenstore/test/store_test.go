@@ -1,6 +1,7 @@
 package tokenstore_test
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"io/fs"
@@ -377,11 +378,11 @@ func (failingMigrations) RegisterSlice(gas.Service, []gas.Migration) {}
 // RegisterFS returns errRegister.
 func (failingMigrations) RegisterFS(gas.Service, fs.FS) error { return errRegister }
 
-// RunPending does nothing.
-func (failingMigrations) RunPending() error { return nil }
+// RunPendingContext does nothing.
+func (failingMigrations) RunPendingContext(context.Context) error { return nil }
 
-// Down does nothing.
-func (failingMigrations) Down(int) error { return nil }
+// DownContext does nothing.
+func (failingMigrations) DownContext(context.Context, int) error { return nil }
 
 // Init fails, naming the service, when the migration manager does not
 // take the migrations, and wraps its error.

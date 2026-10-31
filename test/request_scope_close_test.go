@@ -1,8 +1,7 @@
-package test
+package gas_test
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,13 +18,14 @@ func (*failingScoped) Name() string { return "failing-scoped" }
 func (*failingScoped) Init(context.Context) error { return nil }
 
 func (*failingScoped) Close(context.Context) error {
-	return errors.New("scoped close boom")
+	return errScopedCloseBoom
 }
 
 // An error from closing the request scope is logged with the request's
 // method and path instead of being dropped.
 func TestRequestScope_CloseErrorIsLogged(t *testing.T) {
 	var buf lockedBuffer
+
 	shared := newJSONLogger(&buf)
 	app := gas.NewApp(
 		gas.WithServiceInstance[gas.Logger](shared),
@@ -36,25 +36,33 @@ func TestRequestScope_CloseErrorIsLogged(t *testing.T) {
 		Handle(nil, http.MethodGet, "/scoped", func(ctx gas.Context, _ *failingScoped) error {
 			return ctx.NoContent()
 		})
-	if err := app.Start(context.Background()); err != nil {
+
+	err := app.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	t.Cleanup(func() { _ = app.Shutdown(context.Background()) })
 
 	rr := httptest.NewRecorder()
-	app.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/scoped", nil))
+	app.Handler().
+		ServeHTTP(rr, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/scoped", nil))
 
 	for _, rec := range buf.lines() {
 		if rec["msg"] != "request scope close failed" {
 			continue
 		}
+
 		if e, _ := rec["error"].(string); !strings.Contains(e, "scoped close boom") {
 			t.Errorf("logged error = %q, want it to carry the Close error", e)
 		}
+
 		if rec["method"] != http.MethodGet || rec["path"] != "/scoped" {
 			t.Errorf("logged method/path = %v %v, want GET /scoped", rec["method"], rec["path"])
 		}
+
 		return
 	}
+
 	t.Errorf("no %q log line; got %v", "request scope close failed", buf.lines())
 }

@@ -1,4 +1,4 @@
-package test
+package gas_test
 
 import (
 	"context"
@@ -26,17 +26,22 @@ func TestServiceContainer_RegisterDuringResolve(t *testing.T) {
 	c.RegisterSingletonService[*testDep](newTestDep)
 
 	var wg sync.WaitGroup
+
 	for range 4 {
 		wg.Go(func() {
 			for range 200 {
-				if _, err := c.Resolve[*testDep](); err != nil {
+				_, err := c.Resolve[*testDep]()
+				if err != nil {
 					t.Errorf("Resolve[*testDep]() = %v", err)
+
 					return
 				}
+
 				_ = c.CanResolve[*lateDep]()
 			}
 		})
 	}
+
 	wg.Go(func() {
 		for range 200 {
 			c.RegisterTransientService[*lateDep](func() *lateDep { return &lateDep{} })
@@ -56,13 +61,16 @@ func TestServiceContainer_MustResolve(t *testing.T) {
 
 	dep := &testDep{Value: "instance"}
 	app := gas.NewApp(gas.WithServiceInstance[*testDep](dep))
-	if err := app.InitServices(context.Background()); err != nil {
+
+	err := app.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
 
 	if got := app.ServiceContainer().MustResolve[*testDep](); got != dep {
 		t.Errorf("MustResolve[*testDep]() = %p, want the registered instance %p", got, dep)
 	}
+
 	assertPanics(t, "MustResolve of an unregistered type", func() {
 		app.ServiceContainer().MustResolve[*testDepB]()
 	})
@@ -74,9 +82,12 @@ func TestMustResolveFromRequestScope(t *testing.T) {
 	t.Parallel()
 
 	app := gas.NewApp(gas.WithService[*testDep](newTestDep, gas.ServiceLifetimeScoped))
-	if err := app.InitServices(context.Background()); err != nil {
+
+	err := app.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	app.Router().Get(nil, "/ok", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(gas.MustResolveFromRequestScope[*testDep](r).Value))
 	})
@@ -88,13 +99,17 @@ func TestMustResolveFromRequestScope(t *testing.T) {
 	})
 
 	rr := httptest.NewRecorder()
-	app.Router().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/ok", nil))
+	app.Router().
+		ServeHTTP(rr, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ok", nil))
+
 	if rr.Body.String() != "resolved" {
 		t.Errorf("GET /ok body = %q, want %q", rr.Body.String(), "resolved")
 	}
 
 	rr = httptest.NewRecorder()
-	app.Router().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/missing", nil))
+	app.Router().
+		ServeHTTP(rr, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/missing", nil))
+
 	if rr.Code != http.StatusNoContent {
 		t.Errorf("GET /missing = %d, want 204", rr.Code)
 	}
@@ -116,15 +131,17 @@ func TestServiceContainer_CircularDependency(t *testing.T) {
 	c := gas.NewServiceContainer()
 
 	type A struct{}
+
 	type B struct{}
 
-	c.RegisterService[*A](func(b *B) *A { return &A{} }, gas.ServiceLifetimeSingleton)
-	c.RegisterService[*B](func(a *A) *B { return &B{} }, gas.ServiceLifetimeSingleton)
+	c.RegisterService[*A](func(_ *B) *A { return &A{} }, gas.ServiceLifetimeSingleton)
+	c.RegisterService[*B](func(_ *A) *B { return &B{} }, gas.ServiceLifetimeSingleton)
 
 	err := c.BuildAll(context.Background())
 	if err == nil {
 		t.Fatal("expected error for circular dependency")
 	}
+
 	if !errors.Is(err, gas.ErrCircularDependency) {
 		t.Fatalf("expected ErrCircularDependency, got: %v", err)
 	}
@@ -133,7 +150,9 @@ func TestServiceContainer_CircularDependency(t *testing.T) {
 func TestServiceContainer_CaptiveDependency(t *testing.T) {
 	t.Run("SingletonDependsOnScoped", func(t *testing.T) {
 		c := gas.NewServiceContainer()
+
 		type SvcScoped struct{}
+
 		type SvcSingleton struct{}
 
 		c.RegisterService[*SvcScoped](
@@ -141,7 +160,7 @@ func TestServiceContainer_CaptiveDependency(t *testing.T) {
 			gas.ServiceLifetimeScoped,
 		)
 		c.RegisterService[*SvcSingleton](
-			func(s *SvcScoped) *SvcSingleton { return &SvcSingleton{} },
+			func(_ *SvcScoped) *SvcSingleton { return &SvcSingleton{} },
 			gas.ServiceLifetimeSingleton,
 		)
 
@@ -149,6 +168,7 @@ func TestServiceContainer_CaptiveDependency(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error for captive dependency (singleton -> scoped)")
 		}
+
 		if !errors.Is(err, gas.ErrCaptiveDependency) {
 			t.Fatalf("expected ErrCaptiveDependency, got: %v", err)
 		}
@@ -156,7 +176,9 @@ func TestServiceContainer_CaptiveDependency(t *testing.T) {
 
 	t.Run("SingletonDependsOnTransient", func(t *testing.T) {
 		c := gas.NewServiceContainer()
+
 		type SvcTransient struct{}
+
 		type SvcSingleton struct{}
 
 		c.RegisterService[*SvcTransient](
@@ -164,7 +186,7 @@ func TestServiceContainer_CaptiveDependency(t *testing.T) {
 			gas.ServiceLifetimeTransient,
 		)
 		c.RegisterService[*SvcSingleton](
-			func(s *SvcTransient) *SvcSingleton { return &SvcSingleton{} },
+			func(_ *SvcTransient) *SvcSingleton { return &SvcSingleton{} },
 			gas.ServiceLifetimeSingleton,
 		)
 
@@ -172,6 +194,7 @@ func TestServiceContainer_CaptiveDependency(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error for captive dependency (singleton -> transient)")
 		}
+
 		if !errors.Is(err, gas.ErrCaptiveDependency) {
 			t.Fatalf("expected ErrCaptiveDependency, got: %v", err)
 		}
@@ -191,6 +214,8 @@ func (*closeOnlyB) Close(context.Context) error { return nil }
 // With two independent broken registrations, BuildAll reports the same one
 // on every run: the one registered first. Each case registers the B types
 // before the A types, so registration order differs from alphabetical order.
+//
+//nolint:funlen // one scenario or table, read in order
 func TestStartupErrorIsDeterministic(t *testing.T) {
 	type (
 		Root     struct{}
@@ -203,6 +228,7 @@ func TestStartupErrorIsDeterministic(t *testing.T) {
 		CaptiveA struct{}
 		CaptiveB struct{}
 	)
+
 	const runs = 100
 
 	cases := []struct {
@@ -257,20 +283,26 @@ func TestStartupErrorIsDeterministic(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			seen := map[string]int{}
+
 			for range runs {
 				c := gas.NewServiceContainer()
 				tc.register(c)
+
 				err := c.BuildAll(context.Background())
 				if err == nil {
 					t.Fatal("BuildAll succeeded with two broken registrations")
 				}
+
 				seen[err.Error()]++
 			}
+
 			if len(seen) != 1 {
 				var b strings.Builder
+
 				for msg, n := range seen {
 					_, _ = fmt.Fprintf(&b, "\n  %d/%d: %s", n, runs, msg)
 				}
+
 				t.Fatalf(
 					"BuildAll returned %d distinct errors over %d runs:%s",
 					len(seen),
@@ -278,6 +310,7 @@ func TestStartupErrorIsDeterministic(t *testing.T) {
 					b.String(),
 				)
 			}
+
 			for msg := range seen {
 				if !strings.Contains(msg, tc.want) {
 					t.Fatalf("BuildAll() = %q, want the first registered (%q)", msg, tc.want)
@@ -296,11 +329,14 @@ func TestEachInstance_FnMayResolve(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
+
 		c.EachInstance(func(reflect.Value) {
 			if !c.CanResolve[*testDep]() {
 				t.Error("CanResolve[*testDep]() = false inside EachInstance")
 			}
-			if _, err := c.Resolve[*testDep](); err != nil {
+
+			_, err := c.Resolve[*testDep]()
+			if err != nil {
 				t.Errorf("Resolve[*testDep]() inside EachInstance = %v", err)
 			}
 		})
@@ -315,9 +351,11 @@ func TestEachInstance_FnMayResolve(t *testing.T) {
 
 func TestServiceContainer_ConstructorError(t *testing.T) {
 	c := gas.NewServiceContainer()
+
 	type Svc struct{}
+
 	c.RegisterService[*Svc](func() (*Svc, error) {
-		return nil, errors.New("ctor failed")
+		return nil, errCtorFailed
 	}, gas.ServiceLifetimeSingleton)
 
 	err := c.BuildAll(context.Background())
@@ -328,7 +366,7 @@ func TestServiceContainer_ConstructorError(t *testing.T) {
 
 func TestServiceContainer_InitError(t *testing.T) {
 	c := gas.NewServiceContainer()
-	svc := &testService{name: "failing", initErr: errors.New("init failed")}
+	svc := &testService{name: "failing", initErr: errInitFailed2}
 	c.RegisterServiceInstance[*testService](svc)
 
 	// BuildAll doesn't call Init on RegisterInstance.
@@ -367,10 +405,14 @@ func TestScopeClosesInReverseResolutionOrder(t *testing.T) {
 		}, gas.ServiceLifetimeScoped)
 
 		scope := c.NewScope(context.Background())
-		if _, err := scope.Resolve[*ordService[ordTag2]](); err != nil {
+
+		_, err := scope.Resolve[*ordService[ordTag2]]()
+		if err != nil {
 			t.Fatalf("run %d: resolve: %v", run, err)
 		}
-		if err := scope.Close(context.Background()); err != nil {
+
+		err = scope.Close(context.Background())
+		if err != nil {
 			t.Fatalf("run %d: scope close: %v", run, err)
 		}
 
@@ -378,6 +420,7 @@ func TestScopeClosesInReverseResolutionOrder(t *testing.T) {
 		if got := strings.Join(inits, " "); got != "S0 S1 S2" {
 			t.Fatalf("run %d: init order = [%s], want [S0 S1 S2]", run, got)
 		}
+
 		if got := strings.Join(closes, " "); got != wantClose {
 			t.Fatalf("run %d: scope close order = [%s], want [%s]", run, got, wantClose)
 		}
@@ -385,6 +428,8 @@ func TestScopeClosesInReverseResolutionOrder(t *testing.T) {
 }
 
 // namer is the alias interface most alias tests resolve through.
+//
+//nolint:iface // a distinct type on purpose: the container resolves by exact type
 type namer interface{ Name() string }
 
 // countedService counts its Init and Close calls.
@@ -392,9 +437,19 @@ type countedService struct {
 	inits, closes atomic.Int32
 }
 
-func (s *countedService) Name() string                { return "counted" }
-func (s *countedService) Init(context.Context) error  { s.inits.Add(1); return nil }
-func (s *countedService) Close(context.Context) error { s.closes.Add(1); return nil }
+func (s *countedService) Name() string { return "counted" }
+
+func (s *countedService) Init(context.Context) error {
+	s.inits.Add(1)
+
+	return nil
+}
+
+func (s *countedService) Close(context.Context) error {
+	s.closes.Add(1)
+
+	return nil
+}
 
 // labeled is a plain transient value, not a Service.
 type labeled struct{ label string }
@@ -427,19 +482,26 @@ func TestServiceAlias_SingletonSharesInstance(t *testing.T) {
 		gas.WithSingletonService[*countedService](func() *countedService { return svc }),
 		gas.WithServiceAlias[*countedService, namer](),
 	)
-	if err := w.Start(t.Context()); err != nil {
+
+	err := w.Start(t.Context())
+	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+
 	c := w.ServiceContainer()
 	if got := c.MustResolve[namer](); got != namer(svc) {
 		t.Errorf("Resolve[namer]() = %p, want the *countedService %p", got, svc)
 	}
+
 	if got := c.MustResolve[*countedService](); got != svc {
 		t.Errorf("Resolve[*countedService]() = %p, want %p", got, svc)
 	}
-	if err := w.Shutdown(context.Background()); err != nil {
+
+	err = w.Shutdown(context.Background())
+	if err != nil {
 		t.Fatalf("Shutdown: %v", err)
 	}
+
 	if i, cl := svc.inits.Load(), svc.closes.Load(); i != 1 || cl != 1 {
 		t.Errorf("Init ran %d times and Close %d times, want 1 each", i, cl)
 	}
@@ -453,23 +515,31 @@ func TestServiceAlias_ScopedSharesInstance(t *testing.T) {
 	c := gas.NewServiceContainer()
 	c.RegisterScopedService[*countedService](func() *countedService { return &countedService{} })
 	c.RegisterServiceAlias[*countedService, namer]()
-	if err := c.BuildAll(t.Context()); err != nil {
+
+	err := c.BuildAll(t.Context())
+	if err != nil {
 		t.Fatalf("BuildAll: %v", err)
 	}
 
 	scope := c.NewScope(t.Context())
 	viaAlias := scope.MustResolve[namer]()
 	viaTarget := scope.MustResolve[*countedService]()
+
 	if viaAlias != namer(viaTarget) {
 		t.Fatalf("Resolve[namer]() = %p, want the scope's *countedService %p", viaAlias, viaTarget)
 	}
-	if err := scope.Close(context.Background()); err != nil {
+
+	err = scope.Close(context.Background())
+	if err != nil {
 		t.Fatalf("Close: %v", err)
 	}
+
 	if i, cl := viaTarget.inits.Load(), viaTarget.closes.Load(); i != 1 || cl != 1 {
 		t.Errorf("Init ran %d times and Close %d times, want 1 each", i, cl)
 	}
-	if _, err := c.Resolve[namer](); !errors.Is(err, gas.ErrScopeRequired) {
+
+	_, err = c.Resolve[namer]()
+	if !errors.Is(err, gas.ErrScopeRequired) {
 		t.Errorf("container Resolve[namer]() = %v, want ErrScopeRequired for a scoped target", err)
 	}
 }
@@ -486,6 +556,7 @@ func TestServiceAlias_Transient(t *testing.T) {
 	if a == b {
 		t.Error("two resolutions of a transient alias returned the same instance")
 	}
+
 	if a.Name() != "fresh" {
 		t.Errorf("Name() = %q, want %q", a.Name(), "fresh")
 	}
@@ -498,9 +569,12 @@ func TestServiceAlias_InterfaceTarget(t *testing.T) {
 	c := gas.NewServiceContainer()
 	c.RegisterSingletonService[namedSvc](func() namedSvc { return kindService{} })
 	c.RegisterServiceAlias[namedSvc, namer]()
-	if err := c.BuildAll(t.Context()); err != nil {
+
+	err := c.BuildAll(t.Context())
+	if err != nil {
 		t.Fatalf("BuildAll: %v", err)
 	}
+
 	if got := c.MustResolve[namer]().Name(); got != "kind" {
 		t.Errorf("Resolve[namer]().Name() = %q, want %q", got, "kind")
 	}
@@ -514,14 +588,17 @@ func TestServiceAlias_CaptiveDependency(t *testing.T) {
 	for _, lifetime := range []gas.ServiceLifetime{gas.ServiceLifetimeScoped, gas.ServiceLifetimeTransient} {
 		t.Run(lifetime.String(), func(t *testing.T) {
 			t.Parallel()
+
 			c := gas.NewServiceContainer()
 			c.RegisterService[*labeled](func() *labeled { return &labeled{} }, lifetime)
 			c.RegisterServiceAlias[*labeled, namer]()
 			c.RegisterSingletonService[*needsNamer](newNeedsNamer)
+
 			err := c.BuildAll(t.Context())
 			if !errors.Is(err, gas.ErrCaptiveDependency) {
 				t.Fatalf("BuildAll = %v, want ErrCaptiveDependency", err)
 			}
+
 			if !strings.Contains(err.Error(), "*gas_test.labeled") {
 				t.Errorf("error %q does not name the target", err)
 			}
@@ -530,15 +607,19 @@ func TestServiceAlias_CaptiveDependency(t *testing.T) {
 
 	t.Run("singleton", func(t *testing.T) {
 		t.Parallel()
+
 		c := gas.NewServiceContainer()
 		// The dependent is registered first, so it builds only if the
 		// sort sees the edge through the alias.
 		c.RegisterSingletonService[*needsNamer](newNeedsNamer)
 		c.RegisterServiceAlias[*labeled, namer]()
 		c.RegisterSingletonService[*labeled](func() *labeled { return &labeled{label: "dep"} })
-		if err := c.BuildAll(t.Context()); err != nil {
+
+		err := c.BuildAll(t.Context())
+		if err != nil {
 			t.Fatalf("BuildAll: %v", err)
 		}
+
 		if got := c.MustResolve[*needsNamer]().n; got != namer(c.MustResolve[*labeled]()) {
 			t.Errorf("needsNamer got %v, want the *labeled singleton", got)
 		}
@@ -553,31 +634,42 @@ func TestServiceAlias_MissingTarget(t *testing.T) {
 
 	c := gas.NewServiceContainer()
 	c.RegisterServiceAlias[*labeled, namer]()
+
 	if c.CanResolve[namer]() {
 		t.Error("CanResolve[namer]() = true with no target registered")
 	}
+
 	err := c.BuildAll(t.Context())
 	if !errors.Is(err, gas.ErrNotRegistered) {
 		t.Fatalf("BuildAll = %v, want ErrNotRegistered", err)
 	}
+
 	if !strings.Contains(err.Error(), "*gas_test.labeled") ||
 		!strings.Contains(err.Error(), "gas_test.namer") {
 		t.Errorf("error %q does not name the alias and its target", err)
 	}
-	if _, err := c.Resolve[namer](); !errors.Is(err, gas.ErrNotRegistered) {
+
+	_, err = c.Resolve[namer]()
+	if !errors.Is(err, gas.ErrNotRegistered) {
 		t.Errorf("Resolve[namer]() = %v, want ErrNotRegistered", err)
 	}
-	if _, err := c.NewScope(t.Context()).Resolve[namer](); !errors.Is(err, gas.ErrNotRegistered) {
+
+	_, err = c.NewScope(t.Context()).Resolve[namer]()
+	if !errors.Is(err, gas.ErrNotRegistered) {
 		t.Errorf("Scope.Resolve[namer]() = %v, want ErrNotRegistered", err)
 	}
 
 	c.RegisterSingletonService[*labeled](func() *labeled { return &labeled{label: "late"} })
+
 	if !c.CanResolve[namer]() {
 		t.Error("CanResolve[namer]() = false once the target is registered")
 	}
-	if err := c.BuildAll(t.Context()); err != nil {
+
+	err = c.BuildAll(t.Context())
+	if err != nil {
 		t.Fatalf("BuildAll after registering the target: %v", err)
 	}
+
 	if got := c.MustResolve[namer]().Name(); got != "late" {
 		t.Errorf("Resolve[namer]().Name() = %q, want %q", got, "late")
 	}
@@ -591,14 +683,17 @@ func TestServiceAlias_InstanceTarget(t *testing.T) {
 	c := gas.NewServiceContainer()
 	c.RegisterServiceInstance(inst)
 	c.RegisterServiceAlias[*labeled, namer]()
+
 	if !c.CanResolve[namer]() {
 		t.Error("CanResolve[namer]() = false for an instance target")
 	}
+
 	if got := c.MustResolve[namer](); got != namer(inst) {
 		t.Errorf("Resolve[namer]() = %p, want the instance %p", got, inst)
 	}
 }
 
+//nolint:iface // a distinct type on purpose: the container resolves by exact type
 type otherNamer interface{ Name() string }
 
 type notANamer struct{}
@@ -659,6 +754,7 @@ func TestServiceAlias_PanicNamesTypes(t *testing.T) {
 			t.Errorf("panic %q does not name both types", msg)
 		}
 	}()
+
 	gas.NewServiceContainer().RegisterServiceAlias[*notANamer, namer]()
 }
 
@@ -669,10 +765,14 @@ func TestServiceAlias_WorkerRegister(t *testing.T) {
 	w := gas.NewWorker()
 	w.RegisterServiceAlias[*labeled, namer]()
 	w.RegisterSingletonService[*labeled](func() *labeled { return &labeled{label: "worker"} })
-	if err := w.Start(t.Context()); err != nil {
+
+	err := w.Start(t.Context())
+	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+
 	t.Cleanup(func() { _ = w.Shutdown(context.Background()) })
+
 	if got := w.ServiceContainer().MustResolve[namer]().Name(); got != "worker" {
 		t.Errorf("Resolve[namer]().Name() = %q, want %q", got, "worker")
 	}
@@ -688,18 +788,23 @@ func TestServiceAlias_RegisterDuringResolve(t *testing.T) {
 	c.RegisterServiceAlias[*labeled, namer]()
 
 	var wg sync.WaitGroup
+
 	for range 4 {
 		wg.Go(func() {
 			for range 200 {
-				if _, err := c.Resolve[namer](); err != nil {
+				_, err := c.Resolve[namer]()
+				if err != nil {
 					t.Errorf("Resolve[namer]() = %v", err)
+
 					return
 				}
+
 				_ = c.CanResolve[otherNamer]()
 				_, _ = c.NewScope(context.Background()).Resolve[otherNamer]()
 			}
 		})
 	}
+
 	wg.Go(func() {
 		for range 200 {
 			c.RegisterServiceAlias[*labeled, otherNamer]()

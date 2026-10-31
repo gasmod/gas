@@ -1,4 +1,4 @@
-package test
+package gas_test
 
 import (
 	"context"
@@ -30,10 +30,14 @@ func (p testPrincipal) Metadata() gas.PrincipalMetadata { return p.meta }
 // authentication middleware does.
 func principalRouter(t *testing.T, attach bool, principal gas.Principal) (*gas.Router, *error) {
 	t.Helper()
+
 	app := gas.NewApp()
-	if err := app.InitServices(context.Background()); err != nil {
+
+	err := app.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	if attach {
 		app.Router().UseMiddlewareFunc(func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -41,15 +45,20 @@ func principalRouter(t *testing.T, attach bool, principal gas.Principal) (*gas.R
 			})
 		})
 	}
+
 	var seen error
+
 	app.Router().Handle(nil, "GET", "/me", func(ctx gas.Context) error {
 		p, err := ctx.Principal()
+
 		seen = err
 		if err != nil {
 			return err
 		}
+
 		return ctx.Text(http.StatusOK, p.Subject())
 	})
+
 	return app.Router(), &seen
 }
 
@@ -60,11 +69,15 @@ func TestContext_Principal_Present(t *testing.T) {
 
 	router, seen := principalRouter(t, true, testPrincipal{subject: "user-42"})
 	rr := httptest.NewRecorder()
-	router.ServeHTTP(rr, httptest.NewRequest("GET", "/me", nil))
+	router.ServeHTTP(
+		rr,
+		httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/me", nil),
+	)
 
 	if *seen != nil {
 		t.Fatalf("Principal() error = %v, want nil", *seen)
 	}
+
 	if rr.Code != http.StatusOK || rr.Body.String() != "user-42" {
 		t.Fatalf("response = %d %q, want 200 %q", rr.Code, rr.Body.String(), "user-42")
 	}
@@ -78,15 +91,21 @@ func TestContext_Principal_Absent(t *testing.T) {
 
 	router, seen := principalRouter(t, false, nil)
 	rr := httptest.NewRecorder()
-	router.ServeHTTP(rr, httptest.NewRequest("GET", "/me", nil))
+	router.ServeHTTP(
+		rr,
+		httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/me", nil),
+	)
 
 	var gerr *gas.Error
+
 	if !errors.As(*seen, &gerr) {
 		t.Fatalf("Principal() error = %v, want a *gas.Error", *seen)
 	}
+
 	if gerr.Status != http.StatusUnauthorized || gerr.Code != gas.CodeUnauthorized {
 		t.Fatalf("error = %d %q, want 401 %q", gerr.Status, gerr.Code, gas.CodeUnauthorized)
 	}
+
 	if rr.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rr.Code)
 	}
@@ -99,9 +118,13 @@ func TestContext_Principal_NilStored(t *testing.T) {
 
 	router, seen := principalRouter(t, true, nil)
 	rr := httptest.NewRecorder()
-	router.ServeHTTP(rr, httptest.NewRequest("GET", "/me", nil))
+	router.ServeHTTP(
+		rr,
+		httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/me", nil),
+	)
 
 	var gerr *gas.Error
+
 	if !errors.As(*seen, &gerr) || gerr.Code != gas.CodeUnauthorized {
 		t.Fatalf("Principal() error = %v, want a 401 *gas.Error", *seen)
 	}
@@ -115,11 +138,14 @@ func TestPrincipalFromContext(t *testing.T) {
 	if p, ok := gas.PrincipalFromContext(context.Background()); ok || p != nil {
 		t.Fatalf("PrincipalFromContext(empty) = %v, %v, want nil, false", p, ok)
 	}
+
 	want := testPrincipal{subject: "user-1"}
 	got, ok := gas.PrincipalFromContext(gas.WithPrincipal(context.Background(), want))
+
 	if !ok || got.Subject() != "user-1" {
 		t.Fatalf("PrincipalFromContext = %v, %v, want subject user-1, true", got, ok)
 	}
+
 	if p, ok := gas.PrincipalFromContext(
 		gas.WithPrincipal(context.Background(), nil),
 	); ok ||
@@ -138,12 +164,15 @@ func TestMetadataValue(t *testing.T) {
 	if v, ok := gas.MetadataValue[string](m, "role"); !ok || v != "admin" {
 		t.Fatalf("MetadataValue[string](role) = %q, %v; want admin, true", v, ok)
 	}
+
 	if v, ok := gas.MetadataValue[string](m, "level"); ok || v != "" {
 		t.Fatalf("MetadataValue[string](level) = %q, %v; want \"\", false", v, ok)
 	}
+
 	if v, ok := gas.MetadataValue[int](m, "missing"); ok || v != 0 {
 		t.Fatalf("MetadataValue[int](missing) = %d, %v; want 0, false", v, ok)
 	}
+
 	if v := m.Value("missing"); v != nil {
 		t.Fatalf("Value(missing) = %v, want nil", v)
 	}
@@ -168,7 +197,9 @@ func TestPrincipalFromContext_TypedNil(t *testing.T) {
 	t.Parallel()
 
 	var typedNil *ptrPrincipal
+
 	ctx := gas.WithPrincipal(context.Background(), typedNil)
+
 	if p, ok := gas.PrincipalFromContext(ctx); ok || p != nil {
 		t.Fatalf("PrincipalFromContext(typed nil stored) = %#v, %v, want nil, false", p, ok)
 	}
@@ -179,11 +210,16 @@ func TestContext_Principal_TypedNilStored(t *testing.T) {
 	t.Parallel()
 
 	var typedNil *ptrPrincipal
+
 	router, seen := principalRouter(t, true, typedNil)
 	rr := httptest.NewRecorder()
-	router.ServeHTTP(rr, httptest.NewRequest("GET", "/me", nil))
+	router.ServeHTTP(
+		rr,
+		httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/me", nil),
+	)
 
 	var gerr *gas.Error
+
 	if !errors.As(*seen, &gerr) || gerr.Code != gas.CodeUnauthorized {
 		t.Fatalf("Principal() error = %v, want a 401 *gas.Error", *seen)
 	}

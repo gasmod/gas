@@ -44,6 +44,40 @@ func TestDoc_Usage(t *testing.T) {
 	assert.Equal(t, 1, m.CallCount("RunPending"))
 }
 
+// RunPendingContext and DownContext, the methods gas.MigrationManager
+// requires, record their context and return what RunPendingFn and DownFn
+// return.
+func TestMock_ContextMethods(t *testing.T) {
+	t.Parallel()
+
+	var gotN int
+
+	m := &migratetest.MockMigrationManager{
+		RunPendingFn: func() error { return errBoom },
+		DownFn: func(n int) error {
+			gotN = n
+
+			return errBoom
+		},
+	}
+
+	var mgr gas.MigrationManager = m
+
+	ctx := t.Context()
+
+	require.ErrorIs(t, mgr.RunPendingContext(ctx), errBoom)
+	require.ErrorIs(t, mgr.DownContext(ctx, 3), errBoom)
+	assert.Equal(t, 3, gotN)
+	assert.Equal(t, []migratetest.Call{
+		{Method: "RunPendingContext", Args: []any{ctx}},
+		{Method: "DownContext", Args: []any{ctx, 3}},
+	}, m.Calls())
+
+	empty := &migratetest.MockMigrationManager{}
+	require.NoError(t, empty.RunPendingContext(ctx))
+	require.NoError(t, empty.DownContext(ctx, 1))
+}
+
 // With every field nil, each method succeeds and does nothing, and Name
 // is migrate.ServiceName.
 func TestMock_Defaults(t *testing.T) {

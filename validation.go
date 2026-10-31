@@ -17,15 +17,18 @@ func newValidator() *validator.Validate {
 	v.RegisterTagNameFunc(func(field reflect.StructField) string {
 		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
 		if name == "" {
-			name = strings.SplitN(field.Tag.Get("form"), ",", 2)[0]
+			name, _, _ = strings.Cut(field.Tag.Get("form"), ",")
 		}
+
 		// Returning "" makes validator fall back to the Go field name, which is
 		// what we want for a field carrying neither tag, or tagged "-".
 		if name == "-" {
 			return ""
 		}
+
 		return name
 	})
+
 	return v
 }
 
@@ -33,6 +36,7 @@ func newValidator() *validator.Validate {
 // FieldError slice. It reports false when err is not a validation error.
 func validationFieldErrors(err error) ([]FieldError, bool) {
 	var ve validator.ValidationErrors
+
 	if !errors.As(err, &ve) {
 		return nil, false
 	}
@@ -45,6 +49,7 @@ func validationFieldErrors(err error) ([]FieldError, bool) {
 			Message: validationMessage(fe.Tag(), fe.Param()),
 		})
 	}
+
 	return fields, true
 }
 
@@ -75,5 +80,6 @@ func validationMessage(tag, param string) string {
 	if param != "" {
 		msg += " (" + param + ")"
 	}
+
 	return msg
 }

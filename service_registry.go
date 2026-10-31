@@ -41,8 +41,11 @@ func (l ServiceLifetime) String() string {
 	}
 }
 
+// registration is a registered constructor and its lifetime.
 type registration struct {
-	ctor     any
+	// ctor is the constructor.
+	ctor any
+	// lifetime is how its result is cached.
 	lifetime ServiceLifetime
 }
 
@@ -52,10 +55,17 @@ type Resolver interface {
 	resolveType(ctx context.Context, t reflect.Type) (reflect.Value, error)
 }
 
-// ServiceContainer is a dependency injection container that manages service registration,
-// construction, and lifetime-scoped resolution.
+// ServiceContainer is a dependency injection container, as described under
+// Dependency injection in the package documentation: it registers
+// constructors and instances, builds them with their dependencies, and
+// caches them by lifetime. It is safe for concurrent use.
 type ServiceContainer struct {
-	opt *ServiceContainerOptions
+	// opt holds the container's settings.
+	opt *serviceContainerOptions
+
+	// optErr is the first error an option recorded, which BuildAll
+	// returns.
+	optErr error
 
 	registrations *omap.Map[reflect.Type, registration]
 	instances     *omap.Map[reflect.Type, reflect.Value] // singletons + pre-registered instances
@@ -78,57 +88,64 @@ type ServiceContainer struct {
 	// order. A lookup of an alias becomes a lookup of its target.
 	aliases *omap.Map[reflect.Type, reflect.Type]
 
+	// gate, when set, checks a singleton instance before it is handed
+	// out, and fails the resolution with its error. A Worker sets it to
+	// refuse services that are not active.
+	gate func(v reflect.Value) error
+
+	// fallbackLogger, when set, returns the logger of a request served
+	// with no Logger of its own. A Worker sets it.
+	fallbackLogger func() Logger
+
 	// mu guards registrations, instances, initedInstances, aliases,
 	// builds, stacks, and waiting. Constructors and Init run without it held.
 	mu sync.Mutex
 }
 
-// ServiceContainerOptions holds the settings a ServiceContainer is built
-// with. Its fields are set through ServiceContainerOption values passed to
-// NewServiceContainer.
-type ServiceContainerOptions struct {
+// serviceContainerOptions holds the settings a ServiceContainer is built
+// with.
+type serviceContainerOptions struct {
+	err                error
 	serviceInitTimeout time.Duration
 }
 
 // ServiceContainerOption configures a ServiceContainer at construction.
-type ServiceContainerOption func(*ServiceContainerOptions)
+type ServiceContainerOption func(*serviceContainerOptions)
 
 // WithServiceContainerServiceTimeout sets the deadline the container gives
-// each service's Init, singleton or scoped. The default is 15 seconds, and 0
-// disables the deadline so only the caller's context applies. A service that
-// implements ServiceInitTimeout overrides it for itself.
+// each service's Init, singleton or scoped. 0 disables the deadline, so
+// only the caller's context applies. A service that implements
+// ServiceInitTimeout overrides it for itself. A negative timeout makes
+// BuildAll fail with an error wrapping ErrInvalidOption.
 //
-// Panics if timeout is negative.
+// Default: DefaultServiceInitTimeout.
 func WithServiceContainerServiceTimeout(timeout time.Duration) ServiceContainerOption {
-	mustNotBeNegativeInitTimeout("WithServiceContainerServiceTimeout", timeout)
-	return func(opts *ServiceContainerOptions) {
+	return func(opts *serviceContainerOptions) {
+		if timeout < 0 {
+			if opts.err == nil {
+				opts.err = fmt.Errorf(
+					"%w: WithServiceContainerServiceTimeout must not be negative",
+					ErrInvalidOption,
+				)
+			}
+
+			return
+		}
+
 		opts.serviceInitTimeout = timeout
 	}
 }
 
-// mustNotBeNegativeInitTimeout panics when an init-timeout option is given a
-// negative duration, which is a wiring mistake: 0 already means "no deadline".
-func mustNotBeNegativeInitTimeout(option string, timeout time.Duration) {
-	if timeout < 0 {
-		panic(fmt.Sprintf(
-			"gas: %s got a negative timeout %s; pass a positive duration, or 0 to disable the init deadline",
-			option,
-			timeout,
-		))
-	}
-}
-
-// NewServiceContainer creates a new ServiceContainer.
+// NewServiceContainer returns an empty ServiceContainer with opts applied.
 func NewServiceContainer(opts ...ServiceContainerOption) *ServiceContainer {
-	options := &ServiceContainerOptions{
-		serviceInitTimeout: 15 * time.Second,
-	}
+	options := &serviceContainerOptions{serviceInitTimeout: DefaultServiceInitTimeout}
 
 	for _, opt := range opts {
 		opt(options)
 	}
 
 	return &ServiceContainer{
+		optErr:          options.err,
 		registrations:   &omap.Map[reflect.Type, registration]{},
 		instances:       &omap.Map[reflect.Type, reflect.Value]{},
 		initedInstances: make(map[reflect.Type]struct{}),
@@ -171,22 +188,21 @@ func (c *ServiceContainer) RegisterService[T any](ctor any, lifetime ServiceLife
 
 	validateCtorShape(t, ctor)
 
-	if lifetime == ServiceLifetimeTransient {
-		svcType := reflect.TypeFor[Service]()
-		if t.Implements(svcType) || (t.Kind() == reflect.Pointer && t.Implements(svcType)) {
-			panic(
-				fmt.Sprintf(
-					"gas: transient service %v implements Service; use Singleton or Scoped lifetime instead",
-					t,
-				),
-			)
-		}
+	if lifetime == ServiceLifetimeTransient && t.Implements(serviceType) {
+		panic(fmt.Errorf(
+			"%w: transient %v implements Service; register it as a singleton or scoped",
+			ErrInvalidLifetime,
+			t,
+		))
 	}
+
 	c.mu.Lock()
+
 	isAlias := c.aliases.Has(t)
 	if !isAlias {
 		c.registrations.Store(t, registration{ctor: ctor, lifetime: lifetime})
 	}
+
 	c.mu.Unlock()
 
 	if isAlias {
@@ -197,10 +213,7 @@ func (c *ServiceContainer) RegisterService[T any](ctor any, lifetime ServiceLife
 // panicRegisteredAsAlias panics because t, which a service is being
 // registered under, is already an alias.
 func panicRegisteredAsAlias(t reflect.Type) {
-	panic(fmt.Sprintf(
-		"gas: %v is already registered as an alias; it cannot also be registered as a service",
-		t,
-	))
+	panic(fmt.Errorf("%w: %v is an alias; it cannot also be a service", ErrInvalidAlias, t))
 }
 
 // RegisterTransientService registers a constructor for type T with the
@@ -237,9 +250,18 @@ func (c *ServiceContainer) RegisterSingletonService[T any](ctor any) {
 // An instance wins over a constructor registration for the same type,
 // whichever was registered last. Registering another instance for the same
 // type replaces the earlier one.
+//
+// A nil val, such as a nil interface or a nil pointer, map, channel or
+// function, panics with an error wrapping ErrNilInstance.
 func (c *ServiceContainer) RegisterServiceInstance[T any](val T) {
 	t := reflect.TypeFor[T]()
-	if !c.setInstance(t, reflect.ValueOf(val)) {
+
+	v := reflect.ValueOf(val)
+	if isNilValue(v) {
+		panic(fmt.Errorf("%w: %v", ErrNilInstance, t))
+	}
+
+	if !c.setInstance(t, v) {
 		panicRegisteredAsAlias(t)
 	}
 }
@@ -265,19 +287,22 @@ func (c *ServiceContainer) RegisterServiceAlias[Target, Alias any]() {
 	t := reflect.TypeFor[Target]()
 	a := reflect.TypeFor[Alias]()
 
-	if err := validateAlias(t, a); err != nil {
-		panic(fmt.Sprintf("gas: invalid alias: %v", err))
+	err := validateAlias(t, a)
+	if err != nil {
+		panic(err)
 	}
 
 	c.mu.Lock()
-	err := c.checkAliasLocked(t, a)
+
+	err = c.checkAliasLocked(t, a)
 	if err == nil {
 		c.aliases.Store(a, t)
 	}
+
 	c.mu.Unlock()
 
 	if err != nil {
-		panic(fmt.Sprintf("gas: invalid alias: %v", err))
+		panic(err)
 	}
 }
 
@@ -285,78 +310,18 @@ func (c *ServiceContainer) RegisterServiceAlias[Target, Alias any]() {
 // alone.
 func validateAlias(t, a reflect.Type) error {
 	if a.Kind() != reflect.Interface {
-		return fmt.Errorf("alias %v must be an interface", a)
+		return fmt.Errorf("%w: alias %v must be an interface", ErrInvalidAlias, a)
 	}
+
 	if t == a {
-		return fmt.Errorf("alias %v is its own target", a)
+		return fmt.Errorf("%w: alias %v is its own target", ErrInvalidAlias, a)
 	}
+
 	if !t.Implements(a) {
-		return fmt.Errorf("target %v does not implement alias %v", t, a)
+		return fmt.Errorf("%w: target %v does not implement alias %v", ErrInvalidAlias, t, a)
 	}
+
 	return nil
-}
-
-// checkAliasLocked checks an alias against what is already registered. It
-// is called with c.mu held.
-func (c *ServiceContainer) checkAliasLocked(t, a reflect.Type) error {
-	if c.registrations.Has(a) || c.instances.Has(a) {
-		return fmt.Errorf("%v is already registered as a service; it cannot also be an alias", a)
-	}
-	if c.aliases.Has(t) {
-		return fmt.Errorf(
-			"target %v of alias %v is itself an alias; alias the target directly",
-			t,
-			a,
-		)
-	}
-	for other, target := range c.aliases.All() {
-		if target == a {
-			return fmt.Errorf("%v is the target of alias %v; an alias cannot be a target", a, other)
-		}
-	}
-	return nil
-}
-
-// aliasTarget returns the target of t when t is an alias, and t otherwise.
-func (c *ServiceContainer) aliasTarget(t reflect.Type) reflect.Type {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if target, ok := c.aliases.Load(t); ok {
-		return target
-	}
-	return t
-}
-
-// validateAliases fails if an alias's target has no instance or
-// registration, reporting the first such alias in registration order.
-func (c *ServiceContainer) validateAliases() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for a, t := range c.aliases.All() {
-		if !c.registrations.Has(t) && !c.instances.Has(t) {
-			return newDIError(
-				ErrNotRegistered,
-				"no registration for %v, the target of alias %v",
-				t,
-				a,
-			)
-		}
-	}
-	return nil
-}
-
-// setInstance caches an instance and records its position. Re-registering a
-// type keeps its original position: it was already available from that point
-// on, so anything built afterwards may depend on it. It sets nothing, and
-// reports false, when t is an alias.
-func (c *ServiceContainer) setInstance(t reflect.Type, v reflect.Value) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.aliases.Has(t) {
-		return false
-	}
-	c.instances.Store(t, v)
-	return true
 }
 
 // BuildAll initializes pre-registered Service instances, then eagerly resolves
@@ -368,19 +333,13 @@ func (c *ServiceContainer) setInstance(t reflect.Type, v reflect.Value) bool {
 // before anything the container constructs, matching the order it became
 // available, so reversing that order at shutdown stays correct.
 func (c *ServiceContainer) BuildAll(ctx context.Context) error {
-	if err := c.validateServiceShapes(); err != nil {
+	err := c.validate()
+	if err != nil {
 		return err
 	}
 
-	if err := c.validateAliases(); err != nil {
-		return err
-	}
-
-	if err := c.validateLifetimes(); err != nil {
-		return err
-	}
-
-	if err := c.initInstances(ctx); err != nil {
+	err = c.initInstances(ctx)
+	if err != nil {
 		return err
 	}
 
@@ -393,39 +352,621 @@ func (c *ServiceContainer) BuildAll(ctx context.Context) error {
 		if _, ok := c.lookupInstance(t); ok {
 			continue
 		}
+
 		reg, _ := c.findRegistration(t)
 		if reg.lifetime != ServiceLifetimeSingleton {
 			continue
 		}
-		if _, resErr := c.resolveSingleton(ctx, t); resErr != nil {
-			return fmt.Errorf("building %v: %w", t, resErr)
+
+		_, err = c.resolveSingleton(ctx, t)
+		if err != nil {
+			return fmt.Errorf("building %v: %w", t, err)
 		}
 	}
+
 	return nil
 }
 
+// NewScope returns a Scope of the container. Scoped services resolved
+// within it share instances; singletons come from the container. ctx is
+// passed to the Init of every scoped service the scope builds; in an App
+// it is the request's context.
+func (c *ServiceContainer) NewScope(ctx context.Context) *Scope {
+	return &Scope{
+		ctx:       ctx,
+		container: c,
+		resolved:  make(map[reflect.Type]reflect.Value),
+		builds:    make(map[reflect.Type]*singletonBuild),
+	}
+}
+
+// Resolve returns the instance registered for T, building it and its
+// dependencies on first use and caching it when T is a singleton. Scoped
+// registrations cannot be resolved here and return an error; call NewScope and
+// resolve from the Scope instead.
+func (c *ServiceContainer) Resolve[T any]() (T, error) {
+	return resolveFrom[T](context.Background(), c)
+}
+
+// MustResolve is like Resolve but panics if the service cannot be resolved.
+func (c *ServiceContainer) MustResolve[T any]() T {
+	return mustResolveFrom[T](context.Background(), c)
+}
+
+// ResolveFromRequestScope resolves T from the request's Scope, building it
+// if needed, as Scope.Resolve does.
+func ResolveFromRequestScope[T any](r *http.Request) (T, error) {
+	//goland:noinspection GoResourceLeak
+	return resolveFrom[T](r.Context(), RequestScope(r))
+}
+
+// MustResolveFromRequestScope is ResolveFromRequestScope, and panics with
+// the error when T cannot be resolved.
+func MustResolveFromRequestScope[T any](r *http.Request) T {
+	//goland:noinspection GoResourceLeak
+	return mustResolveFrom[T](r.Context(), RequestScope(r))
+}
+
+// --- ServiceContainer as Resolver ---
+
+// resolveFrom resolves T through r with ctx.
+func resolveFrom[T any](ctx context.Context, r Resolver) (T, error) {
+	var zero T
+
+	t := reflect.TypeFor[T]()
+
+	v, err := r.resolveType(ctx, t)
+	if err != nil {
+		return zero, err
+	}
+
+	// The container stores a value of T, or one converted to T, so this
+	// holds; a failure is a bug in the container.
+	val, ok := reflect.TypeAssert[T](v)
+	if !ok {
+		return zero, fmt.Errorf("%w: resolved %v for %v", errContainerBug, v.Type(), t)
+	}
+
+	return val, nil
+}
+
+// errContainerBug indicates a broken invariant of the container.
+var errContainerBug = errors.New("gas: container invariant broken")
+
+// mustResolveFrom resolves T through r with ctx, and panics with the
+// error when it cannot.
+func mustResolveFrom[T any](ctx context.Context, r Resolver) T {
+	v, err := resolveFrom[T](ctx, r)
+	if err != nil {
+		panic(fmt.Errorf("gas: resolve %v: %w", reflect.TypeFor[T](), err))
+	}
+
+	return v
+}
+
+// notRegistered is the error for a lookup of asked that found nothing for t,
+// which is asked itself or, when asked is an alias, its target.
+func notRegistered(asked, t reflect.Type) error {
+	if asked != t {
+		return newDIError(
+			ErrNotRegistered,
+			"no registration for %v, the target of alias %v",
+			t,
+			asked,
+		)
+	}
+
+	return newDIError(ErrNotRegistered, "no registration for %v", t)
+}
+
+// EachInstance iterates all built singleton instances (including pre-registered
+// ones) in the order they became available. A dependency is always constructed
+// and cached before the constructor that consumes it returns, so this order is
+// a valid initialization order: reversing it is safe for shutdown.
+func (c *ServiceContainer) EachInstance(fn func(reflect.Value)) {
+	// Snapshot under the lock and call fn without it, so fn may resolve.
+	c.mu.Lock()
+
+	instances := c.instances.Clone()
+	c.mu.Unlock()
+
+	for _, v := range instances.All() {
+		fn(v)
+	}
+}
+
+// --- Scope ---
+
+// Scope is a resolution context for scoped services, as described under
+// Dependency injection in the package documentation. It is safe for
+// concurrent use: goroutines resolving one scoped type share one build.
+type Scope struct {
+	// ctx is the context the scope was created with. Scope.Resolve has no
+	// context parameter, so the Init of each scoped service it builds gets
+	// this one.
+	ctx context.Context //nolint:containedctx // the context of the scope's Inits, as documented
+	// container is the scope's container, whose mu guards the fields
+	// below.
+	container *ServiceContainer
+	// resolved holds the scoped instances built, and builds those being
+	// built.
+	resolved map[reflect.Type]reflect.Value
+	builds   map[reflect.Type]*singletonBuild
+
+	// order records resolution order so Close can tear scoped services
+	// down in reverse.
+	order []reflect.Type
+
+	// closed is set by Close.
+	closed bool
+}
+
+// Resolve returns the instance registered for T within this scope. A scoped T
+// is built once per Scope and cached for the life of the scope; singletons
+// come from the owning container, and transients are built fresh. Scoped
+// instances that implement Service are closed in reverse resolution order by
+// Scope.Close.
+func (s *Scope) Resolve[T any]() (T, error) {
+	return resolveFrom[T](s.ctx, s)
+}
+
+// MustResolve is like Resolve but panics if the service cannot be resolved.
+func (s *Scope) MustResolve[T any]() T {
+	return mustResolveFrom[T](s.ctx, s)
+}
+
+// Close calls Close(ctx) on every scoped Service instance the scope
+// built, in reverse resolution order, so a scoped service can still use
+// the scoped dependencies it was built from, and returns their errors,
+// joined. Resolving a scoped type afterwards fails with ErrScopeClosed.
+// A second Close closes nothing.
+func (s *Scope) Close(ctx context.Context) error {
+	c := s.container
+
+	c.mu.Lock()
+
+	if s.closed {
+		c.mu.Unlock()
+
+		return nil
+	}
+
+	s.closed = true
+
+	services := make([]Service, 0, len(s.order))
+
+	for _, t := range slices.Backward(s.order) {
+		if svc, ok := reflect.TypeAssert[Service](s.resolved[t]); ok {
+			services = append(services, svc)
+		}
+	}
+
+	c.mu.Unlock()
+
+	var errs []error
+
+	for _, svc := range services {
+		err := svc.Close(ctx)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("gas: close %s: %w", svc.Name(), err))
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+func (s *Scope) resolveType(ctx context.Context, t reflect.Type) (reflect.Value, error) {
+	asked := t
+
+	t = s.container.aliasTarget(t)
+
+	// 1. check scope cache
+	if v, ok := s.lookupScoped(t); ok {
+		return v, nil
+	}
+
+	// 2. check container instances (singletons)
+	if v, ok := s.container.lookupInstance(t); ok {
+		return s.container.checkGate(v)
+	}
+
+	// 3. check registration and build
+	reg, ok := s.container.findRegistration(t)
+	if !ok {
+		return reflect.Value{}, notRegistered(asked, t)
+	}
+
+	switch reg.lifetime {
+	case ServiceLifetimeSingleton:
+		// delegate fully to container (it caches there)
+		return s.container.resolveType(ctx, t)
+
+	case ServiceLifetimeScoped:
+		return s.resolveScoped(ctx, t)
+
+	case ServiceLifetimeTransient:
+		return s.container.invoke(ctx, t, s)
+	}
+
+	return reflect.Value{}, newDIError(ErrInvalidLifetime, "unknown lifetime for %v", t)
+}
+
+// resolveScoped returns the scope's instance of the scoped type t,
+// building it if needed. One goroutine builds it at a time; another that
+// needs it waits for that build and shares its result, as for a
+// singleton. A failed build is not cached.
+func (s *Scope) resolveScoped(ctx context.Context, t reflect.Type) (reflect.Value, error) {
+	c := s.container
+
+	c.mu.Lock()
+
+	if v, ok := s.resolved[t]; ok {
+		c.mu.Unlock()
+
+		return v, nil
+	}
+
+	if s.closed {
+		c.mu.Unlock()
+
+		return reflect.Value{}, fmt.Errorf("%w: resolving %v", ErrScopeClosed, t)
+	}
+
+	gid := curGoroutineID()
+	if b, ok := s.builds[t]; ok {
+		return c.awaitBuild(t, b, gid)
+	}
+
+	b := &singletonBuild{gid: gid, done: make(chan struct{})}
+
+	s.builds[t] = b
+	c.mu.Unlock()
+
+	defer c.abandonBuild(s.builds, t, b)
+
+	val, err := c.invoke(ctx, t, s)
+
+	c.mu.Lock()
+
+	// A Close that ran during the build has closed everything else; the
+	// build closes its own instance rather than keep it.
+	closedDuring := err == nil && s.closed
+	if closedDuring {
+		err = fmt.Errorf("%w: resolving %v", ErrScopeClosed, t)
+	} else if err == nil {
+		s.resolved[t] = val
+		s.order = append(s.order, t)
+	}
+
+	delete(s.builds, t)
+
+	b.val, b.err = val, err
+	c.mu.Unlock()
+	close(b.done)
+
+	if closedDuring {
+		if svc, ok := reflect.TypeAssert[Service](val); ok {
+			err = errors.Join(err, closeService(context.WithoutCancel(ctx), svc))
+		}
+
+		return reflect.Value{}, err
+	}
+
+	return val, err
+}
+
+// replaceResult is what replaceScoped did.
+type replaceResult uint8
+
+const (
+	// replaced is a slot that now holds the new value.
+	replaced replaceResult = iota
+	// replaceKept is a slot left in place, as documented: the type is not
+	// scoped, the scope holds no instance, or the instance is a Service.
+	replaceKept
+	// replaceNotAssignable is a scoped slot the value cannot take.
+	replaceNotAssignable
+)
+
+// replaceScoped replaces the instance this scope has cached for t with v,
+// so later resolutions of t in the scope return v. It replaces only when t
+// is registered scoped, the scope holds an instance of t that is not a
+// Service, and v is assignable to t, which keeps it from shadowing a
+// singleton and from replacing an instance the scope has to close. It is
+// used by RequestLogger to put the per-request logger into its scoped
+// slot.
+func (s *Scope) replaceScoped(t reflect.Type, v reflect.Value) replaceResult {
+	reg, ok := s.container.findRegistration(t)
+	if !ok || reg.lifetime != ServiceLifetimeScoped {
+		return replaceKept
+	}
+
+	c := s.container
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	cur, ok := s.resolved[t]
+	if !ok {
+		return replaceKept
+	}
+
+	if _, isService := reflect.TypeAssert[Service](cur); isService {
+		return replaceKept
+	}
+
+	if !v.IsValid() || !v.Type().AssignableTo(t) {
+		return replaceNotAssignable
+	}
+
+	s.resolved[t] = v
+
+	return replaced
+}
+
+// lookupScoped returns the scope's instance of exactly t.
+func (s *Scope) lookupScoped(t reflect.Type) (reflect.Value, bool) {
+	s.container.mu.Lock()
+	defer s.container.mu.Unlock()
+
+	v, ok := s.resolved[t]
+
+	return v, ok
+}
+
+// --- internal: constructor invocation ---
+
+// --- internal: validation ---
+
+// CanResolve reports whether the container has an instance or registration
+// for exactly T, or T is an alias whose target has one, which is when Resolve
+// can find it. An interface T is not resolvable just because a registered
+// type implements it: register the constructor under the interface, or
+// register T as an alias. It answers from the registry alone and builds
+// nothing.
+func (c *ServiceContainer) CanResolve[T any]() bool {
+	t := reflect.TypeFor[T]()
+
+	return c.canResolveType(t)
+}
+
+// checkAliasLocked checks an alias against what is already registered. It
+// is called with c.mu held.
+func (c *ServiceContainer) checkAliasLocked(t, a reflect.Type) error {
+	if c.registrations.Has(a) || c.instances.Has(a) {
+		return fmt.Errorf("%w: %v is a service; it cannot also be an alias", ErrInvalidAlias, a)
+	}
+
+	if c.aliases.Has(t) {
+		return fmt.Errorf(
+			"%w: target %v of alias %v is itself an alias; alias the target directly",
+			ErrInvalidAlias,
+			t,
+			a,
+		)
+	}
+
+	for other, target := range c.aliases.All() {
+		if target == a {
+			return fmt.Errorf(
+				"%w: %v is the target of alias %v; an alias cannot be a target",
+				ErrInvalidAlias,
+				a,
+				other,
+			)
+		}
+	}
+
+	return nil
+}
+
+// aliasTarget returns the target of t when t is an alias, and t otherwise.
+func (c *ServiceContainer) aliasTarget(t reflect.Type) reflect.Type {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if target, ok := c.aliases.Load(t); ok {
+		return target
+	}
+
+	return t
+}
+
+// validateAliases fails if an alias's target has no instance or
+// registration, reporting the first such alias in registration order.
+func (c *ServiceContainer) validateAliases() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for a, t := range c.aliases.All() {
+		if !c.registrations.Has(t) && !c.instances.Has(t) {
+			return newDIError(
+				ErrNotRegistered,
+				"no registration for %v, the target of alias %v",
+				t,
+				a,
+			)
+		}
+	}
+
+	return nil
+}
+
+// setInstance caches an instance and records its position. Re-registering a
+// type keeps its original position: it was already available from that point
+// on, so anything built afterwards may depend on it. It sets nothing, and
+// reports false, when t is an alias.
+func (c *ServiceContainer) setInstance(t reflect.Type, v reflect.Value) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.aliases.Has(t) {
+		return false
+	}
+
+	c.instances.Store(t, v)
+
+	return true
+}
+
+// validate runs the checks BuildAll makes before it builds anything: the
+// options, the service shapes, the aliases and the lifetimes.
+func (c *ServiceContainer) validate() error {
+	if c.optErr != nil {
+		return c.optErr
+	}
+
+	err := c.validateServiceShapes()
+	if err != nil {
+		return err
+	}
+
+	err = c.validateAliases()
+	if err != nil {
+		return err
+	}
+
+	return c.validateLifetimes()
+}
+
 // initInstances calls Init on every pre-registered Service instance that has
-// not been initialized yet, in registration order. Instances bypass invoke —
-// BuildAll skips types already present in the instance map — so this is the
+// not been initialized yet, in registration order. Instances bypass invoke
+// (BuildAll skips types already present in the instance map), so this is the
 // only place their Init can run.
 func (c *ServiceContainer) initInstances(ctx context.Context) error {
 	c.mu.Lock()
+
 	instances := c.instances.Clone()
 	c.mu.Unlock()
 
 	for t := range instances.All() {
 		if svc, ok := c.claimInstanceInit(t); ok {
-			if err := c.initService(ctx, t, svc); err != nil {
-				// Unmarked so initializedServices never reports an
-				// instance whose Init failed.
-				c.mu.Lock()
-				delete(c.initedInstances, t)
-				c.mu.Unlock()
+			err := c.initClaimed(ctx, t, svc)
+			if err != nil {
 				return err
 			}
 		}
 	}
+
 	return nil
+}
+
+// initClaimed runs the Init of the claimed instance svc of t. When Init
+// fails or panics, the instance is unmarked, so initializedServices never
+// reports an instance whose Init did not succeed.
+func (c *ServiceContainer) initClaimed(ctx context.Context, t reflect.Type, svc Service) error {
+	ok := false
+
+	defer func() {
+		if !ok {
+			c.mu.Lock()
+			delete(c.initedInstances, t)
+			c.mu.Unlock()
+		}
+	}()
+
+	err := c.initService(ctx, t, svc)
+
+	ok = err == nil
+
+	return err
+}
+
+// abandonBuild ends the build b of t in builds when its constructor or
+// Init panicked: it removes the build, so a later resolution builds again,
+// gives the goroutines waiting on it an error wrapping ErrPanic, and
+// panics again. A build that returned has closed b.done already and is
+// left alone.
+func (c *ServiceContainer) abandonBuild(
+	builds map[reflect.Type]*singletonBuild,
+	t reflect.Type,
+	b *singletonBuild,
+) {
+	select {
+	case <-b.done:
+		return
+	default:
+	}
+
+	rec := recover()
+
+	c.mu.Lock()
+
+	if builds[t] == b {
+		delete(builds, t)
+	}
+
+	b.err = fmt.Errorf("%w building %v: %v", ErrPanic, t, rec)
+	c.mu.Unlock()
+	close(b.done)
+
+	if rec != nil {
+		panic(rec)
+	}
+}
+
+// checkGate runs the gate on v, when there is one, and returns v or the
+// gate's error.
+func (c *ServiceContainer) checkGate(v reflect.Value) (reflect.Value, error) {
+	if c.gate == nil {
+		return v, nil
+	}
+
+	err := c.gate(v)
+	if err != nil {
+		return reflect.Value{}, err
+	}
+
+	return v, nil
+}
+
+// dependencyServices returns the built Service instances that t, or its
+// alias target, depends on through its constructor's parameters, directly
+// or not, in no particular order. t's own instance is not among them.
+func (c *ServiceContainer) dependencyServices(t reflect.Type) []Service {
+	root := c.aliasTarget(t)
+	seen := map[reflect.Type]bool{root: true}
+	queue := []reflect.Type{root}
+
+	var out []Service
+
+	self, _ := c.lookupInstance(root)
+
+	for len(queue) > 0 {
+		cur := queue[0]
+
+		queue = queue[1:]
+
+		reg, ok := c.findRegistration(cur)
+		if !ok {
+			continue
+		}
+
+		for in := range reflect.TypeOf(reg.ctor).Ins() {
+			dep := c.aliasTarget(in)
+			if seen[dep] {
+				continue
+			}
+
+			seen[dep] = true
+			queue = append(queue, dep)
+
+			v, built := c.lookupInstance(dep)
+			if !built {
+				continue
+			}
+
+			svc, isSvc := reflect.TypeAssert[Service](v)
+			if !isSvc || (self.IsValid() && sameInstance(svc, self.Interface())) ||
+				slices.ContainsFunc(out, func(o Service) bool { return sameInstance(o, svc) }) {
+				continue
+			}
+
+			out = append(out, svc)
+		}
+	}
+
+	return out
 }
 
 // initializedServices returns, in the order they became available, the
@@ -438,24 +979,28 @@ func (c *ServiceContainer) initializedServices() []Service {
 	defer c.mu.Unlock()
 
 	var out []Service
-	seen := make(map[Service]struct{})
+
 	for t, v := range c.instances.All() {
-		svc, ok := v.Interface().(Service)
+		svc, ok := reflect.TypeAssert[Service](v)
 		if !ok {
 			continue
 		}
+
 		_, inited := c.initedInstances[t]
 		reg, registered := c.registrations.Load(t)
+
 		built := registered && reg.lifetime == ServiceLifetimeSingleton
 		if !inited && !built {
 			continue
 		}
-		if _, dup := seen[svc]; dup {
+
+		if slices.ContainsFunc(out, func(o Service) bool { return sameInstance(o, svc) }) {
 			continue
 		}
-		seen[svc] = struct{}{}
+
 		out = append(out, svc)
 	}
+
 	return out
 }
 
@@ -469,15 +1014,19 @@ func (c *ServiceContainer) claimInstanceInit(t reflect.Type) (Service, bool) {
 	if _, done := c.initedInstances[t]; done {
 		return nil, false
 	}
+
 	v, ok := c.instances.Load(t)
 	if !ok {
 		return nil, false
 	}
-	svc, ok := v.Interface().(Service)
+
+	svc, ok := reflect.TypeAssert[Service](v)
 	if !ok {
 		return nil, false
 	}
+
 	c.initedInstances[t] = struct{}{}
+
 	return svc, true
 }
 
@@ -497,7 +1046,7 @@ func (c *ServiceContainer) initService(ctx context.Context, t reflect.Type, svc 
 	if tout, ok := svc.(ServiceInitTimeout); ok {
 		timeout = tout.InitTimeout()
 		if timeout < 0 {
-			return fmt.Errorf("init %v: InitTimeout returned a negative duration %s", t, timeout)
+			return fmt.Errorf("init %v: %w: InitTimeout is negative", t, ErrInvalidOption)
 		}
 	}
 
@@ -505,6 +1054,7 @@ func (c *ServiceContainer) initService(ctx context.Context, t reflect.Type, svc 
 	if timeout > 0 {
 		initCtx, cancel = context.WithTimeout(ctx, timeout)
 	}
+
 	defer cancel()
 
 	err := svc.Init(initCtx)
@@ -515,6 +1065,7 @@ func (c *ServiceContainer) initService(ctx context.Context, t reflect.Type, svc 
 		if err != nil {
 			return fmt.Errorf("init %v: %w", t, err)
 		}
+
 		return nil
 	}
 
@@ -522,6 +1073,7 @@ func (c *ServiceContainer) initService(ctx context.Context, t reflect.Type, svc 
 		if errors.Is(err, context.DeadlineExceeded) {
 			return fmt.Errorf("init %v: timed out after %s: %w", t, timeout, err)
 		}
+
 		return fmt.Errorf(
 			"init %v: timed out after %s: %w: %w",
 			t,
@@ -537,35 +1089,13 @@ func (c *ServiceContainer) initService(ctx context.Context, t reflect.Type, svc 
 		timeout,
 		context.DeadlineExceeded,
 	)
-	if closeErr := svc.Close(context.WithoutCancel(ctx)); closeErr != nil {
+
+	closeErr := svc.Close(context.WithoutCancel(ctx))
+	if closeErr != nil {
 		return errors.Join(timeoutErr, fmt.Errorf("close %v after late init: %w", t, closeErr))
 	}
+
 	return timeoutErr
-}
-
-// NewScope creates a scoped resolution context. Scoped services resolved within
-// this scope share instances; singletons delegate to the container. ctx is
-// passed to the Init of every scoped service the scope builds; in an App it
-// is the request's context.
-func (c *ServiceContainer) NewScope(ctx context.Context) *Scope {
-	return &Scope{
-		ctx:       ctx,
-		container: c,
-		resolved:  make(map[reflect.Type]reflect.Value),
-	}
-}
-
-// Resolve returns the instance registered for T, building it and its
-// dependencies on first use and caching it when T is a singleton. Scoped
-// registrations cannot be resolved here and return an error; call NewScope and
-// resolve from the Scope instead.
-func (c *ServiceContainer) Resolve[T any]() (T, error) {
-	return resolveFrom[T](context.Background(), c)
-}
-
-// MustResolve is like Resolve but panics if the service cannot be resolved.
-func (c *ServiceContainer) MustResolve[T any]() T {
-	return mustResolveFrom[T](context.Background(), c)
 }
 
 // resolveBuilt returns the instance already built for T, without invoking any
@@ -576,63 +1106,23 @@ func (c *ServiceContainer) resolveBuilt[T any]() (T, bool) {
 	v, ok := c.lookupInstance(c.aliasTarget(reflect.TypeFor[T]()))
 	if !ok {
 		var zero T
+
 		return zero, false
 	}
 
-	val, ok := v.Interface().(T)
+	val, ok := reflect.TypeAssert[T](v)
+
 	return val, ok
-}
-
-// ResolveFromRequestScope retrieves or builds a service of type T from the per-request scope in the provided *http.Request.
-func ResolveFromRequestScope[T any](r *http.Request) (T, error) {
-	//goland:noinspection GoResourceLeak
-	return resolveFrom[T](r.Context(), RequestScope(r))
-}
-
-// MustResolveFromRequestScope retrieves a service of type T from the request's Scope and panics if it cannot be resolved.
-func MustResolveFromRequestScope[T any](r *http.Request) T {
-	//goland:noinspection GoResourceLeak
-	return mustResolveFrom[T](r.Context(), RequestScope(r))
-}
-
-// --- ServiceContainer as Resolver ---
-
-func resolveFrom[T any](ctx context.Context, r Resolver) (T, error) {
-	if r == nil {
-		var zero T
-		return zero, fmt.Errorf("gas: resolver is nil")
-	}
-
-	t := reflect.TypeFor[T]()
-	v, err := r.resolveType(ctx, t)
-	if err != nil {
-		var zero T
-		return zero, err
-	}
-
-	if val, ok := v.Interface().(T); ok {
-		return val, nil
-	}
-
-	var zero T
-	return zero, fmt.Errorf("gas: resolved incorrect type for %v", t)
-}
-
-func mustResolveFrom[T any](ctx context.Context, r Resolver) T {
-	v, err := resolveFrom[T](ctx, r)
-	if err != nil {
-		panic(fmt.Sprintf("gas: failed to resolve %v: %v", reflect.TypeFor[T](), err))
-	}
-	return v
 }
 
 func (c *ServiceContainer) resolveType(ctx context.Context, t reflect.Type) (reflect.Value, error) {
 	asked := t
+
 	t = c.aliasTarget(t)
 
 	// 1. check cached instances (singletons + registered)
 	if v, ok := c.lookupInstance(t); ok {
-		return v, nil
+		return c.checkGate(v)
 	}
 
 	// 2. check registration
@@ -643,7 +1133,12 @@ func (c *ServiceContainer) resolveType(ctx context.Context, t reflect.Type) (ref
 
 	switch reg.lifetime {
 	case ServiceLifetimeSingleton:
-		return c.resolveSingleton(ctx, t)
+		v, err := c.resolveSingleton(ctx, t)
+		if err != nil {
+			return reflect.Value{}, err
+		}
+
+		return c.checkGate(v)
 
 	case ServiceLifetimeTransient:
 		return c.invoke(ctx, t, c)
@@ -671,8 +1166,10 @@ func (c *ServiceContainer) resolveSingleton(
 	t reflect.Type,
 ) (reflect.Value, error) {
 	c.mu.Lock()
+
 	if v, ok := c.instances.Load(t); ok {
 		c.mu.Unlock()
+
 		return v, nil
 	}
 
@@ -682,16 +1179,22 @@ func (c *ServiceContainer) resolveSingleton(
 	}
 
 	b := &singletonBuild{gid: gid, done: make(chan struct{})}
+
 	c.builds[t] = b
 	c.mu.Unlock()
+
+	defer c.abandonBuild(c.builds, t, b)
 
 	val, err := c.invoke(ctx, t, c)
 
 	c.mu.Lock()
+
 	if err == nil {
 		c.instances.Store(t, val)
 	}
+
 	delete(c.builds, t)
+
 	b.val, b.err = val, err
 	c.mu.Unlock()
 	close(b.done)
@@ -711,6 +1214,7 @@ func (c *ServiceContainer) awaitBuild(
 	if b.gid == gid {
 		err := cycleIn(c.stacks[gid], t)
 		c.mu.Unlock()
+
 		if err == nil {
 			err = newDIError(
 				ErrCircularDependency,
@@ -718,16 +1222,20 @@ func (c *ServiceContainer) awaitBuild(
 				t,
 			)
 		}
+
 		return reflect.Value{}, err
 	}
+
 	if c.waitsOn(b, gid) {
 		c.mu.Unlock()
+
 		return reflect.Value{}, newDIError(
 			ErrCircularDependency,
 			"circular dependency: %v is being built by a goroutine that is waiting on this one",
 			t,
 		)
 	}
+
 	c.waiting[gid] = b
 	c.mu.Unlock()
 
@@ -736,172 +1244,21 @@ func (c *ServiceContainer) awaitBuild(
 	c.mu.Lock()
 	delete(c.waiting, gid)
 	c.mu.Unlock()
-	return b.val, b.err
-}
 
-// notRegistered is the error for a lookup of asked that found nothing for t,
-// which is asked itself or, when asked is an alias, its target.
-func notRegistered(asked, t reflect.Type) error {
-	if asked != t {
-		return newDIError(
-			ErrNotRegistered,
-			"no registration for %v, the target of alias %v",
-			t,
-			asked,
-		)
-	}
-	return newDIError(ErrNotRegistered, "no registration for %v", t)
+	return b.val, b.err
 }
 
 func (c *ServiceContainer) lookupInstance(t reflect.Type) (reflect.Value, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	if v, ok := c.instances.Load(t); ok {
 		return v, true
 	}
+
 	// DO NOT try to resolve by interface satisfaction!
 	return reflect.Value{}, false
 }
-
-// EachInstance iterates all built singleton instances (including pre-registered
-// ones) in the order they became available. A dependency is always constructed
-// and cached before the constructor that consumes it returns, so this order is
-// a valid initialization order: reversing it is safe for shutdown.
-func (c *ServiceContainer) EachInstance(fn func(reflect.Value)) {
-	// Snapshot under the lock and call fn without it, so fn may resolve.
-	c.mu.Lock()
-	instances := c.instances.Clone()
-	c.mu.Unlock()
-
-	for _, v := range instances.All() {
-		fn(v)
-	}
-}
-
-// --- Scope ---
-
-// Scope is a resolution context for scoped service lifetimes.
-type Scope struct {
-	// ctx is the context the scope was created with. Scope.Resolve has no
-	// context parameter, so the Init of each scoped service it builds gets
-	// this one.
-	ctx       context.Context
-	container *ServiceContainer
-	resolved  map[reflect.Type]reflect.Value
-
-	// order records resolution order so Close can tear scoped services down in
-	// reverse, for the same reason the container tracks.
-	order []reflect.Type
-}
-
-// Resolve returns the instance registered for T within this scope. A scoped T
-// is built once per Scope and cached for the life of the scope; singletons
-// come from the owning container, and transients are built fresh. Scoped
-// instances that implement Service are closed in reverse resolution order by
-// Scope.Close.
-func (s *Scope) Resolve[T any]() (T, error) {
-	return resolveFrom[T](s.ctx, s)
-}
-
-// MustResolve is like Resolve but panics if the service cannot be resolved.
-func (s *Scope) MustResolve[T any]() T {
-	return mustResolveFrom[T](s.ctx, s)
-}
-
-func (s *Scope) resolveType(ctx context.Context, t reflect.Type) (reflect.Value, error) {
-	asked := t
-	t = s.container.aliasTarget(t)
-
-	// 1. check scope cache
-	if v, ok := s.lookupScoped(t); ok {
-		return v, nil
-	}
-
-	// 2. check container instances (singletons)
-	if v, ok := s.container.lookupInstance(t); ok {
-		return v, nil
-	}
-
-	// 3. check registration and build
-	reg, ok := s.container.findRegistration(t)
-	if !ok {
-		return reflect.Value{}, notRegistered(asked, t)
-	}
-
-	switch reg.lifetime {
-	case ServiceLifetimeSingleton:
-		// delegate fully to container (it caches there)
-		return s.container.resolveType(ctx, t)
-
-	case ServiceLifetimeScoped:
-		val, err := s.container.invoke(ctx, t, s)
-		if err != nil {
-			return reflect.Value{}, err
-		}
-		s.resolved[t] = val
-		s.order = append(s.order, t)
-		return val, nil
-
-	case ServiceLifetimeTransient:
-		return s.container.invoke(ctx, t, s)
-	}
-
-	return reflect.Value{}, newDIError(ErrInvalidLifetime, "unknown lifetime for %v", t)
-}
-
-// Close calls Close(ctx) on all scoped Service instances resolved in this
-// scope, in reverse resolution order, so a scoped service can still use the
-// scoped dependencies it was built from.
-func (s *Scope) Close(ctx context.Context) error {
-	var errs []error
-	for _, t := range slices.Backward(s.order) {
-		v, ok := s.resolved[t]
-		if !ok {
-			continue
-		}
-		if svc, svcOk := v.Interface().(Service); svcOk {
-			if err := svc.Close(ctx); err != nil {
-				errs = append(errs, err)
-			}
-		}
-	}
-	return errors.Join(errs...)
-}
-
-// replaceScoped replaces the instance this scope has cached for t with v,
-// so later resolutions of t in the scope return v. It does nothing, and
-// reports false, unless t is registered with a scoped lifetime, the scope
-// already holds an instance of t, v's type is assignable to t, and the
-// cached instance is not a Service. That keeps it from shadowing a singleton
-// and from replacing an instance the scope has to close when it ends. It is
-// used by RequestLogger to put the per-request logger into its scoped slot.
-func (s *Scope) replaceScoped(t reflect.Type, v reflect.Value) bool {
-	reg, ok := s.container.findRegistration(t)
-	if !ok || reg.lifetime != ServiceLifetimeScoped {
-		return false
-	}
-	cur, ok := s.resolved[t]
-	if !ok || !v.IsValid() || !v.Type().AssignableTo(t) {
-		return false
-	}
-	if cur.IsValid() && cur.CanInterface() {
-		if _, isService := cur.Interface().(Service); isService {
-			return false
-		}
-	}
-	s.resolved[t] = v
-	return true
-}
-
-func (s *Scope) lookupScoped(t reflect.Type) (reflect.Value, bool) {
-	if v, ok := s.resolved[t]; ok {
-		return v, true
-	}
-	// DO NOT try to resolve by interface satisfaction!
-	return reflect.Value{}, false
-}
-
-// --- internal: constructor invocation ---
 
 // invoke calls the constructor for type t, resolving its dependencies through r.
 func (c *ServiceContainer) invoke(
@@ -911,7 +1268,7 @@ func (c *ServiceContainer) invoke(
 ) (reflect.Value, error) {
 	reg, ok := c.findRegistration(t)
 	if !ok {
-		return reflect.Value{}, newDIError(ErrNoConstructor, "no constructor for %v", t)
+		return reflect.Value{}, notRegistered(t, t)
 	}
 
 	gid, err := c.enterBuild(t)
@@ -930,8 +1287,9 @@ func (c *ServiceContainer) invoke(
 
 	results := ctorVal.Call(args)
 
-	// convention: last return is error
+	// The second result, when there is one, is the error.
 	if ctorType.NumOut() == 2 && !results[1].IsNil() {
+		//nolint:forcetypeassert // validateCtorShape requires an error result
 		return reflect.Value{}, results[1].Interface().(error)
 	}
 
@@ -946,7 +1304,8 @@ func (c *ServiceContainer) initInstance(
 	// The registered type may be an interface, so the concrete type is only
 	// knowable here. Reject a half-written service before it silently skips
 	// its own Init.
-	if vErr := validateServiceShape(concreteType(v)); vErr != nil {
+	vErr := validateServiceShape(concreteType(v))
+	if vErr != nil {
 		return reflect.Value{}, vErr
 	}
 
@@ -954,12 +1313,13 @@ func (c *ServiceContainer) initInstance(
 		v = v.Convert(t)
 	}
 
-	svc, svcOK := v.Interface().(Service)
+	svc, svcOK := reflect.TypeAssert[Service](v)
 	if !svcOK {
 		return v, nil
 	}
 
-	if initErr := c.initService(ctx, t, svc); initErr != nil {
+	initErr := c.initService(ctx, t, svc)
+	if initErr != nil {
 		return reflect.Value{}, initErr
 	}
 
@@ -974,16 +1334,17 @@ func (c *ServiceContainer) resolveCtorArgs(
 	args := make([]reflect.Value, ctor.NumIn())
 	for i := range args {
 		dep := ctor.In(i)
+
 		resolved, err := r.resolveType(ctx, dep)
 		if err != nil {
 			return nil, fmt.Errorf("resolving dep %v for %v: %w", dep, t, err)
 		}
+
 		args[i] = resolved
 	}
+
 	return args, nil
 }
-
-// --- internal: validation ---
 
 // validateLifetimes checks for captive dependency violations:
 // a singleton must not depend on a scoped or transient service.
@@ -1012,6 +1373,7 @@ func (c *ServiceContainer) validateLifetimes() error {
 					"captive dependency: singleton %v depends on scoped %v", t, dep,
 				)
 			}
+
 			if reg.lifetime == ServiceLifetimeSingleton &&
 				depReg.lifetime == ServiceLifetimeTransient {
 				return newDIError(
@@ -1021,6 +1383,7 @@ func (c *ServiceContainer) validateLifetimes() error {
 			}
 		}
 	}
+
 	return nil
 }
 
@@ -1028,7 +1391,9 @@ func (c *ServiceContainer) validateLifetimes() error {
 func (c *ServiceContainer) findRegistration(t reflect.Type) (registration, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	reg, ok := c.registrations.Load(t)
+
 	return reg, ok
 }
 
@@ -1037,6 +1402,7 @@ func (c *ServiceContainer) findRegistration(t reflect.Type) (registration, bool)
 func (c *ServiceContainer) registrationsSnapshot() omap.Map[reflect.Type, registration] {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	return *c.registrations.Clone()
 }
 
@@ -1045,19 +1411,10 @@ func (c *ServiceContainer) canResolveType(t reflect.Type) bool {
 	if _, ok := c.lookupInstance(t); ok {
 		return true
 	}
-	_, ok := c.findRegistration(t)
-	return ok
-}
 
-// CanResolve reports whether the container has an instance or registration
-// for exactly T, or T is an alias whose target has one, which is when Resolve
-// can find it. An interface T is not resolvable just because a registered
-// type implements it: register the constructor under the interface, or
-// register T as an alias. It answers from the registry alone and builds
-// nothing.
-func (c *ServiceContainer) CanResolve[T any]() bool {
-	t := reflect.TypeFor[T]()
-	return c.canResolveType(t)
+	_, ok := c.findRegistration(t)
+
+	return ok
 }
 
 // --- internal: topological sort ---
@@ -1065,6 +1422,7 @@ func (c *ServiceContainer) CanResolve[T any]() bool {
 func (c *ServiceContainer) topoSort() ([]reflect.Type, error) {
 	regs := c.registrationsSnapshot()
 	deps := omap.Map[reflect.Type, []reflect.Type]{}
+
 	for t, reg := range regs.All() {
 		ctorType := reflect.TypeOf(reg.ctor)
 		for in := range ctorType.Ins() {
@@ -1079,6 +1437,7 @@ func (c *ServiceContainer) topoSort() ([]reflect.Type, error) {
 		if !inDegree.Has(t) {
 			inDegree.Store(t, 0)
 		}
+
 		a, _ := deps.Load(t)
 		for _, d := range a {
 			if _, hasCtor := regs.Load(d); hasCtor {
@@ -1089,6 +1448,7 @@ func (c *ServiceContainer) topoSort() ([]reflect.Type, error) {
 	}
 
 	var queue []reflect.Type
+
 	for t, deg := range inDegree.All() {
 		if deg == 0 {
 			queue = append(queue, t)
@@ -1100,6 +1460,7 @@ func (c *ServiceContainer) topoSort() ([]reflect.Type, error) {
 	if len(order) != regs.Len() {
 		return nil, newDIError(ErrCircularDependency, "circular dependency detected")
 	}
+
 	return order, nil
 }
 
@@ -1109,9 +1470,12 @@ func (c *ServiceContainer) topoSortOrder(
 	inDegree *omap.Map[reflect.Type, int],
 ) []reflect.Type {
 	var order []reflect.Type
+
 	for len(queue) > 0 {
 		curr := queue[0]
+
 		queue = queue[1:]
+
 		order = append(order, curr)
 
 		for t, d := range deps.All() {
@@ -1119,6 +1483,7 @@ func (c *ServiceContainer) topoSortOrder(
 				if dep == curr {
 					v, _ := inDegree.Load(t)
 					inDegree.Store(t, v-1)
+
 					if i, _ := inDegree.Load(t); i == 0 {
 						queue = append(queue, t)
 					}
@@ -1126,6 +1491,7 @@ func (c *ServiceContainer) topoSortOrder(
 			}
 		}
 	}
+
 	return order
 }
 
@@ -1133,103 +1499,101 @@ func (c *ServiceContainer) topoSortOrder(
 
 var errorType = reflect.TypeFor[error]()
 
-// validateCtorShape rejects a constructor whose signature the container cannot
-// call, at the point of registration rather than deep inside invoke. Without
-// it a non-func, a variadic func, or a wrong result list registers cleanly and
-// fails much later: reflect panics out of BuildAll with a message that names
-// neither the constructor nor the type it was registered for, and a
-// three-result constructor is worse still — invoke only checks the error when
-// NumOut is 2, so its error is dropped and the service is built anyway.
-//
-// Inputs beyond variadicity are deliberately not checked. A constructor's
-// parameters are its dependencies, and whether they resolve is only knowable
-// once the container is built; invoke already reports that properly.
-//
-// Panics rather than returning an error, matching the transient/Service check:
-// every path here is a programmer error fixed at the call site, and
-// registerCtor is reached through eight exported entry points that have no
-// error return to add one to.
+// validateCtorShape panics with an error wrapping ErrInvalidConstructor
+// when the container cannot call ctor to build a t, at registration
+// rather than deep inside a build: ctor must be a non-variadic function
+// returning a value assignable to t, or implementing t when t is an
+// interface, and optionally an error. Its parameters are its
+// dependencies, which only a build can check.
 func validateCtorShape(t reflect.Type, ctor any) {
+	err := ctorShapeError(t, ctor)
+	if err != nil {
+		panic(err)
+	}
+}
+
+// ctorShapeError returns the error validateCtorShape panics with, or nil.
+func ctorShapeError(t reflect.Type, ctor any) error {
 	ct := reflect.TypeOf(ctor)
 	if !isFunc(ct) {
-		panic(fmt.Sprintf("gas: constructor for %v is %v, want a function", t, ctorTypeName(ct)))
+		return fmt.Errorf(
+			"%w: constructor for %v is %s, not a function",
+			ErrInvalidConstructor,
+			t,
+			ctorTypeName(ct),
+		)
 	}
 
-	// invoke builds exactly NumIn arguments and calls with them, so a variadic
-	// tail would be passed as a single slice argument rather than expanded.
+	// invoke passes exactly NumIn arguments, so a variadic tail would get a
+	// single slice rather than the dependencies.
 	if ct.IsVariadic() {
-		panic(
-			fmt.Sprintf(
-				"gas: constructor %v for %v is variadic; dependencies must be declared as fixed parameters",
-				ct,
-				t,
-			),
-		)
+		return fmt.Errorf("%w: constructor %v for %v is variadic", ErrInvalidConstructor, ct, t)
 	}
 
 	if !isValidCtorNumOut(ct) {
-		panic(
-			fmt.Sprintf(
-				"gas: constructor %v for %v returns %d values; want (%v) or (%v, error)",
-				ct,
-				t,
-				ct.NumOut(),
-				t,
-				t,
-			),
+		return fmt.Errorf(
+			"%w: constructor %v for %v returns %d values; want (%v) or (%v, error)",
+			ErrInvalidConstructor, ct, t, ct.NumOut(), t, t,
 		)
 	}
 
-	// t is commonly an interface registered against a constructor returning a
-	// concrete pointer, which is not assignable but does implement it. invoke
-	// converts that case, so accept exactly what it can handle.
 	if out, valid := isValidCtorReturnType(t, ct); !valid {
-		panic(
-			fmt.Sprintf(
-				"gas: constructor %v returns %v, which is not assignable to %v",
-				ct,
-				out,
-				t,
-			),
+		return fmt.Errorf(
+			"%w: constructor %v returns %v, which is not assignable to %v",
+			ErrInvalidConstructor,
+			ct,
+			out,
+			t,
 		)
 	}
 
 	if !isValidCtorErrorReturnType(ct) {
-		panic(
-			fmt.Sprintf(
-				"gas: constructor %v for %v has second result %v; want error",
-				ct,
-				t,
-				ct.Out(1),
-			),
+		return fmt.Errorf(
+			"%w: constructor %v for %v has second result %v; want error",
+			ErrInvalidConstructor, ct, t, ct.Out(1),
 		)
 	}
+
+	return nil
 }
 
+// isFunc reports whether t is a function type.
 func isFunc(t reflect.Type) bool {
 	return t != nil && t.Kind() == reflect.Func
 }
 
+// isValidCtorNumOut reports whether t returns one or two values.
 func isValidCtorNumOut(t reflect.Type) bool {
-	switch {
-	case t.NumOut() == 1 || t.NumOut() == 2:
-		return true
-	default:
-		return false
-	}
+	return t.NumOut() == 1 || t.NumOut() == 2
 }
 
+// isValidCtorReturnType returns ct's first result and reports whether it
+// is assignable to t, or implements t when t is an interface.
 func isValidCtorReturnType(t, ct reflect.Type) (reflect.Type, bool) {
 	out := ct.Out(0)
+
 	return out, out.AssignableTo(t) || (t.Kind() == reflect.Interface && out.Implements(t))
 }
 
+// isValidCtorErrorReturnType reports whether a second result, when t has
+// one, implements error.
 func isValidCtorErrorReturnType(t reflect.Type) bool {
-	switch {
-	case t.NumOut() == 2:
-		return t.Out(1).Implements(errorType)
-	default:
+	return t.NumOut() != 2 || t.Out(1).Implements(errorType)
+}
+
+// isNilValue reports whether v is no value, or a nil pointer, interface,
+// map, channel or function.
+func isNilValue(v reflect.Value) bool {
+	if !v.IsValid() {
 		return true
+	}
+
+	//nolint:exhaustive // only these kinds can be nil and unusable
+	switch v.Kind() {
+	case reflect.Pointer, reflect.Interface, reflect.Map, reflect.Chan, reflect.Func:
+		return v.IsNil()
+	default:
+		return false
 	}
 }
 
@@ -1254,8 +1618,8 @@ var serviceType = reflect.TypeFor[Service]()
 // Name is deliberately not among them: it is an identity method that ordinary
 // dependencies carry (six types in gas/config alone declare a bare Name()
 // string), so triggering on it would reject them. Dropping Name from a service
-// is also the harmless mistake of the three — the type still initializes and
-// closes — whereas dropping Init or Close silently skips a lifecycle hook.
+// is also the harmless mistake of the three: the type still initializes and
+// closes, whereas dropping Init or Close silently skips a lifecycle hook.
 var lifecycleMethodNames = [...]string{"Init", "Close"}
 
 // declaredLifecycleMethods returns the lifecycle method names t declares,
@@ -1267,6 +1631,7 @@ func declaredLifecycleMethods(t reflect.Type) []string {
 			found = append(found, name)
 		}
 	}
+
 	return found
 }
 
@@ -1276,22 +1641,27 @@ func declaredLifecycleMethods(t reflect.Type) []string {
 func serviceMethodProblem(t reflect.Type, name string, in []reflect.Type, out reflect.Type) string {
 	want := serviceMethodSignature(name, in, out)
 	m, ok := t.MethodByName(name)
+
 	if !ok {
 		return "missing " + want
 	}
+
 	// A method on a concrete type carries its receiver as In(0); an interface
 	// method does not.
 	first := 0
 	if t.Kind() != reflect.Interface {
 		first = 1
 	}
+
 	ok = m.Type.NumIn()-first == len(in) && m.Type.NumOut() == 1 && m.Type.Out(0) == out
 	for i := 0; ok && i < len(in); i++ {
 		ok = m.Type.In(first+i) == in[i]
 	}
+
 	if !ok {
 		return fmt.Sprintf("%s has signature %v, want %s", name, m.Type, want)
 	}
+
 	return ""
 }
 
@@ -1302,6 +1672,7 @@ func serviceMethodSignature(name string, in []reflect.Type, out reflect.Type) st
 	for i, p := range in {
 		params[i] = p.String()
 	}
+
 	return fmt.Sprintf("%s(%s) %v", name, strings.Join(params, ", "), out)
 }
 
@@ -1312,7 +1683,7 @@ func serviceMethodSignature(name string, in []reflect.Type, out reflect.Type) st
 // forgetting the rest is the common way to land here, so the error names
 // exactly what is missing rather than letting the service quietly do nothing.
 //
-// A type declaring neither Init nor Close is not a service and is left alone —
+// A type declaring neither Init nor Close is not a service and is left alone:
 // the same registration options carry plain dependencies (loggers, config,
 // per-request values), which must keep working. A type from another package
 // that declares Close (an io.Closer such as *sql.DB) cannot be given the
@@ -1343,7 +1714,8 @@ func validateServiceShape(t reflect.Type) error {
 	}
 
 	ctxParam := []reflect.Type{reflect.TypeFor[context.Context]()}
-	problems := make([]string, 0, 3)
+	problems := make([]string, 0, len(lifecycleMethodNames)+1)
+
 	for _, m := range []struct {
 		out  reflect.Type
 		name string
@@ -1362,7 +1734,7 @@ func validateServiceShape(t reflect.Type) error {
 		ErrInvalidServiceShape,
 		"gas: %v declares %s but does not implement gas.Service (%s); "+
 			"Init and Close are the managed lifecycle, so a type declaring either must "+
-			"implement all of gas.Service — otherwise it is never initialized, never "+
+			"implement all of gas.Service; otherwise it is never initialized, never "+
 			"closed, and invisible to the kill switch",
 		t, strings.Join(declared, " and "), strings.Join(problems, "; "),
 	)
@@ -1372,20 +1744,24 @@ func validateServiceShape(t reflect.Type) error {
 func (c *ServiceContainer) validateServiceShapes() error {
 	regs := c.registrationsSnapshot()
 	for t := range regs.Keys() {
-		if err := validateServiceShape(t); err != nil {
+		err := validateServiceShape(t)
+		if err != nil {
 			return err
 		}
 	}
 
 	c.mu.Lock()
+
 	instances := c.instances.Clone()
 	c.mu.Unlock()
 
 	for _, v := range instances.All() {
-		if err := validateServiceShape(concreteType(v)); err != nil {
+		err := validateServiceShape(concreteType(v))
+		if err != nil {
 			return err
 		}
 	}
+
 	return nil
 }
 
@@ -1396,11 +1772,14 @@ func concreteType(v reflect.Value) reflect.Type {
 	if !v.IsValid() {
 		return nil
 	}
+
 	if v.Kind() == reflect.Interface {
 		if v.IsNil() {
 			return nil
 		}
+
 		return v.Elem().Type()
 	}
+
 	return v.Type()
 }

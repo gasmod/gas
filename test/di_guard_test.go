@@ -1,4 +1,4 @@
-package test
+package gas_test
 
 import (
 	"context"
@@ -27,6 +27,7 @@ func (*cycleInit) Name() string { return "cycle-init" }
 func (s *cycleInit) Init(context.Context) error {
 	//nolint:contextcheck // the cycle under test goes through Resolve, which takes no context
 	_, err := s.c.Resolve[*cycleInit]()
+
 	return err
 }
 
@@ -41,6 +42,7 @@ func TestDI_CapturedContainerSelfCycle(t *testing.T) {
 	c := gas.NewServiceContainer()
 	c.RegisterSingletonService[*cycleSelf](func() (*cycleSelf, error) {
 		_, err := c.Resolve[*cycleSelf]()
+
 		return &cycleSelf{}, err
 	})
 
@@ -48,6 +50,7 @@ func TestDI_CapturedContainerSelfCycle(t *testing.T) {
 	if !errors.Is(err, gas.ErrCircularDependency) {
 		t.Fatalf("BuildAll() = %v, want %v", err, gas.ErrCircularDependency)
 	}
+
 	if err == nil || !strings.Contains(err.Error(), "cycleSelf -> ") {
 		t.Errorf("BuildAll() error %q does not name the cycle", err)
 	}
@@ -61,7 +64,8 @@ func TestDI_InitSelfCycle(t *testing.T) {
 	c := gas.NewServiceContainer()
 	c.RegisterSingletonService[*cycleInit](func() *cycleInit { return &cycleInit{c: c} })
 
-	if _, err := c.Resolve[*cycleInit](); !errors.Is(err, gas.ErrCircularDependency) {
+	_, err := c.Resolve[*cycleInit]()
+	if !errors.Is(err, gas.ErrCircularDependency) {
 		t.Fatalf("Resolve() = %v, want %v", err, gas.ErrCircularDependency)
 	}
 }
@@ -74,10 +78,12 @@ func TestDI_TransientSelfCycle(t *testing.T) {
 	c := gas.NewServiceContainer()
 	c.RegisterTransientService[*cycleTrans](func() (*cycleTrans, error) {
 		_, err := c.Resolve[*cycleTrans]()
+
 		return &cycleTrans{}, err
 	})
 
-	if _, err := c.Resolve[*cycleTrans](); !errors.Is(err, gas.ErrCircularDependency) {
+	_, err := c.Resolve[*cycleTrans]()
+	if !errors.Is(err, gas.ErrCircularDependency) {
 		t.Fatalf("Resolve() = %v, want %v", err, gas.ErrCircularDependency)
 	}
 }
@@ -88,30 +94,38 @@ func TestDI_ConcurrentLazySingletonBuildsOnce(t *testing.T) {
 	t.Parallel()
 
 	var built atomic.Int32
+
 	c := gas.NewServiceContainer()
 	c.RegisterSingletonService[*lazyOnce](func() *lazyOnce {
 		built.Add(1)
 		time.Sleep(20 * time.Millisecond)
+
 		return &lazyOnce{n: 1}
 	})
 
 	const callers = 8
+
 	got := make([]*lazyOnce, callers)
+
 	var wg sync.WaitGroup
+
 	for i := range callers {
 		wg.Go(func() {
 			v, err := c.Resolve[*lazyOnce]()
 			if err != nil {
 				t.Errorf("Resolve() error: %v", err)
 			}
+
 			got[i] = v
 		})
 	}
+
 	wg.Wait()
 
 	if n := built.Load(); n != 1 {
 		t.Errorf("constructor ran %d times, want 1", n)
 	}
+
 	for i, v := range got {
 		if v != got[0] {
 			t.Errorf("caller %d got a different instance", i)
@@ -130,21 +144,27 @@ func TestDI_CrossGoroutineWaitCycle(t *testing.T) {
 	c.RegisterSingletonService[*waitA](func() (*waitA, error) {
 		close(aStarted)
 		<-bStarted
+
 		_, err := c.Resolve[*waitB]()
+
 		return &waitA{}, err
 	})
 	c.RegisterSingletonService[*waitB](func() (*waitB, error) {
 		close(bStarted)
 		<-aStarted
+
 		_, err := c.Resolve[*waitA]()
+
 		return &waitB{}, err
 	})
 
 	errs := make(chan error, 2)
+
 	go func() { _, err := c.Resolve[*waitA](); errs <- err }()
 	go func() { _, err := c.Resolve[*waitB](); errs <- err }()
 
 	var cycle bool
+
 	for range 2 {
 		select {
 		case err := <-errs:
@@ -155,6 +175,7 @@ func TestDI_CrossGoroutineWaitCycle(t *testing.T) {
 			t.Fatal("resolutions deadlocked")
 		}
 	}
+
 	if !cycle {
 		t.Error("neither resolution reported ErrCircularDependency")
 	}

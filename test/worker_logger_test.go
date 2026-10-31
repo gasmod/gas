@@ -1,4 +1,4 @@
-package test
+package gas_test
 
 import (
 	"context"
@@ -28,11 +28,14 @@ func TestWorker_FallbackLoggerConcurrentKillSwitch(t *testing.T) {
 		w := gas.NewWorker(
 			gas.WithSingletonService[*raceSvc](func() *raceSvc { return &raceSvc{} }),
 		)
-		if err := w.InitServices(context.Background()); err != nil {
+
+		err := w.Start(context.Background())
+		if err != nil {
 			t.Fatal(err)
 		}
 
 		var wg sync.WaitGroup
+
 		wg.Go(func() { _ = w.CloseService[*raceSvc](context.Background()) })
 		wg.Go(func() { _ = w.RestartService[*raceSvc](context.Background()) })
 		wg.Go(func() { _ = w.CloseService[*raceSvc](context.Background()) })
@@ -46,14 +49,14 @@ func TestWorker_FallbackLoggerNotRegistered(t *testing.T) {
 	t.Parallel()
 
 	w := gas.NewWorker()
-	if err := w.InitServices(context.Background()); err != nil {
+
+	err := w.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
-	// FIXME(@ahmedkamalio)
-	//if w.getLogger() == nil {
-	//	t.Fatal("getLogger() = nil, want the slog fallback")
-	//}
-	if _, err := w.ServiceContainer().Resolve[gas.Logger](); !errors.Is(err, gas.ErrNotRegistered) {
+
+	_, err = w.ServiceContainer().Resolve[gas.Logger]()
+	if !errors.Is(err, gas.ErrNotRegistered) {
 		t.Errorf("Resolve[Logger]() error = %v, want %v", err, gas.ErrNotRegistered)
 	}
 }
@@ -64,11 +67,9 @@ func TestWorker_UsesRegisteredLogger(t *testing.T) {
 
 	nop := &gas.NopLogger{}
 	w := gas.NewWorker(gas.WithServiceInstance[gas.Logger](nop))
-	if err := w.InitServices(context.Background()); err != nil {
+
+	err := w.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
-	// FIXME(@ahmedkamalio)
-	//if got := w.getLogger(); got != gas.Logger(nop) {
-	//	t.Errorf("getLogger() = %v, want the registered logger", got)
-	//}
 }

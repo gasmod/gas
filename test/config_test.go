@@ -1,4 +1,4 @@
-package test
+package gas_test
 
 import (
 	"strings"
@@ -41,10 +41,12 @@ func TestConfig_BindValidatesHost(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.host, func(t *testing.T) {
 			t.Parallel()
+
 			err := hostConfig(t, tt.host).Bind(gas.DefaultConfig())
 			if tt.valid && err != nil {
 				t.Errorf("Bind() with Host %q = %v, want nil", tt.host, err)
 			}
+
 			if !tt.valid && err == nil {
 				t.Errorf("Bind() with Host %q = nil, want an error", tt.host)
 			}

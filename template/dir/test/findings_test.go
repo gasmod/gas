@@ -24,7 +24,7 @@ func TestKI033_DirStoreRegistersAsTemplateProvider(t *testing.T) {
 	conformance.WriteFiles(t, d, fstest.MapFS{"a.html": {Data: []byte("a")}})
 
 	w := gas.NewWorker(gas.WithSingletonService[gas.TemplateProvider](dir.NewStore(d)))
-	require.NoError(t, w.InitServices(t.Context()))
+	require.NoError(t, w.Start(t.Context()))
 
 	p, err := w.ServiceContainer().Resolve[gas.TemplateProvider]()
 	require.NoError(t, err)

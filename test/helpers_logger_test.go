@@ -1,4 +1,4 @@
-package test
+package gas_test
 
 import (
 	"bytes"
@@ -23,22 +23,29 @@ type lockedBuffer struct {
 func (b *lockedBuffer) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
 	return b.buf.Write(p)
 }
 
 func (b *lockedBuffer) lines() []map[string]any {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
 	var out []map[string]any
+
 	for line := range strings.SplitSeq(strings.TrimSpace(b.buf.String()), "\n") {
 		if line == "" {
 			continue
 		}
+
 		var rec map[string]any
-		if err := json.Unmarshal([]byte(line), &rec); err == nil {
+
+		err := json.Unmarshal([]byte(line), &rec)
+		if err == nil {
 			out = append(out, rec)
 		}
 	}
+
 	return out
 }
 
@@ -52,11 +59,6 @@ type jsonLogger struct {
 // newJSONLogger returns a jsonLogger writing to w.
 func newJSONLogger(w io.Writer) *jsonLogger {
 	return &jsonLogger{logger: slog.New(slog.NewJSONHandler(w, nil))}
-}
-
-// event starts an event at level.
-func (l *jsonLogger) event(level slog.Level, msg string) gas.LogEvent {
-	return &jsonEvent{logger: l.logger, level: level, msg: msg}
 }
 
 // Trace starts an event at slog.LevelDebug.
@@ -80,14 +82,16 @@ func (l *jsonLogger) Flush() {}
 // With returns a context collecting fields for a child logger.
 func (l *jsonLogger) With() gas.LoggerContext { return &jsonContext{logger: l.logger} }
 
+// event starts an event at level.
+func (l *jsonLogger) event(level slog.Level, msg string) gas.LogEvent {
+	return &jsonEvent{logger: l.logger, level: level, msg: msg}
+}
+
 // jsonContext collects the fields of a jsonLogger from With.
 type jsonContext struct {
 	logger *slog.Logger
 	attrs  []any
 }
-
-// add appends a and returns c.
-func (c *jsonContext) add(a slog.Attr) gas.LoggerContext { c.attrs = append(c.attrs, a); return c }
 
 // Str adds a string field.
 func (c *jsonContext) Str(k, v string) gas.LoggerContext { return c.add(slog.String(k, v)) }
@@ -120,6 +124,13 @@ func (c *jsonContext) Duration(k string, v time.Duration) gas.LoggerContext {
 // Logger returns a jsonLogger carrying the fields added so far.
 func (c *jsonContext) Logger() gas.Logger { return &jsonLogger{logger: c.logger.With(c.attrs...)} }
 
+// add appends a and returns c.
+func (c *jsonContext) add(a slog.Attr) gas.LoggerContext {
+	c.attrs = append(c.attrs, a)
+
+	return c
+}
+
 // jsonEvent collects the fields of one record until Send, which writes it
 // once; every call after Send does nothing.
 type jsonEvent struct {
@@ -128,14 +139,6 @@ type jsonEvent struct {
 	attrs  []slog.Attr
 	level  slog.Level
 	sent   bool
-}
-
-// add appends a unless the event was sent, and returns e.
-func (e *jsonEvent) add(a slog.Attr) gas.LogEvent {
-	if !e.sent {
-		e.attrs = append(e.attrs, a)
-	}
-	return e
 }
 
 // Str adds a string field.
@@ -171,6 +174,16 @@ func (e *jsonEvent) Send() {
 	if e.sent {
 		return
 	}
+
 	e.sent = true
 	e.logger.LogAttrs(context.Background(), e.level, e.msg, e.attrs...)
+}
+
+// add appends a unless the event was sent, and returns e.
+func (e *jsonEvent) add(a slog.Attr) gas.LogEvent {
+	if !e.sent {
+		e.attrs = append(e.attrs, a)
+	}
+
+	return e
 }

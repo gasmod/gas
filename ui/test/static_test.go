@@ -284,7 +284,12 @@ func TestStatic_RouterMethodNotAllowed(t *testing.T) {
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), m, "/static/app.css", nil))
 		assert.Equal(t, http.StatusMethodNotAllowed, w.Code, m)
-		assert.Empty(t, w.Body.String(), m)
+		assert.JSONEq(
+			t,
+			`{"error":{"status":405,"code":"method_not_allowed","message":"method not allowed"}}`,
+			w.Body.String(),
+			m,
+		)
 		assert.ElementsMatch(
 			t,
 			[]string{http.MethodGet, http.MethodHead},

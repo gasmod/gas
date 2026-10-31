@@ -23,10 +23,19 @@ const (
 	CodeInternal         = "internal_error"
 	CodeUnavailable      = "service_unavailable"
 	CodePayloadTooLarge  = "payload_too_large"
+	CodeMethodNotAllowed = "method_not_allowed"
+	CodeTimeout          = "request_timeout"
 )
 
-// FieldError describes a single field-level validation failure. Field carries
-// the name the client sent (the json tag), not the Go struct field name.
+// ErrResponseCommitted indicates that WriteError, or WriteErrorJSON, was
+// called once the response had a status or a body, and wrote nothing:
+// an error body appended to a response already sent would corrupt it.
+var ErrResponseCommitted = errors.New("gas: response already committed")
+
+// FieldError describes a single field-level validation failure. Field is
+// the name the client sent: the field's `json` tag name, else its `form`
+// tag name, else, when it has neither or its `json` tag is `-`, its Go
+// name.
 type FieldError struct {
 	Field   string `json:"field"`
 	Rule    string `json:"rule"`
@@ -57,6 +66,11 @@ type Error struct {
 
 var _ error = (*Error)(nil)
 
+// NewError builds an Error with an explicit status, code, and message.
+func NewError(status int, code, message string) *Error {
+	return &Error{Status: status, Code: code, Message: message}
+}
+
 // Error implements the error interface. The wrapped cause is included so that
 // logs carry the full chain.
 func (e *Error) Error() string {
@@ -64,19 +78,16 @@ func (e *Error) Error() string {
 	if e.Code != "" {
 		msg = e.Code + ": " + msg
 	}
+
 	if e.cause != nil {
 		msg += ": " + e.cause.Error()
 	}
+
 	return msg
 }
 
 // Unwrap returns the wrapped cause, so errors.Is and errors.As see through it.
 func (e *Error) Unwrap() error { return e.cause }
-
-// NewError builds an Error with an explicit status, code, and message.
-func NewError(status int, code, message string) *Error {
-	return &Error{Status: status, Code: code, Message: message}
-}
 
 // BadRequest returns a 400 Error with code CodeBadRequest.
 func BadRequest(message string) *Error {
@@ -127,12 +138,14 @@ func ServiceUnavailable(message string) *Error {
 // through errors.Is and errors.As, but is never written to a response.
 func (e *Error) WithCause(err error) *Error {
 	e.cause = err
+
 	return e
 }
 
 // WithField appends a field-level validation failure.
 func (e *Error) WithField(field, rule, message string) *Error {
 	e.Fields = append(e.Fields, FieldError{Field: field, Rule: rule, Message: message})
+
 	return e
 }
 
@@ -141,7 +154,9 @@ func (e *Error) WithDetail(key string, val any) *Error {
 	if e.Details == nil {
 		e.Details = make(map[string]any)
 	}
+
 	e.Details[key] = val
+
 	return e
 }
 
@@ -150,6 +165,7 @@ func AsError(err error) (*Error, bool) {
 	if e, ok := errors.AsType[*Error](err); ok {
 		return e, true
 	}
+
 	return nil, false
 }
 
@@ -170,9 +186,11 @@ func WantsJSON(r *http.Request) bool {
 	if accept == "" {
 		return true
 	}
+
 	if strings.Contains(accept, "application/json") {
 		return true
 	}
+
 	return !strings.Contains(accept, "text/html")
 }
 
@@ -181,18 +199,28 @@ func WantsJSON(r *http.Request) bool {
 // *Error render as a canonical 500 with the original discarded from the
 // response.
 //
-// WriteError does not log; the caller decides that. It reads only w and r, so
-// it is safe to call from middleware that runs before the request scope exists.
+// WriteError does not log; the caller decides that. It reads only w and r,
+// so it is safe to call from middleware that runs before the request
+// scope exists. Once the response is committed, as a Router tracks it, it
+// writes nothing and returns ErrResponseCommitted. A JSON encoding error
+// is returned, wrapped.
 func WriteError(w http.ResponseWriter, r *http.Request, err error) error {
 	return writeErrorResponse(w, coerceError(err), WantsJSON(r))
 }
 
-// coerceError returns err as an *Error, collapsing anything unrecognized into
-// a canonical internal error that carries the original as its cause.
+// coerceError returns err as an *Error, collapsing anything unrecognized
+// into a canonical internal error that carries the original as its cause.
+// An error wrapping ErrServiceNotActive, such as from resolving a closed
+// service, is a 503, as the service's own routes answer.
 func coerceError(err error) *Error {
 	if e, ok := AsError(err); ok {
 		return e
 	}
+
+	if errors.Is(err, ErrServiceNotActive) {
+		return ServiceUnavailable("service unavailable").WithCause(err)
+	}
+
 	return Internal("internal server error").WithCause(err)
 }
 
@@ -203,19 +231,31 @@ func normalizeStatus(status int) int {
 	if status < 100 || status > 599 {
 		return http.StatusInternalServerError
 	}
+
 	return status
 }
 
+// writeErrorResponse writes e as JSON or plain text, with
+// `Cache-Control: no-store`, unless the response is committed.
 func writeErrorResponse(w http.ResponseWriter, e *Error, asJSON bool) error {
+	if committed(w) {
+		return ErrResponseCommitted
+	}
+
 	status := normalizeStatus(e.Status)
+
+	// No cache may keep an error in place of the resource.
+	w.Header().Set("Cache-Control", "no-store")
 
 	if !asJSON {
 		http.Error(w, e.Message, status)
+
 		return nil
 	}
 
 	if e.Status != status {
 		normalized := *e
+
 		normalized.Status = status
 		e = &normalized
 	}
@@ -223,8 +263,10 @@ func writeErrorResponse(w http.ResponseWriter, e *Error, asJSON bool) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 
-	if err := json.NewEncoder(w).Encode(ErrorResponse{Error: e}); err != nil {
-		return fmt.Errorf("gas: encoding error response: %w", err)
+	err := json.NewEncoder(w).Encode(ErrorResponse{Error: e})
+	if err != nil {
+		return fmt.Errorf("gas: encode error response: %w", err)
 	}
+
 	return nil
 }

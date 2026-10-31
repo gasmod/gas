@@ -1,4 +1,4 @@
-package test
+package gas_test
 
 import (
 	"context"
@@ -17,6 +17,7 @@ import (
 // not depend on config, so its tests fake the provider.
 func hostConfig(t *testing.T, host string) gas.ConfigProvider {
 	t.Helper()
+
 	return &hostProvider{host: host}
 }
 
@@ -30,7 +31,8 @@ func (p *hostProvider) Bind(dest any) error {
 	if cfg, ok := dest.(*gas.Config); ok {
 		cfg.Server.Host = p.host
 	}
-	return validator.New().Struct(dest) //nolint:wrapcheck // the test reads it as is
+
+	return validator.New().Struct(dest)
 }
 
 // recordingLogger records which level each log call used. Everything it does
@@ -46,36 +48,42 @@ func newRecordingLogger() *recordingLogger {
 	return &recordingLogger{Logger: &gas.NopLogger{}}
 }
 
+func (l *recordingLogger) Warn(msg string) gas.LogEvent {
+	l.record("warn")
+
+	return l.Logger.Warn(msg)
+}
+
+func (l *recordingLogger) Error(msg string) gas.LogEvent {
+	l.record("error")
+
+	return l.Logger.Error(msg)
+}
+
 func (l *recordingLogger) record(level string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+
 	l.levels = append(l.levels, level)
 }
 
 func (l *recordingLogger) seen() []string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+
 	return append([]string(nil), l.levels...)
-}
-
-func (l *recordingLogger) Warn(msg string) gas.LogEvent {
-	l.record("warn")
-	return l.Logger.Warn(msg)
-}
-
-func (l *recordingLogger) Error(msg string) gas.LogEvent {
-	l.record("error")
-	return l.Logger.Error(msg)
 }
 
 // assertPanics fails the test if fn does not panic.
 func assertPanics(t *testing.T, name string, fn func()) {
 	t.Helper()
+
 	defer func() {
 		if r := recover(); r == nil {
 			t.Fatalf("expected panic for %s", name)
 		}
 	}()
+
 	fn()
 }
 
@@ -92,6 +100,8 @@ type testDepB struct {
 }
 
 // Greeter is an interface dependency for interface resolution tests.
+//
+//nolint:iface // a distinct type on purpose: the container resolves by exact type
 type Greeter interface {
 	Greet() string
 }
@@ -102,7 +112,7 @@ func (h *helloGreeter) Greet() string { return "hello" }
 
 func newHelloGreeter() *helloGreeter { return &helloGreeter{} }
 
-func panicking(w http.ResponseWriter, r *http.Request) { panic("plain boom") }
+func panicking(_ http.ResponseWriter, _ *http.Request) { panic("plain boom") }
 
 // A type that carries an Init method but does not fully implement gas.Service
 // used to register fine and then do nothing: the container's auto-Init only
@@ -111,10 +121,14 @@ func panicking(w http.ResponseWriter, r *http.Request) { panic("plain boom") }
 // Close while writing a service is the easy way to land there, so registration
 // now rejects the type instead.
 
-// initOnly implements Init and nothing else — the reported failure mode.
+// initOnly implements Init and nothing else: the reported failure mode.
 type initOnly struct{ inited bool }
 
-func (s *initOnly) Init(context.Context) error { s.inited = true; return nil }
+func (s *initOnly) Init(context.Context) error {
+	s.inited = true
+
+	return nil
+}
 
 // testService is a minimal Service implementation for testing App lifecycle.
 type testService struct {
@@ -130,11 +144,13 @@ func (s *testService) Name() string { return s.name }
 func (s *testService) Init(context.Context) error {
 	s.initCount.Add(1)
 	s.closed.Store(false)
+
 	return s.initErr
 }
 
 func (s *testService) Close(context.Context) error {
 	s.closed.Store(true)
+
 	return s.closeErr
 }
 
@@ -155,6 +171,7 @@ type startLog struct {
 
 func (l *startLog) add(call string) {
 	l.mu.Lock()
+
 	l.calls = append(l.calls, call)
 	l.mu.Unlock()
 }
@@ -162,6 +179,7 @@ func (l *startLog) add(call string) {
 func (l *startLog) snapshot() []string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+
 	return append([]string(nil), l.calls...)
 }
 
@@ -169,14 +187,17 @@ func (p *startProbe) Name() string { return p.name }
 
 func (p *startProbe) Init(context.Context) error {
 	p.log.add("init " + p.name)
+
 	return p.initErr
 }
 
 func (p *startProbe) Close(ctx context.Context) error {
 	p.log.add("close " + p.name)
 	p.log.mu.Lock()
+
 	p.log.ctxs = append(p.log.ctxs, ctx.Err())
 	p.log.mu.Unlock()
+
 	return nil
 }
 
@@ -190,11 +211,13 @@ func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
 	}
+
 	for i := range a {
 		if a[i] != b[i] {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -202,7 +225,7 @@ func equalStrings(a, b []string) bool {
 // initialization order", which is what makes it safe for a service to use its
 // dependencies during Close.
 //
-// InitServices builds w.serviceOrder by iterating EachInstance. When the
+// Start builds w.serviceOrder by iterating EachInstance. When the
 // container kept its instances in a plain map, that iteration was randomized,
 // so serviceOrder was a random permutation of the services and a service
 // could be closed after a dependency it uses inside Close. EachInstance now
@@ -231,18 +254,21 @@ type ordLog struct {
 func (l *ordLog) init(name string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+
 	l.inits = append(l.inits, name)
 }
 
 func (l *ordLog) close(name string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+
 	l.closes = append(l.closes, name)
 }
 
 func (l *ordLog) snapshot() (inits, closes []string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+
 	return append([]string(nil), l.inits...), append([]string(nil), l.closes...)
 }
 
@@ -255,6 +281,14 @@ type ordService[K any] struct {
 
 func (s *ordService[K]) Name() string { return s.name }
 
-func (s *ordService[K]) Init(context.Context) error { s.log.init(s.name); return nil }
+func (s *ordService[K]) Init(context.Context) error {
+	s.log.init(s.name)
 
-func (s *ordService[K]) Close(context.Context) error { s.log.close(s.name); return nil }
+	return nil
+}
+
+func (s *ordService[K]) Close(context.Context) error {
+	s.log.close(s.name)
+
+	return nil
+}

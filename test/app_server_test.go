@@ -1,4 +1,4 @@
-package test
+package gas_test
 
 import (
 	"context"
@@ -22,6 +22,7 @@ func (p *serverProvider) Bind(dest any) error {
 	if cfg, ok := dest.(*gas.Config); ok {
 		p.fn(cfg)
 	}
+
 	return nil
 }
 
@@ -29,12 +30,17 @@ func (p *serverProvider) Bind(dest any) error {
 // run on the App before Start, as a service's Init would.
 func boundApp(t *testing.T, fn func(*gas.Config), early func(*gas.App)) *gas.App {
 	t.Helper()
+
 	app := gas.NewApp(gas.WithServiceInstance[gas.ConfigProvider](&serverProvider{fn: fn}))
 	early(app)
-	if err := app.Start(context.Background()); err != nil {
+
+	err := app.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	t.Cleanup(func() { _ = app.Shutdown(context.Background()) })
+
 	return app
 }
 
@@ -53,6 +59,7 @@ func bindServer(c *gas.Config) {
 // life of the process.
 func TestServer_BuiltBeforeStartGetsTheBoundConfig(t *testing.T) {
 	t.Parallel()
+
 	app := boundApp(t, bindServer, func(a *gas.App) { _ = a.Server() })
 
 	srv := app.Server()
@@ -68,6 +75,7 @@ func TestServer_BuiltBeforeStartGetsTheBoundConfig(t *testing.T) {
 // config only fills the fields left as the App set them.
 func TestServer_BuiltBeforeStartKeepsWhatTheCallerSet(t *testing.T) {
 	t.Parallel()
+
 	app := boundApp(t, bindServer, func(a *gas.App) {
 		a.Server().ReadTimeout = 0 // stream request bodies
 	})
@@ -76,6 +84,7 @@ func TestServer_BuiltBeforeStartKeepsWhatTheCallerSet(t *testing.T) {
 	if srv.ReadTimeout != 0 {
 		t.Errorf("Server().ReadTimeout = %v, want the caller's 0", srv.ReadTimeout)
 	}
+
 	if srv.WriteTimeout != 11*time.Second {
 		t.Errorf("Server().WriteTimeout = %v, want the bound 11s", srv.WriteTimeout)
 	}
@@ -85,6 +94,7 @@ func TestServer_BuiltBeforeStartKeepsWhatTheCallerSet(t *testing.T) {
 // what it sets on the server stays.
 func TestServer_AppConfigUpdatedHasTheLastWord(t *testing.T) {
 	t.Parallel()
+
 	app := boundApp(t, bindServer, func(a *gas.App) {
 		a.EventBus().Subscribe[gas.AppConfigUpdated](func(gas.AppConfigUpdatedPayload) {
 			a.Server().ReadHeaderTimeout = 2 * time.Second
@@ -100,8 +110,10 @@ func TestServer_AppConfigUpdatedHasTheLastWord(t *testing.T) {
 // pins the documented edge.
 func TestServer_SetToTheSameValueCountsAsUnchanged(t *testing.T) {
 	t.Parallel()
+
 	app := boundApp(t, bindServer, func(a *gas.App) {
 		srv := a.Server()
+
 		srv.ReadTimeout = gas.DefaultConfig().Server.ReadTimeout
 	})
 	if got := app.Server().ReadTimeout; got != 7*time.Second {
@@ -114,6 +126,7 @@ func TestServer_SetToTheSameValueCountsAsUnchanged(t *testing.T) {
 // would look untouched and be overwritten.
 func TestServer_AppConfigUpdatedRunsAfterTheBoundConfig(t *testing.T) {
 	t.Parallel()
+
 	copied := gas.DefaultConfig().Server.ReadHeaderTimeout
 	app := boundApp(t, bindServer, func(a *gas.App) {
 		_ = a.Server()
@@ -121,6 +134,7 @@ func TestServer_AppConfigUpdatedRunsAfterTheBoundConfig(t *testing.T) {
 			a.Server().ReadHeaderTimeout = copied
 		})
 	})
+
 	if got := app.Server().ReadHeaderTimeout; got != copied {
 		t.Errorf("Server().ReadHeaderTimeout = %v, want the subscriber's %v", got, copied)
 	}
@@ -131,18 +145,25 @@ func TestServer_AppConfigUpdatedRunsAfterTheBoundConfig(t *testing.T) {
 // server to the config as it stood then.
 func TestHandler_DoesNotBuildTheServer(t *testing.T) {
 	t.Parallel()
+
 	app := gas.NewApp()
 	if app.Handler() == nil {
 		t.Fatal("Handler() = nil")
 	}
+
 	app.Config().Server.ReadTimeout = 7 * time.Second
-	if err := app.Start(context.Background()); err != nil {
+
+	err := app.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	t.Cleanup(func() { _ = app.Shutdown(context.Background()) })
+
 	if got := app.Server().ReadTimeout; got != 7*time.Second {
 		t.Errorf("Server().ReadTimeout after an early Handler() = %v, want 7s", got)
 	}
+
 	if app.Server().Handler == nil {
 		t.Error("Server().Handler = nil")
 	}
@@ -151,28 +172,42 @@ func TestHandler_DoesNotBuildTheServer(t *testing.T) {
 // A second Start while the server is serving must not write the live
 // server's fields, which net/http reads for every connection: under -race
 // that write is a data race. Start, Serve, Start is one way to get there.
+//
+//nolint:funlen // one scenario or table, read in order
 func TestServer_SecondStartLeavesALiveServerAlone(t *testing.T) {
 	t.Parallel()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	port := ln.Addr().(*net.TCPAddr).Port
-	if err := ln.Close(); err != nil {
+
+	err = ln.Close()
+	if err != nil {
 		t.Fatal(err)
 	}
 
 	app := gas.NewApp()
+
 	app.Config().Server.Host = "127.0.0.1"
 	app.Config().Server.Port = port
-	if err := app.Start(context.Background()); err != nil {
+
+	err = app.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	served := make(chan error, 1)
+
 	go func() { served <- app.Serve() }()
+
 	t.Cleanup(func() {
 		_ = app.Stop(context.Background())
-		if sErr := <-served; sErr != nil {
+
+		sErr := <-served
+		if sErr != nil {
 			t.Errorf("Serve() = %v", sErr)
 		}
 	})
@@ -185,21 +220,27 @@ func TestServer_SecondStartLeavesALiveServerAlone(t *testing.T) {
 		}
 	}
 	deadline := time.Now().Add(5 * time.Second)
+
 	for {
 		resp, gErr := http.Get(url) //nolint:noctx,gosec // a local test server
 		if gErr == nil {
 			_ = resp.Body.Close()
+
 			break
 		}
+
 		if time.Now().After(deadline) {
 			t.Fatalf("server never answered: %v", gErr)
 		}
+
 		time.Sleep(10 * time.Millisecond)
 	}
 
 	app.Config().Server.ReadTimeout = 9 * time.Second
 	_ = app.Start(context.Background())
+
 	get()
+
 	if got := app.Server().ReadTimeout; got != 5*time.Second {
 		t.Errorf("Server().ReadTimeout of the live server = %v, want it left at 5s", got)
 	}
@@ -211,6 +252,7 @@ func TestServer_SecondStartLeavesALiveServerAlone(t *testing.T) {
 // The default is the 5s that fallback gave a default config before.
 func TestDefaultConfig_ReadHeaderTimeout(t *testing.T) {
 	t.Parallel()
+
 	if got := gas.DefaultConfig().Server.ReadHeaderTimeout; got != 5*time.Second {
 		t.Errorf("DefaultConfig().Server.ReadHeaderTimeout = %v, want 5s", got)
 	}
@@ -220,12 +262,16 @@ func TestDefaultConfig_ReadHeaderTimeout(t *testing.T) {
 // configured value alike.
 func TestServer_ReadHeaderTimeout(t *testing.T) {
 	t.Parallel()
+
 	for name, tt := range map[string]struct {
 		configure func(*gas.Config)
 		want      time.Duration
 	}{
-		"default":    {configure: func(*gas.Config) {}, want: 5 * time.Second},
-		"configured": {configure: func(c *gas.Config) { c.Server.ReadHeaderTimeout = 3 * time.Second }, want: 3 * time.Second},
+		"default": {configure: func(*gas.Config) {}, want: 5 * time.Second},
+		"configured": {
+			configure: func(c *gas.Config) { c.Server.ReadHeaderTimeout = 3 * time.Second },
+			want:      3 * time.Second,
+		},
 		"streaming": {
 			configure: func(c *gas.Config) { c.Server.ReadTimeout = 0 },
 			want:      5 * time.Second,
@@ -233,12 +279,17 @@ func TestServer_ReadHeaderTimeout(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+
 			app := gas.NewApp()
 			tt.configure(app.Config())
-			if err := app.Start(context.Background()); err != nil {
+
+			err := app.Start(context.Background())
+			if err != nil {
 				t.Fatal(err)
 			}
+
 			t.Cleanup(func() { _ = app.Shutdown(context.Background()) })
+
 			if got := app.Server().ReadHeaderTimeout; got != tt.want {
 				t.Errorf("Server().ReadHeaderTimeout = %v, want %v", got, tt.want)
 			}

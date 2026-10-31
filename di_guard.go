@@ -33,13 +33,20 @@ type singletonBuild struct {
 // the header format.
 func curGoroutineID() uint64 {
 	var buf [64]byte
+
 	n := runtime.Stack(buf[:], false)
 	b := bytes.TrimPrefix(buf[:n], []byte("goroutine "))
-	if i := bytes.IndexByte(b, ' '); i > 0 {
-		if id, err := strconv.ParseUint(string(b[:i]), 10, 64); err == nil {
-			return id
-		}
+
+	i := bytes.IndexByte(b, ' ')
+	if i <= 0 {
+		return 0
 	}
+
+	id, err := strconv.ParseUint(string(b[:i]), 10, 64)
+	if err == nil {
+		return id
+	}
+
 	return 0
 }
 
@@ -55,9 +62,12 @@ func (c *ServiceContainer) enterBuild(t reflect.Type) (uint64, error) {
 	defer c.mu.Unlock()
 
 	stack := c.stacks[gid]
-	if err := cycleIn(stack, t); err != nil {
+
+	err := cycleIn(stack, t)
+	if err != nil {
 		return gid, err
 	}
+
 	if len(stack) >= maxResolveDepth {
 		return gid, newDIError(
 			ErrCircularDependency,
@@ -66,7 +76,9 @@ func (c *ServiceContainer) enterBuild(t reflect.Type) (uint64, error) {
 			maxResolveDepth,
 		)
 	}
+
 	c.stacks[gid] = append(stack, t)
+
 	return gid, nil
 }
 
@@ -78,8 +90,10 @@ func (c *ServiceContainer) leaveBuild(gid uint64) {
 	stack := c.stacks[gid]
 	if len(stack) <= 1 {
 		delete(c.stacks, gid)
+
 		return
 	}
+
 	c.stacks[gid] = stack[:len(stack)-1]
 }
 
@@ -90,17 +104,21 @@ func cycleIn(stack []reflect.Type, t reflect.Type) error {
 		if s != t {
 			continue
 		}
+
 		names := make([]string, 0, len(stack)-i+1)
 		for _, typ := range stack[i:] {
 			names = append(names, typ.String())
 		}
+
 		names = append(names, t.String())
+
 		return newDIError(
 			ErrCircularDependency,
 			"circular dependency: %s",
 			strings.Join(names, " -> "),
 		)
 	}
+
 	return nil
 }
 
@@ -112,11 +130,14 @@ func (c *ServiceContainer) waitsOn(b *singletonBuild, gid uint64) bool {
 		if b.gid == gid {
 			return true
 		}
+
 		next, ok := c.waiting[b.gid]
 		if !ok {
 			return false
 		}
+
 		b = next
 	}
+
 	return false
 }

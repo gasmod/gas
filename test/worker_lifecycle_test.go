@@ -1,9 +1,8 @@
-package test
+package gas_test
 
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http/httptest"
 	"slices"
 	"strings"
@@ -49,35 +48,43 @@ func (p *lcProbe[K]) Name() string { return p.name }
 func (p *lcProbe[K]) Init(ctx context.Context) error {
 	p.initCalls.Add(1)
 	p.mu.Lock()
+
 	p.initDeadline, p.initHasDL = ctx.Deadline()
 	p.initValue = ctx.Value(ctxKey{})
 	p.mu.Unlock()
 
 	var err error
+
 	if p.initFn != nil {
 		err = p.initFn(ctx)
 	}
+
 	p.initReturned.Store(true)
+
 	return err
 }
 
 func (p *lcProbe[K]) Close(ctx context.Context) error {
 	p.closeCalls.Add(1)
 	p.mu.Lock()
+
 	p.closeValue = ctx.Value(ctxKey{})
 	p.mu.Unlock()
+
 	return p.closeErr
 }
 
 func (p *lcProbe[K]) deadline() (time.Time, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
 	return p.initDeadline, p.initHasDL
 }
 
 func (p *lcProbe[K]) values() (initVal, closeVal any) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
 	return p.initValue, p.closeValue
 }
 
@@ -102,7 +109,7 @@ func waitForCancel(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-time.After(2 * time.Second):
-		return errors.New("init context was never canceled")
+		return errInitContextWasNever
 	}
 }
 
@@ -128,7 +135,9 @@ func TestInitContextCarriesDeadline(t *testing.T) {
 			w := gas.NewWorker(gas.WithServiceInitTimeout(5*time.Second), r.reg(p))
 
 			before := time.Now()
-			if err := w.Start(t.Context()); err != nil {
+
+			err := w.Start(t.Context())
+			if err != nil {
 				t.Fatalf("Start: %v", err)
 			}
 
@@ -136,6 +145,7 @@ func TestInitContextCarriesDeadline(t *testing.T) {
 			if !ok {
 				t.Fatal("Init context has no deadline")
 			}
+
 			if got := dl.Sub(before); got <= 0 || got > 5*time.Second+time.Second {
 				t.Errorf("Init deadline is %v after Start, want about 5s", got)
 			}
@@ -150,9 +160,12 @@ func TestInitContextCarriesCallerValues(t *testing.T) {
 			w := gas.NewWorker(r.reg(p))
 
 			ctx := context.WithValue(t.Context(), ctxKey{}, "caller")
-			if err := w.Start(ctx); err != nil {
+
+			err := w.Start(ctx)
+			if err != nil {
 				t.Fatalf("Start: %v", err)
 			}
+
 			if got, _ := p.values(); got != "caller" {
 				t.Errorf("Init saw context value %v, want caller", got)
 			}
@@ -167,7 +180,9 @@ func TestInitDeadlineCancelsAndWaits(t *testing.T) {
 		t.Run(r.name, func(t *testing.T) {
 			p := &lcProbe[lcTag0]{name: "probe", initFn: func(ctx context.Context) error {
 				err := waitForCancel(ctx)
+
 				time.Sleep(50 * time.Millisecond) // cleanup after cancellation
+
 				return err
 			}}
 			w := gas.NewWorker(gas.WithServiceInitTimeout(30*time.Millisecond), r.reg(p))
@@ -176,12 +191,15 @@ func TestInitDeadlineCancelsAndWaits(t *testing.T) {
 			if !p.initReturned.Load() {
 				t.Error("Start returned while Init was still running")
 			}
+
 			if !errors.Is(err, context.DeadlineExceeded) {
 				t.Fatalf("Start error = %v, want context.DeadlineExceeded", err)
 			}
+
 			if !strings.Contains(err.Error(), "timed out after 30ms") {
 				t.Errorf("Start error %q does not name the 30ms timeout", err)
 			}
+
 			if got := p.closeCalls.Load(); got != 0 {
 				t.Errorf("Close called %d times on an Init that failed, want 0", got)
 			}
@@ -197,6 +215,7 @@ func TestInitSucceedingAfterDeadlineIsClosed(t *testing.T) {
 		t.Run(r.name, func(t *testing.T) {
 			p := &lcProbe[lcTag0]{name: "probe", initFn: func(ctx context.Context) error {
 				_ = waitForCancel(ctx) // returns after the deadline, ignoring it
+
 				return nil
 			}}
 			w := gas.NewWorker(gas.WithServiceInitTimeout(20*time.Millisecond), r.reg(p))
@@ -205,9 +224,11 @@ func TestInitSucceedingAfterDeadlineIsClosed(t *testing.T) {
 			if !errors.Is(err, context.DeadlineExceeded) {
 				t.Fatalf("Start error = %v, want context.DeadlineExceeded", err)
 			}
+
 			if !p.initReturned.Load() {
 				t.Error("Start returned while Init was still running")
 			}
+
 			if got := p.closeCalls.Load(); got != 1 {
 				t.Errorf("Close called %d times after a late Init, want 1", got)
 			}
@@ -217,12 +238,13 @@ func TestInitSucceedingAfterDeadlineIsClosed(t *testing.T) {
 
 // The error a late Init's Close returns is reported alongside the timeout.
 func TestInitSucceedingAfterDeadlineReportsCloseError(t *testing.T) {
-	errClose := errors.New("close failed")
+	errClose := errCloseFailed2
 	p := &lcProbe[lcTag0]{
 		name:     "probe",
 		closeErr: errClose,
 		initFn: func(ctx context.Context) error {
 			_ = waitForCancel(ctx) // returns after the deadline, ignoring it
+
 			return nil
 		},
 	}
@@ -240,9 +262,12 @@ func TestInitTimeoutZeroMeansNoDeadline(t *testing.T) {
 			for range 50 {
 				p := &lcProbe[lcTag0]{name: "probe"}
 				w := gas.NewWorker(gas.WithServiceInitTimeout(0), r.reg(p))
-				if err := w.Start(t.Context()); err != nil {
+
+				err := w.Start(t.Context())
+				if err != nil {
 					t.Fatalf("Start with a zero timeout: %v", err)
 				}
+
 				if _, ok := p.deadline(); ok {
 					t.Fatal("Init context has a deadline with a zero timeout")
 				}
@@ -257,38 +282,37 @@ func TestInitTimeoutZeroKeepsCallerDeadline(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
+
 	want, _ := ctx.Deadline()
-	if err := w.Start(ctx); err != nil {
+
+	err := w.Start(ctx)
+	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+
 	if got, ok := p.deadline(); !ok || !got.Equal(want) {
 		t.Errorf("Init deadline = %v (set %v), want the caller's %v", got, ok, want)
 	}
 }
 
-func requirePanicPrefix(t *testing.T, fn func()) {
-	t.Helper()
-	defer func() {
-		t.Helper()
-		r := recover()
-		if r == nil {
-			t.Fatal("expected a panic")
-		}
-		if msg, _ := r.(string); !strings.HasPrefix(msg, "gas: ") {
-			t.Errorf("panic %v does not start with gas:", r)
-		}
-	}()
-	fn()
-}
-
-func TestInitTimeoutNegativePanics(t *testing.T) {
+// A negative init timeout is an option error: Start, or BuildAll, fails
+// with ErrInvalidOption before anything is initialized.
+func TestInitTimeoutNegativeFailsStart(t *testing.T) {
 	t.Run("WithServiceInitTimeout", func(t *testing.T) {
-		requirePanicPrefix(t, func() { gas.NewWorker(gas.WithServiceInitTimeout(-time.Second)) })
+		w := gas.NewWorker(gas.WithServiceInitTimeout(-time.Second))
+		err := w.Start(context.Background())
+
+		if !errors.Is(err, gas.ErrInvalidOption) {
+			t.Errorf("Start() = %v, want ErrInvalidOption", err)
+		}
 	})
 	t.Run("WithServiceContainerServiceTimeout", func(t *testing.T) {
-		requirePanicPrefix(t, func() {
-			gas.NewServiceContainer(gas.WithServiceContainerServiceTimeout(-time.Second))
-		})
+		c := gas.NewServiceContainer(gas.WithServiceContainerServiceTimeout(-time.Second))
+		err := c.BuildAll(context.Background())
+
+		if !errors.Is(err, gas.ErrInvalidOption) {
+			t.Errorf("BuildAll() = %v, want ErrInvalidOption", err)
+		}
 	})
 }
 
@@ -302,9 +326,12 @@ func TestServiceInitTimeoutOverridesDefault(t *testing.T) {
 	)
 
 	before := time.Now()
-	if err := w.Start(t.Context()); err != nil {
+
+	err := w.Start(t.Context())
+	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+
 	dl, ok := p.deadline()
 	if !ok || dl.Sub(before) > 3*time.Second {
 		t.Errorf("Init deadline %v after Start (set %v), want about 2s", dl.Sub(before), ok)
@@ -319,6 +346,7 @@ func TestServiceInitTimeoutNegativeFailsStart(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "negative") {
 		t.Fatalf("Start error = %v, want an error about the negative InitTimeout", err)
 	}
+
 	if p.initCalls.Load() != 0 {
 		t.Error("Init ran despite a negative InitTimeout")
 	}
@@ -334,7 +362,9 @@ func TestStartWithCanceledContextFails(t *testing.T) {
 
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
-			if err := w.Start(ctx); !errors.Is(err, context.Canceled) {
+
+			err := w.Start(ctx)
+			if !errors.Is(err, context.Canceled) {
 				t.Fatalf("Start error = %v, want context.Canceled", err)
 			}
 		})
@@ -344,17 +374,24 @@ func TestStartWithCanceledContextFails(t *testing.T) {
 func TestRestartServiceInitHasDeadline(t *testing.T) {
 	p := &lcProbe[lcTag0]{name: "probe"}
 	w := gas.NewWorker(gas.WithServiceInitTimeout(5*time.Second), gas.WithServiceInstance(p))
-	if err := w.Start(t.Context()); err != nil {
+
+	err := w.Start(t.Context())
+	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	if err := w.CloseService[*lcProbe[lcTag0]](context.Background()); err != nil {
+
+	err = w.CloseService[*lcProbe[lcTag0]](context.Background())
+	if err != nil {
 		t.Fatalf("CloseService: %v", err)
 	}
 
 	before := time.Now()
-	if err := w.RestartService[*lcProbe[lcTag0]](t.Context()); err != nil {
+
+	err = w.RestartService[*lcProbe[lcTag0]](t.Context())
+	if err != nil {
 		t.Fatalf("RestartService: %v", err)
 	}
+
 	dl, ok := p.deadline()
 	if !ok || dl.Sub(before) > 6*time.Second {
 		t.Errorf(
@@ -367,26 +404,34 @@ func TestRestartServiceInitHasDeadline(t *testing.T) {
 
 func TestRestartServiceInitDeadlineCancelsAndWaits(t *testing.T) {
 	var restarting atomic.Bool
+
 	p := &lcProbe[lcTag0]{name: "probe", initFn: func(ctx context.Context) error {
 		if !restarting.Load() {
 			return nil
 		}
+
 		return waitForCancel(ctx)
 	}}
 	w := gas.NewWorker(gas.WithServiceInitTimeout(30*time.Millisecond), gas.WithServiceInstance(p))
-	if err := w.Start(t.Context()); err != nil {
+
+	err := w.Start(t.Context())
+	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	if err := w.CloseService[*lcProbe[lcTag0]](context.Background()); err != nil {
+
+	err = w.CloseService[*lcProbe[lcTag0]](context.Background())
+	if err != nil {
 		t.Fatalf("CloseService: %v", err)
 	}
 
 	restarting.Store(true)
 	p.initReturned.Store(false)
-	err := w.RestartService[*lcProbe[lcTag0]](t.Context())
+
+	err = w.RestartService[*lcProbe[lcTag0]](t.Context())
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("RestartService error = %v, want context.DeadlineExceeded", err)
 	}
+
 	if !p.initReturned.Load() {
 		t.Error("RestartService returned while Init was still running")
 	}
@@ -399,25 +444,32 @@ func TestScopedInitGetsScopeContextWithDeadline(t *testing.T) {
 	c.RegisterScopedService[*lcProbe[lcTag0]](func() *lcProbe[lcTag0] {
 		return &lcProbe[lcTag0]{name: "scoped"}
 	})
-	if err := c.BuildAll(t.Context()); err != nil {
+
+	err := c.BuildAll(t.Context())
+	if err != nil {
 		t.Fatalf("BuildAll: %v", err)
 	}
 
 	scope := c.NewScope(context.WithValue(t.Context(), ctxKey{}, "request"))
+
 	p, err := scope.Resolve[*lcProbe[lcTag0]]()
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
+
 	if got, _ := p.values(); got != "request" {
 		t.Errorf("scoped Init saw context value %v, want request", got)
 	}
+
 	if _, ok := p.deadline(); !ok {
 		t.Error("scoped Init context didn't get a deadline")
 	}
 
-	if err := scope.Close(context.WithValue(context.Background(), ctxKey{}, "close")); err != nil {
+	err = scope.Close(context.WithValue(context.Background(), ctxKey{}, "close"))
+	if err != nil {
 		t.Fatalf("Scope.Close: %v", err)
 	}
+
 	if _, got := p.values(); got != "close" {
 		t.Errorf("scoped Close saw context value %v, want close", got)
 	}
@@ -428,15 +480,19 @@ func TestScopedInitGetsScopeContextWithDeadline(t *testing.T) {
 func TestShutdownTwiceClosesOnce(t *testing.T) {
 	p := &lcProbe[lcTag0]{name: "probe"}
 	w := gas.NewWorker(gas.WithServiceInstance(p))
-	if err := w.Start(t.Context()); err != nil {
+
+	err := w.Start(t.Context())
+	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
 	for range 3 {
-		if err := w.Shutdown(context.Background()); err != nil {
+		err := w.Shutdown(context.Background())
+		if err != nil {
 			t.Fatalf("Shutdown: %v", err)
 		}
 	}
+
 	if got := p.closeCalls.Load(); got != 1 {
 		t.Errorf("Close called %d times, want 1", got)
 	}
@@ -445,15 +501,22 @@ func TestShutdownTwiceClosesOnce(t *testing.T) {
 func TestShutdownSkipsServiceClosedByKillSwitch(t *testing.T) {
 	p := &lcProbe[lcTag0]{name: "probe"}
 	w := gas.NewWorker(gas.WithServiceInstance(p))
-	if err := w.Start(t.Context()); err != nil {
+
+	err := w.Start(t.Context())
+	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	if err := w.CloseService[*lcProbe[lcTag0]](context.Background()); err != nil {
+
+	err = w.CloseService[*lcProbe[lcTag0]](context.Background())
+	if err != nil {
 		t.Fatalf("CloseService: %v", err)
 	}
-	if err := w.Shutdown(context.Background()); err != nil {
+
+	err = w.Shutdown(context.Background())
+	if err != nil {
 		t.Fatalf("Shutdown: %v", err)
 	}
+
 	if got := p.closeCalls.Load(); got != 1 {
 		t.Errorf("Close called %d times after CloseService and Shutdown, want 1", got)
 	}
@@ -464,25 +527,34 @@ func TestShutdownSkipsServiceClosedByKillSwitch(t *testing.T) {
 func TestShutdownClosesRestartedService(t *testing.T) {
 	p := &lcProbe[lcTag0]{name: "probe"}
 	w := gas.NewWorker(gas.WithServiceInstance(p))
-	if err := w.Start(t.Context()); err != nil {
+
+	err := w.Start(t.Context())
+	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	if err := w.CloseService[*lcProbe[lcTag0]](context.Background()); err != nil {
+
+	err = w.CloseService[*lcProbe[lcTag0]](context.Background())
+	if err != nil {
 		t.Fatalf("CloseService: %v", err)
 	}
-	if err := w.RestartService[*lcProbe[lcTag0]](t.Context()); err != nil {
+
+	err = w.RestartService[*lcProbe[lcTag0]](t.Context())
+	if err != nil {
 		t.Fatalf("RestartService: %v", err)
 	}
-	if err := w.Shutdown(context.Background()); err != nil {
+
+	err = w.Shutdown(context.Background())
+	if err != nil {
 		t.Fatalf("Shutdown: %v", err)
 	}
+
 	if got := p.closeCalls.Load(); got != 2 {
 		t.Errorf("Close called %d times, want 2 (kill switch, then shutdown)", got)
 	}
 }
 
 func TestShutdownReturnsCloseErrorsWithoutLogging(t *testing.T) {
-	errA, errB := errors.New("a failed"), errors.New("b failed")
+	errA, errB := errAFailed, errBFailed
 	a := &lcProbe[lcTag0]{name: "a", closeErr: errA}
 	b := &lcProbe[lcTag1]{name: "b", closeErr: errB}
 	rec := newRecordingLogger()
@@ -491,17 +563,21 @@ func TestShutdownReturnsCloseErrorsWithoutLogging(t *testing.T) {
 		gas.WithServiceInstance(a),
 		gas.WithServiceInstance(b),
 	)
-	if err := w.Start(t.Context()); err != nil {
+
+	err := w.Start(t.Context())
+	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
-	err := w.Shutdown(context.Background())
+	err = w.Shutdown(context.Background())
 	if !errors.Is(err, errA) || !errors.Is(err, errB) {
 		t.Fatalf("Shutdown error = %v, want both Close errors", err)
 	}
+
 	if a.closeCalls.Load() != 1 || b.closeCalls.Load() != 1 {
 		t.Error("a failing Close stopped the remaining services from closing")
 	}
+
 	for _, level := range rec.seen() {
 		if level == "error" {
 			t.Error("Shutdown both logged and returned a Close error")
@@ -512,14 +588,19 @@ func TestShutdownReturnsCloseErrorsWithoutLogging(t *testing.T) {
 func TestShutdownPassesCallerContextToClose(t *testing.T) {
 	p := &lcProbe[lcTag0]{name: "probe"}
 	w := gas.NewWorker(gas.WithServiceInstance(p))
-	if err := w.Start(t.Context()); err != nil {
+
+	err := w.Start(t.Context())
+	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	if err := w.Shutdown(
+
+	err = w.Shutdown(
 		context.WithValue(context.Background(), ctxKey{}, "shutdown"),
-	); err != nil {
+	)
+	if err != nil {
 		t.Fatalf("Shutdown: %v", err)
 	}
+
 	if _, got := p.values(); got != "shutdown" {
 		t.Errorf("Close saw context value %v, want shutdown", got)
 	}
@@ -531,25 +612,33 @@ func TestShutdownConcurrentCallsCloseOnce(t *testing.T) {
 	release := make(chan struct{})
 	p := &blockingCloser{release: release}
 	w := gas.NewWorker(gas.WithServiceInstance(p))
-	if err := w.Start(t.Context()); err != nil {
+
+	err := w.Start(t.Context())
+	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
 	var wg sync.WaitGroup
+
 	returned := make(chan struct{}, 8)
+
 	for range 8 {
 		wg.Go(func() {
 			_ = w.Shutdown(context.Background())
+
 			returned <- struct{}{}
 		})
 	}
+
 	select {
 	case <-returned:
 		t.Fatal("a Shutdown call returned while the first was still closing")
 	case <-time.After(50 * time.Millisecond):
 	}
+
 	close(release)
 	wg.Wait()
+
 	if got := p.closeCalls.Load(); got != 1 {
 		t.Errorf("Close called %d times by concurrent Shutdowns, want 1", got)
 	}
@@ -568,17 +657,20 @@ func (b *blockingCloser) Init(context.Context) error { return nil }
 func (b *blockingCloser) Close(context.Context) error {
 	b.closeCalls.Add(1)
 	<-b.release
+
 	return nil
 }
 
 // An Init that ignores its context and fails late with its own error reports
 // both the init deadline and that error.
 func TestInitFailingAfterDeadlineReportsBoth(t *testing.T) {
-	errInit := errors.New("init failed")
+	errInit := errInitFailed2
+
 	for _, r := range lcRegistrations {
 		t.Run(r.name, func(t *testing.T) {
 			p := &lcProbe[lcTag0]{name: "probe", initFn: func(ctx context.Context) error {
 				_ = waitForCancel(ctx) // returns after the deadline, ignoring it
+
 				return errInit
 			}}
 			w := gas.NewWorker(gas.WithServiceInitTimeout(10*time.Millisecond), r.reg(p))
@@ -590,6 +682,7 @@ func TestInitFailingAfterDeadlineReportsBoth(t *testing.T) {
 					err,
 				)
 			}
+
 			if got := p.closeCalls.Load(); got != 0 {
 				t.Errorf("Close called %d times on an Init that failed, want 0", got)
 			}
@@ -605,10 +698,12 @@ func TestInitCallerDeadlineIsNotReportedAsInitTimeout(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
+
 	err := w.Start(ctx)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Start error = %v, want context.DeadlineExceeded", err)
 	}
+
 	if strings.Contains(err.Error(), "timed out after") {
 		t.Errorf("Start error %q reports the caller's deadline as the init timeout", err)
 	}
@@ -616,16 +711,20 @@ func TestInitCallerDeadlineIsNotReportedAsInitTimeout(t *testing.T) {
 
 // Init failing fails Start, and that service is never closed by Shutdown.
 func TestShutdownAfterFailedStartDoesNotCloseFailedService(t *testing.T) {
-	errInit := errors.New("init failed")
+	errInit := errInitFailed2
 	p := &lcProbe[lcTag0]{name: "probe", initFn: func(context.Context) error { return errInit }}
 	w := gas.NewWorker(gas.WithServiceInstance(p))
 
-	if err := w.Start(t.Context()); !errors.Is(err, errInit) {
+	err := w.Start(t.Context())
+	if !errors.Is(err, errInit) {
 		t.Fatalf("Start error = %v, want the Init error", err)
 	}
-	if err := w.Shutdown(context.Background()); err != nil {
+
+	err = w.Shutdown(context.Background())
+	if err != nil {
 		t.Fatalf("Shutdown: %v", err)
 	}
+
 	if got := p.closeCalls.Load(); got != 0 {
 		t.Errorf("Close called %d times on a service whose Init failed, want 0", got)
 	}
@@ -634,19 +733,21 @@ func TestShutdownAfterFailedStartDoesNotCloseFailedService(t *testing.T) {
 // scopeProbe is a scoped Service that records the contexts its Init and
 // Close receive.
 type scopeProbe struct {
-	initCtx  context.Context
-	closeCtx context.Context
+	initCtx  context.Context //nolint:containedctx // the probe records what Init got
+	closeCtx context.Context //nolint:containedctx // the probe records what Close got
 }
 
 func (s *scopeProbe) Name() string { return "scope-probe" }
 
 func (s *scopeProbe) Init(ctx context.Context) error {
 	s.initCtx = ctx
+
 	return nil
 }
 
 func (s *scopeProbe) Close(ctx context.Context) error {
 	s.closeCtx = ctx
+
 	return nil
 }
 
@@ -656,28 +757,36 @@ func (s *scopeProbe) Close(ctx context.Context) error {
 func TestRequestScopeContexts(t *testing.T) {
 	probe := &scopeProbe{}
 	app := gas.NewApp(gas.WithScopedService[*scopeProbe](func() *scopeProbe { return probe }))
-	if err := app.InitServices(t.Context()); err != nil {
-		t.Fatalf("InitServices: %v", err)
+
+	err := app.Start(t.Context())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
 	}
+
 	app.Router().Handle(nil, "GET", "/scoped", func(ctx gas.Context, _ *scopeProbe) error {
 		return ctx.NoContent()
 	})
 
 	reqCtx, cancel := context.WithCancel(context.WithValue(t.Context(), ctxKey{}, "request"))
 	cancel() // the client has gone away
+
 	req := httptest.NewRequestWithContext(reqCtx, "GET", "/scoped", nil)
 	app.Router().ServeHTTP(httptest.NewRecorder(), req)
 
 	if probe.initCtx == nil || probe.initCtx.Value(ctxKey{}) != "request" {
 		t.Fatal("scoped Init did not get the request context")
 	}
+
 	if probe.closeCtx == nil {
 		t.Fatal("scoped Close was not called")
 	}
+
 	if probe.closeCtx.Value(ctxKey{}) != "request" {
 		t.Error("scoped Close context lost the request values")
 	}
-	if err := probe.closeCtx.Err(); err != nil {
+
+	err = probe.closeCtx.Err()
+	if err != nil {
 		t.Errorf("scoped Close context is done (%v), want it detached from the client", err)
 	}
 }
@@ -686,12 +795,17 @@ func TestRequestScopeContexts(t *testing.T) {
 func TestShutdownEmptiesActiveServices(t *testing.T) {
 	p := &lcProbe[lcTag0]{name: "probe"}
 	w := gas.NewWorker(gas.WithServiceInstance(p))
-	if err := w.Start(t.Context()); err != nil {
+
+	err := w.Start(t.Context())
+	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	if err := w.Shutdown(context.Background()); err != nil {
+
+	err = w.Shutdown(context.Background())
+	if err != nil {
 		t.Fatalf("Shutdown: %v", err)
 	}
+
 	if got := w.ActiveServices(); slices.Contains(got, "probe") {
 		t.Errorf("ActiveServices after Shutdown = %v, want probe gone", got)
 	}
@@ -711,14 +825,18 @@ func TestKillSwitchAfterShutdownFails(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			p := &lcProbe[lcTag0]{name: "probe"}
 			w := gas.NewWorker(gas.WithServiceInstance(p))
-			if err := w.Start(t.Context()); err != nil {
+
+			err := w.Start(t.Context())
+			if err != nil {
 				t.Fatalf("Start: %v", err)
 			}
-			if err := w.Shutdown(context.Background()); err != nil {
+
+			err = w.Shutdown(context.Background())
+			if err != nil {
 				t.Fatalf("Shutdown: %v", err)
 			}
 
-			err := call(w)
+			err = call(w)
 			if err == nil || !strings.Contains(err.Error(), "shut down") {
 				t.Fatalf(
 					"%s after Shutdown = %v, want an error saying the worker is shut down",
@@ -726,9 +844,11 @@ func TestKillSwitchAfterShutdownFails(t *testing.T) {
 					err,
 				)
 			}
+
 			if inits, closes := p.initCalls.Load(), p.closeCalls.Load(); inits != 1 || closes != 1 {
 				t.Errorf("Init ran %d times and Close %d times, want 1 and 1", inits, closes)
 			}
+
 			if got := w.ActiveServices(); slices.Contains(got, "probe") {
 				t.Errorf("ActiveServices = %v, want probe gone", got)
 			}
@@ -746,28 +866,49 @@ func TestShutdownRacingKillSwitchLeavesNothingOpen(t *testing.T) {
 			gas.WithServiceInstance[gas.Logger](&gas.NopLogger{}),
 			gas.WithServiceInstance(p),
 		)
-		if err := w.Start(t.Context()); err != nil {
+
+		err := w.Start(t.Context())
+		if err != nil {
 			t.Fatalf("Start: %v", err)
 		}
-		if err := w.CloseService[*lcProbe[lcTag0]](context.Background()); err != nil {
+
+		err = w.CloseService[*lcProbe[lcTag0]](context.Background())
+		if err != nil {
 			t.Fatalf("CloseService: %v", err)
 		}
-		if err := w.RestartService[*lcProbe[lcTag0]](context.Background()); err != nil {
+
+		err = w.RestartService[*lcProbe[lcTag0]](context.Background())
+		if err != nil {
 			t.Fatalf("RestartService: %v", err)
 		}
 
 		// The goroutines wait on start so the three calls overlap.
 		start := make(chan struct{})
+
 		var wg sync.WaitGroup
-		wg.Go(func() { <-start; _ = w.Shutdown(context.Background()) })
-		wg.Go(func() { <-start; _ = w.CloseService[*lcProbe[lcTag0]](context.Background()) })
-		wg.Go(func() { <-start; _ = w.RestartService[*lcProbe[lcTag0]](context.Background()) })
+
+		wg.Go(func() {
+			<-start
+
+			_ = w.Shutdown(context.Background())
+		})
+		wg.Go(func() {
+			<-start
+
+			_ = w.CloseService[*lcProbe[lcTag0]](context.Background())
+		})
+		wg.Go(func() {
+			<-start
+
+			_ = w.RestartService[*lcProbe[lcTag0]](context.Background())
+		})
 		close(start)
 		wg.Wait()
 
 		if inits, closes := p.initCalls.Load(), p.closeCalls.Load(); inits != closes {
 			t.Fatalf("Init ran %d times and Close %d times; a service was left open", inits, closes)
 		}
+
 		if got := w.ActiveServices(); slices.Contains(got, "probe") {
 			t.Fatalf("ActiveServices = %v after Shutdown, want probe gone", got)
 		}
@@ -794,35 +935,46 @@ func TestServiceInstanceIsInitialized(t *testing.T) {
 	svc := &ordService[instTagA]{log: log, name: "instance"}
 
 	w := gas.NewWorker(
-		gas.WithSingletonService[gas.Logger](gas.NewNopLogger()),
+		gas.WithSingletonService[gas.Logger](func() *gas.NopLogger { return &gas.NopLogger{} }),
 		gas.WithServiceInstance[*ordService[instTagA]](svc),
 	)
-	if err := w.InitServices(context.Background()); err != nil {
-		t.Fatalf("InitServices: %v", err)
+
+	err := w.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
 	}
 
 	inits, _ := log.snapshot()
 	if got := strings.Join(inits, " "); got != "instance" {
 		t.Errorf("init calls = [%s], want [instance]", got)
 	}
+
 	if got := w.ActiveServices(); len(got) != 2 ||
 		!slices.Contains(got, "instance") { // 1 built-in (gas/eventbus) + "instance"
 		t.Errorf("ActiveServices = %v, want [gas/eventbus, instance]", got)
 	}
 }
 
-// InitServices is idempotent, so the instance must not be initialized twice.
+// A second Start fails with ErrAlreadyStarted, so the instance is not
+// initialized twice.
 func TestServiceInstanceInitializedExactlyOnce(t *testing.T) {
 	log := &ordLog{}
 	svc := &ordService[instTagA]{log: log, name: "instance"}
 
 	w := gas.NewWorker(
-		gas.WithSingletonService[gas.Logger](gas.NewNopLogger()),
+		gas.WithSingletonService[gas.Logger](func() *gas.NopLogger { return &gas.NopLogger{} }),
 		gas.WithServiceInstance[*ordService[instTagA]](svc),
 	)
-	for range 3 {
-		if err := w.InitServices(context.Background()); err != nil {
-			t.Fatalf("InitServices: %v", err)
+
+	err := w.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	for range 2 {
+		err := w.Start(context.Background())
+		if !errors.Is(err, gas.ErrAlreadyStarted) {
+			t.Fatalf("Start again = %v, want ErrAlreadyStarted", err)
 		}
 	}
 
@@ -846,14 +998,15 @@ func (s *failingInstance) Close(context.Context) error { return nil }
 
 func TestServiceInstanceInitErrorAbortsStartup(t *testing.T) {
 	w := gas.NewWorker(
-		gas.WithSingletonService[gas.Logger](gas.NewNopLogger()),
+		gas.WithSingletonService[gas.Logger](func() *gas.NopLogger { return &gas.NopLogger{} }),
 		gas.WithServiceInstance[*failingInstance](&failingInstance{}),
 	)
 
-	err := w.InitServices(context.Background())
+	err := w.Start(context.Background())
 	if err == nil {
-		t.Fatal("expected InitServices to fail")
+		t.Fatal("expected Start to fail")
 	}
+
 	if !errors.Is(err, errInstanceInit) {
 		t.Errorf("error %v does not wrap the service's own error", err)
 	}
@@ -870,16 +1023,20 @@ func TestServiceInstanceInitializesBeforeConstructedServices(t *testing.T) {
 		instance := &ordService[instTagA]{log: log, name: "instance"}
 
 		w := gas.NewWorker(
-			gas.WithSingletonService[gas.Logger](gas.NewNopLogger()),
+			gas.WithSingletonService[gas.Logger](func() *gas.NopLogger { return &gas.NopLogger{} }),
 			gas.WithServiceInstance[*ordService[instTagA]](instance),
 			gas.WithSingletonService[*ordService[instTagB]](func() *ordService[instTagB] {
 				return &ordService[instTagB]{log: log, name: "constructed"}
 			}),
 		)
-		if err := w.InitServices(context.Background()); err != nil {
-			t.Fatalf("run %d: InitServices: %v", run, err)
+
+		err := w.Start(context.Background())
+		if err != nil {
+			t.Fatalf("run %d: Start: %v", run, err)
 		}
-		if err := w.Shutdown(context.Background()); err != nil {
+
+		err = w.Shutdown(context.Background())
+		if err != nil {
 			t.Fatalf("run %d: Shutdown: %v", run, err)
 		}
 
@@ -887,6 +1044,7 @@ func TestServiceInstanceInitializesBeforeConstructedServices(t *testing.T) {
 		if got := strings.Join(inits, " "); got != "instance constructed" {
 			t.Fatalf("run %d: init order = [%s], want [instance constructed]", run, got)
 		}
+
 		if got := strings.Join(closes, " "); got != "constructed instance" {
 			t.Fatalf("run %d: close order = [%s], want [constructed instance]", run, got)
 		}
@@ -910,6 +1068,7 @@ func newFailingWorker(log *startLog, opts ...gas.Option) *gas.Worker {
 			return &probeC{&startProbe{name: "c", log: log, initErr: errInitFailed}}
 		}),
 	}, opts...)
+
 	return gas.NewWorker(all...)
 }
 
@@ -932,9 +1091,11 @@ func TestWorker_FailedInitClosesInitialized(t *testing.T) {
 	}
 
 	// Nothing is left for Shutdown to close.
-	if err := w.Shutdown(context.Background()); err != nil {
+	err = w.Shutdown(context.Background())
+	if err != nil {
 		t.Errorf("Shutdown() after a failed Start = %v, want nil", err)
 	}
+
 	if got := log.snapshot(); len(got) != len(want) {
 		t.Errorf("Shutdown closed again: calls = %v", got)
 	}
@@ -952,12 +1113,14 @@ func TestWorker_StartAfterFailureReturnsOriginalError(t *testing.T) {
 	if first == nil {
 		t.Fatal("first Start() = nil, want an error")
 	}
+
 	calls := len(log.snapshot())
 
 	second := w.Start(context.Background())
 	if !errors.Is(second, errInitFailed) {
 		t.Errorf("second Start() = %v, want %v", second, errInitFailed)
 	}
+
 	if got := log.snapshot(); len(got) != calls {
 		t.Errorf("second Start ran more lifecycle calls: %v", got[calls:])
 	}
@@ -969,7 +1132,7 @@ func TestWorker_FailedReadyHookClosesAll(t *testing.T) {
 	t.Parallel()
 
 	log := &startLog{}
-	hookErr := errors.New("hook failed")
+	hookErr := errHookFailed
 	w := gas.NewWorker(
 		gas.WithServiceInstance[gas.Logger](&gas.NopLogger{}),
 		gas.WithSingletonService[*probeA](func() *probeA {
@@ -981,13 +1144,16 @@ func TestWorker_FailedReadyHookClosesAll(t *testing.T) {
 		gas.WithReadyFunc(func(*gas.ServiceContainer) error { return hookErr }),
 	)
 
-	if err := w.Start(context.Background()); !errors.Is(err, hookErr) {
+	err := w.Start(context.Background())
+	if !errors.Is(err, hookErr) {
 		t.Fatalf("Start() = %v, want %v", err, hookErr)
 	}
+
 	want := []string{"init a", "init b", "close b", "close a"}
 	if got := log.snapshot(); !equalStrings(got, want) {
 		t.Errorf("calls = %v, want %v", got, want)
 	}
+
 	if got := w.ActiveServices(); len(got) != 0 {
 		t.Errorf("ActiveServices() after a failed Start = %v, want none", got)
 	}
@@ -1007,9 +1173,11 @@ func TestWorker_FailedStartClosesWithoutCancel(t *testing.T) {
 
 	log.mu.Lock()
 	defer log.mu.Unlock()
+
 	if len(log.ctxs) == 0 {
 		t.Fatal("no service was closed")
 	}
+
 	for i, err := range log.ctxs {
 		if err != nil {
 			t.Errorf("Close %d got a context with error %v, want none", i, err)
@@ -1019,7 +1187,7 @@ func TestWorker_FailedStartClosesWithoutCancel(t *testing.T) {
 
 func newOrdWorker(log *ordLog) *gas.Worker {
 	return gas.NewWorker(
-		gas.WithSingletonService[gas.Logger](gas.NewNopLogger()),
+		gas.WithSingletonService[gas.Logger](func() *gas.NopLogger { return &gas.NopLogger{} }),
 		gas.WithSingletonService[*ordService[ordTag0]](func() *ordService[ordTag0] {
 			return &ordService[ordTag0]{log: log, name: "S0"}
 		}),
@@ -1066,10 +1234,13 @@ func TestShutdownClosesServicesInReverseInitOrder(t *testing.T) {
 		log := &ordLog{}
 		w := newOrdWorker(log)
 
-		if err := w.InitServices(context.Background()); err != nil {
-			t.Fatalf("run %d: InitServices: %v", run, err)
+		err := w.Start(context.Background())
+		if err != nil {
+			t.Fatalf("run %d: Start: %v", run, err)
 		}
-		if err := w.Shutdown(context.Background()); err != nil {
+
+		err = w.Shutdown(context.Background())
+		if err != nil {
 			t.Fatalf("run %d: Shutdown: %v", run, err)
 		}
 
@@ -1082,6 +1253,7 @@ func TestShutdownClosesServicesInReverseInitOrder(t *testing.T) {
 		if gotInit != wantInit {
 			t.Fatalf("run %d: init order = [%s], want [%s]", run, gotInit, wantInit)
 		}
+
 		if gotClose != wantClose {
 			t.Fatalf("run %d: close order = [%s], want [%s]\n"+
 				"Shutdown must close services in reverse initialization order so a "+
@@ -1104,15 +1276,19 @@ func TestShutdownNeverClosesADependencyFirst(t *testing.T) {
 		log := &ordLog{}
 		w := newOrdWorker(log)
 
-		if err := w.InitServices(context.Background()); err != nil {
-			t.Fatalf("run %d: InitServices: %v", run, err)
+		err := w.Start(context.Background())
+		if err != nil {
+			t.Fatalf("run %d: Start: %v", run, err)
 		}
-		if err := w.Shutdown(context.Background()); err != nil {
+
+		err = w.Shutdown(context.Background())
+		if err != nil {
 			t.Fatalf("run %d: Shutdown: %v", run, err)
 		}
 
 		_, closes := log.snapshot()
 		closed := map[string]bool{}
+
 		for _, name := range closes {
 			// Everything this service depends on is shallower in the chain.
 			for dep, d := range depth {
@@ -1121,13 +1297,14 @@ func TestShutdownNeverClosesADependencyFirst(t *testing.T) {
 						run, name, dep, strings.Join(closes, " "))
 				}
 			}
+
 			closed[name] = true
 		}
 	}
 }
 
 func TestWorker_Start_InitFailure(t *testing.T) {
-	svc := &testService{name: "bad-svc", initErr: fmt.Errorf("init failed")}
+	svc := &testService{name: "bad-svc", initErr: errInitFailed2}
 	w := gas.NewWorker(
 		gas.WithService[*testService](
 			func() *testService { return svc },
@@ -1143,8 +1320,8 @@ func TestWorker_Start_InitFailure(t *testing.T) {
 
 func TestWorker_Start_ReadyHookFailure(t *testing.T) {
 	w := gas.NewWorker(
-		gas.WithReadyFunc(func(sc *gas.ServiceContainer) error {
-			return errors.New("hook failed")
+		gas.WithReadyFunc(func(_ *gas.ServiceContainer) error {
+			return errHookFailed
 		}),
 	)
 
@@ -1156,18 +1333,22 @@ func TestWorker_Start_ReadyHookFailure(t *testing.T) {
 
 func TestWorker_Start_ReadyHooksRunInOrder(t *testing.T) {
 	var order []int
+
 	w := gas.NewWorker(
-		gas.WithReadyFunc(func(sc *gas.ServiceContainer) error {
+		gas.WithReadyFunc(func(_ *gas.ServiceContainer) error {
 			order = append(order, 1)
+
 			return nil
 		}),
-		gas.WithReadyFunc(func(sc *gas.ServiceContainer) error {
+		gas.WithReadyFunc(func(_ *gas.ServiceContainer) error {
 			order = append(order, 2)
+
 			return nil
 		}),
 	)
 
-	if err := w.Start(context.Background()); err != nil {
+	err := w.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -1180,6 +1361,7 @@ func TestWorker_Shutdown_ReverseOrder(t *testing.T) {
 	// Use two services registered via constructors (not instances) so
 	// Init is called by the container and they appear in serviceOrder.
 	type svcA struct{ testService }
+
 	type svcB struct{ testService }
 
 	var closeOrder []string
@@ -1192,18 +1374,22 @@ func TestWorker_Shutdown_ReverseOrder(t *testing.T) {
 		gas.WithServiceInstance[*svcB](b),
 	)
 
-	if err := w.Start(context.Background()); err != nil {
+	err := w.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Subscribe to shutdown event.
 	var shutdownEmitted atomic.Bool
+
 	w.EventBus().Subscribe[gas.SystemShuttingDown](func(_ gas.SystemShuttingDownPayload) {
 		shutdownEmitted.Store(true)
 	})
 
 	_ = closeOrder // tracking would require hooking into Close, but we verify the event fires
-	if err := w.Shutdown(context.Background()); err != nil {
+
+	err = w.Shutdown(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -1214,16 +1400,20 @@ func TestWorker_Shutdown_ReverseOrder(t *testing.T) {
 
 func TestWorker_Shutdown_EmitsSystemShuttingDown(t *testing.T) {
 	w := gas.NewWorker()
-	if err := w.Start(context.Background()); err != nil {
+
+	err := w.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
 
 	var emitted atomic.Bool
+
 	w.EventBus().Subscribe[gas.SystemShuttingDown](func(_ gas.SystemShuttingDownPayload) {
 		emitted.Store(true)
 	})
 
-	if err := w.Shutdown(context.Background()); err != nil {
+	err = w.Shutdown(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -1232,45 +1422,23 @@ func TestWorker_Shutdown_EmitsSystemShuttingDown(t *testing.T) {
 	}
 }
 
-func TestWorker_InitServices_EmitsAllServicesInitialized(t *testing.T) {
+func TestWorker_Start_EmitsAllServicesInitialized(t *testing.T) {
 	w := gas.NewWorker()
 
 	var emitted atomic.Bool
+
 	w.EventBus().Subscribe[gas.SystemAllServicesInitialized](
 		func(_ gas.SystemAllServicesInitializedPayload) {
 			emitted.Store(true)
 		},
 	)
 
-	if err := w.InitServices(context.Background()); err != nil {
+	err := w.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
 
 	if !emitted.Load() {
 		t.Fatal("expected SystemAllServicesInitialized to be emitted")
-	}
-}
-
-func TestWorker_InitServices_Idempotent(t *testing.T) {
-	var count atomic.Int32
-	svc := &testService{name: "svc"}
-
-	w := gas.NewWorker(
-		gas.WithSingletonService[*testService](func() *testService {
-			count.Add(1)
-			return svc
-		}),
-	)
-
-	if err := w.InitServices(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if err := w.InitServices(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	// Constructor should have been called only once (sync.Once).
-	if count.Load() != 1 {
-		t.Fatalf("expected constructor called once, got %d", count.Load())
 	}
 }

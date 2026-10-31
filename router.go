@@ -2,6 +2,7 @@ package gas
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -13,198 +14,242 @@ import (
 	"github.com/gorilla/schema"
 )
 
-// subrouteEntry records a chi sub-mux mounted at a given pattern, along with
-// its own nested-subroutes map. The nested map is shared across all
-// sub-router *Router instances that route into this sub-mux, so repeat
-// Route() calls with the same pattern — including nested ones inside
-// sibling callback blocks — reuse the existing mount.
+// Errors of route registration, as described under Routing in the
+// package documentation. Registration panics with an error wrapping one
+// of them, since each is a wiring mistake fixed at the call site.
+var (
+	// ErrUnknownMiddleware indicates a MiddlewareByName whose name is not
+	// registered.
+	ErrUnknownMiddleware = errors.New("gas: unknown middleware")
+
+	// ErrNotFoundHandlerSet indicates a NotFound handler registered by a
+	// service while another service's is in place.
+	ErrNotFoundHandlerSet = errors.New("gas: not found handler already set")
+)
+
+// routerName is the name of the top-level Router, which owns the routes
+// and middleware registered without a service.
+const routerName = "gas/router"
+
+// methods are the methods the 405 handler checks a path against for the
+// Allow header, in the order the header lists them.
+var methods = []string{
+	http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch,
+	http.MethodDelete, http.MethodConnect, http.MethodOptions, http.MethodTrace,
+}
+
+// subrouteEntry records a chi sub-mux mounted at a pattern, with its own
+// nested-subroutes map. The nested map is shared by every sub-router that
+// routes into this sub-mux, so repeated Route calls with the same pattern,
+// nested ones included, reuse the mount.
 type subrouteEntry struct {
-	mux    chi.Router
+	// mux is the mounted sub-mux.
+	mux chi.Router
+	// nested holds the sub-muxes mounted inside it.
 	nested map[string]*subrouteEntry
 }
 
+// registeredRoute is a route as the router records it.
 type registeredRoute struct {
-	method     string
-	path       string
+	// method and path are the route's.
+	method string
+	path   string
+	// middleware are the names of the named middleware of the route and
+	// of the groups it sits in, not counting the top-level Use calls,
+	// which Routes adds.
 	middleware []string
-	autoHEAD   bool // true for HEAD routes implicitly registered alongside GET
+	// autoHEAD is set on the HEAD route registered alongside a GET.
+	autoHEAD bool
 }
 
-// RegisteredRoute is an exported snapshot of a registered route.
+// RegisteredRoute is a snapshot of a registered route.
 type RegisteredRoute struct {
-	Method     string
-	Path       string
+	// Method is the route's HTTP method.
+	Method string
+	// Path is the route's full path.
+	Path string
+	// Middleware are the names of the named middleware that apply to it,
+	// the top-level ones first.
 	Middleware []string
 }
 
-// pendingHandler records a DI-aware handler's dependency types for boot-time
-// validation. Collected during Handle() and inspected in InitServices().
+// pendingHandler records a DI-aware handler's dependency types, which
+// Start checks against the container.
 type pendingHandler struct {
-	service  Service
-	method   string
-	path     string
+	// service is the owner's name, and method and path the route's.
+	service string
+	method  string
+	path    string
+	// depTypes are the handler's parameter types after the Context.
 	depTypes []reflect.Type
 }
 
-// Router is a smart router that wraps Chi and tracks route and middleware
-// ownership by service. MiddlewareByName middleware is validated against an
-// internal registry at registration time and resolved on every build of the
-// routing tree, so ownership changes reach chains registered earlier. The base
-// server uses RemoveByService during kill-switch to replace everything a closed
-// service registered — its routes and its named middleware — with 503.
-//
-// Top-level routers created via NewRouter() start unsealed: Use, Handle,
-// Group, and Route calls are deferred until Seal() is called. This lets
-// services register middleware and routes in any order during Init.
-// Seal() flushes all pending middleware first (via chi.Use), then replays
-// pending route operations — guaranteeing middleware-before-routes ordering
-// that Chi requires.
-//
-// Sub-routers (created inside Group/Route callbacks) are always sealed so
-// their calls pass through to Chi immediately.
-//
-// Concurrency model: once sealed, the live chi tree is immutable. ServeHTTP
-// reads it lock-free via an atomic pointer (served). Runtime mutators
-// (RemoveByService, and Handle/Route/Group/Use via RestartService) never touch
-// the tree in flight — they rebuild a fresh chi tree under r.mu by replaying
-// the recorded registrations and atomically swap it in. In-flight requests
-// keep serving the previous tree, which is never written after publication.
-type Router struct {
-	// mux is the build scratchpad / most recently built tree. It is only read
-	// and written under r.mu. The serving path never touches it — see served.
+// routeOp is a recorded Handle, Group or Route call of the top-level
+// router. Every build of the routing tree runs every op again.
+type routeOp struct {
+	// run registers the op's routes on the tree being built.
+	run func()
+	// owners are the services whose routes the op registered on its first
+	// build; skip those whose routes it no longer registers, because
+	// RemoveByService removed them.
+	owners map[string]struct{}
+	skip   map[string]struct{}
+	// booked is set once the op has been built, so the routes it
+	// registers are recorded once.
+	booked bool
+}
+
+// muxSnapshot wraps a chi.Router so it can be stored in an
+// atomic.Pointer.
+type muxSnapshot struct {
+	// mux is the published tree.
 	mux chi.Router
-	// served holds the published, immutable tree. ServeHTTP loads it without
-	// locking. Top-level routers always have a value; sub-routers leave it nil
-	// (they are never served directly).
+}
+
+// Router routes requests to handlers and tracks which service owns each
+// route and named middleware, as described under Routing in the package
+// documentation. It wraps chi. A top-level Router defers every
+// registration until Seal, so services register middleware and routes in
+// any order; once sealed, every change builds a new routing tree and
+// publishes it atomically, so requests in flight keep the tree they
+// started on. It is safe for concurrent use.
+type Router struct {
+	// mux is the tree being built, or the last one built. Only builds
+	// touch it, under mu.
+	mux chi.Router
+	// served holds the published tree, read without a lock.
 	served atomic.Pointer[muxSnapshot]
 
+	// routes are the registered routes by owner, registry the named
+	// middleware by name, and retired the named middleware whose owner
+	// was removed. All three are shared with sub-routers.
 	routes   map[string][]registeredRoute
 	registry map[string]namedMiddleware
-	// retired holds named middleware whose owning service was torn down by
-	// RemoveByService. Killing a service disables every middleware it
-	// registered wherever it is referenced, so a retired name resolves to a
-	// short-circuit 503 rather than the func it used to name. Re-registering
-	// the name (RestartService -> Init -> Register) reclaims it.
-	retired map[string]namedMiddleware
+	retired  map[string]namedMiddleware
 
-	// subroutes tracks chi sub-muxes mounted under this router's routing tree
-	// so repeat Route(pattern) calls can attach to the existing mount instead
-	// of panicking. The map is shared across sub-routers that share the same
-	// tree (siblings from repeat Route calls, and sub-routers produced by
-	// Group()), so nested Route() dedup works too.
+	// subroutes tracks the chi sub-muxes mounted under this router's tree,
+	// so repeated Route calls attach to the existing mount.
 	subroutes map[string]*subrouteEntry
 
-	errorHandler    ErrorHandler      // converts handler errors into HTTP responses
-	pendingHandlers *[]pendingHandler // DI handler deps for boot-time validation (shared across sub-routers)
+	// errorHandler is the top-level router's ErrorHandler.
+	errorHandler atomic.Pointer[ErrorHandler]
 
+	// logger returns the logger for a panic the router recovers outside a
+	// request scope, or is nil. App sets it.
+	logger func() Logger
+
+	// validator, formDecoder, maxJSONBody and maxFormBody configure the Context of
+	// DI-aware handlers; sub-routers share the top-level router's.
 	validator   *validator.Validate
 	formDecoder *schema.Decoder
-
-	// maxJSONBody is the BindJSON body limit DI-aware handlers read on each
-	// request, shared with sub-routers. The App sets it from
-	// Server.MaxJSONBodyBytes once its config is bound.
 	maxJSONBody *atomic.Int64
+	maxFormBody *atomic.Int64
 
-	// notFoundHandler is re-applied on every rebuild (top-level only).
+	// notFoundHandler is the custom 404 handler, re-applied on every
+	// build, and notFoundOwner its owner (top-level only).
 	notFoundHandler http.HandlerFunc
-	// removed records, per service, the routes torn down by RemoveByService so
-	// each rebuild can overlay them with 503 handlers (top-level only).
+	notFoundOwner   string
+
+	// removed records, per owner, the routes RemoveByService took down,
+	// which every build answers with 503 (top-level only).
 	removed map[string][]registeredRoute
-	// rebuilding is shared with sub-routers (like pendingHandlers). It is true
-	// while an already-built op is being replayed, so the shared bookkeeping
-	// (routes/pendingHandlers) is recorded exactly once — on an op's first
-	// build — and skipped on every later rebuild. buildMux toggles it per op.
-	rebuilding *bool
-	// root is the top-level router. Registrations made without a service are
-	// owned by it, on sub-routers too, so ownerless routes share one owner.
+
+	// building is the op the top-level router is building, read by
+	// sub-routers while it runs.
+	building *routeOp
+
+	// root is the top-level router.
 	root *Router
 
-	// Fields below carry inline scalar data (string length, slice len/cap)
-	// and are grouped after the pure-pointer fields to keep the struct
-	// field-aligned (govet fieldalignment).
-	notFoundHandlerService string
-	prefix                 string   // accumulated path prefix from Route() nesting
-	scopeMiddleware        []string // middleware names applied via Use() on this router and its ancestors
+	// pendingHandlers are the DI-aware handlers Start checks, recorded
+	// until handlersToCheck returns them (top-level only).
+	pendingHandlers []pendingHandler
 
-	pendingMW  []Middleware // recorded Use() calls, re-resolved on every (re)build
-	pendingOps []func()     // recorded Handle/Group/Route calls, replayed on every (re)build
+	// prefix is the path prefix of Route nesting.
+	prefix string
+	// scopeMiddleware are the names of the named middleware this
+	// sub-router and its sub-router ancestors Use. The top-level router's
+	// are its global ones.
+	scopeMiddleware []string
 
-	// bookedOps is the number of leading pendingOps already built once. On a
-	// rebuild, ops before this index are replays (bookkeeping suppressed); ops
-	// at or after it are new and book their routes exactly once.
-	bookedOps int
+	// pendingMW are the top-level Use calls and ops the recorded Handle,
+	// Group and Route calls, replayed on every build.
+	pendingMW []Middleware
+	ops       []*routeOp
 
+	// mu guards the fields above. A sub-router's mu guards its own
+	// scopeMiddleware.
 	mu sync.RWMutex
 
-	sealed bool // after Seal(), structural changes trigger a rebuild
-	// isSub marks sub-routers created via Group/Route. They build directly
-	// into their own sub-mux and never queue, rebuild, or serve.
+	// sealed is set by Seal, and checked once handlersToCheck has run.
+	sealed  bool
+	checked bool
+	// isSub marks sub-routers made by Group and Route. They build
+	// straight into their sub-mux and never queue, build or serve.
 	isSub bool
 }
 
 var _ Service = (*Router)(nil)
 
-// Name returns the name of the router as a string.
-func (r *Router) Name() string {
-	if r.prefix != "" {
-		return fmt.Sprintf("gas/router(%s)", r.prefix)
-	}
-	return "gas/router"
-}
-
-// Init is a no-op. It exists so the Router satisfies Service and can be
-// passed as an owner.
-func (r *Router) Init(context.Context) error { return nil }
-
-// Close is a no-op; routes are removed through RemoveByService.
-func (r *Router) Close(context.Context) error { return nil }
-
-// muxSnapshot wraps a chi.Router so it can be stored in an atomic.Pointer
-// (chi.Router is an interface, which atomic.Pointer cannot hold directly).
-type muxSnapshot struct {
-	mux chi.Router
-}
-
-// NewRouter creates a Router backed by Chi with an empty middleware registry.
-// The router starts unsealed — Use/Handle/Group/Route calls are deferred
-// until Seal() is called.
+// NewRouter returns an unsealed Router with an empty middleware registry.
 func NewRouter() *Router {
-	ph := make([]pendingHandler, 0)
-
 	dec := schema.NewDecoder()
 	dec.SetAliasTag("form")
 	dec.IgnoreUnknownKeys(true)
 
 	mux := chi.NewRouter()
-	rebuilding := false
 	r := &Router{
-		mux:             mux,
-		routes:          make(map[string][]registeredRoute),
-		registry:        make(map[string]namedMiddleware),
-		retired:         make(map[string]namedMiddleware),
-		subroutes:       make(map[string]*subrouteEntry),
-		removed:         make(map[string][]registeredRoute),
-		errorHandler:    defaultErrorHandler,
-		pendingHandlers: &ph,
-		rebuilding:      &rebuilding,
-		validator:       newValidator(),
-		formDecoder:     dec,
-		maxJSONBody:     new(atomic.Int64),
+		mux:         mux,
+		routes:      make(map[string][]registeredRoute),
+		registry:    make(map[string]namedMiddleware),
+		retired:     make(map[string]namedMiddleware),
+		subroutes:   make(map[string]*subrouteEntry),
+		removed:     make(map[string][]registeredRoute),
+		validator:   newValidator(),
+		formDecoder: dec,
+		maxJSONBody: new(atomic.Int64),
+		maxFormBody: new(atomic.Int64),
 	}
-	r.maxJSONBody.Store(defaultMaxJSONBodyBytes)
+	r.maxJSONBody.Store(DefaultMaxJSONBodyBytes)
+	r.maxFormBody.Store(DefaultMaxFormBodyBytes)
+
 	r.root = r
-	// Publish an empty tree so ServeHTTP never sees a nil snapshot before Seal.
+
+	eh := ErrorHandler(defaultErrorHandler)
+	r.errorHandler.Store(&eh)
+
+	// Publish an empty tree so ServeHTTP never sees a nil snapshot.
 	r.served.Store(&muxSnapshot{mux: mux})
+
 	return r
 }
 
-// newSubRouter creates a sub-Router that shares the parent's registry, routes
-// map, and mutex but operates on the given chi.Router (e.g. from Group/Route).
-// Sub-routers are always sealed — they're created inside deferred callbacks
-// that execute during Seal(), so their calls pass through to Chi immediately.
+// Name returns `gas/router`, followed by the prefix in parentheses for a
+// sub-router made by Route.
+func (r *Router) Name() string {
+	if r.prefix != "" {
+		return fmt.Sprintf("%s(%s)", routerName, r.prefix)
+	}
+
+	return routerName
+}
+
+// Init does nothing. It exists so the Router is a Service and can own
+// routes.
+func (r *Router) Init(context.Context) error { return nil }
+
+// Close does nothing; RemoveByService removes routes.
+func (r *Router) Close(context.Context) error { return nil }
+
+// newSubRouter returns a sub-router of parent building into mux, sharing
+// the parent's registry, routes and handler configuration.
 func newSubRouter(mux chi.Router, parent *Router, prefix string) *Router {
-	inherited := make([]string, len(parent.scopeMiddleware))
-	copy(inherited, parent.scopeMiddleware)
+	var inherited []string
+
+	if parent.isSub {
+		inherited = append(inherited, parent.scopeMiddleware...)
+	}
+
 	return &Router{
 		mux:             mux,
 		routes:          parent.routes,
@@ -213,39 +258,31 @@ func newSubRouter(mux chi.Router, parent *Router, prefix string) *Router {
 		subroutes:       make(map[string]*subrouteEntry),
 		prefix:          parent.prefix + prefix,
 		scopeMiddleware: inherited,
-		errorHandler:    parent.errorHandler,
-		pendingHandlers: parent.pendingHandlers,
-		rebuilding:      parent.rebuilding,
+		validator:       parent.validator,
+		formDecoder:     parent.formDecoder,
 		maxJSONBody:     parent.maxJSONBody,
-		// Shared so a sub-route registration clears the parent's 503 overlay,
-		// letting RestartService bring grouped routes back to life.
-		removed: parent.removed,
-		mu:      sync.RWMutex{},
-		sealed:  true,
-		isSub:   true,
-		root:    parent.root,
+		maxFormBody:     parent.maxFormBody,
+		removed:         parent.removed,
+		sealed:          true,
+		isSub:           true,
+		root:            parent.root,
 	}
 }
 
-// Mux returns the underlying Chi router so the base server can add
-// global middleware, mount sub-routers, or pass it to http.Server.
-//
-// This returns the most recently built tree. Mutating it directly bypasses
-// the router's synchronization and is only safe before serving begins.
-func (r *Router) Mux() chi.Router {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.mux
-}
-
-// SetErrorHandler configures the function that converts DI-aware handler
-// errors into HTTP responses. Must be called before Handle() registrations.
+// SetErrorHandler sets the function that turns a handler's error into a
+// response, for every route, including those registered before. A nil
+// handler restores the default.
 func (r *Router) SetErrorHandler(h ErrorHandler) {
-	r.errorHandler = h
+	if h == nil {
+		h = defaultErrorHandler
+	}
+
+	r.root.errorHandler.Store(&h)
 }
 
-// Register adds a named middleware to the internal registry and tracks which
-// service owns it.
+// Register adds named middleware to the registry, owned by service, or by
+// the router when service is nil. A name registered again is replaced; a
+// name whose owner was removed is taken back.
 func (r *Router) Register(service Service, name string, mw func(http.Handler) http.Handler) {
 	if service == nil {
 		service = r.root
@@ -254,40 +291,40 @@ func (r *Router) Register(service Service, name string, mw func(http.Handler) ht
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// A restarted service re-registering its name reclaims it from the 503
-	// short-circuit RemoveByService installed.
 	_, wasRetired := r.retired[name]
 	delete(r.retired, name)
+
 	r.registry[name] = namedMiddleware{service: service, fn: mw}
 	if wasRetired && r.sealed && !r.isSub {
 		r.publish()
 	}
 }
 
-// Use applies middleware to the router. Each Middleware is resolved (by name
-// from the registry or used directly) and applied via chi's Use.
-// Panics if a named middleware is not registered.
-// When the router is unsealed, middleware is queued and applied during Seal().
+// Use applies middleware to every route of the router, in order. A
+// top-level Use applies to every route, registered before or after it.
+// Use is not owned by a service, so a service that calls it in Init
+// applies it again when it restarts. A MiddlewareByName whose name is not
+// registered panics with an error wrapping ErrUnknownMiddleware.
 func (r *Router) Use(middleware ...Middleware) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	for _, m := range middleware {
 		if r.isSub {
-			// Sub-routers run inside a replayed op, so this call *is* the
-			// build: resolve now, honoring any retirement.
+			// A sub-router runs inside an op being built, so this call is
+			// the build: resolve now, honoring any retirement.
 			fn, err := r.buildMiddleware(m)
 			if err != nil {
 				panic(err)
 			}
+
 			r.mux.Use(fn)
 		} else {
-			// Validate the name now so a typo panics at the call site, but
-			// keep the spec unresolved: every rebuild re-resolves it so a
-			// later RemoveByService can retire it.
-			if err := r.validateMiddleware(m); err != nil {
+			err := r.validateMiddleware(m)
+			if err != nil {
 				panic(err)
 			}
+
 			r.pendingMW = append(r.pendingMW, m)
 		}
 
@@ -301,51 +338,43 @@ func (r *Router) Use(middleware ...Middleware) {
 	}
 }
 
-// UseMiddlewareFunc applies a middleware function directly to the router by wrapping it as a MiddlewareFunc.
+// UseMiddlewareFunc is Use with MiddlewareFunc(middleware).
 func (r *Router) UseMiddlewareFunc(middleware func(http.Handler) http.Handler) {
 	r.Use(MiddlewareFunc(middleware))
 }
 
-// UseMiddlewareByName applies a middleware to the router by resolving it from the registry using its name.
-// Panics if the middleware is not registered.
+// UseMiddlewareByName is Use with MiddlewareByName(middleware).
 func (r *Router) UseMiddlewareByName(middleware string) {
 	r.Use(MiddlewareByName(middleware))
 }
 
-// Group creates an inline route group. The callback receives a sub-Router
-// that shares the parent's middleware registry and route tracking.
-// When the router is unsealed, the group is deferred until Seal().
+// Group registers an inline group: fn gets a sub-router whose Use applies
+// to the routes fn registers on it only. A top-level Group runs fn on
+// every build of the tree.
 func (r *Router) Group(fn func(sub *Router)) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	op := func() {
+	r.applyOp(func() {
 		r.mux.Group(func(cr chi.Router) {
 			sub := newSubRouter(cr, r, "")
-			// A chi.Group routes into the same underlying tree as its parent,
-			// so any Route() calls inside the group must dedup against the
-			// parent's subroutes — share the map.
+			// A group routes into its parent's tree, so Route calls inside
+			// it dedupe against the parent's mounts.
 			sub.subroutes = r.subroutes
 			fn(sub)
 		})
-	}
-	r.applyOp(op)
+	})
 }
 
-// Route creates a pattern-scoped route group. The callback receives a
-// sub-Router that shares the parent's middleware registry and route tracking.
-// When the router is unsealed, the route is deferred until Seal().
-//
-// Calling Route with the same pattern more than once on the same parent is
-// allowed: subsequent calls attach to the sub-mux created by the first call
-// instead of panicking. Each call's body runs inside its own chi.Group, so
-// middleware added via Use() inside a given block only applies to handlers
-// registered in that block.
+// Route registers a group under pattern: fn gets a sub-router whose paths
+// are relative to it. Route with a pattern already used on the same
+// parent attaches to that mount; each call's body runs in a group of its
+// own, so its Use applies to its own routes only.
 func (r *Router) Route(pattern string, fn func(sub *Router)) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	op := func() {
+	r.applyOp(func() {
 		entry, ok := r.subroutes[pattern]
 		if !ok {
 			r.mux.Route(pattern, func(cr chi.Router) {
@@ -353,24 +382,26 @@ func (r *Router) Route(pattern string, fn func(sub *Router)) {
 				r.subroutes[pattern] = entry
 			})
 		}
+
 		entry.mux.Group(func(grp chi.Router) {
 			sub := newSubRouter(grp, r, pattern)
+
 			sub.subroutes = entry.nested
 			fn(sub)
 		})
-	}
-	r.applyOp(op)
+	})
 }
 
-// Handle registers a route and tracks ownership. The handler can be:
-//   - http.HandlerFunc or func(http.ResponseWriter, *http.Request) — passed through directly
-//   - A DI-aware function: func(gas.Context, Dep1, Dep2, ...) error — dependencies are
-//     auto-resolved from the per-request scope at call time
+// Handle registers a route owned by service, or by the router when
+// service is nil, as described under Routing and Handlers and errors in
+// the package documentation. handler is an http.HandlerFunc, a
+// func(http.ResponseWriter, *http.Request), or a DI-aware func(Context,
+// Deps...) error. A GET route also serves HEAD. middleware applies in
+// order, outermost first.
 //
-// Middleware is resolved from the internal registry (for MiddlewareByName) or used
-// directly (for MiddlewareFunc) and applied in order (outermost first).
-// Panics if a named middleware is not registered or if a DI-aware handler has an invalid signature.
-// When the router is unsealed, the registration is deferred until Seal().
+// It panics with an error wrapping ErrInvalidHandler for a handler of
+// another shape, and ErrUnknownMiddleware for a MiddlewareByName whose
+// name is not registered.
 func (r *Router) Handle(
 	service Service,
 	method, path string,
@@ -381,93 +412,58 @@ func (r *Router) Handle(
 		service = r.root
 	}
 
+	owner := service.Name()
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// Specs are resolved inside the op, on every rebuild, so a middleware
-	// retired by RemoveByService stops applying to routes that were registered
-	// before the teardown. Top-level calls still validate the name here so an
-	// unregistered one panics at the call site rather than at Seal.
-	middlewareSpecs := make([]Middleware, len(middleware))
-	copy(middlewareSpecs, middleware)
-	middlewareNames := r.middlewareNames(middleware, method, path)
+	// Names are checked now, so a typo panics at the call site, and
+	// resolved on every build, so a retirement reaches the route.
+	names := r.middlewareNames(middleware, method, path)
+	specs := append([]Middleware(nil), middleware...)
 
-	var httpHandler http.HandlerFunc
-	switch h := handler.(type) {
-	case http.HandlerFunc:
-		httpHandler = recoverPlain(h, func() ErrorHandler { return r.errorHandler })
-	case func(http.ResponseWriter, *http.Request):
-		httpHandler = recoverPlain(h, func() ErrorHandler { return r.errorHandler })
-	default:
-		var depTypes []reflect.Type
-		httpHandler, depTypes = adaptHandler(
-			handler,
-			func() ErrorHandler { return r.errorHandler },
-			r.validator,
-			r.formDecoder,
-			r.maxJSONBody.Load,
-		)
-		// Boot-time DI validation is recorded once, not on rebuild replays.
-		if len(depTypes) > 0 && !*r.rebuilding {
-			*r.pendingHandlers = append(*r.pendingHandlers, pendingHandler{
-				service:  service,
-				method:   method,
-				path:     path,
-				depTypes: depTypes,
-			})
-		}
-	}
+	httpHandler, depTypes := r.adapt(handler)
 
-	op := r.op(middlewareSpecs, method, path, httpHandler)
-
-	// Record bookkeeping once (skipped while replaying ops on a rebuild).
-	// Registering a service's route also clears any pending 503 overlay from a
-	// prior RemoveByService, so RestartService brings the routes back to life.
-	if !*r.rebuilding {
-		r.recordBookkeeping(service, method, path, middlewareNames)
-	}
-
-	r.applyOp(op)
-}
-
-func (r *Router) middlewareNames(middleware []Middleware, method, path string) []string {
-	middlewareNames := make([]string, 0, len(middleware))
-	for _, m := range middleware {
-		if !r.isSub {
-			if err := r.validateMiddleware(m); err != nil {
-				panic(fmt.Errorf("gas: route %s %s: %w", method, path, err))
-			}
-		}
-		if m.name != "" {
-			middlewareNames = append(middlewareNames, m.name)
-		}
-	}
-	return middlewareNames
-}
-
-func (r *Router) op(
-	middlewareSpecs []Middleware,
-	method, path string,
-	httpHandler http.HandlerFunc,
-) func() {
-	return func() {
-		middlewareFuncs := make([]func(http.Handler) http.Handler, 0, len(middlewareSpecs))
-		for _, m := range middlewareSpecs {
+	register := func() {
+		fns := make([]func(http.Handler) http.Handler, 0, len(specs))
+		for _, m := range specs {
 			fn, err := r.buildMiddleware(m)
 			if err != nil {
-				panic(fmt.Errorf("gas: route %s %s: %w", method, path, err))
+				panic(fmt.Errorf("%w (route %s %s)", err, method, path))
 			}
-			middlewareFuncs = append(middlewareFuncs, fn)
+
+			fns = append(fns, fn)
 		}
-		chained := r.mux.With(middlewareFuncs...)
+
+		chained := r.mux.With(fns...)
 		chained.Method(method, path, httpHandler)
+
 		if method == http.MethodGet {
 			chained.Method(http.MethodHead, path, httpHandler)
 		}
 	}
+
+	if r.isSub {
+		op := r.root.building
+		if _, skipped := op.skip[owner]; skipped {
+			return
+		}
+
+		if !op.booked {
+			op.owners[owner] = struct{}{}
+			r.book(owner, method, path, names, depTypes)
+		}
+
+		register()
+
+		return
+	}
+
+	r.book(owner, method, path, names, depTypes)
+	r.applyOp(register, owner)
 }
 
-// Get registers a GET route via Handle, which also serves HEAD on the same path.
+// Get registers a GET route, which also serves HEAD, via Handle.
 func (r *Router) Get(service Service, path string, handler any, middleware ...Middleware) {
 	r.Handle(service, http.MethodGet, path, handler, middleware...)
 }
@@ -497,123 +493,76 @@ func (r *Router) Delete(service Service, path string, handler any, middleware ..
 	r.Handle(service, http.MethodDelete, path, handler, middleware...)
 }
 
-func (r *Router) recordBookkeeping(service Service, method, path string, middlewareNames []string) {
-	allMiddlewareNames := make([]string, 0, len(r.scopeMiddleware)+len(middlewareNames))
-	allMiddlewareNames = append(allMiddlewareNames, r.scopeMiddleware...)
-	allMiddlewareNames = append(allMiddlewareNames, middlewareNames...)
-
-	fullPath := r.prefix + path
-	name := service.Name()
-	delete(r.removed, name)
-	r.routes[name] = append(r.routes[name], registeredRoute{
-		method:     method,
-		path:       fullPath,
-		middleware: allMiddlewareNames,
-	})
-	if method == http.MethodGet {
-		r.routes[name] = append(r.routes[name], registeredRoute{
-			method:     http.MethodHead,
-			path:       fullPath,
-			middleware: allMiddlewareNames,
-			autoHEAD:   true,
-		})
-	}
-}
-
-// NotFound registers a custom not-found handler for the router, associated with the specified service.
-// The handler can be http.HandlerFunc or a DI-aware function (same rules as Handle).
-// Panics if a not found handler is already registered by another service.
+// NotFound sets the handler for a path no route matches, owned by
+// service, or by the router when service is nil. handler takes the shapes
+// Handle takes. Without one, a 404 *Error with code CodeNotFound is
+// written in the unified error shape. The owner may set it again, such as
+// when it restarts; another service setting it panics with an error
+// wrapping ErrNotFoundHandlerSet. RemoveByService of the owner removes it.
 func (r *Router) NotFound(service Service, handler any) {
 	if service == nil {
 		service = r.root
 	}
 
+	owner := service.Name()
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.notFoundHandlerService != "" {
-		panic(
-			fmt.Errorf(
-				"gas: service %q already registered a not found handler",
-				r.notFoundHandlerService,
-			),
-		)
-	}
-
-	r.notFoundHandlerService = service.Name()
-
-	var httpHandler http.HandlerFunc
-	switch h := handler.(type) {
-	case http.HandlerFunc:
-		httpHandler = recoverPlain(h, func() ErrorHandler { return r.errorHandler })
-	case func(http.ResponseWriter, *http.Request):
-		httpHandler = recoverPlain(h, func() ErrorHandler { return r.errorHandler })
-	default:
-		var depTypes []reflect.Type
-		httpHandler, depTypes = adaptHandler(
-			handler,
-			func() ErrorHandler { return r.errorHandler },
-			r.validator,
-			r.formDecoder,
-			r.maxJSONBody.Load,
-		)
-		// Validated at boot like a route handler's dependencies.
-		if len(depTypes) > 0 && !*r.rebuilding {
-			*r.pendingHandlers = append(*r.pendingHandlers, pendingHandler{
-				service:  service,
-				method:   "NOTFOUND",
-				path:     r.prefix + "/*",
-				depTypes: depTypes,
-			})
-		}
-	}
+	httpHandler, depTypes := r.adapt(handler)
 
 	if r.isSub {
-		// Sub-routers build straight into their (fresh) sub-mux.
+		op := r.root.building
+		if _, skipped := op.skip[owner]; skipped {
+			return
+		}
+
+		if !op.booked {
+			op.owners[owner] = struct{}{}
+			r.bookNotFound(owner, depTypes)
+		}
+
 		r.mux.NotFound(httpHandler)
+
 		return
 	}
-	// Top-level: stored so every rebuild re-applies it.
+
+	if r.notFoundOwner != "" && r.notFoundOwner != owner {
+		panic(fmt.Errorf("%w by service %q", ErrNotFoundHandlerSet, r.notFoundOwner))
+	}
+
+	r.bookNotFound(owner, depTypes)
+
+	r.notFoundOwner = owner
 	r.notFoundHandler = httpHandler
+
 	if r.sealed {
 		r.publish()
 	}
 }
 
-// RemoveByService tears down everything the given service registered. Its
-// routes are replaced with 503 Service Unavailable handlers, and every named
-// middleware it registered is replaced with a 503 short-circuit wherever it is
-// referenced — including on routes owned by services that are still running,
-// and including references nested inside Group/Route blocks. A route guarded
-// by a killed service's middleware therefore stops serving: the middleware is
-// disabled, never skipped, so a teardown can never drop an authorization check
-// and leave the route open.
-//
-// Register-ing the name again (the RestartService -> Init path) re-arms it.
-//
-// The teardown is applied by rebuilding a fresh routing tree and swapping it
-// in atomically, so requests in flight on the old tree are never disrupted.
+// RemoveByService takes down what service registered, as described under
+// Services in the package documentation: its routes answer 503 in the
+// unified error shape, its named middleware answers 503 wherever it is
+// used, so a route guarded by it never runs unguarded, and its NotFound
+// handler is removed. Its registrations are dropped, so when it registers
+// again, such as on restart, only what it registers then is served. The
+// new tree is published atomically.
 func (r *Router) RemoveByService(service Service) {
 	if service == nil {
 		service = r.root
 	}
+
 	name := service.Name()
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// Record the routes so each rebuild can overlay them with 503 handlers,
-	// then drop them from the live registration set.
 	if routes, ok := r.routes[name]; ok {
 		r.removed[name] = routes
 		delete(r.routes, name)
 	}
 
-	// Retire middleware owned by this service. Every reference to it, in any
-	// service's routes and however deeply nested, resolves to a 503
-	// short-circuit on the rebuild below: killing a service disables the
-	// middleware it registered wherever that middleware is used, not just the
-	// routes it owns.
 	for mwName, nm := range r.registry {
 		if nm.service.Name() == name {
 			r.retired[mwName] = nm
@@ -621,54 +570,87 @@ func (r *Router) RemoveByService(service Service) {
 		}
 	}
 
+	kept := r.ops[:0]
+
+	for _, op := range r.ops {
+		if _, owned := op.owners[name]; owned {
+			op.skip[name] = struct{}{}
+
+			if len(op.skip) == len(op.owners) {
+				continue
+			}
+		}
+
+		kept = append(kept, op)
+	}
+
+	clear(r.ops[len(kept):])
+
+	r.ops = kept
+
+	if r.notFoundOwner == name {
+		r.notFoundOwner = ""
+		r.notFoundHandler = nil
+	}
+
 	if r.sealed {
 		r.publish()
 	}
 }
 
-// Routes returns a snapshot of all explicitly registered routes grouped by
-// service. Implicit HEAD routes (auto-registered alongside GET) are excluded.
+// Routes returns a snapshot of the registered routes by owner, in
+// registration order. The HEAD routes registered alongside GET routes are
+// left out.
 func (r *Router) Routes() map[string][]RegisteredRoute {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+
 	out := make(map[string][]RegisteredRoute, len(r.routes))
+
 	for svc, routes := range r.routes {
 		exported := make([]RegisteredRoute, 0, len(routes))
+
 		for _, rt := range routes {
 			if rt.autoHEAD {
 				continue
 			}
-			mw := make([]string, len(rt.middleware))
-			copy(mw, rt.middleware)
+
+			mw := make([]string, 0, len(r.scopeMiddleware)+len(rt.middleware))
+
+			mw = append(mw, r.scopeMiddleware...)
+			mw = append(mw, rt.middleware...)
 			exported = append(
 				exported,
 				RegisteredRoute{Method: rt.method, Path: rt.path, Middleware: mw},
 			)
 		}
+
 		if len(exported) > 0 {
 			out[svc] = exported
 		}
 	}
+
 	return out
 }
 
-// NamedMiddleware returns a snapshot of the named middleware registry
-// as a map of middleware name to owning service.
+// NamedMiddleware returns a snapshot of the named middleware registry: the
+// owner's name by middleware name.
 func (r *Router) NamedMiddleware() map[string]string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+
 	out := make(map[string]string, len(r.registry))
 	for name, nm := range r.registry {
 		out[name] = nm.service.Name()
 	}
+
 	return out
 }
 
-// Seal builds the routing tree from the deferred middleware and route
-// registrations and publishes it. Middleware is applied first (via chi.Use),
-// then route operations are replayed in order. After Seal, structural changes
-// rebuild the tree and swap it in atomically.
-// Seal is idempotent — calling it on an already-sealed router is a no-op.
+// Seal builds the routing tree from the deferred registrations and
+// publishes it: the top-level Use calls first, then the routes, in order.
+// After Seal, every change builds and publishes a new tree. Sealing a
+// sealed router does nothing.
 func (r *Router) Seal() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -676,40 +658,221 @@ func (r *Router) Seal() {
 	if r.sealed {
 		return
 	}
+
 	r.sealed = true
 	r.publish()
 }
 
-// applyOp records a structural op and applies it. Sub-routers build straight
-// into their fresh sub-mux; top-level routers append the op for replay and,
-// once sealed, rebuild the tree so the change goes live. Must hold r.mu.
-func (r *Router) applyOp(op func()) {
+// writeNotFound answers a path no route matches with a 404 in the unified
+// error shape.
+func writeNotFound(w http.ResponseWriter, req *http.Request) {
+	_ = WriteError(w, req, NotFound("not found"))
+}
+
+// methodNotAllowed returns the handler for a path that m routes for other
+// methods only: a 405 in the unified error shape, with an Allow header
+// listing the methods m routes for the path.
+func methodNotAllowed(m chi.Router) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		path := req.URL.RawPath
+		if path == "" {
+			path = req.URL.Path
+		}
+
+		for _, method := range methods {
+			if m.Match(chi.NewRouteContext(), method, path) {
+				w.Header().Add("Allow", method)
+			}
+		}
+
+		_ = WriteError(
+			w,
+			req,
+			NewError(http.StatusMethodNotAllowed, CodeMethodNotAllowed, "method not allowed"),
+		)
+	}
+}
+
+// ServeHTTP serves req from the published tree, read without a lock. It
+// recovers a panic anywhere in the middleware or handlers, as described
+// under Handlers and errors in the package documentation.
+func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	tw := &responseTracker{ResponseWriter: w}
+
+	//nolint:contextcheck // the Context is built from the request's own context
+	defer func() {
+		if rec := recover(); rec != nil {
+			ctx := NewContext(req.Context(), tw, req)
+			handlePanic(rec, ctx, req, r.getErrorHandler, func() Logger {
+				// A panic below RequestLogger is logged with its fields.
+				if tw.logger != nil {
+					return tw.logger
+				}
+
+				return r.root.panicLogger()
+			})
+		}
+	}()
+
+	r.served.Load().mux.ServeHTTP(tw, req)
+}
+
+// adapt returns handler as an http.HandlerFunc with panic recovery, and
+// the dependency types of a DI-aware handler.
+func (r *Router) adapt(handler any) (http.HandlerFunc, []reflect.Type) {
+	switch h := handler.(type) {
+	case http.HandlerFunc:
+		return recoverPlain(h, r.getErrorHandler, r.root.panicLogger), nil
+	case func(http.ResponseWriter, *http.Request):
+		return recoverPlain(h, r.getErrorHandler, r.root.panicLogger), nil
+	default:
+		return adaptHandler(
+			handler,
+			r.getErrorHandler,
+			r.root.panicLogger,
+			r.validator,
+			r.formDecoder,
+			r.maxJSONBody.Load,
+			r.maxFormBody.Load,
+		)
+	}
+}
+
+// panicLogger returns the router's fallback logger for a recovered panic,
+// or nil.
+func (r *Router) panicLogger() Logger {
+	if r.logger == nil {
+		return nil
+	}
+
+	return r.logger()
+}
+
+// book records a route and, until Start has checked them, a DI-aware
+// handler's dependencies. Registering a route of an owner whose routes
+// were removed ends their 503 answers.
+func (r *Router) book(owner, method, path string, names []string, depTypes []reflect.Type) {
+	root := r.root
+	fullPath := r.prefix + path
+
+	if len(depTypes) > 0 && !root.checked {
+		root.pendingHandlers = append(root.pendingHandlers, pendingHandler{
+			service:  owner,
+			method:   method,
+			path:     fullPath,
+			depTypes: depTypes,
+		})
+	}
+
+	all := make([]string, 0, len(r.scopeMiddleware)+len(names))
 	if r.isSub {
-		op()
+		all = append(all, r.scopeMiddleware...)
+	}
+
+	all = append(all, names...)
+
+	delete(r.removed, owner)
+
+	r.routes[owner] = append(r.routes[owner], registeredRoute{
+		method:     method,
+		path:       fullPath,
+		middleware: all,
+	})
+	if method == http.MethodGet {
+		r.routes[owner] = append(r.routes[owner], registeredRoute{
+			method:     http.MethodHead,
+			path:       fullPath,
+			middleware: all,
+			autoHEAD:   true,
+		})
+	}
+}
+
+// handlersToCheck returns the DI-aware handlers registered so far and
+// stops recording them. App calls it once, at Start.
+func (r *Router) handlersToCheck() []pendingHandler {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.checked = true
+
+	out := r.pendingHandlers
+
+	r.pendingHandlers = nil
+
+	return out
+}
+
+// middlewareNames checks middleware, on a top-level router, and returns
+// the names of the named ones.
+func (r *Router) middlewareNames(middleware []Middleware, method, path string) []string {
+	names := make([]string, 0, len(middleware))
+
+	for _, m := range middleware {
+		if !r.isSub {
+			err := r.validateMiddleware(m)
+			if err != nil {
+				panic(fmt.Errorf("%w (route %s %s)", err, method, path))
+			}
+		}
+
+		if m.name != "" {
+			names = append(names, m.name)
+		}
+	}
+
+	return names
+}
+
+// bookNotFound records a DI-aware NotFound handler's dependencies until
+// Start has checked them.
+func (r *Router) bookNotFound(owner string, depTypes []reflect.Type) {
+	if len(depTypes) > 0 && !r.root.checked {
+		r.root.pendingHandlers = append(r.root.pendingHandlers, pendingHandler{
+			service:  owner,
+			method:   "NOTFOUND",
+			path:     r.prefix + "/*",
+			depTypes: depTypes,
+		})
+	}
+}
+
+// applyOp records a Handle, Group or Route call of the top-level router,
+// owned by owners when they are known, and publishes a new tree when the
+// router is sealed. A sub-router runs it at once. Must hold r.mu.
+func (r *Router) applyOp(run func(), owners ...string) {
+	if r.isSub {
+		run()
+
 		return
 	}
-	r.pendingOps = append(r.pendingOps, op)
+
+	op := &routeOp{run: run, owners: make(map[string]struct{}), skip: make(map[string]struct{})}
+	for _, o := range owners {
+		op.owners[o] = struct{}{}
+	}
+
+	r.ops = append(r.ops, op)
 	if r.sealed {
 		r.publish()
 	}
 }
 
-// publish rebuilds the routing tree from the recorded registrations and
-// atomically swaps it in. Requests in flight keep serving the previous tree,
-// which is never mutated after publication. Must hold r.mu (top-level only).
+// publish builds a new tree and swaps it in. Requests in flight keep the
+// tree they started on, which is never changed after it is published.
+// Must hold r.mu (top-level only).
 func (r *Router) publish() {
-	m := r.buildMux()
-	r.served.Store(&muxSnapshot{mux: m})
+	r.served.Store(&muxSnapshot{mux: r.buildMux()})
 }
 
-// buildMux constructs a fresh chi tree by replaying recorded middleware and
-// route registrations, then overlays 503 handlers for removed services. The
-// new tree becomes the build scratchpad (r.mux). Must hold r.mu.
+// buildMux builds a fresh tree from the recorded registrations: the
+// top-level Use calls, the ops, the 404 and 405 handlers, and the 503
+// answers of removed routes. Must hold r.mu.
 func (r *Router) buildMux() chi.Router {
 	m := chi.NewRouter()
+
 	r.mux = m
-	// Reset per-build state so replayed Route() ops recreate their sub-mux
-	// mounts against the fresh tree.
+	// Route ops mount their sub-muxes again on the fresh tree.
 	r.subroutes = make(map[string]*subrouteEntry)
 
 	for _, spec := range r.pendingMW {
@@ -717,84 +880,91 @@ func (r *Router) buildMux() chi.Router {
 		if err != nil {
 			panic(err)
 		}
+
 		m.Use(fn)
 	}
-	for i, op := range r.pendingOps {
-		// Ops already built on a prior pass are replays: suppress the
-		// once-only bookkeeping their (sub-)Handle calls would repeat. Ops at
-		// or past bookedOps are new and record their routes exactly once.
-		*r.rebuilding = i < r.bookedOps
-		op()
-	}
-	*r.rebuilding = false
-	r.bookedOps = len(r.pendingOps)
 
-	if r.notFoundHandler != nil {
-		m.NotFound(r.notFoundHandler)
+	for _, op := range r.ops {
+		r.building = op
+		op.run()
+
+		op.booked = true
 	}
-	// Overlay torn-down routes with 503s, mirroring the prior in-place
-	// behavior of replacing each leaf handler. A re-registered service clears
-	// its entry above (via Handle), so only still-removed services overlay.
-	for _, routes := range r.removed {
+
+	r.building = nil
+
+	notFound := r.notFoundHandler
+	if notFound == nil {
+		notFound = writeNotFound
+	}
+
+	m.NotFound(notFound)
+	m.MethodNotAllowed(methodNotAllowed(m))
+
+	// A route a live owner registered is served, not a removed owner's 503.
+	live := make(map[[2]string]bool)
+
+	for _, routes := range r.routes {
 		for _, route := range routes {
-			m.Method(route.method, route.path, http.HandlerFunc(r.handleUnavailable))
+			live[[2]string{route.method, route.path}] = true
 		}
 	}
+
+	for _, routes := range r.removed {
+		for _, route := range routes {
+			if !live[[2]string{route.method, route.path}] {
+				m.Method(route.method, route.path, http.HandlerFunc(handleUnavailable))
+			}
+		}
+	}
+
 	return m
 }
 
-// ServeHTTP implements http.Handler, delegating to the published Chi tree.
-// The tree is loaded atomically with no lock, so serving never contends with
-// runtime route mutations.
-func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if s := r.served.Load(); s != nil {
-		s.mux.ServeHTTP(w, req)
-		return
-	}
-	// Sub-routers are never served directly, but fall back to their sub-mux.
-	r.mux.ServeHTTP(w, req)
-}
-
-// handleUnavailable serves routes whose owning service has been torn down. It
-// renders the unified error shape so a killed service is indistinguishable from
-// any other error as far as the client's parser is concerned. The owning
-// service name is deliberately left out of the body.
-func (r *Router) handleUnavailable(w http.ResponseWriter, req *http.Request) {
+// handleUnavailable answers a route whose owner was removed with a 503 in
+// the unified error shape, which does not name the owner.
+func handleUnavailable(w http.ResponseWriter, req *http.Request) {
 	_ = WriteError(w, req, ServiceUnavailable("service unavailable"))
 }
 
-// validateMiddleware checks that a Middleware can be resolved against the live
-// registry, without resolving it. Registration defers the real lookup to
-// buildMiddleware so every rebuild re-resolves; this is only here so an
-// unknown name panics at its call site instead of at Seal. A retired name is
-// deliberately not accepted: re-registering against a torn-down service is a
-// programming error, not a teardown. Must be called with r.mu held.
+// validateMiddleware checks that m can be resolved against the registry,
+// without resolving it. A retired name is not accepted: registering
+// against a removed service's middleware is a wiring mistake. Must hold
+// r.mu.
 func (r *Router) validateMiddleware(m Middleware) error {
 	if m.fn != nil {
 		return nil
 	}
+
 	if _, ok := r.registry[m.name]; !ok {
-		return fmt.Errorf("gas: middleware %q not registered", m.name)
+		return fmt.Errorf("%w %q", ErrUnknownMiddleware, m.name)
 	}
+
 	return nil
 }
 
-// buildMiddleware resolves a Middleware while constructing the routing tree. A
-// name whose owning service has been torn down resolves to a short-circuit
-// 503 instead of its original func, so the middleware is disabled everywhere
-// it is referenced. A name that was never registered is still a programming
-// error. Must be called with r.mu held.
+// buildMiddleware resolves m while a tree is built. A name whose owner
+// was removed resolves to a 503 answer, so it is disabled wherever it is
+// used. Must hold r.mu.
 func (r *Router) buildMiddleware(m Middleware) (func(http.Handler) http.Handler, error) {
 	if m.fn != nil {
 		return m.fn, nil
 	}
+
 	if nm, ok := r.registry[m.name]; ok {
 		return nm.fn, nil
 	}
+
 	if _, ok := r.retired[m.name]; ok {
 		return func(http.Handler) http.Handler {
-			return http.HandlerFunc(r.handleUnavailable)
+			return http.HandlerFunc(handleUnavailable)
 		}, nil
 	}
-	return nil, fmt.Errorf("gas: middleware %q not registered", m.name)
+
+	return nil, fmt.Errorf("%w %q", ErrUnknownMiddleware, m.name)
+}
+
+// getErrorHandler returns the top-level router's ErrorHandler.
+func (r *Router) getErrorHandler() ErrorHandler {
+	return *r.root.errorHandler.Load()
 }

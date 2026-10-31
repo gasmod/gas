@@ -4,33 +4,61 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
-	"os"
-	"os/signal"
+	"slices"
+	"strconv"
 	"sync"
-	"syscall"
+	"sync/atomic"
 	"time"
 )
 
-// App manages service lifecycle, the HTTP server, and graceful shutdown.
-// It embeds a Worker for DI, events, migrations, and service management,
-// and adds routing, CSRF protection, and an HTTP listener on top.
+// ShutdownGracePeriod is how long App.Stop waits for requests that outlive
+// ShutdownTimeout once their contexts are canceled, and the least time it
+// leaves services to close, as described under Lifecycle in the package
+// documentation.
+const ShutdownGracePeriod = time.Second
+
+// inflightPoll is how often Stop checks whether the requests it waits for
+// have returned.
+const inflightPoll = 5 * time.Millisecond
+
+// App is a Worker with routing and an HTTP server, as described in the
+// package documentation. It runs once, like its Worker: Start, Serve,
+// Stop. It is safe for concurrent use, except as Server says.
 type App struct {
 	*Worker
 
-	srv            *http.Server
-	handler        http.Handler
-	router         *Router
-	cfg            *Config
+	// srv is the server, built once by Server.
+	srv *http.Server
+	// handler is the App's handler, built once by Handler.
+	handler http.Handler
+	// router is the App's router, registered in the container.
+	router *Router
+	// cfg is the App's configuration, bound and validated by Start.
+	cfg *Config
+	// csrfProtection guards the router against cross-origin requests.
 	csrfProtection *http.CrossOriginProtection
+	// baseCtx is the base context of the server's requests, and
+	// cancelBase cancels it, which Stop does at the shutdown deadline.
+	baseCtx    context.Context //nolint:containedctx // the server's base context, canceled by Stop
+	cancelBase context.CancelFunc
+	// allowedEnvs are the environments Start accepts.
+	allowedEnvs []Environment
 	// srvCopied holds what Server copied from the Config into srv, so
-	// bindConfig can tell the fields a caller changed from those it left.
-	srvCopied   serverFields
+	// applyBoundServer can tell the fields a caller changed from those it
+	// left.
+	srvCopied serverFields
+	// inflight counts the requests the App's handler is serving.
+	inflight atomic.Int64
+	// srvOnce and handlerOnce guard the one build of srv and handler.
 	srvOnce     sync.Once
 	handlerOnce sync.Once
-	srvMu       sync.Mutex // guards srv, srvCopied and srvSettled
+	// srvMu guards srv, srvCopied and srvSettled.
+	srvMu sync.Mutex
 	// srvSettled is set once the server's fields are final: the bound
-	// config was applied to it, or Serve has begun and net/http reads them.
+	// config was applied to it, or Serve has begun and net/http reads
+	// them.
 	srvSettled bool
 }
 
@@ -47,7 +75,7 @@ type serverFields struct {
 // serverFieldsOf returns the server fields s calls for.
 func serverFieldsOf(s *ServerSettings) serverFields {
 	return serverFields{
-		addr:              fmt.Sprintf("%s:%d", s.Host, s.Port),
+		addr:              net.JoinHostPort(s.Host, strconv.Itoa(s.Port)),
 		readTimeout:       s.ReadTimeout,
 		readHeaderTimeout: s.ReadHeaderTimeout,
 		writeTimeout:      s.WriteTimeout,
@@ -55,79 +83,97 @@ func serverFieldsOf(s *ServerSettings) serverFields {
 	}
 }
 
-// --- AppOption functions (HTTP-specific) ---
-
-// WithErrorHandler configures the function that converts DI-aware handler
-// errors into HTTP responses.
+// WithErrorHandler sets the function that turns a handler's error into a
+// response; see ErrorHandler. A nil handler keeps the default.
 func WithErrorHandler(h ErrorHandler) AppOption {
 	return func(a *App) { a.router.SetErrorHandler(h) }
 }
 
-// WithTrustedOrigin adds an origin that is permitted to make cross-origin
-// non-safe requests (POST, PUT, PATCH, DELETE, etc.). The origin must be an
-// absolute URL with a scheme and host, e.g. "https://app.example.com".
-// Panics if the origin is not a valid absolute URL.
+// WithTrustedOrigin adds an origin that may make cross-origin requests
+// with unsafe methods, such as POST, PUT, PATCH and DELETE. The origin is
+// an absolute URL with a scheme and a host, such as
+// `https://app.example.com`. An origin that is not makes Start fail with
+// an error wrapping ErrInvalidOption.
 func WithTrustedOrigin(origin string) AppOption {
 	return func(a *App) {
-		if err := a.csrfProtection.AddTrustedOrigin(origin); err != nil {
-			panic(fmt.Errorf("gas: failed to add trusted origin: %w", err))
+		err := a.csrfProtection.AddTrustedOrigin(origin)
+		if err != nil {
+			// net/http's error quotes the origin, which is configuration.
+			a.recordOptionError(fmt.Errorf(
+				"%w: WithTrustedOrigin needs an absolute URL with a scheme and a host",
+				ErrInvalidOption,
+			))
 		}
 	}
 }
 
-// WithCSRFInsecureBypassPattern adds a URL path pattern that bypasses CSRF
-// cross-origin protection. Use only for endpoints that require unauthenticated
-// cross-origin access and implement their own request validation (e.g. webhook
-// receivers).
+// WithCSRFInsecureBypassPattern adds a path pattern, in the syntax of
+// http.ServeMux, whose requests skip cross-origin protection. Use it only
+// for endpoints that must take unauthenticated cross-origin requests and
+// check them in another way, such as webhook receivers. A pattern
+// http.CrossOriginProtection rejects panics.
 func WithCSRFInsecureBypassPattern(pattern string) AppOption {
 	return func(a *App) { a.csrfProtection.AddInsecureBypassPattern(pattern) }
 }
 
-// WithCSRFDenyHandler sets the handler invoked when a cross-origin request is
-// rejected by CSRF protection. The default handler returns 403 Forbidden.
+// WithCSRFDenyHandler sets the handler for a request cross-origin
+// protection rejects. The default writes a 403 *Error with code
+// CodeForbidden in the unified error shape.
 func WithCSRFDenyHandler(h http.Handler) AppOption {
 	return func(a *App) { a.csrfProtection.SetDenyHandler(h) }
 }
 
-// NewApp creates an App with the given options.
-// Router and EventBus are created internally and registered in the container.
+// WithAllowedEnvironments sets the environments Start accepts in
+// Config.Env, for an app whose config module allows others, as the
+// EnvExtension's WithAllowedEnvs does. DefaultEnvironment is always
+// allowed, as it is the environment of an App no configuration sets one
+// for. An empty list makes Start fail with an error wrapping
+// ErrInvalidOption.
+//
+// Default: EnvDevelopment, EnvTesting, EnvStaging and EnvProduction.
+func WithAllowedEnvironments(envs ...Environment) AppOption {
+	return func(a *App) {
+		if len(envs) == 0 {
+			a.recordOptionError(
+				fmt.Errorf("%w: WithAllowedEnvironments needs an environment", ErrInvalidOption),
+			)
+
+			return
+		}
+
+		a.allowedEnvs = slices.Clone(envs)
+		if !slices.Contains(envs, DefaultEnvironment) {
+			a.allowedEnvs = append(a.allowedEnvs, DefaultEnvironment)
+		}
+	}
+}
+
+// NewApp returns an App with opts applied. It registers the Router, and
+// at Start the bound *Config, in the container.
 func NewApp(opts ...Option) *App {
 	w := NewWorker()
+
+	baseCtx, cancelBase := context.WithCancel(context.Background())
 
 	a := &App{
 		Worker:         w,
 		cfg:            DefaultConfig(),
 		router:         NewRouter(),
 		csrfProtection: http.NewCrossOriginProtection(),
+		baseCtx:        baseCtx,
+		cancelBase:     cancelBase,
+		allowedEnvs:    standardEnvironments,
 	}
 
-	// Register infra as instances in the container.
+	a.csrfProtection.SetDenyHandler(SecurityHeaders()(http.HandlerFunc(a.denyCrossOrigin)))
+
+	a.router.logger = w.getLogger
+
 	w.serviceContainer.RegisterServiceInstance[*Router](a.router)
 
-	// Set hooks so Worker delegates HTTP-specific work back to App.
-	w.postBuildHook = func() error {
-		// Seal the router: flush all pending middleware first, then routes.
-		a.router.Seal()
-
-		// Validate all DI-aware handler dependencies.
-		for _, ph := range *a.router.pendingHandlers {
-			for _, depType := range ph.depTypes {
-				if !w.serviceContainer.canResolveType(depType) {
-					return fmt.Errorf(
-						"gas: handler %s %s (service %q): dependency %v is not registered in the container",
-						ph.method,
-						ph.path,
-						ph.service.Name(),
-						depType,
-					)
-				}
-			}
-		}
-		return nil
-	}
-	w.onServiceClose = func(s Service) {
-		a.router.RemoveByService(s)
-	}
+	w.beforeBuild = a.registerConfig
+	w.afterBuild = a.afterBuild
+	w.onServiceClose = func(s Service) { a.router.RemoveByService(s) }
 
 	for _, opt := range opts {
 		switch o := opt.(type) {
@@ -138,71 +184,34 @@ func NewApp(opts ...Option) *App {
 		}
 	}
 
-	// Install per-request scope middleware on the router at app initialization time.
+	// Every request gets its own scope.
 	a.router.Use(MiddlewareFunc(requestScopeMiddleware(w.serviceContainer, w.getLogger)))
 
 	return a
 }
 
-// Config retrieves the application's configuration.
+// Config returns the App's Config. Start binds and validates it, and
+// nothing changes it after; change it only before Start, from one
+// goroutine.
 func (a *App) Config() *Config { return a.cfg }
 
 // Router returns the App's router.
 func (a *App) Router() *Router { return a.router }
 
-// Start initializes the underlying Worker (services, migrations, hooks) and
-// binds configuration. It does not start the HTTP server; call Serve for that,
-// or use Run to do both and block until shutdown. ctx is passed to the Init
-// of every service built during startup.
-//
-// Like Worker.Start, a Start that fails, including when the ConfigProvider
-// cannot bind the config (Bind also checks its validate tags), closes every service it had initialized and returns the
-// error; every later Start returns the same error.
-func (a *App) Start(ctx context.Context) error {
-	if err := a.Worker.Start(ctx); err != nil {
-		return err
-	}
-
-	//nolint:contextcheck // every singleton is built by now, so resolving the provider runs no Init
-	if err := a.bindConfig(); err != nil {
-		// Like a failed Worker.Start, leave nothing running and make every
-		// later Start return this error.
-		//nolint:contextcheck // cleanup must run even when ctx is what failed
-		err = errors.Join(
-			fmt.Errorf("gas: failed to bind config: %w", err),
-			a.closeActive(context.WithoutCancel(ctx)),
-		)
-		a.failStart(err)
-		return err
-	}
-
-	return nil
-}
-
-// Server returns the App's *http.Server, constructing it on first call from
-// the current Config. The instance is cached and safe to call concurrently.
-//
-// A server built before Start, such as by a service's Init, starts from the
-// config as it stood then. When Start binds the config, the bound Addr and
-// timeouts are applied to every one of those fields the caller has not
-// changed; a field the caller set, such as a ReadTimeout of zero to stream
-// request bodies, is kept. "Changed" is a comparison of values, so a field
-// set to the very value the server was built with counts as unchanged and
-// takes the bound value. An AppConfigUpdated subscriber runs after this,
-// so what it sets on the server stays. The bound config is applied once:
-// not again on a later Start, and not at all once Serve has begun, so a
-// Start after Serve leaves the server's fields alone. Only App.Serve marks
-// the server as serving: an embedder that serves Server() itself, with
-// Server().Serve or ListenAndServe, must call Start before it begins, or
-// a later Start can write onto the live server. Do not read or write
-// the server's fields from another goroutine while Start runs, and do not
-// call Server concurrently with Start: building the server reads the
-// Config that Start's bind writes, as it always has.
+// Server returns the App's *http.Server, building it on the first call
+// from the Config as it stands, as described under Configuration in the
+// package documentation. A server built before Start, such as by a
+// service's Init, takes the bound address and timeouts at Start for every
+// one of those fields the caller has not changed, unless Serve has begun.
+// Do not call Server concurrently with Start, and do not change the
+// server's fields once it serves.
 func (a *App) Server() *http.Server {
 	a.srvOnce.Do(func() {
 		a.srvMu.Lock()
 		defer a.srvMu.Unlock()
+
 		f := serverFieldsOf(&a.cfg.Server)
+
 		a.srv = &http.Server{
 			Addr:              f.addr,
 			Handler:           a.Handler(),
@@ -210,63 +219,57 @@ func (a *App) Server() *http.Server {
 			ReadHeaderTimeout: f.readHeaderTimeout,
 			WriteTimeout:      f.writeTimeout,
 			IdleTimeout:       f.idleTimeout,
+			BaseContext:       func(net.Listener) context.Context { return a.baseCtx },
 		}
 		a.srvCopied = f
 	})
+
 	return a.srv
 }
 
-// applyBoundServer gives a server built before the config was bound the
-// bound value of each field the caller left as Server set it. A server
-// built later is built from the bound config and needs nothing. It applies
-// at most once, and never to a server Serve has begun with: a second Start
-// must not write fields net/http is reading.
-func (a *App) applyBoundServer() {
-	a.srvMu.Lock()
-	defer a.srvMu.Unlock()
-	if a.srv == nil || a.srvSettled {
-		return
-	}
-	a.srvSettled = true
-	bound, was := serverFieldsOf(&a.cfg.Server), a.srvCopied
-	if a.srv.Addr == was.addr {
-		a.srv.Addr = bound.addr
-	}
-	if a.srv.ReadTimeout == was.readTimeout {
-		a.srv.ReadTimeout = bound.readTimeout
-	}
-	if a.srv.ReadHeaderTimeout == was.readHeaderTimeout {
-		a.srv.ReadHeaderTimeout = bound.readHeaderTimeout
-	}
-	if a.srv.WriteTimeout == was.writeTimeout {
-		a.srv.WriteTimeout = bound.writeTimeout
-	}
-	if a.srv.IdleTimeout == was.idleTimeout {
-		a.srv.IdleTimeout = bound.idleTimeout
-	}
-	a.srvCopied = bound
-}
-
-// Handler returns the fully wrapped http.Handler used by the App's server
-// (router behind CSRF protection). Useful for embedding the App in tests or
-// in an externally managed listener. It is built once and does not build
-// the server, so calling it before Start leaves the server to be built from
-// the bound config. It is the handler the App built: a replacement assigned
-// to Server().Handler is not returned here.
+// Handler returns the App's http.Handler: the router behind cross-origin
+// protection, counting the requests in flight so Stop can wait for them.
+// Use it to serve the App from a listener of your own or in tests. It is
+// built once and does not build the server. Before Start, while the
+// router is not sealed, every route answers 404.
 func (a *App) Handler() http.Handler {
 	a.handlerOnce.Do(func() {
-		a.handler = a.csrfProtection.Handler(a.router)
+		protected := a.csrfProtection.Handler(a.router)
+
+		a.handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			a.inflight.Add(1)
+			defer a.inflight.Add(-1)
+
+			protected.ServeHTTP(w, r)
+		})
 	})
+
 	return a.handler
 }
 
-// Serve starts the HTTP server and blocks until it stops. A clean shutdown
-// (http.ErrServerClosed) returns nil; any other listener error is returned.
+// Serve starts the HTTP server and blocks until it stops. It returns
+// ErrNotStarted before Start succeeds and ErrShutDown once Stop has begun.
+// A server closed by Stop returns nil; any other listener error is
+// returned, wrapped.
 func (a *App) Serve() error {
+	a.mu.Lock()
+
+	state := a.state
+	a.mu.Unlock()
+
+	switch state {
+	case lifeIdle, lifeStarting, lifeFailed:
+		return ErrNotStarted
+	case lifeShutDown:
+		return ErrShutDown
+	case lifeStarted:
+	}
+
 	srv := a.Server()
-	// From here net/http reads the server's fields, so Start must no longer
-	// write them; see applyBoundServer.
+
+	// From here net/http reads the server's fields.
 	a.srvMu.Lock()
+
 	a.srvSettled = true
 	a.srvMu.Unlock()
 
@@ -275,97 +278,274 @@ func (a *App) Serve() error {
 		Str("addr", srv.Addr).
 		Send()
 
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("gas: server error: %w", err)
+	err := srv.ListenAndServe()
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("gas: serve: %w", err)
 	}
 
 	return nil
 }
 
-// Stop emits the server-shutting-down event, gracefully shuts down the HTTP
-// server within ShutdownTimeout (or sooner, if ctx ends first), and then
-// shuts down the underlying Worker, passing ctx to each service's Close.
-//
-// The Worker is shut down, and the services closed, even when the server
-// shutdown fails, for example because in-flight requests outlive
-// ShutdownTimeout. That error is logged as "server shutdown error" and
-// returned, joined with any error from the Worker shutdown. A clean Stop
-// returns nil.
+// Stop shuts the App down within ShutdownTimeout, as described under
+// Lifecycle in the package documentation: it emits
+// SystemServerShuttingDown, shuts the server down, cancels the context of
+// requests still running at the deadline and waits up to
+// ShutdownGracePeriod for them, then shuts the Worker down. ctx bounds it
+// too. Every error is returned, joined; a clean Stop returns nil.
 func (a *App) Stop(ctx context.Context) error {
-	srv := a.Server()
+	a.mu.Lock()
 
-	a.Worker.eventBus.Emit[SystemServerShuttingDown](SystemServerShuttingDownPayload{}).Wait()
+	started := a.state == lifeStarted
+	timeout := a.cfg.Server.ShutdownTimeout
+	a.mu.Unlock()
 
-	srvCtx, cancel := context.WithTimeout(ctx, a.cfg.Server.ShutdownTimeout)
+	if !started {
+		a.cancelBase()
+
+		return a.Shutdown(ctx)
+	}
+
+	deadline := time.Now().Add(timeout)
+
+	srvCtx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 
-	var shErr error
-	if srvErr := srv.Shutdown(srvCtx); srvErr != nil {
-		//nolint:contextcheck // getLogger resolves the logger, which needs no caller ctx
-		a.getLogger().Error("server shutdown error").Err("error", srvErr).Send()
-		shErr = fmt.Errorf("server shutdown error: %w", srvErr)
+	var errs []error
+
+	err := emitAndWait[SystemServerShuttingDown](
+		srvCtx,
+		a.eventBus,
+		SystemServerShuttingDownPayload{},
+	)
+	if err != nil {
+		errs = append(
+			errs,
+			fmt.Errorf("gas: stop: wait for SystemServerShuttingDown subscribers: %w", err),
+		)
 	}
 
-	if err := a.Shutdown(ctx); err != nil {
-		shErr = errors.Join(shErr, fmt.Errorf("worker shutdown error: %w", err))
+	errs = append(errs, a.drainServer(ctx, srvCtx)...)
+
+	closeDeadline := deadline
+	if least := time.Now().Add(ShutdownGracePeriod); least.After(closeDeadline) {
+		closeDeadline = least
 	}
 
-	if shErr == nil {
-		return nil
+	closeCtx, cancelClose := context.WithDeadline(ctx, closeDeadline)
+	defer cancelClose()
+
+	err = a.Shutdown(closeCtx)
+	if err != nil {
+		errs = append(errs, err)
 	}
-	return fmt.Errorf("gas: shutdown error: %w", shErr)
+
+	return errors.Join(errs...)
 }
 
-// Run initializes all services, runs pending migrations, starts the HTTP
-// server, and blocks until a shutdown signal is received, then stops the App
-// and returns Stop's error. Startup and shutdown use context.Background(). If
-// the server fails, Run stops the App and returns the server error joined
-// with any error from Stop.
+// Run starts the App, logs the route map, serves, and blocks until SIGINT,
+// SIGTERM or a server error, then stops the App and returns Stop's error,
+// joined with the server error. Start runs under a context the first
+// signal cancels, so a signal during a slow startup stops it. Once the
+// first signal arrives the App stops handling them, so a second one ends
+// the process. Stop gets context.Background(); ShutdownTimeout bounds it.
 func (a *App) Run() error {
-	ctx := context.Background()
-	if err := a.Start(ctx); err != nil {
+	ctx, sigs, stop := watchSignals()
+	defer stop()
+
+	err := a.Start(ctx)
+	if err != nil {
 		return err
 	}
 
-	// log route map
 	a.logRouteMap(a.cfg.Env.IsDevelopment())
 
 	srvErr := make(chan error, 1)
-	go func() {
-		if err := a.Serve(); err != nil {
-			srvErr <- err
-		}
-		close(srvErr)
-	}()
 
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	go func() { srvErr <- a.Serve() }()
+
+	stopCtx := context.Background()
 
 	select {
-	case sig := <-quit:
+	case sig := <-sigs:
 		a.getLogger().Info("shutdown signal received").Str("signal", sig.String()).Send()
-	case chnErr := <-srvErr:
-		if chnErr != nil {
-			// Stop anyway, so the services Start initialized are closed.
-			return errors.Join(chnErr, a.Stop(ctx))
+
+		return a.Stop(stopCtx)
+	case err = <-srvErr:
+		// Stop anyway, so the services Start initialized are closed.
+		return errors.Join(err, a.Stop(stopCtx))
+	}
+}
+
+// denyCrossOrigin answers a request cross-origin protection rejects with a
+// 403 in the unified error shape, and logs it at warn level with its
+// method and path.
+func (a *App) denyCrossOrigin(w http.ResponseWriter, r *http.Request) {
+	a.getLogger().Warn("cross-origin request denied").
+		Str("method", r.Method).
+		Str("path", r.URL.Path).
+		Send()
+
+	_ = WriteError(w, r, Forbidden("cross-origin request denied"))
+}
+
+// registerConfig registers the constructor of *Config, which binds and
+// validates the configuration, so services built after it can take the
+// bound *Config. It depends on the ConfigProvider when one is registered.
+func (a *App) registerConfig() error {
+	c := a.serviceContainer
+
+	if c.CanResolve[*Config]() {
+		return fmt.Errorf("%w: *gas.Config is registered by the App", ErrInvalidOption)
+	}
+
+	if c.CanResolve[ConfigProvider]() {
+		c.RegisterSingletonService[*Config](func(p ConfigProvider) (*Config, error) {
+			return a.bindConfig(p)
+		})
+
+		return nil
+	}
+
+	c.RegisterSingletonService[*Config](func() (*Config, error) { return a.bindConfig(nil) })
+
+	return nil
+}
+
+// bindConfig binds the Config from p, when there is one, and validates it.
+func (a *App) bindConfig(p ConfigProvider) (*Config, error) {
+	if p != nil {
+		err := p.Bind(a.cfg)
+		if err != nil {
+			return nil, fmt.Errorf("%w: bind: %w", ErrInvalidConfig, err)
 		}
 	}
 
-	return a.Stop(ctx)
-}
-
-func (a *App) bindConfig() error {
-	if cfgProvider := a.ConfigProvider(); cfgProvider != nil {
-		if err := cfgProvider.Bind(a.cfg); err != nil {
-			return fmt.Errorf("gas: config binding: %w", err)
-		}
+	err := a.cfg.validate(a.allowedEnvs)
+	if err != nil {
+		return nil, err
 	}
 
 	a.router.maxJSONBody.Store(a.cfg.Server.MaxJSONBodyBytes)
+	a.router.maxFormBody.Store(a.cfg.Server.MaxFormBodyBytes)
+
+	return a.cfg, nil
+}
+
+// afterBuild seals the router, checks that every DI-aware handler's
+// dependencies are registered, applies the bound Config to a server built
+// early, and emits AppConfigUpdated.
+func (a *App) afterBuild() error {
+	a.router.Seal()
+
+	for _, ph := range a.router.handlersToCheck() {
+		for _, depType := range ph.depTypes {
+			if !a.serviceContainer.canResolveType(depType) {
+				return newDIError(
+					ErrNotRegistered,
+					"gas: handler %s %s (service %q): dependency %v is not registered",
+					ph.method,
+					ph.path,
+					ph.service,
+					depType,
+				)
+			}
+		}
+	}
+
 	// Before the event, so a subscriber that sets a server field wins.
 	a.applyBoundServer()
 
-	a.Worker.eventBus.Emit[AppConfigUpdated](AppConfigUpdatedPayload{Config: *a.cfg}).Wait()
+	a.eventBus.Emit[AppConfigUpdated](AppConfigUpdatedPayload{Config: *a.cfg}).Wait()
 
 	return nil
+}
+
+// applyBoundServer gives a server built before the config was bound the
+// bound value of each field the caller left as Server set it. It applies
+// at most once, and never to a server Serve has begun with.
+func (a *App) applyBoundServer() {
+	a.srvMu.Lock()
+	defer a.srvMu.Unlock()
+
+	if a.srv == nil || a.srvSettled {
+		return
+	}
+
+	a.srvSettled = true
+
+	bound, was := serverFieldsOf(&a.cfg.Server), a.srvCopied
+
+	if a.srv.Addr == was.addr {
+		a.srv.Addr = bound.addr
+	}
+
+	if a.srv.ReadTimeout == was.readTimeout {
+		a.srv.ReadTimeout = bound.readTimeout
+	}
+
+	if a.srv.ReadHeaderTimeout == was.readHeaderTimeout {
+		a.srv.ReadHeaderTimeout = bound.readHeaderTimeout
+	}
+
+	if a.srv.WriteTimeout == was.writeTimeout {
+		a.srv.WriteTimeout = bound.writeTimeout
+	}
+
+	if a.srv.IdleTimeout == was.idleTimeout {
+		a.srv.IdleTimeout = bound.idleTimeout
+	}
+
+	a.srvCopied = bound
+}
+
+// drainServer shuts the server down within srvCtx, cancels the context of
+// the requests still running, and gives them ShutdownGracePeriod to
+// return; then it closes their connections, which ends their blocked
+// reads and writes, and gives them ShutdownGracePeriod again, logging how
+// many are left when it gives up. The waits also end with ctx, Stop's
+// own. It returns the server's errors.
+func (a *App) drainServer(ctx, srvCtx context.Context) []error {
+	var errs []error
+
+	srv := a.Server()
+
+	err := srv.Shutdown(srvCtx)
+	if err != nil {
+		errs = append(errs, fmt.Errorf("gas: server shutdown: %w", err))
+	}
+
+	a.cancelBase()
+
+	if a.waitInflight(ctx, ShutdownGracePeriod) {
+		return errs
+	}
+
+	err = srv.Close()
+	if err != nil {
+		errs = append(errs, fmt.Errorf("gas: server close: %w", err))
+	}
+
+	if !a.waitInflight(ctx, ShutdownGracePeriod) {
+		a.getLogger().Warn("requests still running after the shutdown grace period").
+			Int64("requests", a.inflight.Load()).
+			Send()
+	}
+
+	return errs
+}
+
+// waitInflight waits up to grace, and no longer than ctx allows, for the
+// App's handler to serve no request, and reports whether it does.
+func (a *App) waitInflight(ctx context.Context, grace time.Duration) bool {
+	giveUp := time.Now().Add(grace)
+
+	for a.inflight.Load() > 0 {
+		if time.Now().After(giveUp) || ctx.Err() != nil {
+			return false
+		}
+
+		time.Sleep(inflightPoll)
+	}
+
+	return true
 }

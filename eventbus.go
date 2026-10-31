@@ -15,7 +15,7 @@ import (
 // because the zero value of the event type is used as the subscriber key.
 type event[D any] interface {
 	comparable
-	data(D)
+	data(payload D)
 }
 
 // Event is embedded in an event type to declare the payload that event
@@ -36,7 +36,7 @@ func (Event[D]) data(D) {}
 // a single map alongside subscriptions to every other event type.
 type subscriber interface {
 	service() string
-	handle(any)
+	handle(payload any)
 }
 
 // subscriberEntry retains the payload type its handler was registered with.
@@ -48,8 +48,14 @@ type subscriberEntry[D any] struct {
 	owner   string
 }
 
+// service returns the owner's name.
 func (s *subscriberEntry[D]) service() string { return s.owner }
-func (s *subscriberEntry[D]) handle(d any)    { s.handler(d.(D)) }
+
+// handle calls the handler with d.
+func (s *subscriberEntry[D]) handle(d any) {
+	//nolint:forcetypeassert // Emit dispatches only a D to this bucket
+	s.handler(d.(D))
+}
 
 // EventBus is a publish/subscribe message bus with service ownership
 // tracking. Subscriptions are keyed by event type; those registered through
@@ -99,43 +105,12 @@ func (bus *EventBus) Close(context.Context) error { return nil }
 //
 // A handler that panics is recovered, so it neither takes the process down
 // nor keeps the WaitGroup from completing, and the other handlers still run.
-// The stack goes to stderr and, on a Worker's bus, the panic is logged with
-// the event type and the owning service.
+// On a Worker's bus the panic is logged with the event type, the owning
+// service and the stack; on a bus of its own the stack goes to stderr.
 func (bus *EventBus) Emit[E event[D], D any](data D) *sync.WaitGroup {
-	bus.mu.RLock()
-	var key E
-	subs := make([]subscriber, len(bus.subscribers[key]))
-	copy(subs, bus.subscribers[key])
-	bus.mu.RUnlock()
+	wg, _ := bus.emit[E](data)
 
-	var wg sync.WaitGroup
-	for _, s := range subs {
-		wg.Go(func() {
-			defer func() {
-				if rec := recover(); rec != nil {
-					bus.handlePanic(fmt.Sprintf("%T", key), s.service(), rec)
-				}
-			}()
-			s.handle(data)
-		})
-	}
-	return &wg
-}
-
-// handlePanic reports a panic recovered from a subscriber of event: the stack
-// goes to stderr, and to the bus's logger when it has one.
-func (bus *EventBus) handlePanic(event, owner string, rec any) {
-	stack := debug.Stack()
-	_, _ = os.Stderr.Write(stack)
-	if bus.logger == nil {
-		return
-	}
-	bus.logger().Error("event subscriber panic").
-		Str("event", event).
-		Str("service", owner).
-		Err("panic", fmt.Errorf("gas: event subscriber panic: %v", rec)).
-		Str("stack", string(stack)).
-		Send()
+	return wg
 }
 
 // Subscribe registers a handler for event type E with no owning service:
@@ -151,6 +126,7 @@ func (bus *EventBus) Subscribe[E event[D], D any](handler func(D)) {
 	defer bus.mu.Unlock()
 
 	var key E
+
 	bus.subscribers[key] = append(bus.subscribers[key], &subscriberEntry[D]{
 		handler: handler,
 	})
@@ -165,6 +141,7 @@ func (bus *EventBus) SubscribeWithOwner[E event[D], D any](service Service, hand
 	defer bus.mu.Unlock()
 
 	var key E
+
 	bus.subscribers[key] = append(bus.subscribers[key], &subscriberEntry[D]{
 		owner:   service.Name(),
 		handler: handler,
@@ -188,14 +165,66 @@ func (bus *EventBus) RemoveByService(service Service) {
 				filtered = append(filtered, s)
 			}
 		}
+
 		if len(filtered) == 0 {
 			delete(bus.subscribers, e)
+
 			continue
 		}
+
 		// The removed subscribers are still referenced by the tail of the
 		// backing array. Clear it so their handler closures, and whatever
 		// those capture, can be collected.
 		clear(subs[len(filtered):])
+
 		bus.subscribers[e] = filtered
 	}
+}
+
+// emit is Emit, and also returns the number of subscribers it dispatched
+// to, so a caller can skip waiting when there are none.
+func (bus *EventBus) emit[E event[D], D any](data D) (*sync.WaitGroup, int) {
+	bus.mu.RLock()
+
+	var key E
+
+	subs := make([]subscriber, len(bus.subscribers[key]))
+	copy(subs, bus.subscribers[key])
+	bus.mu.RUnlock()
+
+	var wg sync.WaitGroup
+
+	for _, s := range subs {
+		wg.Go(func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					bus.handlePanic(fmt.Sprintf("%T", key), s.service(), rec)
+				}
+			}()
+
+			s.handle(data)
+		})
+	}
+
+	return &wg, len(subs)
+}
+
+// handlePanic reports a panic recovered from a subscriber of event: to the
+// bus's logger, with the stack, when it has one, and else the stack to
+// stderr.
+func (bus *EventBus) handlePanic(event, owner string, rec any) {
+	stack := debug.Stack()
+
+	if bus.logger == nil {
+		_, _ = os.Stderr.Write(stack)
+
+		return
+	}
+
+	bus.logger().Error("event subscriber panic").
+		Str("event", event).
+		Str("service", owner).
+		Err("error", fmt.Errorf("%w in event subscriber: %v", ErrPanic, rec)).
+		Str("stack", string(stack)).
+		Send()
 }

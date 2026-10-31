@@ -53,7 +53,7 @@ func TestDoc_Usage(t *testing.T) {
 			},
 		),
 	)
-	require.NoError(t, w.InitServices(ctx))
+	require.NoError(t, w.Start(ctx))
 
 	p, err := w.ServiceContainer().Resolve[gas.TemplateProvider]()
 	require.NoError(t, err)

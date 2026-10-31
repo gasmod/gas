@@ -230,7 +230,8 @@
 // [EnvExtension] resolves the environment the app runs in, such as
 // development or production, during each load, and stores it at the key
 // `GasEnv`. An app reads it by binding a field of type [Environment], or
-// gas.Environment, which is the same type, from that key. A field named
+// gas.Environment, which has the same values, from that key, as
+// gas.Config.Env does. A field named
 // `Env` needs the tag, as its own name is the key `env`; with
 // [WithConfigKey] set to `env`, it binds without one:
 //

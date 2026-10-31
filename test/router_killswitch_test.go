@@ -1,6 +1,7 @@
-package test
+package gas_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,7 +13,7 @@ import (
 // middleware registered by A with a static Service Unavailable response,
 // regardless of where they are referenced. A middleware owned by A that
 // another service's route pulls in short-circuits to 503, so that route stops
-// serving too — the middleware is the unit of teardown, not the route.
+// serving too: the middleware is the unit of teardown, not the route.
 //
 // This is what Worker.CloseService drives at runtime via
 // onServiceClose -> Router.RemoveByService.
@@ -23,8 +24,10 @@ func ksHandler(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.Stat
 // and "billing" owns routes that reference auth's middleware in several ways.
 func ksStatus(t *testing.T, h http.Handler, path string) int {
 	t.Helper()
+
 	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
+	h.ServeHTTP(rr, httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil))
+
 	return rr.Code
 }
 
@@ -56,14 +59,17 @@ func TestKillSwitchDisablesMiddlewareScopedInSubRouter(t *testing.T) {
 			t.Fatalf("RemoveByService panicked: %v", r)
 		}
 	}()
+
 	router.RemoveByService(auth)
 
 	if got := ksStatus(t, router, "/api/invoices"); got != http.StatusServiceUnavailable {
 		t.Errorf("/api/invoices = %d, want 503 (guarded by killed service's middleware)", got)
 	}
+
 	if got := ksStatus(t, router, "/login"); got != http.StatusServiceUnavailable {
 		t.Errorf("/login = %d, want 503 (killed service's own route)", got)
 	}
+
 	if got := ksStatus(t, router, "/plans"); got != http.StatusOK {
 		t.Errorf("/plans = %d, want 200 (billing route, no reference to auth)", got)
 	}
@@ -93,6 +99,7 @@ func TestKillSwitchDisablesMiddlewareOnSubRouterRoute(t *testing.T) {
 			t.Fatalf("RemoveByService panicked: %v", r)
 		}
 	}()
+
 	router.RemoveByService(auth)
 
 	if got := ksStatus(t, router, "/invoices"); got != http.StatusServiceUnavailable {
@@ -114,6 +121,7 @@ func TestKillSwitchDisablesMiddlewareOnTopLevelRoute(t *testing.T) {
 	router.Register(auth, "require-auth", func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ran++
+
 			next.ServeHTTP(w, r)
 		})
 	})
@@ -135,6 +143,7 @@ func TestKillSwitchDisablesMiddlewareOnTopLevelRoute(t *testing.T) {
 	if got := ksStatus(t, router, "/invoices"); got != http.StatusServiceUnavailable {
 		t.Errorf("/invoices = %d, want 503", got)
 	}
+
 	if ran != 1 {
 		t.Errorf("killed middleware ran %d times, want 1 (must not execute after teardown)", ran)
 	}
@@ -185,6 +194,7 @@ func TestKillSwitchLeavesRouterUsable(t *testing.T) {
 			t.Fatalf("router poisoned: registering a route after the kill-switch: %v", r)
 		}
 	}()
+
 	router.Handle(reports, http.MethodGet, "/reports", ksHandler)
 
 	if got := ksStatus(t, router, "/reports"); got != http.StatusOK {
@@ -221,6 +231,7 @@ func TestRestartServiceRestoresMiddlewareAndRoutes(t *testing.T) {
 	}
 
 	router.Handle(auth, http.MethodGet, "/login", ksHandler)
+
 	if got := ksStatus(t, router, "/login"); got != http.StatusOK {
 		t.Errorf("after restart: /login = %d, want 200", got)
 	}
@@ -239,6 +250,7 @@ func TestKillSwitchLeavesAnonymousMiddlewareAlone(t *testing.T) {
 	router.Use(gas.MiddlewareFunc(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ran++
+
 			next.ServeHTTP(w, r)
 		})
 	}))
@@ -249,6 +261,7 @@ func TestKillSwitchLeavesAnonymousMiddlewareAlone(t *testing.T) {
 	if got := ksStatus(t, router, "/plans"); got != http.StatusOK {
 		t.Errorf("/plans = %d, want 200", got)
 	}
+
 	if ran != 1 {
 		t.Errorf("inline middleware ran %d times, want 1", ran)
 	}
@@ -266,6 +279,7 @@ func TestKillSwitchOnSharedRoutePrefix(t *testing.T) {
 	notesOnly := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ran++
+
 			next.ServeHTTP(w, r)
 		})
 	}
@@ -286,12 +300,15 @@ func TestKillSwitchOnSharedRoutePrefix(t *testing.T) {
 
 	check := func(stage string, wantNotes, wantRan int) {
 		t.Helper()
+
 		if got := ksStatus(t, router, "/api/notes"); got != wantNotes {
 			t.Errorf("%s: /api/notes = %d, want %d", stage, got, wantNotes)
 		}
+
 		if got := ksStatus(t, router, "/api/plans"); got != http.StatusOK {
 			t.Errorf("%s: /api/plans = %d, want 200", stage, got)
 		}
+
 		if ran != wantRan {
 			t.Errorf("%s: notes-only ran %d times in total, want %d", stage, ran, wantRan)
 		}

@@ -10,7 +10,7 @@ import (
 // will have Init(ctx) called after construction and Close(ctx) called at
 // shutdown (singletons) or scope end (scoped). This holds however the value was
 // registered: a pre-built instance passed to WithServiceInstance is
-// initialized too. Transient services cannot implement this interface —
+// initialized too. Transient services cannot implement this interface:
 // registration will be rejected.
 //
 // Implementing it partially is rejected too. Init and Close are the managed
@@ -20,14 +20,16 @@ import (
 // BuildAll returns an error naming the missing or mis-typed methods instead.
 //
 // Name is not a trigger. Declaring only Name leaves a type an ordinary
-// dependency, and the same registration options carry those — loggers, config
-// providers, per-request values — which must keep working.
+// dependency, and the same registration options carry those (loggers, config
+// providers, per-request values), which must keep working.
 //
 // A type from another package that declares Close (an io.Closer such as
 // *sql.DB) cannot be given the remaining methods; wrap it in a service of your
 // own rather than registering it directly.
 type Service interface {
-	// Name returns the unique identifier for this service (e.g., "gas/auth").
+	// Name returns the service's name, such as "gas/auth". Routes,
+	// middleware and subscriptions are owned by name, so the kill switch
+	// refuses a service whose name another service shares.
 	Name() string
 
 	// Init initializes the service. Called automatically by the DI container
@@ -43,9 +45,10 @@ type Service interface {
 	// background goroutine, must not derive from it.
 	Init(ctx context.Context) error
 
-	// Close gracefully shuts down the service. Called at App shutdown
-	// (singletons) or when a Scope is closed (scoped services). ctx is the
-	// caller's shutdown context and bounds the shutdown work.
+	// Close gracefully shuts down the service. Called at shutdown
+	// (singletons), by CloseService, or when a Scope is closed (scoped
+	// services). ctx bounds the work: Close must return when ctx ends,
+	// since the shutdown deadline relies on it.
 	Close(ctx context.Context) error
 }
 

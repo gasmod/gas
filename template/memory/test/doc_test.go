@@ -33,7 +33,7 @@ func TestDoc_Usage(t *testing.T) {
 	assert.Equal(t, []string{"welcome.html", "welcome.txt"}, names)
 
 	w := gas.NewWorker(gas.WithSingletonService[gas.TemplateProvider](memory.NewStore()))
-	require.NoError(t, w.InitServices(ctx))
+	require.NoError(t, w.Start(ctx))
 
 	p, err := w.ServiceContainer().Resolve[gas.TemplateProvider]()
 	require.NoError(t, err)

@@ -1,13 +1,13 @@
-package test
+package gas_test
 
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -22,25 +22,33 @@ func (*runCloser) Name() string { return "run-closer" }
 
 func (*runCloser) Init(context.Context) error { return nil }
 
-func (c *runCloser) Close(context.Context) error { c.closed.Store(true); return nil }
+func (c *runCloser) Close(context.Context) error {
+	c.closed.Store(true)
+
+	return nil
+}
 
 // When the listener fails, Run returns the error after stopping the App, so
 // the services it started are closed.
 func TestApp_Run_ServeErrorStopsApp(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	defer func() { _ = ln.Close() }()
 
 	svc := &runCloser{}
 	app := gas.NewApp(gas.WithServiceInstance[*runCloser](svc))
+
 	app.Config().Server.Host = "127.0.0.1"
 	app.Config().Server.Port = ln.Addr().(*net.TCPAddr).Port
 
-	if err := app.Run(); err == nil {
+	err = app.Run()
+	if err == nil {
 		t.Fatal("Run() = nil, want the listen error")
 	}
+
 	if !svc.closed.Load() {
 		t.Error("Run() returned without closing the started service")
 	}
@@ -61,67 +69,90 @@ func (*failingCloser) Close(context.Context) error { return errCloseFailed }
 // servingApp starts an App built from opts on a free local port, serves it,
 // and returns it once it answers. With stuck set, it also holds one request
 // in flight until the test ends.
+//
+//nolint:funlen // one scenario or table, read in order
 func servingApp(t *testing.T, timeout time.Duration, stuck bool, opts ...gas.Option) *gas.App {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	port := ln.Addr().(*net.TCPAddr).Port
-	if err := ln.Close(); err != nil {
+
+	err = ln.Close()
+	if err != nil {
 		t.Fatal(err)
 	}
 
 	app := gas.NewApp(opts...)
+
 	app.Config().Server.Host = "127.0.0.1"
 	app.Config().Server.Port = port
 	app.Config().Server.ShutdownTimeout = timeout
+
 	entered := make(chan struct{})
 	release := make(chan struct{})
+
 	t.Cleanup(func() { close(release) })
 	app.Router().Handle(nil, http.MethodGet, "/up", func(http.ResponseWriter, *http.Request) {})
 	app.Router().Handle(nil, http.MethodGet, "/stuck", func(http.ResponseWriter, *http.Request) {
 		close(entered)
 		<-release
 	})
-	if err := app.Start(context.Background()); err != nil {
+
+	err = app.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	go func() { _ = app.Serve() }()
 
 	base := "http://127.0.0.1:" + strconv.Itoa(port)
 	deadline := time.Now().Add(5 * time.Second)
+
 	for {
-		resp, gErr := http.Get(base + "/up") //nolint:noctx,gosec // a local test server
+		resp, gErr := http.Get(base + "/up") //nolint:noctx // a local test server
 		if gErr == nil {
 			_ = resp.Body.Close()
+
 			break
 		}
+
 		if time.Now().After(deadline) {
 			t.Fatalf("server never answered: %v", gErr)
 		}
+
 		time.Sleep(10 * time.Millisecond)
 	}
+
 	if stuck {
 		go func() {
-			resp, gErr := http.Get(base + "/stuck") //nolint:noctx,gosec // a local test server
+			resp, gErr := http.Get(base + "/stuck") //nolint:noctx // a local test server
 			if gErr == nil {
 				_ = resp.Body.Close()
 			}
 		}()
+
 		<-entered
 	}
+
 	return app
 }
 
 // A Stop with nothing in flight and no failing Close returns nil.
 func TestApp_Stop_CleanReturnsNil(t *testing.T) {
 	t.Parallel()
+
 	svc := &runCloser{}
 	app := servingApp(t, time.Second, false, gas.WithServiceInstance[*runCloser](svc))
-	if err := app.Stop(context.Background()); err != nil {
+
+	err := app.Stop(context.Background())
+	if err != nil {
 		t.Fatalf("Stop() = %v, want nil", err)
 	}
+
 	if !svc.closed.Load() {
 		t.Error("Stop() did not close the service")
 	}
@@ -131,12 +162,15 @@ func TestApp_Stop_CleanReturnsNil(t *testing.T) {
 // shutdown error, and the services are still closed.
 func TestApp_Stop_ReturnsServerShutdownError(t *testing.T) {
 	t.Parallel()
+
 	svc := &runCloser{}
 	app := servingApp(t, 100*time.Millisecond, true, gas.WithServiceInstance[*runCloser](svc))
 	err := app.Stop(context.Background())
+
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Stop() = %v, want an error wrapping context.DeadlineExceeded", err)
 	}
+
 	if !svc.closed.Load() {
 		t.Error("Stop() returned the server shutdown error without closing the service")
 	}
@@ -145,6 +179,7 @@ func TestApp_Stop_ReturnsServerShutdownError(t *testing.T) {
 // A server shutdown error and a failing Close are both returned, joined.
 func TestApp_Stop_JoinsServerAndWorkerErrors(t *testing.T) {
 	t.Parallel()
+
 	app := servingApp(
 		t,
 		100*time.Millisecond,
@@ -152,6 +187,7 @@ func TestApp_Stop_JoinsServerAndWorkerErrors(t *testing.T) {
 		gas.WithServiceInstance[*failingCloser](&failingCloser{}),
 	)
 	err := app.Stop(context.Background())
+
 	if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, errCloseFailed) {
 		t.Fatalf("Stop() = %v, want the server shutdown error joined with the Close error", err)
 	}
@@ -164,13 +200,17 @@ func newCSRFApp(t *testing.T, opts ...gas.Option) http.Handler {
 	t.Helper()
 
 	app := gas.NewApp(opts...)
-	if err := app.InitServices(context.Background()); err != nil {
+
+	err := app.Start(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	ok := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }
 	app.Router().Handle(nil, http.MethodPost, "/submit", ok)
 	app.Router().Handle(nil, http.MethodGet, "/submit", ok)
 	app.Router().Handle(nil, http.MethodPost, "/webhook", ok)
+
 	return app.Handler()
 }
 
@@ -179,11 +219,13 @@ const evilOrigin = "https://evil.example"
 // crossSite sends method to path as a browser would for a cross-site request
 // from origin and returns the response status.
 func crossSite(h http.Handler, method, path, origin string) int {
-	req := httptest.NewRequest(method, path, nil)
+	req := httptest.NewRequestWithContext(context.Background(), method, path, nil)
 	req.Header.Set("Sec-Fetch-Site", "cross-site")
 	req.Header.Set("Origin", origin)
+
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
+
 	return rr.Code
 }
 
@@ -197,14 +239,17 @@ func TestApp_CSRF_RejectsCrossOriginWrites(t *testing.T) {
 	if code := crossSite(h, http.MethodPost, "/submit", evilOrigin); code != http.StatusForbidden {
 		t.Errorf("cross-site POST = %d, want 403", code)
 	}
+
 	if code := crossSite(h, http.MethodGet, "/submit", evilOrigin); code != http.StatusOK {
 		t.Errorf("cross-site GET = %d, want 200", code)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/submit", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/submit", nil)
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
+
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
+
 	if rr.Code != http.StatusOK {
 		t.Errorf("same-origin POST = %d, want 200", rr.Code)
 	}
@@ -224,6 +269,7 @@ func TestApp_CSRF_TrustedOrigin(t *testing.T) {
 	); code != http.StatusOK {
 		t.Errorf("POST from trusted origin = %d, want 200", code)
 	}
+
 	if code := crossSite(
 		h,
 		http.MethodPost,
@@ -234,16 +280,21 @@ func TestApp_CSRF_TrustedOrigin(t *testing.T) {
 	}
 }
 
-// WithTrustedOrigin panics on a value that is not an absolute origin.
-func TestApp_CSRF_TrustedOriginInvalidPanics(t *testing.T) {
+// WithTrustedOrigin with a value that is not an absolute origin makes
+// Start fail with ErrInvalidOption, without quoting the value.
+func TestApp_CSRF_TrustedOriginInvalidFailsStart(t *testing.T) {
 	t.Parallel()
 
-	defer func() {
-		if recover() == nil {
-			t.Error("NewApp with an invalid trusted origin did not panic")
-		}
-	}()
-	gas.NewApp(gas.WithTrustedOrigin("not a url"))
+	app := gas.NewApp(gas.WithTrustedOrigin("not a url"))
+	err := app.Start(context.Background())
+
+	if !errors.Is(err, gas.ErrInvalidOption) {
+		t.Fatalf("Start() = %v, want ErrInvalidOption", err)
+	}
+
+	if strings.Contains(err.Error(), "not a url") {
+		t.Errorf("Start() = %v, quotes the origin", err)
+	}
 }
 
 // WithCSRFInsecureBypassPattern exempts only the matching path.
@@ -255,6 +306,7 @@ func TestApp_CSRF_InsecureBypassPattern(t *testing.T) {
 	if code := crossSite(h, http.MethodPost, "/webhook", evilOrigin); code != http.StatusOK {
 		t.Errorf("cross-site POST /webhook = %d, want 200", code)
 	}
+
 	if code := crossSite(h, http.MethodPost, "/submit", evilOrigin); code != http.StatusForbidden {
 		t.Errorf("cross-site POST /submit = %d, want 403", code)
 	}
@@ -275,7 +327,7 @@ func TestApp_CSRF_DenyHandler(t *testing.T) {
 }
 
 func TestApp_InitFailure(t *testing.T) {
-	failing := &testService{name: "bad-svc", initErr: fmt.Errorf("init failed")}
+	failing := &testService{name: "bad-svc", initErr: errInitFailed2}
 
 	app := gas.NewApp(
 		gas.WithService[*testService](
@@ -284,7 +336,7 @@ func TestApp_InitFailure(t *testing.T) {
 		),
 	)
 
-	err := app.InitServices(context.Background())
+	err := app.Start(context.Background())
 	if err == nil {
 		t.Fatal("expected error from failing service init")
 	}
@@ -310,6 +362,7 @@ func TestApp_RouterAndEventBusGetters(t *testing.T) {
 	if app.Router() == nil {
 		t.Fatal("expected non-nil Router")
 	}
+
 	if app.EventBus() == nil {
 		t.Fatal("expected non-nil EventBus")
 	}
@@ -333,6 +386,7 @@ func TestApp_FailedConfigBindClosesAll(t *testing.T) {
 	if first == nil {
 		t.Fatal("Start() = nil, want a config validation error")
 	}
+
 	want := []string{"init a", "close a"}
 	if got := log.snapshot(); !equalStrings(got, want) {
 		t.Errorf("calls = %v, want %v", got, want)
@@ -342,6 +396,7 @@ func TestApp_FailedConfigBindClosesAll(t *testing.T) {
 	if second == nil || second.Error() != first.Error() {
 		t.Errorf("second Start() = %v, want %v", second, first)
 	}
+
 	if got := log.snapshot(); len(got) != len(want) {
 		t.Errorf("second Start ran more lifecycle calls: %v", got)
 	}

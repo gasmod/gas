@@ -1,6 +1,7 @@
-package test
+package gas_test
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -16,7 +17,7 @@ import (
 // Router.mu (an RWMutex) guards only the router's own bookkeeping maps
 // (routes/registry). ServeHTTP (router.go) calls r.mux.ServeHTTP WITHOUT
 // taking r.mu, while RemoveByService mutates the very same chi radix tree via
-// r.mux.Method(...) — chi does no internal locking of its own. So concurrent
+// r.mux.Method(...): chi does no internal locking of its own. So concurrent
 // request serving and a kill-switch invocation read and write chi's tree at
 // the same time with zero synchronization between them.
 //
@@ -37,7 +38,9 @@ import (
 // RemoveByService). Once ServeHTTP and the mutators are properly synchronized,
 // the test passes. Without -race the bug is silent (which is exactly why it
 // shipped), so the race detector is the point of this test.
-func TestRouterServeHTTPRacesKillSwitch(t *testing.T) {
+//
+//nolint:funlen // one scenario or table, read in order
+func TestRouterServeHTTPRacesKillSwitch(_ *testing.T) {
 	const (
 		nRoutes = 200
 		readers = 8
@@ -58,32 +61,48 @@ func TestRouterServeHTTPRacesKillSwitch(t *testing.T) {
 		for _, p := range paths {
 			router.Handle(victim, http.MethodGet, p, handler)
 		}
+
 		router.Seal()
 
 		stop := make(chan struct{})
+
 		var ready sync.WaitGroup // each reader signals once it is actively serving
+
 		ready.Add(readers)
+
 		var done sync.WaitGroup
+
 		done.Add(readers)
 
 		for r := range readers {
 			go func(seed int) {
 				defer done.Done()
+
 				i := seed
 				first := true
+
 				for {
 					select {
 					case <-stop:
 						return
 					default:
 					}
-					req := httptest.NewRequest(http.MethodGet, paths[i%nRoutes], nil)
+
+					req := httptest.NewRequestWithContext(
+						context.Background(),
+						http.MethodGet,
+						paths[i%nRoutes],
+						nil,
+					)
 					// ServeHTTP reads chi's tree under no lock.
 					router.ServeHTTP(httptest.NewRecorder(), req)
+
 					if first {
 						ready.Done()
+
 						first = false
 					}
+
 					i++
 				}
 			}(r)
@@ -112,7 +131,9 @@ func TestRouterServeHTTPRacesKillSwitch(t *testing.T) {
 // Run with the race detector to exercise the synchronization:
 //
 //	go test -race -run TestRouterServeHTTPRacesRuntimeHandle ./...
-func TestRouterServeHTTPRacesRuntimeHandle(t *testing.T) {
+//
+//nolint:funlen // one scenario or table, read in order
+func TestRouterServeHTTPRacesRuntimeHandle(_ *testing.T) {
 	const (
 		nRoutes = 200
 		readers = 8
@@ -128,27 +149,42 @@ func TestRouterServeHTTPRacesRuntimeHandle(t *testing.T) {
 	router.Seal()
 
 	stop := make(chan struct{})
+
 	var ready sync.WaitGroup
+
 	ready.Add(readers)
+
 	var done sync.WaitGroup
+
 	done.Add(readers)
 
 	for r := range readers {
 		go func(seed int) {
 			defer done.Done()
+
 			first := true
+
 			for {
 				select {
 				case <-stop:
 					return
 				default:
 				}
-				req := httptest.NewRequest(http.MethodGet, "/warm", nil)
+
+				req := httptest.NewRequestWithContext(
+					context.Background(),
+					http.MethodGet,
+					"/warm",
+					nil,
+				)
 				router.ServeHTTP(httptest.NewRecorder(), req)
+
 				if first {
 					ready.Done()
+
 					first = false
 				}
+
 				_ = seed
 			}
 		}(r)
@@ -182,7 +218,11 @@ func TestRouterRemoveThenReRegisterServes(t *testing.T) {
 
 	serve := func() int {
 		rr := httptest.NewRecorder()
-		router.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/x", nil))
+		router.ServeHTTP(
+			rr,
+			httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/x", nil),
+		)
+
 		return rr.Code
 	}
 
@@ -191,12 +231,14 @@ func TestRouterRemoveThenReRegisterServes(t *testing.T) {
 	}
 
 	router.RemoveByService(victim)
+
 	if got := serve(); got != http.StatusServiceUnavailable {
 		t.Fatalf("after removal: expected 503, got %d", got)
 	}
 
 	// Re-register the same service/path, mirroring RestartService -> Init.
 	router.Handle(victim, http.MethodGet, "/x", ok)
+
 	if got := serve(); got != http.StatusOK {
 		t.Fatalf("after re-registration: expected 200, got %d", got)
 	}
@@ -222,18 +264,24 @@ func TestRouterPostSealGroupedRouteTracked(t *testing.T) {
 
 	serve := func() int {
 		rr := httptest.NewRecorder()
-		router.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/thing", nil))
+		router.ServeHTTP(
+			rr,
+			httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/thing", nil),
+		)
+
 		return rr.Code
 	}
 
 	if got := serve(); got != http.StatusOK {
 		t.Fatalf("serve /api/thing: expected 200, got %d", got)
 	}
+
 	if got := router.Routes()[svc.Name()]; len(got) == 0 {
 		t.Fatal("post-seal sub-route not tracked in Routes()")
 	}
 
 	router.RemoveByService(svc)
+
 	if got := serve(); got != http.StatusServiceUnavailable {
 		t.Fatalf("after RemoveByService: expected 503, got %d", got)
 	}

@@ -1,6 +1,7 @@
-package test
+package gas_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -17,13 +18,16 @@ func serveThrough(t *testing.T, mw func(http.Handler) http.Handler, path string)
 	called := false
 	h := mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		called = true
+
 		w.WriteHeader(http.StatusOK)
 	}))
 	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
+	h.ServeHTTP(rr, httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil))
+
 	if !called {
 		t.Fatal("middleware did not call the next handler")
 	}
+
 	return rr.Header()
 }
 
@@ -38,6 +42,7 @@ var securityHeaderNames = []string{
 	"Cross-Origin-Resource-Policy",
 }
 
+//nolint:funlen // one scenario or table, read in order
 func TestSecurityHeaders(t *testing.T) {
 	t.Parallel()
 
@@ -98,8 +103,10 @@ func TestSecurityHeaders(t *testing.T) {
 				want, set := tt.want[name]
 				if _, present := got[name]; present != set {
 					t.Errorf("%s present = %v, want %v", name, present, set)
+
 					continue
 				}
+
 				if g := got.Get(name); g != want {
 					t.Errorf("%s = %q, want %q", name, g, want)
 				}
@@ -149,6 +156,7 @@ func TestCacheControl_Directives(t *testing.T) {
 		if name == "" {
 			name = "none set"
 		}
+
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 

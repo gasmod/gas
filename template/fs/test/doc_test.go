@@ -33,7 +33,7 @@ func TestDoc_Usage(t *testing.T) {
 	assert.Equal(t, "<h1>home</h1>", string(b))
 
 	w := gas.NewWorker(gas.WithSingletonService[gas.TemplateProvider](templatefs.NewStore(sub)))
-	require.NoError(t, w.InitServices(t.Context()))
+	require.NoError(t, w.Start(t.Context()))
 
 	dir := t.TempDir()
 	conformance.WriteFiles(t, dir, fstest.MapFS{"pages/home.html": {Data: []byte("x")}})

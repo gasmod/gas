@@ -1,8 +1,7 @@
-package test
+package gas_test
 
 import (
 	"context"
-	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -13,12 +12,14 @@ import (
 // A constructor registered with a signature the container cannot call used to
 // register cleanly and blow up much later, inside invoke: reflect panicked out
 // of BuildAll naming neither the constructor nor the type it was registered
-// for. The three-result case was worse than a panic — invoke only checks the
+// for. The three-result case was worse than a panic: invoke only checks the
 // error when NumOut is 2, so the error was dropped and the service built
 // anyway. Registration now rejects the signature at the call site.
 
 // greeter is the interface half of the dominant registration pattern:
 // registered as an interface, constructed as a concrete pointer.
+//
+//nolint:iface // a distinct type on purpose: the container resolves by exact type
 type greeter interface {
 	Greet() string
 }
@@ -52,10 +53,12 @@ func requirePanic(t *testing.T, wantSubstrings []string, fn func()) {
 			t.Fatal("expected registration to panic, it did not")
 		}
 
-		msg, ok := r.(string)
+		err, ok := r.(error)
 		if !ok {
-			t.Fatalf("expected a string panic value, got %T: %v", r, r)
+			t.Fatalf("expected an error panic value, got %T: %v", r, r)
 		}
+
+		msg := err.Error()
 
 		if !strings.HasPrefix(msg, "gas: ") {
 			t.Errorf("panic message should be caller-facing and gas-prefixed, got %q", msg)
@@ -121,7 +124,8 @@ func TestRegisterCtor_AcceptsValidShapes(t *testing.T) {
 			c := gas.NewServiceContainer()
 			tt.register(c)
 
-			if err := c.BuildAll(context.Background()); err != nil {
+			err := c.BuildAll(context.Background())
+			if err != nil {
 				t.Fatalf("BuildAll: %v", err)
 			}
 		})
@@ -137,7 +141,8 @@ func TestRegisterCtor_InterfaceRegistrationResolves(t *testing.T) {
 	c := gas.NewServiceContainer()
 	c.RegisterService[greeter](newConcreteGreeter, gas.ServiceLifetimeSingleton)
 
-	if err := c.BuildAll(context.Background()); err != nil {
+	err := c.BuildAll(context.Background())
+	if err != nil {
 		t.Fatalf("BuildAll: %v", err)
 	}
 
@@ -151,6 +156,7 @@ func TestRegisterCtor_InterfaceRegistrationResolves(t *testing.T) {
 	}
 }
 
+//nolint:funlen // one scenario or table, read in order
 func TestRegisterCtor_RejectsBadShapes(t *testing.T) {
 	t.Parallel()
 
@@ -161,14 +167,14 @@ func TestRegisterCtor_RejectsBadShapes(t *testing.T) {
 	}{
 		{
 			name:  "nil constructor",
-			wants: []string{"want a function", "nil"},
+			wants: []string{"not a function", "nil"},
 			register: func(c *gas.ServiceContainer) {
 				c.RegisterService[greeter](nil, gas.ServiceLifetimeSingleton)
 			},
 		},
 		{
 			name:  "non-function constructor",
-			wants: []string{"want a function"},
+			wants: []string{"not a function"},
 			register: func(c *gas.ServiceContainer) {
 				c.RegisterService[*concreteGreeter](
 					&concreteGreeter{},
@@ -199,7 +205,7 @@ func TestRegisterCtor_RejectsBadShapes(t *testing.T) {
 			wants: []string{"returns 3 values"},
 			register: func(c *gas.ServiceContainer) {
 				c.RegisterService[greeter](func() (*concreteGreeter, error, error) {
-					return nil, nil, errors.New("dropped")
+					return nil, nil, errDropped
 				}, gas.ServiceLifetimeSingleton)
 			},
 		},
@@ -250,6 +256,7 @@ func TestRegisterCtor_RejectsBadShapes(t *testing.T) {
 			t.Parallel()
 
 			c := gas.NewServiceContainer()
+
 			requirePanic(t, tt.wants, func() { tt.register(c) })
 		})
 	}
@@ -267,11 +274,13 @@ func TestRegisterCtor_RejectedCtorIsNotRegistered(t *testing.T) {
 		c.RegisterService[greeter](func() {}, gas.ServiceLifetimeSingleton)
 	})
 
-	if err := c.BuildAll(context.Background()); err != nil {
+	err := c.BuildAll(context.Background())
+	if err != nil {
 		t.Fatalf("BuildAll after a rejected registration: %v", err)
 	}
 
-	if _, err := c.Resolve[greeter](); err == nil {
+	_, err = c.Resolve[greeter]()
+	if err == nil {
 		t.Fatal("expected greeter to be unregistered after the rejected registration")
 	}
 }
@@ -284,7 +293,7 @@ func TestRegisterCtor_TransientServiceCheckStillApplies(t *testing.T) {
 
 	c := gas.NewServiceContainer()
 
-	requirePanic(t, []string{"transient service", "Singleton or Scoped"}, func() {
+	requirePanic(t, []string{"transient", "singleton or scoped"}, func() {
 		c.RegisterService[*testService](func() *testService {
 			return &testService{name: "transient"}
 		}, gas.ServiceLifetimeTransient)
@@ -320,9 +329,13 @@ func (s *valueService) Close(context.Context) error { return nil }
 // whatever it holds leaks.
 type closeOnly struct{ closed bool }
 
-func (s *closeOnly) Close(context.Context) error { s.closed = true; return nil }
+func (s *closeOnly) Close(context.Context) error {
+	s.closed = true
 
-// nameAndClose forgets Init — the service registers, never initializes, and
+	return nil
+}
+
+// nameAndClose forgets Init: the service registers, never initializes, and
 // still looks complete at a glance.
 type nameAndClose struct{}
 
@@ -341,6 +354,8 @@ func (d *plainDep) Name() string { return d.id }
 
 // shapeGreeter is an interface a half-written service might be registered
 // under, so the concrete type is only knowable after construction.
+//
+//nolint:iface // a distinct type on purpose: the container resolves by exact type
 type shapeGreeter interface{ Greet() string }
 
 type halfGreeter struct{}
@@ -351,9 +366,11 @@ func (g *halfGreeter) Init(context.Context) error { return nil }
 
 func requireErrContains(t *testing.T, err error, want ...string) {
 	t.Helper()
+
 	if err == nil {
 		t.Fatal("expected an error, got nil")
 	}
+
 	for _, w := range want {
 		if !strings.Contains(err.Error(), w) {
 			t.Errorf("error %q does not mention %q", err.Error(), w)
@@ -365,7 +382,7 @@ func TestRegisterRejectsInitOnlyType(t *testing.T) {
 	svc := &initOnly{}
 	w := gas.NewWorker(gas.WithServiceInstance[*initOnly](svc))
 
-	err := w.InitServices(context.Background())
+	err := w.Start(context.Background())
 	requireErrContains(t, err, "*gas_test.initOnly", "does not implement gas.Service",
 		"missing Name() string", "missing Close(context.Context) error")
 
@@ -379,8 +396,9 @@ func TestRegisterRejectsServiceMissingClose(t *testing.T) {
 		return &missingClose{}
 	}))
 
-	err := w.InitServices(context.Background())
+	err := w.Start(context.Background())
 	requireErrContains(t, err, "missingClose", "missing Close(context.Context) error")
+
 	if strings.Contains(err.Error(), "missing Name") {
 		t.Errorf("error should not report Name as missing: %v", err)
 	}
@@ -391,7 +409,7 @@ func TestRegisterRejectsWrongInitSignature(t *testing.T) {
 		return &wrongInitSig{}
 	}))
 
-	err := w.InitServices(context.Background())
+	err := w.Start(context.Background())
 	requireErrContains(
 		t,
 		err,
@@ -406,7 +424,7 @@ func TestRegisterRejectsValueTypeWithPointerMethods(t *testing.T) {
 		return valueService{}
 	}))
 
-	err := w.InitServices(context.Background())
+	err := w.Start(context.Background())
 	requireErrContains(t, err, "methods are declared on *", "register it as *")
 }
 
@@ -417,7 +435,7 @@ func TestRegisterRejectsHalfServiceBehindInterface(t *testing.T) {
 		return &halfGreeter{}
 	}))
 
-	err := w.InitServices(context.Background())
+	err := w.Start(context.Background())
 	requireErrContains(t, err, "halfGreeter", "does not implement gas.Service")
 }
 
@@ -426,12 +444,12 @@ func TestRegisterRejectsScopedHalfService(t *testing.T) {
 		return &initOnly{}
 	}))
 
-	err := w.InitServices(context.Background())
+	err := w.Start(context.Background())
 	requireErrContains(t, err, "initOnly", "does not implement gas.Service")
 }
 
 // The error must reach the caller through the normal startup path, not just
-// through InitServices directly.
+// through Start directly.
 func TestHalfServiceFailsStart(t *testing.T) {
 	w := gas.NewWorker(gas.WithServiceInstance[*initOnly](&initOnly{}))
 	requireErrContains(t, w.Start(context.Background()), "does not implement gas.Service")
@@ -441,7 +459,7 @@ func TestRegisterRejectsCloseOnlyType(t *testing.T) {
 	svc := &closeOnly{}
 	w := gas.NewWorker(gas.WithServiceInstance[*closeOnly](svc))
 
-	err := w.InitServices(context.Background())
+	err := w.Start(context.Background())
 	requireErrContains(
 		t,
 		err,
@@ -458,8 +476,9 @@ func TestRegisterRejectsServiceMissingInit(t *testing.T) {
 		return &nameAndClose{}
 	}))
 
-	err := w.InitServices(context.Background())
+	err := w.Start(context.Background())
 	requireErrContains(t, err, "nameAndClose", "missing Init(context.Context) error")
+
 	if strings.Contains(err.Error(), "missing Name") ||
 		strings.Contains(err.Error(), "missing Close") {
 		t.Errorf("error should blame only Init: %v", err)
@@ -470,7 +489,9 @@ func TestRegisterRejectsServiceMissingInit(t *testing.T) {
 // Name() string and are registered as ordinary dependencies.
 func TestBareNameMethodIsNotAService(t *testing.T) {
 	w := gas.NewWorker(gas.WithServiceInstance[*plainDep](&plainDep{id: "config-provider"}))
-	if err := w.InitServices(context.Background()); err != nil {
+
+	err := w.Start(context.Background())
+	if err != nil {
 		t.Fatalf("a type with only Name() was rejected: %v", err)
 	}
 }
@@ -481,7 +502,9 @@ func TestPlainDependenciesAreUnaffected(t *testing.T) {
 		gas.WithSingletonService[*plainDep2](func() *plainDep2 { return &plainDep2{} }),
 		gas.WithTransientService[*plainDep3](func() *plainDep3 { return &plainDep3{} }),
 	)
-	if err := w.InitServices(context.Background()); err != nil {
+
+	err := w.Start(context.Background())
+	if err != nil {
 		t.Fatalf("plain dependencies rejected: %v", err)
 	}
 }
@@ -495,9 +518,12 @@ type (
 func TestCompleteServiceStillInitializes(t *testing.T) {
 	svc := &testService{name: "complete"}
 	w := gas.NewWorker(gas.WithServiceInstance[*testService](svc))
-	if err := w.InitServices(context.Background()); err != nil {
-		t.Fatalf("InitServices: %v", err)
+
+	err := w.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
 	}
+
 	if got := w.ActiveServices(); len(got) != 2 || !slices.Contains(got, "complete") {
 		t.Errorf("ActiveServices = %v, want [gas/eventbus, complete]", got)
 	}

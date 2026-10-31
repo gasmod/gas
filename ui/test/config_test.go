@@ -18,6 +18,11 @@ import (
 	"github.com/gasmod/gas/ui"
 )
 
+// The config module's *config.Config satisfies gas.ConfigProvider, which
+// core defines with the same methods so that neither module imports the
+// other. This module requires both, so the check lives here.
+var _ gas.ConfigProvider = (*config.Config)(nil)
+
 // provider returns a configuration holding kv.
 func provider(t *testing.T, kv map[string]any) *config.Config {
 	t.Helper()

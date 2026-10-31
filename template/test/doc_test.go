@@ -43,7 +43,7 @@ func TestDoc_Usage(t *testing.T) {
 	require.ErrorIs(t, err, template.ErrTemplateNotFound)
 
 	w := gas.NewWorker(gas.WithSingletonService[gas.TemplateProvider](memory.NewStore()))
-	require.NoError(t, w.InitServices(ctx))
+	require.NoError(t, w.Start(ctx))
 }
 
 // denyFS is a file system that fails to open one path with
