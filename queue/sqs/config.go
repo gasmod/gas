@@ -1,57 +1,137 @@
 package sqs
 
 import (
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/url"
 	"time"
-
-	"github.com/gasmod/gas"
 )
 
 const (
-	defaultRegion            = "us-east-1"
-	defaultVisibilityTimeout = 30 * time.Second
-	defaultWaitTimeSeconds   = 20
+	// DefaultOpTimeout is the bound of each request of DefaultConfig, and
+	// what a Dequeue may take past its wait.
+	DefaultOpTimeout = 10 * time.Second
+	// DefaultVisibilityTimeout is the visibility timeout of Dequeue in
+	// DefaultConfig: 0, the queue's own.
+	DefaultVisibilityTimeout time.Duration = 0
+	// DefaultMaxRetries is how many times DefaultConfig retries a failed
+	// request: 2, so 3 attempts, as the AWS SDK's standard retryer makes
+	// by default.
+	DefaultMaxRetries = 2
+	// MaxRetries is the most retries the MaxRetries setting allows.
+	MaxRetries = 10
 )
 
-// Config holds SQS queue settings.
+// Config holds the SQS store's configuration, read from the `queue`
+// section.
 type Config struct {
-	gas.WithGasEnv
-
+	// Queue holds the settings.
 	Queue Settings
 }
 
-// Settings represents the configuration for the SQS queue service.
+// Settings are the SQS store's settings, as described in the package
+// documentation.
 type Settings struct {
-	// Region is the AWS region for the SQS service. Required.
-	Region string `validate:"required"`
-
-	// Endpoint is an optional custom endpoint URL (e.g. for LocalStack).
-	// Empty means use the default AWS endpoint.
+	// Region is the AWS region; empty leaves it to the AWS SDK's default
+	// chain.
+	Region string
+	// Endpoint is the URL requests go to, such as an emulator's; empty is
+	// the region's SQS endpoint.
 	Endpoint string
-
-	// AccessKeyID is the AWS access key ID for static credentials.
-	// If empty, the default AWS credential chain is used.
+	// AccessKeyID is the access key ID of static credentials, used only
+	// with SecretAccessKey. It is not a secret, but an identifier that
+	// maps to the AWS account ID, so the store never logs it.
 	AccessKeyID string
-
-	// SecretAccessKey is the AWS secret access key for static credentials.
-	// If empty, the default AWS credential chain is used.
-	SecretAccessKey string
-
-	// VisibilityTimeout is how long a dequeued message stays invisible
-	// to other consumers. SQS max is 12 hours. Must not be negative.
-	VisibilityTimeout time.Duration `validate:"gte=0s"`
-
-	// WaitTimeSeconds is the long-poll duration for ReceiveMessage calls.
-	// Must be 0-20 (SQS hard limit).
-	WaitTimeSeconds int `validate:"min=0,max=20"`
+	// SecretAccessKey is the secret access key of static credentials,
+	// used only with AccessKeyID. It prints, marshals and logs as
+	// `[redacted]`.
+	SecretAccessKey Secret
+	// SessionToken is the session token of temporary static credentials.
+	// It prints, marshals and logs as `[redacted]`.
+	SessionToken Secret
+	// OpTimeout bounds each request, and a Dequeue past its wait.
+	OpTimeout time.Duration `validate:"gt=0"`
+	// VisibilityTimeout is how long a message Dequeue returns stays
+	// hidden: 0 is the queue's own, else 1s to 12h.
+	VisibilityTimeout time.Duration `validate:"min=0,max=12h"`
+	// MaxRetries is how many times a failed request is retried.
+	MaxRetries int `validate:"min=0,max=10"`
 }
 
-// DefaultConfig returns a Config with sensible defaults.
+// redacted is what a Secret prints, marshals and logs as.
+const redacted = "[redacted]"
+
+// Secret is a string that is never printed, marshaled or logged, such as
+// Settings.SecretAccessKey: String returns `[redacted]`, and Format writes
+// it for every verb, so `%v`, `%+v` and `%#v` of a Settings or a Config
+// hide it; MarshalText returns it, so encoding/json and YAML encoders
+// that use encoding.TextMarshaler write it; and LogValue returns it, so
+// log/slog logs it. Configuration binds into it as into a string, and
+// string(s) is the value.
+type Secret string
+
+var (
+	_ fmt.Formatter  = Secret("")
+	_ slog.LogValuer = Secret("")
+)
+
+// String returns `[redacted]`, never the value.
+func (Secret) String() string { return redacted }
+
+// Format writes `[redacted]`, never the value, whatever the verb.
+func (Secret) Format(f fmt.State, _ rune) {
+	// fmt's State writes to fmt's own buffer, which does not fail.
+	_, _ = io.WriteString(f, redacted)
+}
+
+// MarshalText returns `[redacted]`, never the value.
+func (Secret) MarshalText() ([]byte, error) { return []byte(redacted), nil }
+
+// LogValue returns `[redacted]`, never the value.
+func (Secret) LogValue() slog.Value { return slog.StringValue(redacted) }
+
+// DefaultConfig returns the configuration a store starts from before
+// binding: no region, no endpoint, no static credentials,
+// DefaultOpTimeout, DefaultVisibilityTimeout and DefaultMaxRetries.
 func DefaultConfig() *Config {
 	return &Config{
 		Queue: Settings{
-			Region:            defaultRegion,
-			VisibilityTimeout: defaultVisibilityTimeout,
-			WaitTimeSeconds:   defaultWaitTimeSeconds,
+			OpTimeout:         DefaultOpTimeout,
+			VisibilityTimeout: DefaultVisibilityTimeout,
+			MaxRetries:        DefaultMaxRetries,
 		},
 	}
+}
+
+// The rule errors name the settings, never their values.
+var (
+	// errSubSecond reports a visibility timeout between 0 and a second.
+	errSubSecond = errors.New("Queue.VisibilityTimeout must be 0 or 1s to 12h")
+	// errEndpoint reports an endpoint that is not an http or https URL
+	// with a host and without user information.
+	errEndpoint = errors.New(
+		"Queue.Endpoint must be an http or https URL with a host and no user information",
+	)
+)
+
+// rules checks what the validate tags cannot express, in the order the
+// package documentation lists them.
+func rules(cfg *Config) error {
+	s := &cfg.Queue
+
+	if s.VisibilityTimeout > 0 && s.VisibilityTimeout < time.Second {
+		return errSubSecond
+	}
+
+	if s.Endpoint != "" {
+		u, err := url.Parse(s.Endpoint)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
+			u.User != nil {
+			return errEndpoint
+		}
+	}
+
+	return nil
 }

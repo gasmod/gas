@@ -1,181 +1,226 @@
-package test
+package queuetest_test
 
 import (
 	"context"
 	"errors"
-	"reflect"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/queue/queuetest"
 )
 
-// mockCase drives one MockQueue method: call invokes it, setErr installs an
-// Fn that returns err and records that it ran, and args are the arguments the
-// mock must record.
-type mockCase struct {
-	call   func(m *queuetest.MockQueue) error
-	setErr func(m *queuetest.MockQueue, err error, ran *bool)
-	method string
-	args   []any
-}
+// errFake is an error a field returns.
+var errFake = errors.New("fake")
 
-func mockCases() []mockCase {
-	ctx := context.Background()
-	payload := []byte("payload")
-	job := gas.Job{ID: "id-1", ReceiptHandle: "rh-1"}
-
-	return []mockCase{
-		{
-			method: "Enqueue",
-			args:   []any{"q", payload, []gas.EnqueueOption(nil)},
-			call:   func(m *queuetest.MockQueue) error { return m.Enqueue(ctx, "q", payload) },
-			setErr: func(m *queuetest.MockQueue, err error, ran *bool) {
-				m.EnqueueFn = func(context.Context, string, []byte, ...gas.EnqueueOption) error {
-					*ran = true
-					return err
-				}
-			},
-		},
-		{
-			method: "Dequeue",
-			args:   []any{"q", 5, time.Second},
-			call: func(m *queuetest.MockQueue) error {
-				_, err := m.Dequeue(ctx, "q", 5, time.Second)
-				return err
-			},
-			setErr: func(m *queuetest.MockQueue, err error, ran *bool) {
-				m.DequeueFn = func(context.Context, string, int, time.Duration) ([]gas.Job, error) {
-					*ran = true
-					return nil, err
-				}
-			},
-		},
-		{
-			method: "Ack",
-			args:   []any{"q", job},
-			call:   func(m *queuetest.MockQueue) error { return m.Ack(ctx, "q", job) },
-			setErr: func(m *queuetest.MockQueue, err error, ran *bool) {
-				m.AckFn = func(context.Context, string, gas.Job) error {
-					*ran = true
-					return err
-				}
-			},
-		},
-		{
-			method: "Nack",
-			args:   []any{"q", job},
-			call:   func(m *queuetest.MockQueue) error { return m.Nack(ctx, "q", job) },
-			setErr: func(m *queuetest.MockQueue, err error, ran *bool) {
-				m.NackFn = func(context.Context, string, gas.Job) error {
-					*ran = true
-					return err
-				}
-			},
-		},
-	}
-}
-
-func TestMockQueue_Methods(t *testing.T) {
+// With every field nil, the mock is an empty queue that accepts
+// everything: Dequeue returns no jobs, the rest return nil.
+func TestMockQueue_Defaults(t *testing.T) {
 	t.Parallel()
 
-	for _, tc := range mockCases() {
-		t.Run(tc.method, func(t *testing.T) {
-			t.Parallel()
+	m := &queuetest.MockQueue{}
+	ctx := t.Context()
 
-			m := &queuetest.MockQueue{}
-			if err := tc.call(m); err != nil {
-				t.Errorf("default %s = %v, want nil", tc.method, err)
-			}
-			if len(m.Calls) != 1 || m.Calls[0].Method != tc.method {
-				t.Fatalf("Calls = %+v, want one %s call", m.Calls, tc.method)
-			}
-			if !reflect.DeepEqual(m.Calls[0].Args, tc.args) {
-				t.Errorf("recorded args = %#v, want %#v", m.Calls[0].Args, tc.args)
-			}
+	jobs, err := m.Dequeue(ctx, "q", 10, time.Second)
+	require.NoError(t, err)
+	assert.Empty(t, jobs)
 
-			wantErr := errors.New("injected")
-			var ran bool
-			tc.setErr(m, wantErr, &ran)
-			if err := tc.call(m); !errors.Is(err, wantErr) {
-				t.Errorf("%s with Fn = %v, want %v", tc.method, err, wantErr)
-			}
-			if !ran {
-				t.Errorf("%s did not call its Fn", tc.method)
-			}
-			if got := m.CallCount(tc.method); got != 2 {
-				t.Errorf("CallCount(%s) = %d, want 2", tc.method, got)
-			}
-		})
-	}
+	require.NoError(t, m.Enqueue(ctx, "q", []byte("v")))
+	require.NoError(t, m.Ack(ctx, "q", gas.Job{}))
+	require.NoError(t, m.Nack(ctx, "q", gas.Job{}))
 }
 
-func TestMockQueue_DequeueReturnsFnJobs(t *testing.T) {
+// Each method returns what its field returns, given the arguments.
+func TestMockQueue_Fields(t *testing.T) {
 	t.Parallel()
 
-	want := []gas.Job{{ID: "a"}, {ID: "b"}}
+	var got []any
+
+	want := []gas.Job{{ID: "1", ReceiptHandle: "r1", Body: []byte("hello")}}
 	m := &queuetest.MockQueue{
-		DequeueFn: func(context.Context, string, int, time.Duration) ([]gas.Job, error) {
+		EnqueueFn: func(_ context.Context, q string, payload []byte, opts ...gas.EnqueueOption) error {
+			got = append(got, q, string(payload), len(opts))
+
+			return errFake
+		},
+		DequeueFn: func(_ context.Context, q string, maxMessages int, wait time.Duration) ([]gas.Job, error) {
+			got = append(got, q, maxMessages, wait)
+
 			return want, nil
 		},
+		AckFn: func(_ context.Context, q string, job gas.Job) error {
+			got = append(got, q, job.ID)
+
+			return errFake
+		},
+		NackFn: func(_ context.Context, q string, job gas.Job) error {
+			got = append(got, q, job.ID)
+
+			return errFake
+		},
 	}
-	got, err := m.Dequeue(context.Background(), "q", 2, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("Dequeue = %+v, want %+v", got, want)
-	}
+	ctx := t.Context()
+
+	require.ErrorIs(t, m.Enqueue(ctx, "e", []byte("x"), gas.WithDelay(time.Second)), errFake)
+
+	jobs, err := m.Dequeue(ctx, "d", 10, 20*time.Second)
+	require.NoError(t, err)
+	assert.Equal(t, want, jobs)
+	require.ErrorIs(t, m.Ack(ctx, "a", gas.Job{ID: "1"}), errFake)
+	require.ErrorIs(t, m.Nack(ctx, "n", gas.Job{ID: "2"}), errFake)
+	assert.Equal(t, []any{"e", "x", 1, "d", 10, 20 * time.Second, "a", "1", "n", "2"}, got)
 }
 
-func TestMockQueue_CallCountAndReset(t *testing.T) {
+// Calls records each call with its arguments after the context, the
+// options resolved, and the payload, attributes and jobs as copies, and
+// returns a copy; CallCount counts one method's; Reset forgets them.
+//
+//nolint:funlen // every method's call, checked whole.
+func TestMockQueue_Calls(t *testing.T) {
 	t.Parallel()
 
 	m := &queuetest.MockQueue{}
-	ctx := context.Background()
-	_ = m.Enqueue(ctx, "q", nil)
-	_ = m.Enqueue(ctx, "q", nil)
-	_ = m.Ack(ctx, "q", gas.Job{})
+	ctx := t.Context()
+	payload := []byte("abc")
+	attrs := map[string]string{"k": "v"}
+	job := gas.Job{
+		ID:            "1",
+		ReceiptHandle: "r",
+		Attributes:    map[string]string{"a": "b"},
+		Body:          []byte("body"),
+	}
 
-	if got := m.CallCount("Enqueue"); got != 2 {
-		t.Errorf("CallCount(Enqueue) = %d, want 2", got)
+	_ = m.Enqueue(
+		ctx,
+		"q.fifo",
+		payload,
+		gas.WithDelay(
+			time.Second,
+		),
+		gas.WithGroupID("g"),
+		gas.WithDedupeID("d"),
+		gas.WithJobAttributes(attrs),
+	)
+	_ = m.Enqueue(ctx, "q", nil)
+	_, _ = m.Dequeue(ctx, "q", 5, time.Minute)
+	_ = m.Ack(ctx, "q", job)
+	_ = m.Nack(ctx, "q", job)
+
+	payload[0] = 'X'
+	attrs["k"] = "changed"
+	job.Body[0] = 'X'
+	job.Attributes["a"] = "changed"
+
+	recorded := gas.Job{
+		ID:            "1",
+		ReceiptHandle: "r",
+		Attributes:    map[string]string{"a": "b"},
+		Body:          []byte("body"),
 	}
-	if got := m.CallCount("Ack"); got != 1 {
-		t.Errorf("CallCount(Ack) = %d, want 1", got)
-	}
-	if got := m.CallCount("Nack"); got != 0 {
-		t.Errorf("CallCount(Nack) = %d, want 0", got)
-	}
+	calls := m.Calls()
+	assert.Equal(t, []queuetest.Call{
+		{Method: "Enqueue", Args: []any{
+			"q.fifo",
+			[]byte("abc"),
+			queuetest.Options{
+				Attributes: map[string]string{
+					"k": "v",
+				},
+				GroupID:  "g",
+				DedupeID: "d",
+				Delay:    time.Second,
+			},
+		}},
+		{Method: "Enqueue", Args: []any{"q", []byte(nil), queuetest.Options{}}},
+		{Method: "Dequeue", Args: []any{"q", 5, time.Minute}},
+		{Method: "Ack", Args: []any{"q", recorded}},
+		{Method: "Nack", Args: []any{"q", recorded}},
+	}, calls)
+
+	calls[0].Method = "changed"
+
+	assert.Equal(t, "Enqueue", m.Calls()[0].Method)
+	assert.Equal(t, 2, m.CallCount("Enqueue"))
+	assert.Equal(t, 0, m.CallCount("Missing"))
 
 	m.Reset()
-	if len(m.Calls) != 0 || m.CallCount("Enqueue") != 0 {
-		t.Errorf("after Reset, Calls = %+v, want none", m.Calls)
-	}
+	assert.Empty(t, m.Calls())
+	assert.Equal(t, 0, m.CallCount("Enqueue"))
 }
 
-// TestMockQueue_ConcurrentCalls checks, under -race, that the mock records
-// concurrent calls without a data race and loses none.
-func TestMockQueue_ConcurrentCalls(t *testing.T) {
+// Calls returns a deep copy: changing a payload, the attributes of the
+// options or a job it returns, or the arguments slice, changes no
+// recorded call.
+func TestMockQueue_CallsDeepCopy(t *testing.T) {
 	t.Parallel()
 
-	const workers, perWorker = 8, 50
 	m := &queuetest.MockQueue{}
-	ctx := context.Background()
+	ctx := t.Context()
+	job := gas.Job{
+		ReceiptHandle: "r",
+		Attributes:    map[string]string{"a": "b"},
+		Body:          []byte("body"),
+	}
+
+	_ = m.Enqueue(ctx, "q", []byte("abc"), gas.WithJobAttributes(map[string]string{"k": "v"}))
+	_ = m.Ack(ctx, "q", job)
+
+	calls := m.Calls()
+
+	calls[0].Args[1].([]byte)[0] = 'X'
+	calls[0].Args[2].(queuetest.Options).Attributes["k"] = "changed"
+	calls[1].Args[1].(gas.Job).Body[0] = 'X'
+	calls[1].Args[1].(gas.Job).Attributes["a"] = "changed"
+	calls[1].Args[0] = "changed"
+
+	again := m.Calls()
+	assert.Equal(t, []byte("abc"), again[0].Args[1])
+	assert.Equal(t, map[string]string{"k": "v"}, again[0].Args[2].(queuetest.Options).Attributes)
+	assert.Equal(t, job, again[1].Args[1])
+	assert.Equal(t, "q", again[1].Args[0])
+}
+
+// The mock may be called from several goroutines at once, which -race
+// checks.
+func TestMockQueue_Concurrent(t *testing.T) {
+	t.Parallel()
+
+	m := &queuetest.MockQueue{}
 
 	var wg sync.WaitGroup
-	for range workers {
+
+	for range 8 {
 		wg.Go(func() {
-			for range perWorker {
-				_ = m.Enqueue(ctx, "q", nil)
+			for range 50 {
+				_ = m.Enqueue(t.Context(), "q", []byte("v"))
+				_, _ = m.Dequeue(t.Context(), "q", 1, 0)
 				_ = m.CallCount("Enqueue")
+				_ = m.Calls()
 			}
 		})
 	}
-	wg.Wait()
 
-	if got := m.CallCount("Enqueue"); got != workers*perWorker {
-		t.Errorf("CallCount(Enqueue) = %d, want %d", got, workers*perWorker)
+	wg.Wait()
+	assert.Equal(t, 400, m.CallCount("Enqueue"))
+}
+
+// The example in the package documentation's Usage section.
+func TestDoc_Usage(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	m := &queuetest.MockQueue{
+		DequeueFn: func(context.Context, string, int, time.Duration) ([]gas.Job, error) {
+			return []gas.Job{{ID: "1", ReceiptHandle: "r1", Body: []byte("hello")}}, nil
+		},
 	}
+	jobs, err := m.Dequeue(ctx, "orders", 10, 20*time.Second)
+
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	assert.Equal(t, 1, m.CallCount("Dequeue"))
 }
