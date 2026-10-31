@@ -1,157 +1,90 @@
-package test
+package memory_test
 
 import (
-	"context"
-	"errors"
-	"fmt"
 	"testing"
 	"testing/fstest"
 
-	template "github.com/gasmod/gas/template"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/gasmod/gas"
+	"github.com/gasmod/gas/template"
+	"github.com/gasmod/gas/template/internal/conformance"
 	"github.com/gasmod/gas/template/memory"
 )
 
-func TestRegisterAndGet(t *testing.T) {
+// The memory store keeps the contract of the template package.
+func TestStore_Conformance(t *testing.T) {
 	t.Parallel()
-	s := memory.NewStore()
 
-	if err := s.Register(
-		context.Background(),
-		"emails/welcome.html",
-		[]byte("<h1>Welcome</h1>"),
-	); err != nil {
-		t.Fatalf("s.Register() error: %v", err)
-	}
+	conformance.Run(t, conformance.Subject{
+		New: func(t *testing.T, seed fstest.MapFS) gas.TemplateProvider {
+			t.Helper()
 
-	got, err := s.Get(context.Background(), "emails/welcome.html")
-	if err != nil {
-		t.Fatalf("Get() error: %v", err)
-	}
-	if string(got) != "<h1>Welcome</h1>" {
-		t.Errorf("Get() = %q, want %q", got, "<h1>Welcome</h1>")
-	}
+			s, err := memory.NewStore(memory.WithExtensions(conformance.Extensions...))()
+			require.NoError(t, err)
+			require.NoError(t, s.RegisterFS(t.Context(), seed))
+
+			return s
+		},
+	})
 }
 
-func TestGetNotFound(t *testing.T) {
+// A store accepts `.html` unless WithExtensions gives it others.
+func TestNewStore_DefaultExtension(t *testing.T) {
 	t.Parallel()
-	s := memory.NewStore()
 
-	_, err := s.Get(context.Background(), "nonexistent")
-	if !errors.Is(err, template.ErrTemplateNotFound) {
-		t.Errorf("Get() error = %v, want %v", err, template.ErrTemplateNotFound)
-	}
+	s, err := memory.NewStore()()
+	require.NoError(t, err)
+
+	require.NoError(t, s.Register(t.Context(), "a.html", nil))
+
+	err = s.Register(t.Context(), "a.txt", nil)
+	require.ErrorIs(t, err, template.ErrInvalidName)
+	require.EqualError(t, err, "template: invalid name: extension not allowed")
 }
 
-func TestRegisterOverwrite(t *testing.T) {
+// The constructor refuses a bad extension set.
+func TestNewStore_InvalidExtensions(t *testing.T) {
 	t.Parallel()
-	s := memory.NewStore()
 
-	if err := s.Register(context.Background(), "page.html", []byte("v1")); err != nil {
-		t.Fatalf("s.Register() error: %v", err)
-	}
-	if err := s.Register(context.Background(), "page.html", []byte("v2")); err != nil {
-		t.Fatalf("s.Register() error: %v", err)
-	}
+	_, err := memory.NewStore(memory.WithExtensions())()
+	require.ErrorIs(t, err, template.ErrInvalidExtension)
+	require.EqualError(t, err, "template: invalid extension: none given")
 
-	got, err := s.Get(context.Background(), "page.html")
-	if err != nil {
-		t.Fatalf("Get() error: %v", err)
-	}
-	if string(got) != "v2" {
-		t.Errorf("Get() = %q, want %q", got, "v2")
-	}
+	_, err = memory.NewStore(memory.WithExtensions(".html", "txt"))()
+	require.ErrorIs(t, err, template.ErrInvalidExtension)
 }
 
-func TestList(t *testing.T) {
+// WithExtensions copies its arguments, so changing the caller's slice
+// afterwards changes nothing.
+func TestWithExtensions_Copies(t *testing.T) {
 	t.Parallel()
-	s := memory.NewStore()
 
-	if err := s.Register(context.Background(), "b.html", []byte("b")); err != nil {
-		t.Fatalf("s.Register() error: %v", err)
-	}
-	if err := s.Register(context.Background(), "a.html", []byte("a")); err != nil {
-		t.Fatalf("s.Register() error: %v", err)
-	}
-	if err := s.Register(context.Background(), "c.html", []byte("c")); err != nil {
-		t.Fatalf("s.Register() error: %v", err)
-	}
+	exts := []string{".txt"}
+	ctor := memory.NewStore(memory.WithExtensions(exts...))
 
-	names, err := s.List(context.Background())
-	if err != nil {
-		t.Fatalf("List() error: %v", err)
-	}
-	if len(names) != 3 {
-		t.Fatalf("List() returned %d names, want 3", len(names))
-	}
-	if names[0] != "a.html" || names[1] != "b.html" || names[2] != "c.html" {
-		t.Errorf("List() = %v, want [a.html b.html c.html]", names)
-	}
+	exts[0] = ".html"
+
+	s, err := ctor()
+	require.NoError(t, err)
+	require.NoError(t, s.Register(t.Context(), "a.txt", nil))
+	require.ErrorIs(t, s.Register(t.Context(), "a.html", nil), template.ErrInvalidName)
 }
 
-func TestListEmpty(t *testing.T) {
+// Get returns a copy, so changing the content Register was given after the
+// call changes nothing, which the old store did not do (survey P1).
+func TestStore_RegisterAliasing(t *testing.T) {
 	t.Parallel()
-	s := memory.NewStore()
 
-	names, err := s.List(context.Background())
-	if err != nil {
-		t.Fatalf("List() error: %v", err)
-	}
-	if len(names) != 0 {
-		t.Errorf("List() returned %d names, want 0", len(names))
-	}
-}
+	s, err := memory.NewStore()()
+	require.NoError(t, err)
 
-func TestConcurrentAccess(t *testing.T) {
-	t.Parallel()
-	s := memory.NewStore()
+	content := []byte("hello")
+	require.NoError(t, s.Register(t.Context(), "a.html", content))
+	copy(content, "JX")
 
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for i := range 100 {
-			if err := s.Register(
-				context.Background(),
-				fmt.Sprintf("t%d.html", i),
-				[]byte("content"),
-			); err != nil {
-				t.Errorf("s.Register() error: %v", err)
-				return
-			}
-		}
-	}()
-
-	for range 100 {
-		_, _ = s.Get(context.Background(), "t0.html")
-		_, _ = s.List(context.Background())
-	}
-	<-done
-}
-
-func TestRegisterFS(t *testing.T) {
-	t.Parallel()
-	s := memory.NewStore()
-
-	fsys := fstest.MapFS{
-		"layouts/base.html":    {Data: []byte("<html>{{block \"content\" .}}{{end}}</html>")},
-		"partials/header.html": {Data: []byte("<header>Header</header>")},
-		"home.html":            {Data: []byte("{{define \"content\"}}Home{{end}}")},
-		"readme.md":            {Data: []byte("# Readme")}, // should be skipped
-	}
-
-	if err := s.RegisterFS(context.Background(), fsys); err != nil {
-		t.Fatalf("RegisterFS() error: %v", err)
-	}
-
-	names, _ := s.List(context.Background())
-	if len(names) != 3 {
-		t.Fatalf("List() returned %d names, want 3 (non-.html should be skipped)", len(names))
-	}
-
-	got, err := s.Get(context.Background(), "layouts/base.html")
-	if err != nil {
-		t.Fatalf("Get() error: %v", err)
-	}
-	if string(got) != "<html>{{block \"content\" .}}{{end}}</html>" {
-		t.Errorf("Get() unexpected content: %q", got)
-	}
+	b, err := s.Get(t.Context(), "a.html")
+	require.NoError(t, err)
+	assert.Equal(t, "hello", string(b))
 }

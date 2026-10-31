@@ -1,746 +1,504 @@
-package test
+package db_test
 
 import (
 	"context"
 	"database/sql"
 	"errors"
-	"io/fs"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 
-	_ "modernc.org/sqlite"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/gasmod/gas"
-	template "github.com/gasmod/gas/template"
-	templatedb "github.com/gasmod/gas/template/db"
+	"github.com/gasmod/gas/database"
+	"github.com/gasmod/gas/migrate/migratetest"
+	"github.com/gasmod/gas/template"
+	"github.com/gasmod/gas/template/db"
+	"github.com/gasmod/gas/template/internal/conformance"
 )
 
-// ---------------------------------------------------------------------------
-// Test helpers
-// ---------------------------------------------------------------------------
-
-var nopLog gas.Logger = &gas.NopLogger{}
-
-// mockDB satisfies gas.DatabaseProvider for tests.
-type mockDB struct {
-	db     *sql.DB
-	driver string
-}
-
-func (m *mockDB) DB() *sql.DB    { return m.db }
-func (m *mockDB) Driver() string { return m.driver }
-
-func (m *mockDB) Ping(context.Context) error { return nil }
-
-func (m *mockDB) Query(_ context.Context, _ string, _ ...any) (gas.Rows, error) {
-	return nil, nil
-}
-
-func (m *mockDB) Exec(_ context.Context, _ string, _ ...any) (gas.Result, error) {
-	return nil, nil
-}
-
-func (m *mockDB) BeginTx(_ context.Context, _ *sql.TxOptions) (*sql.Tx, error) {
-	return nil, nil
-}
-
-func (m *mockDB) WithTx(_ context.Context, _ *sql.TxOptions, _ func(*sql.Tx) error) error {
-	return nil
-}
-
-// mockMigrationMgr satisfies gas.MigrationManager for tests.
-// It records registered migrations, and the name of the service that
-// registered each, without executing them.
-type mockMigrationMgr struct {
-	migrations []gas.Migration
-	services   []string
-}
-
-func (m *mockMigrationMgr) Name() string                { return "mock-migrate" }
-func (m *mockMigrationMgr) Init(context.Context) error  { return nil }
-func (m *mockMigrationMgr) Close(context.Context) error { return nil }
-func (m *mockMigrationMgr) RunPending() error           { return nil }
-func (m *mockMigrationMgr) Down(_ int) error            { return nil }
-
-func (m *mockMigrationMgr) Register(svc gas.Service, migration gas.Migration) {
-	m.migrations = append(m.migrations, migration)
-	m.services = append(m.services, svc.Name())
-}
-
-func (m *mockMigrationMgr) RegisterSlice(_ gas.Service, migrations []gas.Migration) {
-	m.migrations = append(m.migrations, migrations...)
-}
-
-func (m *mockMigrationMgr) RegisterFS(_ gas.Service, _ fs.FS) error { return nil }
-
-// nopMigrationMgr is a shared, read-only-safe mock for tests that don't
-// inspect registered migrations. Each call to Register is a no-op.
-var nopMigrationMgr gas.MigrationManager = &mockMigrationMgr{}
-
-// sqliteSchema returns the SQLite up migration a Store registers on Init.
-func sqliteSchema(t *testing.T) string {
-	t.Helper()
-	mgr := &mockMigrationMgr{}
-	s, err := templatedb.NewStore()(&mockDB{driver: "sqlite"}, nopLog, mgr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Init(t.Context()); err != nil {
-		t.Fatalf("Init(): %v", err)
-	}
-	return mgr.migrations[0].Up
-}
-
-// openTestDB creates an in-memory SQLite database with the templates table
-// and returns a fully initialized Store.
-func openTestDB(t *testing.T) *templatedb.Store {
-	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	// Create schema — in production this is handled by gas/migrate running
-	// the registered migration, but in tests we apply it directly.
-	if _, err = db.Exec(sqliteSchema(t)); err != nil {
-		t.Fatalf("create schema: %v", err)
-	}
-
-	mgr := &mockMigrationMgr{}
-	s, err := templatedb.NewStore()(&mockDB{db: db, driver: "sqlite"}, nopLog, mgr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Init(t.Context()); err != nil {
-		t.Fatalf("Init(): %v", err)
-	}
-	return s
-}
-
-// ---------------------------------------------------------------------------
-// Mock querier for isolated unit tests
-// ---------------------------------------------------------------------------
-
-//type stubQuerier struct {
-//	getTemplateContentFn func(ctx context.Context, namespace, name string) ([]byte, error)
-//	listTemplatesFn      func(ctx context.Context, namespace string) ([]string, error)
-//	upsertTemplateFn     func(ctx context.Context, namespace, name string, content []byte) error
-//	templateExistsFn     func(ctx context.Context, namespace, name string) (bool, error)
-//	deleteTemplateFn     func(ctx context.Context, namespace, name string) (int64, error)
-//}
-
-//func (s *stubQuerier) getTemplateContent(ctx context.Context, ns, name string) ([]byte, error) {
-//	return s.getTemplateContentFn(ctx, ns, name)
-//}
-
-//func (s *stubQuerier) listTemplates(ctx context.Context, ns string) ([]string, error) {
-//	return s.listTemplatesFn(ctx, ns)
-//}
-
-//func (s *stubQuerier) upsertTemplate(ctx context.Context, ns, name string, content []byte) error {
-//	return s.upsertTemplateFn(ctx, ns, name, content)
-//}
-
-//func (s *stubQuerier) templateExists(ctx context.Context, ns, name string) (bool, error) {
-//	return s.templateExistsFn(ctx, ns, name)
-//}
-
-//func (s *stubQuerier) deleteTemplate(ctx context.Context, ns, name string) (int64, error) {
-//	return s.deleteTemplateFn(ctx, ns, name)
-//}
-
-//func newStubStore(q *stubQuerier) *templatedb.Store {
-//	return &templatedb.Store{
-//		q:         q,
-//		namespace: "default",
-//		logger:    nopLog,
-//	}
-//}
-
-// ---------------------------------------------------------------------------
-// Unit tests (stub querier)
-// ---------------------------------------------------------------------------
-
-//func TestGetReturnsContent(t *testing.T) {
-//	t.Parallel()
-//	s := newStubStore(&stubQuerier{
-//		getTemplateContentFn: func(_ context.Context, _, _ string) ([]byte, error) {
-//			return []byte("<h1>Hi</h1>"), nil
-//		},
-//	})
-//
-//	got, err := s.Get(context.Background(), "page.html")
-//	if err != nil {
-//		t.Fatalf("Get() error: %v", err)
-//	}
-//	if string(got) != "<h1>Hi</h1>" {
-//		t.Errorf("Get() = %q, want %q", got, "<h1>Hi</h1>")
-//	}
-//}
-
-//func TestGetNotFoundReturnsSentinel(t *testing.T) {
-//	t.Parallel()
-//	s := newStubStore(&stubQuerier{
-//		getTemplateContentFn: func(_ context.Context, _, _ string) ([]byte, error) {
-//			return nil, sql.ErrNoRows
-//		},
-//	})
-//
-//	_, err := s.Get(context.Background(), "missing.html")
-//	if !errors.Is(err, template.ErrTemplateNotFound) {
-//		t.Errorf("Get() error = %v, want %v", err, template.ErrTemplateNotFound)
-//	}
-//}
-
-//func TestGetWrapsDBError(t *testing.T) {
-//	t.Parallel()
-//	dbErr := errors.New("connection refused")
-//	s := newStubStore(&stubQuerier{
-//		getTemplateContentFn: func(_ context.Context, _, _ string) ([]byte, error) {
-//			return nil, dbErr
-//		},
-//	})
-//
-//	_, err := s.Get(context.Background(), "page.html")
-//	if err == nil {
-//		t.Fatal("Get() expected error, got nil")
-//	}
-//	if !errors.Is(err, dbErr) {
-//		t.Errorf("Get() error should wrap underlying error; got %v", err)
-//	}
-//	if errors.Is(err, template.ErrTemplateNotFound) {
-//		t.Error("Get() non-ErrNoRows error should not be ErrTemplateNotFound")
-//	}
-//}
-
-//func TestListReturnsNames(t *testing.T) {
-//	t.Parallel()
-//	s := newStubStore(&stubQuerier{
-//		listTemplatesFn: func(_ context.Context, _ string) ([]string, error) {
-//			return []string{"a.html", "b.html"}, nil
-//		},
-//	})
-//
-//	names, err := s.List(context.Background())
-//	if err != nil {
-//		t.Fatalf("List() error: %v", err)
-//	}
-//	if len(names) != 2 || names[0] != "a.html" || names[1] != "b.html" {
-//		t.Errorf("List() = %v, want [a.html b.html]", names)
-//	}
-//}
-
-//func TestListWrapsDBError(t *testing.T) {
-//	t.Parallel()
-//	dbErr := errors.New("timeout")
-//	s := newStubStore(&stubQuerier{
-//		listTemplatesFn: func(_ context.Context, _ string) ([]string, error) {
-//			return nil, dbErr
-//		},
-//	})
-//
-//	_, err := s.List(context.Background())
-//	if !errors.Is(err, dbErr) {
-//		t.Errorf("List() error should wrap underlying error; got %v", err)
-//	}
-//}
-
-//func TestExistsReturnsTrue(t *testing.T) {
-//	t.Parallel()
-//	s := newStubStore(&stubQuerier{
-//		templateExistsFn: func(_ context.Context, _, _ string) (bool, error) {
-//			return true, nil
-//		},
-//	})
-//
-//	exists, err := s.Exists("page.html")
-//	if err != nil {
-//		t.Fatalf("Exists() error: %v", err)
-//	}
-//	if !exists {
-//		t.Error("Exists() = false, want true")
-//	}
-//}
-
-//func TestExistsReturnsFalse(t *testing.T) {
-//	t.Parallel()
-//	s := newStubStore(&stubQuerier{
-//		templateExistsFn: func(_ context.Context, _, _ string) (bool, error) {
-//			return false, nil
-//		},
-//	})
-//
-//	exists, err := s.Exists("missing.html")
-//	if err != nil {
-//		t.Fatalf("Exists() error: %v", err)
-//	}
-//	if exists {
-//		t.Error("Exists() = true, want false")
-//	}
-//}
-
-//func TestExistsWrapsDBError(t *testing.T) {
-//	t.Parallel()
-//	dbErr := errors.New("disk I/O")
-//	s := newStubStore(&stubQuerier{
-//		templateExistsFn: func(_ context.Context, _, _ string) (bool, error) {
-//			return false, dbErr
-//		},
-//	})
-//
-//	_, err := s.Exists("page.html")
-//	if !errors.Is(err, dbErr) {
-//		t.Errorf("Exists() error should wrap underlying error; got %v", err)
-//	}
-//}
-
-//func TestDeleteSuccess(t *testing.T) {
-//	t.Parallel()
-//	s := newStubStore(&stubQuerier{
-//		deleteTemplateFn: func(_ context.Context, _, _ string) (int64, error) {
-//			return 1, nil
-//		},
-//	})
-//
-//	if err := s.Delete("page.html"); err != nil {
-//		t.Fatalf("Delete() error: %v", err)
-//	}
-//}
-
-//func TestDeleteNotFound(t *testing.T) {
-//	t.Parallel()
-//	s := newStubStore(&stubQuerier{
-//		deleteTemplateFn: func(_ context.Context, _, _ string) (int64, error) {
-//			return 0, nil
-//		},
-//	})
-//
-//	err := s.Delete("missing.html")
-//	if !errors.Is(err, template.ErrTemplateNotFound) {
-//		t.Errorf("Delete() error = %v, want %v", err, template.ErrTemplateNotFound)
-//	}
-//}
-
-//func TestDeleteWrapsDBError(t *testing.T) {
-//	t.Parallel()
-//	dbErr := errors.New("constraint violation")
-//	s := newStubStore(&stubQuerier{
-//		deleteTemplateFn: func(_ context.Context, _, _ string) (int64, error) {
-//			return 0, dbErr
-//		},
-//	})
-//
-//	err := s.Delete("page.html")
-//	if !errors.Is(err, dbErr) {
-//		t.Errorf("Delete() error should wrap underlying error; got %v", err)
-//	}
-//}
-
-//func TestRegisterWrapsDBError(t *testing.T) {
-//	t.Parallel()
-//	dbErr := errors.New("write failed")
-//	s := newStubStore(&stubQuerier{
-//		upsertTemplateFn: func(_ context.Context, _, _ string, _ []byte) error {
-//			return dbErr
-//		},
-//	})
-//
-//	err := s.Register(context.Background(), "page.html", []byte("content"))
-//	if !errors.Is(err, dbErr) {
-//		t.Errorf("Register() error should wrap underlying error; got %v", err)
-//	}
-//}
-
-func TestInitRegistersMigration(t *testing.T) {
-	t.Parallel()
-	mgr := &mockMigrationMgr{}
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	s, err := templatedb.NewStore()(&mockDB{db: db, driver: "sqlite"}, nopLog, mgr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Init(t.Context()); err != nil {
-		t.Fatalf("Init() error: %v", err)
-	}
-
-	if len(mgr.migrations) != 1 {
-		t.Fatalf("expected 1 registered migration, got %d", len(mgr.migrations))
-	}
-	m := mgr.migrations[0]
-	if m.Version != "20260322235959" {
-		t.Errorf("migration version = %q, want %q", m.Version, "20260322235959")
-	}
-	if m.Up == "" {
-		t.Error("migration Up SQL is empty")
-	}
-	if m.Down == "" {
-		t.Error("migration Down SQL is empty")
-	}
-}
-
-func TestInitUnsupportedDriver(t *testing.T) {
-	t.Parallel()
-	s, err := templatedb.NewStore()(&mockDB{db: nil, driver: "oracle"}, nopLog, nopMigrationMgr)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = s.Init(t.Context())
-	if err == nil {
-		t.Fatal("Init() expected error for unsupported driver, got nil")
-	}
-}
-
-func TestName(t *testing.T) {
-	t.Parallel()
-	s := &templatedb.Store{}
-	if s.Name() != "gas/template/db" {
-		t.Errorf("Name() = %q, want %q", s.Name(), "gas/template/db")
-	}
-}
-
-func TestClose(t *testing.T) {
-	t.Parallel()
-	s := &templatedb.Store{}
-	if err := s.Close(context.Background()); err != nil {
-		t.Errorf("Close() = %v, want nil", err)
-	}
-}
-
-func TestWithNamespace(t *testing.T) {
-	t.Parallel()
-	_, err := templatedb.NewStore(
-		templatedb.WithNamespace("custom"),
-	)(
-		&mockDB{db: nil, driver: "sqlite"},
-		nopLog,
-		nopMigrationMgr,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	//if s.namespace != "custom" {
-	//	t.Errorf("namespace = %q, want %q", s.namespace, "custom")
-	//}
-}
-
-func TestDefaultNamespace(t *testing.T) {
-	t.Parallel()
-	_, err := templatedb.NewStore()(&mockDB{db: nil, driver: "sqlite"}, nopLog, nopMigrationMgr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	//if s.namespace != "default" {
-	//	t.Errorf("namespace = %q, want %q", s.namespace, "default")
-	//}
-}
-
-// ---------------------------------------------------------------------------
-// E2E tests (SQLite in-memory)
-// ---------------------------------------------------------------------------
-
-func TestE2E_RegisterAndGet(t *testing.T) {
-	t.Parallel()
-	s := openTestDB(t)
-
-	_ = s.Register(context.Background(), "emails/welcome.html", []byte("<h1>Welcome</h1>"))
-
-	got, err := s.Get(context.Background(), "emails/welcome.html")
-	if err != nil {
-		t.Fatalf("Get() error: %v", err)
-	}
-	if string(got) != "<h1>Welcome</h1>" {
-		t.Errorf("Get() = %q, want %q", got, "<h1>Welcome</h1>")
-	}
-}
-
-func TestE2E_GetNotFound(t *testing.T) {
-	t.Parallel()
-	s := openTestDB(t)
-
-	_, err := s.Get(context.Background(), "nonexistent")
-	if !errors.Is(err, template.ErrTemplateNotFound) {
-		t.Errorf("Get() error = %v, want %v", err, template.ErrTemplateNotFound)
-	}
-}
-
-func TestE2E_RegisterOverwrite(t *testing.T) {
-	t.Parallel()
-	s := openTestDB(t)
-
-	_ = s.Register(context.Background(), "page.html", []byte("v1"))
-	_ = s.Register(context.Background(), "page.html", []byte("v2"))
-
-	got, err := s.Get(context.Background(), "page.html")
-	if err != nil {
-		t.Fatalf("Get() error: %v", err)
-	}
-	if string(got) != "v2" {
-		t.Errorf("Get() = %q, want %q", got, "v2")
-	}
-}
-
-func TestE2E_List(t *testing.T) {
-	t.Parallel()
-	s := openTestDB(t)
-
-	_ = s.Register(context.Background(), "c.html", []byte("c"))
-	_ = s.Register(context.Background(), "a.html", []byte("a"))
-	_ = s.Register(context.Background(), "b.html", []byte("b"))
-
-	names, err := s.List(context.Background())
-	if err != nil {
-		t.Fatalf("List() error: %v", err)
-	}
-
-	want := []string{"a.html", "b.html", "c.html"}
-	if len(names) != len(want) {
-		t.Fatalf("List() returned %v, want %v", names, want)
-	}
-	for i, n := range names {
-		if n != want[i] {
-			t.Errorf("List()[%d] = %q, want %q", i, n, want[i])
-		}
-	}
-}
-
-func TestE2E_ListEmpty(t *testing.T) {
-	t.Parallel()
-	s := openTestDB(t)
-
-	names, err := s.List(context.Background())
-	if err != nil {
-		t.Fatalf("List() error: %v", err)
-	}
-	if len(names) != 0 {
-		t.Errorf("List() returned %d names, want 0", len(names))
-	}
-}
-
-func TestE2E_Exists(t *testing.T) {
-	t.Parallel()
-	s := openTestDB(t)
-
-	_ = s.Register(context.Background(), "page.html", []byte("content"))
-
-	exists, err := s.Exists("page.html")
-	if err != nil {
-		t.Fatalf("Exists() error: %v", err)
-	}
-	if !exists {
-		t.Error("Exists() = false, want true")
-	}
-}
-
-func TestE2E_ExistsNotFound(t *testing.T) {
-	t.Parallel()
-	s := openTestDB(t)
-
-	exists, err := s.Exists("missing.html")
-	if err != nil {
-		t.Fatalf("Exists() error: %v", err)
-	}
-	if exists {
-		t.Error("Exists() = true, want false")
-	}
-}
-
-func TestE2E_Delete(t *testing.T) {
-	t.Parallel()
-	s := openTestDB(t)
-
-	_ = s.Register(context.Background(), "page.html", []byte("content"))
-
-	if err := s.Delete("page.html"); err != nil {
-		t.Fatalf("Delete() error: %v", err)
-	}
-
-	_, err := s.Get(context.Background(), "page.html")
-	if !errors.Is(err, template.ErrTemplateNotFound) {
-		t.Errorf("Get() after Delete() error = %v, want %v", err, template.ErrTemplateNotFound)
-	}
-}
-
-func TestE2E_DeleteNotFound(t *testing.T) {
-	t.Parallel()
-	s := openTestDB(t)
-
-	err := s.Delete("missing.html")
-	if !errors.Is(err, template.ErrTemplateNotFound) {
-		t.Errorf("Delete() error = %v, want %v", err, template.ErrTemplateNotFound)
-	}
-}
-
-func TestE2E_NamespaceIsolation(t *testing.T) {
-	t.Parallel()
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	if _, execErr := db.Exec(sqliteSchema(t)); execErr != nil {
-		t.Fatalf("create schema: %v", execErr)
-	}
-
-	provider := &mockDB{db: db, driver: "sqlite"}
-
-	nsA, err := templatedb.NewStore(templatedb.WithNamespace("ns-a"))(provider, nopLog, nopMigrationMgr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if initErr := nsA.Init(t.Context()); initErr != nil {
-		t.Fatalf("Init(ns-a): %v", initErr)
-	}
-
-	nsB, err := templatedb.NewStore(templatedb.WithNamespace("ns-b"))(provider, nopLog, nopMigrationMgr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if initErr := nsB.Init(t.Context()); initErr != nil {
-		t.Fatalf("Init(ns-b): %v", initErr)
-	}
-
-	_ = nsA.Register(context.Background(), "page.html", []byte("from A"))
-	_ = nsB.Register(context.Background(), "page.html", []byte("from B"))
-
-	gotA, err := nsA.Get(context.Background(), "page.html")
-	if err != nil {
-		t.Fatalf("nsA.Get(context.Background(),) error: %v", err)
-	}
-	if string(gotA) != "from A" {
-		t.Errorf("nsA.Get(context.Background(),) = %q, want %q", gotA, "from A")
-	}
-
-	gotB, err := nsB.Get(context.Background(), "page.html")
-	if err != nil {
-		t.Fatalf("nsB.Get(context.Background(),) error: %v", err)
-	}
-	if string(gotB) != "from B" {
-		t.Errorf("nsB.Get(context.Background(),) = %q, want %q", gotB, "from B")
-	}
-
-	// Deleting in ns-a should not affect ns-b.
-	if delErr := nsA.Delete("page.html"); delErr != nil {
-		t.Fatalf("nsA.Delete() error: %v", delErr)
-	}
-
-	_, err = nsA.Get(context.Background(), "page.html")
-	if !errors.Is(err, template.ErrTemplateNotFound) {
-		t.Errorf(
-			"nsA.Get(context.Background(),) after delete: error = %v, want %v",
-			err,
-			template.ErrTemplateNotFound,
-		)
-	}
-
-	gotB2, err := nsB.Get(context.Background(), "page.html")
-	if err != nil {
-		t.Fatalf("nsB.Get(context.Background(),) after nsA delete: error: %v", err)
-	}
-	if string(gotB2) != "from B" {
-		t.Errorf("nsB.Get(context.Background(),) after nsA delete = %q, want %q", gotB2, "from B")
-	}
-}
-
-func TestE2E_RegisterFS(t *testing.T) {
-	t.Parallel()
-	s := openTestDB(t)
-
-	fsys := fstest.MapFS{
-		"layouts/base.html":    {Data: []byte("<html>base</html>")},
-		"partials/header.html": {Data: []byte("<header>Header</header>")},
-		"home.html":            {Data: []byte("<h1>Home</h1>")},
-		"readme.md":            {Data: []byte("# Readme")}, // should be skipped
-	}
-
-	if err := s.RegisterFS(context.Background(), fsys); err != nil {
-		t.Fatalf("RegisterFS() error: %v", err)
-	}
-
-	names, err := s.List(context.Background())
-	if err != nil {
-		t.Fatalf("List() error: %v", err)
-	}
-	if len(names) != 3 {
-		t.Fatalf(
-			"List() returned %d names, want 3 (non-.html should be skipped); got %v",
-			len(names),
-			names,
-		)
-	}
-
-	got, err := s.Get(context.Background(), "layouts/base.html")
-	if err != nil {
-		t.Fatalf("Get() error: %v", err)
-	}
-	if string(got) != "<html>base</html>" {
-		t.Errorf("Get() = %q, want %q", got, "<html>base</html>")
-	}
-}
-
-func TestE2E_InitDrivers(t *testing.T) {
-	t.Parallel()
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	// sqlite3 alias should also work.
-	s, err := templatedb.NewStore()(&mockDB{db: db, driver: "sqlite3"}, nopLog, nopMigrationMgr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Init(t.Context()); err != nil {
-		t.Fatalf("Init(sqlite3) error: %v", err)
-	}
-}
-
-// Several stores sharing one database each register the table migration.
-// gas/migrate applies a migration that one service registers more than
-// once only if every copy is identical, so the copies from two stores on
-// one driver must match in service name, version, description, and SQL.
-func TestTwoStoresRegisterIdenticalMigration(t *testing.T) {
+// The db store keeps the contract of the template package on every
+// dialect, each store in a namespace of its own on one database.
+func TestStore_Conformance(t *testing.T) {
 	t.Parallel()
 
-	for _, driver := range []string{"postgres", "pgx", "mysql", "sqlite", "sqlite3"} {
-		t.Run(driver, func(t *testing.T) {
+	for _, b := range backends {
+		t.Run(b.name, func(t *testing.T) {
 			t.Parallel()
-			mgr := &mockMigrationMgr{}
-			db := &mockDB{driver: driver}
 
-			for _, ns := range []string{"emails", "pages"} {
-				s, err := templatedb.NewStore(templatedb.WithNamespace(ns))(db, nopLog, mgr)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := s.Init(t.Context()); err != nil {
-					t.Fatalf("Init() for namespace %q error: %v", ns, err)
-				}
-			}
+			e := newEnv(t, b)
 
-			if len(mgr.migrations) != 2 {
-				t.Fatalf("registered migrations = %d, want 2", len(mgr.migrations))
-			}
-			if mgr.services[0] != mgr.services[1] {
-				t.Errorf(
-					"services = %q and %q, want the same name",
-					mgr.services[0],
-					mgr.services[1],
-				)
-			}
-			a, b := mgr.migrations[0], mgr.migrations[1]
-			if a.Version != b.Version || a.Description != b.Description ||
-				a.Up != b.Up || a.Down != b.Down {
-				t.Errorf("migrations differ:\n%+v\n%+v", a, b)
-			}
+			conformance.Run(t, conformance.Subject{
+				New: func(t *testing.T, seed fstest.MapFS) gas.TemplateProvider {
+					t.Helper()
+
+					return e.conformanceStore(t, seed)
+				},
+			})
 		})
 	}
+}
+
+// The constructor refuses nil dependencies, typed nil pointers included,
+// a bad namespace and a bad extension set.
+func TestNewStore_Errors(t *testing.T) {
+	t.Parallel()
+
+	e := newEnv(t, sqliteBackend)
+	log := &gas.NopLogger{}
+
+	_, err := db.NewStore()(nil, log, e.migrations)
+	require.ErrorIs(t, err, db.ErrNilDatabase)
+
+	_, err = db.NewStore()((*database.Service)(nil), log, e.migrations)
+	require.ErrorIs(t, err, db.ErrNilDatabase)
+
+	_, err = db.NewStore()(e.db, nil, e.migrations)
+	require.ErrorIs(t, err, db.ErrNilLogger)
+
+	_, err = db.NewStore()(e.db, log, nil)
+	require.ErrorIs(t, err, db.ErrNilMigrations)
+
+	for _, ns := range []string{"", "\xff", "a\x00", strings.Repeat("é", 256)} {
+		_, err = db.NewStore(db.WithNamespace(ns))(e.db, log, e.migrations)
+		require.ErrorIs(t, err, db.ErrInvalidNamespace, ns)
+	}
+
+	_, err = db.NewStore(db.WithNamespace(strings.Repeat("é", 255)))(e.db, log, e.migrations)
+	require.NoError(t, err)
+
+	_, err = db.NewStore(db.WithExtensions())(e.db, log, e.migrations)
+	require.ErrorIs(t, err, template.ErrInvalidExtension)
+}
+
+// driverOverride is a provider that reports another driver, or a nil DB.
+type driverOverride struct {
+	*database.Service
+
+	// driver is the driver it reports.
+	driver string
+	// nilDB makes DB return nil.
+	nilDB bool
+}
+
+// Driver returns the driver it reports.
+func (d driverOverride) Driver() string { return d.driver }
+
+// DB returns nil, or the service's DB.
+func (d driverOverride) DB() *sql.DB {
+	if d.nilDB {
+		return nil
+	}
+
+	return d.Service.DB()
+}
+
+// Init refuses a driver it has no SQL for, the dead `pgx` and `sqlite3`
+// names and gas/database's empty driver before its Init included, and a
+// provider whose DB is nil; a failed Init leaves the store uninitialized.
+func TestStore_InitErrors(t *testing.T) {
+	t.Parallel()
+
+	e := newEnv(t, sqliteBackend)
+
+	for _, driver := range []string{"oracle", "pgx", "sqlite3", ""} {
+		s, err := db.NewStore()(
+			driverOverride{Service: e.db, driver: driver},
+			&gas.NopLogger{},
+			e.migrations,
+		)
+		require.NoError(t, err)
+
+		err = s.Init(t.Context())
+		require.ErrorIs(t, err, db.ErrUnsupportedDriver, driver)
+		require.EqualError(
+			t,
+			err,
+			"template: unsupported driver: supported are postgres, mysql and sqlite",
+		)
+
+		_, err = s.Get(t.Context(), "a.html")
+		require.ErrorIs(t, err, template.ErrNotInitialized)
+	}
+
+	s, err := db.NewStore()(
+		driverOverride{Service: e.db, driver: "sqlite", nilDB: true},
+		&gas.NopLogger{},
+		e.migrations,
+	)
+	require.NoError(t, err)
+	require.ErrorIs(t, s.Init(t.Context()), db.ErrNilDatabase)
+}
+
+// Before Init every method but Init and Close returns ErrNotInitialized;
+// after Close, ErrClosed; Init on an open store ErrAlreadyInitialized; and
+// Init after Close works again, with the rows kept (survey D4).
+func TestStore_Lifecycle(t *testing.T) {
+	t.Parallel()
+
+	e := newEnv(t, sqliteBackend)
+	ctx := t.Context()
+
+	s, err := db.NewStore()(e.db, &gas.NopLogger{}, e.migrations)
+	require.NoError(t, err)
+	assert.Equal(t, "gas/template/db", s.Name())
+
+	require.NoError(t, s.Close(ctx))
+	requireState(t, s, template.ErrNotInitialized)
+
+	require.NoError(t, s.Init(ctx))
+	require.NoError(t, e.migrations.RunPendingContext(ctx))
+	require.ErrorIs(t, s.Init(ctx), template.ErrAlreadyInitialized)
+	require.NoError(t, s.Register(ctx, "a.html", []byte("a")))
+
+	require.NoError(t, s.Close(ctx))
+	requireState(t, s, template.ErrClosed)
+
+	require.NoError(t, s.Init(ctx))
+
+	b, err := s.Get(ctx, "a.html")
+	require.NoError(t, err)
+	assert.Equal(t, "a", string(b))
+	require.NoError(t, s.Close(ctx))
+}
+
+// requireState checks that every method but Init and Close returns want.
+func requireState(t *testing.T, s *db.Store, want error) {
+	t.Helper()
+
+	ctx := t.Context()
+
+	_, err := s.Get(ctx, "a.html")
+	require.ErrorIs(t, err, want)
+
+	_, err = s.List(ctx)
+	require.ErrorIs(t, err, want)
+
+	require.ErrorIs(t, s.Register(ctx, "a.html", nil), want)
+	require.ErrorIs(t, s.RegisterFS(ctx, fstest.MapFS{}), want)
+
+	_, err = s.Exists(ctx, "a.html")
+	require.ErrorIs(t, err, want)
+	require.ErrorIs(t, s.Delete(ctx, "a.html"), want)
+}
+
+// Init registers the two migrations, owned by the store, with the
+// manager, and two stores register the same ones.
+func TestStore_RegistersMigrations(t *testing.T) {
+	t.Parallel()
+
+	e := newEnv(t, sqliteBackend)
+	m := &migratetest.MockMigrationManager{}
+
+	s, err := db.NewStore()(e.db, &gas.NopLogger{}, m)
+	require.NoError(t, err)
+	require.NoError(t, s.Init(t.Context()))
+
+	calls := m.Calls()
+	require.Len(t, calls, 1)
+	assert.Equal(t, "RegisterSlice", calls[0].Method)
+	assert.Equal(t, s, calls[0].Args[0])
+
+	migs, ok := calls[0].Args[1].([]gas.Migration)
+	require.True(t, ok)
+	require.Len(t, migs, 2)
+	assert.Equal(t, "20260322235959", migs[0].Version)
+	assert.Equal(t, "create templates table", migs[0].Description)
+	assert.Equal(t, "20261031120000", migs[1].Version)
+	assert.Equal(t, "exact template names", migs[1].Description)
+	assert.Equal(t, s, migs[1].Service)
+}
+
+// Exists and Delete take a context, check the name, and Delete of a
+// missing template is not found.
+func TestStore_ExistsDelete(t *testing.T) {
+	t.Parallel()
+
+	for _, b := range backends {
+		t.Run(b.name, func(t *testing.T) {
+			t.Parallel()
+
+			s := newEnv(t, b).store(t)
+			ctx := t.Context()
+
+			require.NoError(t, s.Register(ctx, "a.html", []byte("a")))
+
+			ok, err := s.Exists(ctx, "a.html")
+			require.NoError(t, err)
+			assert.True(t, ok)
+
+			ok, err = s.Exists(ctx, "A.html")
+			require.NoError(t, err)
+			assert.False(t, ok)
+
+			require.NoError(t, s.Delete(ctx, "a.html"))
+
+			err = s.Delete(ctx, "a.html")
+			require.ErrorIs(t, err, template.ErrTemplateNotFound)
+			require.EqualError(t, err, `template: not found: "a.html"`)
+
+			_, err = s.Exists(ctx, "../a.html")
+			require.ErrorIs(t, err, template.ErrInvalidName)
+			require.ErrorIs(t, s.Delete(ctx, "a.txt"), template.ErrInvalidName)
+
+			canceled, cancel := context.WithCancel(ctx)
+			cancel()
+
+			_, err = s.Exists(canceled, "a.html")
+			require.ErrorIs(t, err, context.Canceled)
+			require.ErrorIs(t, s.Delete(canceled, "a.html"), context.Canceled)
+		})
+	}
+}
+
+// Namespaces are isolated: a store reads and lists only its own rows.
+func TestStore_Namespaces(t *testing.T) {
+	t.Parallel()
+
+	for _, b := range backends {
+		t.Run(b.name, func(t *testing.T) {
+			t.Parallel()
+
+			e := newEnv(t, b)
+			ctx := t.Context()
+			emails := e.store(t, db.WithNamespace("emails"))
+			pages := e.store(t, db.WithNamespace("pages"))
+			upper := e.store(t, db.WithNamespace("Pages"))
+
+			require.NoError(t, emails.Register(ctx, "a.html", []byte("email")))
+			require.NoError(t, pages.Register(ctx, "a.html", []byte("page")))
+
+			got, err := emails.Get(ctx, "a.html")
+			require.NoError(t, err)
+			assert.Equal(t, "email", string(got))
+
+			_, err = upper.Get(ctx, "a.html")
+			require.ErrorIs(t, err, template.ErrTemplateNotFound)
+
+			names, err := pages.List(ctx)
+			require.NoError(t, err)
+			assert.Equal(t, []string{"a.html"}, names)
+		})
+	}
+}
+
+// List leaves out a row whose name the store would refuse, such as one a
+// store of other extensions wrote, so that List and Get agree.
+func TestStore_ListSkipsRefusedNames(t *testing.T) {
+	t.Parallel()
+
+	e := newEnv(t, sqliteBackend)
+	html := e.store(t, db.WithNamespace("mixed"))
+	text := e.store(t, db.WithNamespace("mixed"), db.WithExtensions(".txt"))
+
+	require.NoError(t, text.Register(t.Context(), "a.txt", nil))
+	require.NoError(t, html.Register(t.Context(), "a.html", nil))
+
+	names, err := html.List(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a.html"}, names)
+}
+
+// List sorts in byte order whatever the database's collation, which on
+// PostgreSQL here is en_US and sorts otherwise (survey D2).
+func TestStore_ListByteOrder(t *testing.T) {
+	t.Parallel()
+
+	for _, b := range backends {
+		t.Run(b.name, func(t *testing.T) {
+			t.Parallel()
+
+			s := newEnv(t, b).store(t)
+			want := []string{
+				"B.html",
+				"Z.html",
+				"_a.html",
+				"a.html",
+				"a/b.html",
+				"b.html",
+				"é.html",
+			}
+
+			for _, n := range []string{"é.html", "b.html", "a/b.html", "a.html", "_a.html", "Z.html", "B.html"} {
+				require.NoError(t, s.Register(t.Context(), n, nil))
+			}
+
+			names, err := s.List(t.Context())
+			require.NoError(t, err)
+			assert.Equal(t, want, names)
+		})
+	}
+}
+
+// A failed statement wraps ErrQuery, names the operation and the template,
+// and gives the driver's code, here for a table that is gone.
+func TestStore_QueryErrors(t *testing.T) {
+	t.Parallel()
+
+	for _, b := range backends {
+		t.Run(b.name, func(t *testing.T) {
+			t.Parallel()
+
+			e := newEnv(t, b)
+			s := e.store(t)
+			ctx := t.Context()
+
+			e.exec(t, "DROP TABLE "+db.TableName)
+
+			_, err := s.Get(ctx, "a.html")
+			require.ErrorIs(t, err, db.ErrQuery)
+			assert.True(
+				t,
+				strings.HasPrefix(err.Error(), `template: query failed: get "a.html": `),
+				err.Error(),
+			)
+
+			_, err = s.List(ctx)
+			require.ErrorIs(t, err, db.ErrQuery)
+
+			require.ErrorIs(t, s.Register(ctx, "a.html", nil), db.ErrQuery)
+
+			_, err = s.Exists(ctx, "a.html")
+			require.ErrorIs(t, err, db.ErrQuery)
+			require.ErrorIs(t, s.Delete(ctx, "a.html"), db.ErrQuery)
+
+			err = s.RegisterFS(ctx, fstest.MapFS{"a.html": {}, "b.html": {}})
+			require.ErrorIs(t, err, db.ErrQuery)
+			assert.True(
+				t,
+				strings.HasPrefix(err.Error(), `template: query failed: register "a.html": `),
+				err.Error(),
+			)
+		})
+	}
+}
+
+// RegisterFS stores all files in one transaction: a failure on a later
+// file leaves none of them (here a name too long for MySQL is refused
+// before the transaction, and a canceled context stops it).
+func TestStore_RegisterFSAllOrNothing(t *testing.T) {
+	t.Parallel()
+
+	for _, b := range backends {
+		t.Run(b.name, func(t *testing.T) {
+			t.Parallel()
+
+			s := newEnv(t, b).store(t)
+			ctx := t.Context()
+
+			canceled, cancel := context.WithCancel(ctx)
+			cancel()
+
+			err := s.RegisterFS(canceled, fstest.MapFS{"a.html": {}})
+			require.ErrorIs(t, err, context.Canceled)
+
+			names, err := s.List(ctx)
+			require.NoError(t, err)
+			assert.Empty(t, names)
+		})
+	}
+}
+
+// recordingSafe is a provider whose SafeError replaces every error and
+// counts its calls.
+type recordingSafe struct {
+	*database.Service
+
+	// calls counts the calls of SafeError.
+	calls *atomic.Int64
+}
+
+// errSafe replaces every error recordingSafe sees.
+var errSafe = errors.New("safe")
+
+// SafeError counts the call and returns errSafe.
+func (r recordingSafe) SafeError(error) error {
+	r.calls.Add(1)
+
+	return errSafe
+}
+
+// plain is a provider without SafeError.
+type plain struct{ gas.DatabaseProvider }
+
+// The driver's errors pass through the provider's SafeError when it has
+// one, which here replaces every error, and give only the driver's code
+// otherwise; not found never reaches it.
+func TestStore_SafeError(t *testing.T) {
+	t.Parallel()
+
+	e := newEnv(t, sqliteBackend)
+	calls := &atomic.Int64{}
+
+	s, err := db.NewStore()(
+		recordingSafe{Service: e.db, calls: calls},
+		&gas.NopLogger{},
+		e.migrations,
+	)
+	require.NoError(t, err)
+	require.NoError(t, s.Init(t.Context()))
+	require.NoError(t, e.migrations.RunPendingContext(t.Context()))
+
+	_, err = s.Get(t.Context(), "missing.html")
+	require.ErrorIs(t, err, template.ErrTemplateNotFound)
+	assert.Zero(t, calls.Load())
+
+	e.exec(t, "DROP TABLE "+db.TableName)
+
+	_, err = s.Get(t.Context(), "a.html")
+	require.ErrorIs(t, err, errSafe)
+	require.EqualError(t, err, `template: query failed: get "a.html": safe`)
+	assert.Equal(t, int64(1), calls.Load())
+
+	p, err := db.NewStore()(plain{e.db}, &gas.NopLogger{}, e.migrations)
+	require.NoError(t, err)
+	require.NoError(t, p.Init(t.Context()))
+
+	_, err = p.Get(t.Context(), "a.html")
+	require.EqualError(t, err, `template: query failed: get "a.html": sqlite error 1`)
+}
+
+// With the database gone under a running store, the error holds no user,
+// host, port or database name: gas/database's SafeError replaces the
+// driver's connection error (survey D5).
+func TestStore_SafeErrorPostgres(t *testing.T) {
+	t.Parallel()
+
+	e := newEnv(t, postgresBackend)
+	s := e.store(t)
+	require.NoError(t, s.Register(t.Context(), "a.html", nil))
+
+	name := e.queryString(t, "SELECT current_database()")
+	admin := openDB(t, postgresBackend, pgShared.dsn)
+
+	_, err := admin.DB().ExecContext(t.Context(), "DROP DATABASE "+name+" WITH (FORCE)")
+	require.NoError(t, err)
+
+	// The pool's idle connections were terminated by the drop, so the
+	// first Gets may fail on one of them before one connects anew.
+	for range 5 {
+		_, err = s.Get(t.Context(), "a.html")
+		require.ErrorIs(t, err, db.ErrQuery)
+
+		for _, secret := range []string{name, containerUser, containerPassword, "127.0.0.1", "localhost"} {
+			assert.NotContains(t, err.Error(), secret)
+		}
+
+		if errors.Is(err, database.ErrConnect) {
+			break
+		}
+	}
+
+	require.ErrorIs(t, err, database.ErrConnect)
+	assert.True(
+		t,
+		strings.HasPrefix(
+			err.Error(),
+			`template: query failed: get "a.html": gas/database: connection: `,
+		),
+		err.Error(),
+	)
 }

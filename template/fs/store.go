@@ -2,68 +2,120 @@ package fs
 
 import (
 	"context"
-	"fmt"
-	"io/fs"
-	"path/filepath"
-	"sort"
+	iofs "io/fs"
+	"slices"
 
 	"github.com/gasmod/gas"
-	template "github.com/gasmod/gas/template"
+	"github.com/gasmod/gas/template"
+	"github.com/gasmod/gas/template/internal/files"
+	"github.com/gasmod/gas/template/internal/value"
 )
 
-// Store reads templates from an fs.FS. Register and RegisterFS return
-// template.ErrReadOnly — use composite.Store for mutability.
+// Store reads templates from an fs.FS and cannot be written to, as
+// described in the package documentation. It is safe for concurrent use
+// when its fs.FS is.
 type Store struct {
-	fsys fs.FS
-	ext  string
+	// fsys is the file system the templates are read from.
+	fsys iofs.FS
+	// exts are the extensions a name must end in.
+	exts []string
+	// maxSize is the most bytes a template may hold.
+	maxSize int64
 }
 
 var _ gas.TemplateProvider = (*Store)(nil)
 
-// NewStore returns a DI-injectable constructor for a read-only template
-// store backed by fsys. Only files with the ".html" extension are recognized.
-func NewStore(fsys fs.FS) func() (*Store, error) {
+// Option configures a Store.
+type Option func(*Store)
+
+// WithExtensions sets the extensions a template name must end in. The
+// constructor checks them, as described in the template package
+// documentation.
+//
+// Default: template.DefaultExtension.
+func WithExtensions(exts ...string) Option {
+	exts = slices.Clone(exts)
+
+	return func(s *Store) { s.exts = exts }
+}
+
+// WithMaxSize sets the most bytes a template may hold. The constructor
+// checks it with template.CheckMaxSize.
+//
+// Default: template.DefaultMaxSize.
+func WithMaxSize(n int64) Option {
+	return func(s *Store) { s.maxSize = n }
+}
+
+// NewStore returns the constructor of a Store over fsys with opts
+// applied, in the shape the gas container expects. The constructor
+// returns template.ErrNilFS for a nil fsys and an error wrapping
+// template.ErrInvalidExtension or template.ErrInvalidMaxSize for a bad
+// option.
+func NewStore(fsys iofs.FS, opts ...Option) func() (*Store, error) {
 	return func() (*Store, error) {
-		return &Store{fsys: fsys, ext: ".html"}, nil
+		if value.IsNil(fsys) {
+			return nil, template.ErrNilFS
+		}
+
+		s := &Store{
+			fsys:    fsys,
+			exts:    []string{template.DefaultExtension},
+			maxSize: template.DefaultMaxSize,
+		}
+
+		for _, opt := range opts {
+			opt(s)
+		}
+
+		err := template.CheckExtensions(s.exts)
+		if err != nil {
+			return nil, err //nolint:wrapcheck // CheckExtensions returns complete errors.
+		}
+
+		err = template.CheckMaxSize(s.maxSize)
+		if err != nil {
+			return nil, err //nolint:wrapcheck // CheckMaxSize returns complete errors.
+		}
+
+		return s, nil
 	}
 }
 
-// Get returns the raw template content by name. Returns
-// template.ErrTemplateNotFound if the file is not present.
+// Get returns the content of the template name, read from the file
+// system, as described in the package documentation. Its errors wrap
+// template.ErrInvalidName, template.ErrTemplateNotFound, template.ErrRead
+// or template.ErrTooLarge.
 func (s *Store) Get(_ context.Context, name string) ([]byte, error) {
-	data, err := fs.ReadFile(s.fsys, name)
+	err := template.CheckName(name, s.exts)
 	if err != nil {
-		return nil, template.ErrTemplateNotFound
+		return nil, err //nolint:wrapcheck // CheckName returns complete errors.
 	}
-	return data, nil
+
+	//nolint:wrapcheck // Read returns complete errors.
+	return files.Read(s.fsys, name, s.maxSize)
 }
 
-// List returns all template names from the fs.FS in sorted order.
-func (s *Store) List(context.Context) ([]string, error) {
-	var names []string
-	err := fs.WalkDir(s.fsys, ".", func(path string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if d.IsDir() || filepath.Ext(path) != s.ext {
-			return nil
-		}
-		names = append(names, filepath.ToSlash(path))
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("walking fs: %w", err)
-	}
-	sort.Strings(names)
-	return names, nil
+// List returns the names of the templates of the file system in byte
+// order, as described in the package documentation. A failure to walk it
+// is an error wrapping template.ErrList.
+func (s *Store) List(ctx context.Context) ([]string, error) {
+	//nolint:wrapcheck // List returns complete errors.
+	return files.List(ctx, s.fsys, s.exts)
 }
 
-// Register always returns template.ErrReadOnly.
-func (s *Store) Register(_ context.Context, _ string, _ []byte) error {
+// Register returns an error wrapping template.ErrInvalidName for a name
+// the store does not accept, and template.ErrReadOnly for any other.
+func (s *Store) Register(_ context.Context, name string, _ []byte) error {
+	err := template.CheckName(name, s.exts)
+	if err != nil {
+		return err //nolint:wrapcheck // CheckName returns complete errors.
+	}
+
 	return template.ErrReadOnly
 }
 
-// RegisterFS always returns template.ErrReadOnly.
-func (s *Store) RegisterFS(_ context.Context, _ fs.FS) error {
+// RegisterFS returns template.ErrReadOnly.
+func (*Store) RegisterFS(context.Context, iofs.FS) error {
 	return template.ErrReadOnly
 }

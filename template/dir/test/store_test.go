@@ -1,443 +1,318 @@
-package test
+package dir_test
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 	"testing/fstest"
 
-	template "github.com/gasmod/gas/template"
-	templatedir "github.com/gasmod/gas/template/dir"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/gasmod/gas"
+	"github.com/gasmod/gas/template"
+	"github.com/gasmod/gas/template/dir"
+	"github.com/gasmod/gas/template/internal/conformance"
 )
 
-func newTestDir(t *testing.T) string {
+// The dir store keeps the contract of the template package, on the
+// machine's file system, which on macOS ignores case.
+func TestStore_Conformance(t *testing.T) {
+	t.Parallel()
+
+	conformance.Run(t, conformance.Subject{
+		New: func(t *testing.T, seed fstest.MapFS) gas.TemplateProvider {
+			t.Helper()
+
+			s, _ := open(t, seed)
+
+			return s
+		},
+	})
+}
+
+// The constructor refuses an empty path and a bad extension set, and
+// opens nothing.
+func TestNewStore_Errors(t *testing.T) {
+	t.Parallel()
+
+	_, err := dir.NewStore("")()
+	require.ErrorIs(t, err, dir.ErrEmptyDir)
+	require.EqualError(t, err, "template: directory path is empty")
+
+	_, err = dir.NewStore(t.TempDir(), dir.WithExtensions("/x"))()
+	require.ErrorIs(t, err, template.ErrInvalidExtension)
+
+	_, err = dir.NewStore(filepath.Join(t.TempDir(), "missing"))()
+	require.NoError(t, err)
+}
+
+// Before Init every method but Init and Close returns ErrNotInitialized;
+// after Close, ErrClosed; Init on an open store ErrAlreadyInitialized; and
+// Init after Close opens the directory again, without the templates
+// registered before.
+func TestStore_Lifecycle(t *testing.T) {
+	t.Parallel()
+
+	d := t.TempDir()
+	conformance.WriteFiles(t, d, fstest.MapFS{"a.html": {Data: []byte("a")}})
+
+	s, err := dir.NewStore(d)()
+	require.NoError(t, err)
+	assert.Equal(t, dir.ServiceName, s.Name())
+	assert.Equal(t, "gas/template/dir", s.Name())
+
+	ctx := t.Context()
+	require.NoError(t, s.Close(ctx))
+	requireState(t, s, template.ErrNotInitialized, "template: store not initialized")
+
+	require.NoError(t, s.Init(ctx))
+
+	err = s.Init(ctx)
+	require.ErrorIs(t, err, template.ErrAlreadyInitialized)
+	require.EqualError(t, err, "template: store already initialized")
+
+	require.NoError(t, s.Register(ctx, "b.html", []byte("b")))
+	require.NoError(t, s.Close(ctx))
+	require.NoError(t, s.Close(ctx))
+	requireState(t, s, template.ErrClosed, "template: store closed")
+
+	require.NoError(t, s.Init(ctx))
+
+	names, err := s.List(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a.html"}, names)
+	require.NoError(t, s.Close(ctx))
+}
+
+// requireState checks that every method but Init and Close returns want.
+func requireState(t *testing.T, s *dir.Store, want error, text string) {
 	t.Helper()
-	dir := t.TempDir()
 
-	// Create template files.
-	layoutsDir := filepath.Join(dir, "layouts")
-	if err := os.MkdirAll(layoutsDir, 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(layoutsDir, "base.html"),
-		[]byte("<html>base</html>"),
-		0o600,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(dir, "home.html"),
-		[]byte("<h1>Home</h1>"),
-		0o600,
-	); err != nil {
-		t.Fatal(err)
-	}
-	// Non-HTML file should be ignored.
-	if err := os.WriteFile(filepath.Join(dir, "readme.md"), []byte("# Readme"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return dir
+	ctx := t.Context()
+
+	_, err := s.Get(ctx, "a.html")
+	require.ErrorIs(t, err, want)
+	require.EqualError(t, err, text)
+
+	_, err = s.List(ctx)
+	require.ErrorIs(t, err, want)
+
+	require.ErrorIs(t, s.Register(ctx, "a.html", nil), want)
+	require.ErrorIs(t, s.RegisterFS(ctx, fstest.MapFS{}), want)
 }
 
-func TestGetFromDisk(t *testing.T) {
+// Init fails with ErrDirUnavailable, naming the reason and not the path,
+// for a directory that is missing or a file, and can be tried again once
+// the directory exists; the old store cached the first failure for good
+// (survey P5).
+func TestStore_InitUnavailable(t *testing.T) {
 	t.Parallel()
-	dir := newTestDir(t)
-	s, err := templatedir.NewStore(dir)()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = s.Close() })
 
-	got, err := s.Get(context.Background(), "home.html")
-	if err != nil {
-		t.Fatalf("Get() error: %v", err)
-	}
-	if string(got) != "<h1>Home</h1>" {
-		t.Errorf("Get() = %q, want %q", got, "<h1>Home</h1>")
-	}
+	base := t.TempDir()
+	d := filepath.Join(base, "later")
+
+	s, err := dir.NewStore(d)()
+	require.NoError(t, err)
+
+	err = s.Init(t.Context())
+	require.ErrorIs(t, err, dir.ErrDirUnavailable)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	require.EqualError(t, err, "template: directory unavailable: no such file or directory")
+	assert.NotContains(t, err.Error(), base)
+
+	_, err = s.Get(t.Context(), "a.html")
+	require.ErrorIs(t, err, template.ErrNotInitialized)
+
+	conformance.WriteFiles(t, d, fstest.MapFS{"a.html": {Data: []byte("a")}})
+	require.NoError(t, s.Init(t.Context()))
+
+	b, err := s.Get(t.Context(), "a.html")
+	require.NoError(t, err)
+	assert.Equal(t, "a", string(b))
+	require.NoError(t, s.Close(t.Context()))
+
+	f, err := dir.NewStore(filepath.Join(d, "a.html"))()
+	require.NoError(t, err)
+
+	err = f.Init(t.Context())
+	require.ErrorIs(t, err, dir.ErrDirUnavailable)
+	require.EqualError(t, err, "template: directory unavailable: not a directory")
 }
 
-func TestGetFromOverlay(t *testing.T) {
+// Get applies the extension filter, so a file under the root without one
+// of the store's extensions is not readable (survey P3).
+func TestStore_GetExtensionFilter(t *testing.T) {
 	t.Parallel()
-	dir := newTestDir(t)
-	s, err := templatedir.NewStore(dir)()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = s.Close() })
 
-	if err = s.Register(context.Background(), "custom.html", []byte("<p>Custom</p>")); err != nil {
-		t.Fatalf("s.Register() error: %v", err)
-	}
+	s, _ := open(t, fstest.MapFS{"secret.env": {Data: []byte("DB_PASSWORD=hunter2")}})
 
-	got, err := s.Get(context.Background(), "custom.html")
-	if err != nil {
-		t.Fatalf("Get() error: %v", err)
-	}
-	if string(got) != "<p>Custom</p>" {
-		t.Errorf("Get() = %q, want %q", got, "<p>Custom</p>")
-	}
+	_, err := s.Get(t.Context(), "secret.env")
+	require.ErrorIs(t, err, template.ErrInvalidName)
+	require.EqualError(t, err, "template: invalid name: extension not allowed")
 }
 
-func TestOverlayOverridesDisk(t *testing.T) {
+// A registered template hides the file of its name and is listed once;
+// files changed on disk show at once.
+func TestStore_Overlay(t *testing.T) {
 	t.Parallel()
-	dir := newTestDir(t)
-	s, err := templatedir.NewStore(dir)()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = s.Close() })
 
-	if err = s.Register(
-		context.Background(),
-		"home.html",
-		[]byte("<h1>Overridden</h1>"),
-	); err != nil {
-		t.Fatalf("s.Register() error: %v", err)
-	}
+	s, d := open(t, fstest.MapFS{"a.html": {Data: []byte("disk")}})
+	ctx := t.Context()
 
-	got, err := s.Get(context.Background(), "home.html")
-	if err != nil {
-		t.Fatalf("Get() error: %v", err)
-	}
-	if string(got) != "<h1>Overridden</h1>" {
-		t.Errorf("Get() = %q, want %q", got, "<h1>Overridden</h1>")
-	}
+	require.NoError(t, s.Register(ctx, "a.html", []byte("overlay")))
+
+	b, err := s.Get(ctx, "a.html")
+	require.NoError(t, err)
+	assert.Equal(t, "overlay", string(b))
+
+	conformance.WriteFiles(t, d, fstest.MapFS{"new.html": {Data: []byte("new")}})
+
+	names, err := s.List(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a.html", "new.html"}, names)
+
+	require.NoError(t, os.Remove(filepath.Join(d, "new.html")))
+
+	_, err = s.Get(ctx, "new.html")
+	require.ErrorIs(t, err, template.ErrTemplateNotFound)
 }
 
-func TestGetNotFound(t *testing.T) {
-	t.Parallel()
-	dir := newTestDir(t)
-	s, err := templatedir.NewStore(dir)()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = s.Close() })
+// symlinkTree writes a directory with templates, an outside file, and
+// symlinks of every kind, and returns the directory.
+func symlinkTree(t *testing.T) string {
+	t.Helper()
 
-	_, err = s.Get(context.Background(), "nonexistent.html")
-	if !errors.Is(err, template.ErrTemplateNotFound) {
-		t.Errorf("Get() error = %v, want %v", err, template.ErrTemplateNotFound)
+	base := t.TempDir()
+	d := filepath.Join(base, "templates")
+	conformance.WriteFiles(t, d, fstest.MapFS{
+		"page.html":  {Data: []byte("page")},
+		"sub/a.html": {Data: []byte("a")},
+	})
+	conformance.WriteFiles(t, filepath.Join(base, "outside"), fstest.MapFS{
+		"passwd.html": {Data: []byte("OUTSIDE CONTENT")},
+	})
+
+	for link, target := range map[string]string{
+		"rel.html":      "page.html",
+		"deep.html":     "sub/a.html",
+		"abs.html":      filepath.Join(d, "page.html"),
+		"evil.html":     "../outside/passwd.html",
+		"dangling.html": "nope.html",
+		"self.html":     "self.html",
+		"todir.html":    "sub",
+		"linkdir":       "sub",
+		"outdir":        "../outside",
+		"loop":          ".",
+	} {
+		require.NoError(t, os.Symlink(target, filepath.Join(d, link)))
 	}
+
+	return d
 }
 
-func TestListMergesDiskAndOverlay(t *testing.T) {
+// A symlink to a file inside the root is listed and read; one that leads
+// out, is absolute, dangles, loops or names a directory is neither; a
+// symlinked directory is neither walked nor passed through. So List and
+// Get agree (survey P3, P4b, P12).
+func TestStore_Symlinks(t *testing.T) {
 	t.Parallel()
-	dir := newTestDir(t)
-	s, err := templatedir.NewStore(dir)()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = s.Close() })
 
-	if err = s.Register(context.Background(), "extra.html", []byte("extra")); err != nil {
-		t.Fatalf("s.Register() error: %v", err)
-	}
+	s := openAt(t, symlinkTree(t))
 
-	names, err := s.List(context.Background())
-	if err != nil {
-		t.Fatalf("List() error: %v", err)
-	}
+	names, err := s.List(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"deep.html", "page.html", "rel.html", "sub/a.html"}, names)
 
-	// Expect: extra.html, home.html, layouts/base.html (sorted, no readme.md)
-	want := []string{"extra.html", "home.html", "layouts/base.html"}
-	if len(names) != len(want) {
-		t.Fatalf("List() returned %v, want %v", names, want)
-	}
-	for i, n := range names {
-		if n != want[i] {
-			t.Errorf("List()[%d] = %q, want %q", i, n, want[i])
-		}
-	}
-}
-
-func TestRegisterFS(t *testing.T) {
-	t.Parallel()
-	dir := newTestDir(t)
-	s, err := templatedir.NewStore(dir)()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = s.Close() })
-
-	fsys := fstest.MapFS{
-		"partials/nav.html": {Data: []byte("<nav>Nav</nav>")},
-	}
-
-	if err = s.RegisterFS(context.Background(), fsys); err != nil {
-		t.Fatalf("RegisterFS() error: %v", err)
-	}
-
-	got, err := s.Get(context.Background(), "partials/nav.html")
-	if err != nil {
-		t.Fatalf("Get() error: %v", err)
-	}
-	if string(got) != "<nav>Nav</nav>" {
-		t.Errorf("Get() = %q, want %q", got, "<nav>Nav</nav>")
-	}
-}
-
-func TestPathTraversal(t *testing.T) {
-	t.Parallel()
-	dir := newTestDir(t)
-	s, err := templatedir.NewStore(dir)()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = s.Close() })
-
-	_, err = s.Get(context.Background(), "../../../etc/passwd")
-	if err == nil {
-		t.Error("Get() with path traversal should return error")
-	}
-}
-
-func TestGetInvalidDir(t *testing.T) {
-	t.Parallel()
-	s, err := templatedir.NewStore("/nonexistent/dir/that/does/not/exist")()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = s.Close() })
-
-	_, err = s.Get(context.Background(), "page.html")
-	if err == nil {
-		t.Error("Get() on nonexistent dir should return error")
-	}
-}
-
-func TestListInvalidDir(t *testing.T) {
-	t.Parallel()
-	s, err := templatedir.NewStore("/nonexistent/dir/that/does/not/exist")()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = s.Close() })
-
-	_, err = s.List(context.Background())
-	if err == nil {
-		t.Error("List() on nonexistent dir should return error")
-	}
-}
-
-func TestListOnlyOverlay(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir() // empty directory, no files
-	s, err := templatedir.NewStore(dir)()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = s.Close() })
-
-	if err = s.Register(context.Background(), "overlay.html", []byte("overlay")); err != nil {
-		t.Fatalf("s.Register() error: %v", err)
-	}
-
-	names, err := s.List(context.Background())
-	if err != nil {
-		t.Fatalf("List() error: %v", err)
-	}
-	if len(names) != 1 || names[0] != "overlay.html" {
-		t.Errorf("List() = %v, want [overlay.html]", names)
-	}
-}
-
-func TestListEmpty(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	s, err := templatedir.NewStore(dir)()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = s.Close() })
-
-	names, err := s.List(context.Background())
-	if err != nil {
-		t.Fatalf("List() error: %v", err)
-	}
-	if len(names) != 0 {
-		t.Errorf("List() returned %d names, want 0", len(names))
-	}
-}
-
-func TestCloseUnopenedStore(t *testing.T) {
-	t.Parallel()
-	s, err := templatedir.NewStore(t.TempDir())()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Close without ever calling Get/List (root never opened).
-	if err := s.Close(); err != nil {
-		t.Errorf("Close() = %v, want nil", err)
-	}
-}
-
-func TestListDeduplicatesDiskAndOverlay(t *testing.T) {
-	t.Parallel()
-	dir := newTestDir(t)
-	s, err := templatedir.NewStore(dir)()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = s.Close() })
-
-	// Register an overlay with the same name as a disk file.
-	if err = s.Register(context.Background(), "home.html", []byte("overlay home")); err != nil {
-		t.Fatalf("s.Register() error: %v", err)
-	}
-
-	names, err := s.List(context.Background())
-	if err != nil {
-		t.Fatalf("List() error: %v", err)
-	}
-
-	// home.html should appear once, not twice.
-	count := 0
 	for _, n := range names {
-		if n == "home.html" {
-			count++
-		}
+		_, getErr := s.Get(t.Context(), n)
+		require.NoError(t, getErr, n)
 	}
-	if count != 1 {
-		t.Errorf("home.html appeared %d times, want 1; names = %v", count, names)
-	}
-}
 
-// callNoPanic turns a panic into an error, so a test can check every
-// operation even when one of them panics.
-func callNoPanic(op func() error) (err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("panic: %v", r)
-		}
-	}()
-	return op()
-}
+	b, err := s.Get(t.Context(), "rel.html")
+	require.NoError(t, err)
+	assert.Equal(t, "page", string(b))
 
-// closedStoreOps returns every Store operation as a func returning its
-// error.
-func closedStoreOps(s *templatedir.Store) map[string]func() error {
-	ctx := context.Background()
-	return map[string]func() error{
-		"Get disk": func() error {
-			_, err := s.Get(ctx, "home.html")
-			return err
-		},
-		"Get overlay": func() error {
-			_, err := s.Get(ctx, "mem.html")
-			return err
-		},
-		"List": func() error {
-			_, err := s.List(ctx)
-			return err
-		},
-		"Register": func() error {
-			return s.Register(ctx, "new.html", []byte("new"))
-		},
-		"RegisterFS": func() error {
-			return s.RegisterFS(ctx, fstest.MapFS{
-				"fs.html": &fstest.MapFile{Data: []byte("fs")},
-			})
-		},
+	for _, n := range []string{
+		"abs.html", "evil.html", "dangling.html", "self.html", "todir.html", "linkdir/a.html",
+		"outdir/passwd.html", "loop/page.html",
+	} {
+		_, err := s.Get(t.Context(), n)
+		require.ErrorIs(t, err, template.ErrTemplateNotFound, n)
 	}
 }
 
-func TestClosedStoreReturnsErrClosed(t *testing.T) {
+// An unreadable directory makes List fail with ErrList, naming the
+// directory, instead of returning an empty list and no error as the old
+// store did (survey P6). An unreadable file is listed, and Get fails with
+// ErrRead.
+func TestStore_ReadErrors(t *testing.T) {
+	t.Parallel()
+	skipAsRoot(t)
+
+	s, d := open(t, fstest.MapFS{
+		"a_locked/x.html": {Data: []byte("x")},
+		"locked.html":     {Data: []byte("x")},
+		"page.html":       {Data: []byte("x")},
+	})
+	require.NoError(t, os.Chmod(filepath.Join(d, "locked.html"), 0))
+	require.NoError(t, os.Chmod(filepath.Join(d, "a_locked"), 0))
+	t.Cleanup(func() { unlock(t, filepath.Join(d, "a_locked")) })
+
+	_, err := s.List(t.Context())
+	require.ErrorIs(t, err, template.ErrList)
+	require.EqualError(t, err, `template: list failed: "a_locked": permission denied`)
+
+	_, err = s.Get(t.Context(), "locked.html")
+	require.ErrorIs(t, err, template.ErrRead)
+	require.EqualError(t, err, `template: read failed: "locked.html": permission denied`)
+
+	_, err = s.Get(t.Context(), "a_locked/x.html")
+	require.ErrorIs(t, err, template.ErrRead)
+	assert.NotContains(t, err.Error(), d)
+
+	unlock(t, filepath.Join(d, "a_locked"))
+
+	names, err := s.List(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a_locked/x.html", "locked.html", "page.html"}, names)
+}
+
+// Close waits for the reads in flight, and every read either completes
+// or returns ErrClosed.
+func TestStore_CloseDuringReads(t *testing.T) {
 	t.Parallel()
 
-	for _, opened := range []bool{true, false} {
-		t.Run(fmt.Sprintf("opened=%v", opened), func(t *testing.T) {
-			t.Parallel()
-			s, err := templatedir.NewStore(newTestDir(t))()
-			if err != nil {
-				t.Fatal(err)
-			}
-			ctx := context.Background()
-			if err := s.Register(ctx, "mem.html", []byte("mem")); err != nil {
-				t.Fatalf("Register() error: %v", err)
-			}
-			if opened {
-				if _, err := s.Get(ctx, "home.html"); err != nil {
-					t.Fatalf("Get() before Close error: %v", err)
-				}
-			}
-			if err := s.Close(); err != nil {
-				t.Fatalf("Close() error: %v", err)
-			}
+	s, _ := open(t, conformance.Seed())
 
-			for name, op := range closedStoreOps(s) {
-				if err := callNoPanic(op); !errors.Is(err, template.ErrClosed) {
-					t.Errorf("%s after Close = %v, want %v", name, err, template.ErrClosed)
-				}
-			}
-		})
-	}
-}
+	var (
+		wg   sync.WaitGroup
+		mu   sync.Mutex
+		errs []error
+	)
 
-func TestCloseTwice(t *testing.T) {
-	t.Parallel()
-	s, err := templatedir.NewStore(newTestDir(t))()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Get(context.Background(), "home.html"); err != nil {
-		t.Fatalf("Get() error: %v", err)
-	}
-
-	if err := s.Close(); err != nil {
-		t.Fatalf("first Close() = %v, want nil", err)
-	}
-	if err := s.Close(); err != nil {
-		t.Errorf("second Close() = %v, want nil", err)
-	}
-}
-
-// Close while reads are in flight must not race or panic; each read
-// either completes or reports template.ErrClosed.
-func TestCloseDuringReads(t *testing.T) {
-	t.Parallel()
-	s, err := templatedir.NewStore(newTestDir(t))()
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := context.Background()
-
-	start := make(chan struct{})
-	errs := make(chan error, 64)
-	var wg sync.WaitGroup
-	for i := range 8 {
+	for range 8 {
 		wg.Go(func() {
-			<-start
 			for range 50 {
-				var err error
-				if i%2 == 0 {
-					_, err = s.Get(ctx, "home.html")
-				} else {
-					_, err = s.List(ctx)
-				}
-				if err != nil && !errors.Is(err, template.ErrClosed) {
-					select {
-					case errs <- err:
-					default:
-					}
-				}
+				_, getErr := s.Get(context.Background(), "home.html")
+				_, listErr := s.List(context.Background())
+
+				mu.Lock()
+
+				errs = append(errs, getErr, listErr)
+				mu.Unlock()
 			}
 		})
 	}
 
-	close(start)
-	if err := s.Close(); err != nil {
-		t.Errorf("Close() error: %v", err)
-	}
+	require.NoError(t, s.Close(context.Background()))
 	wg.Wait()
-	close(errs)
 
-	for err := range errs {
-		t.Errorf("read during Close = %v, want nil or %v", err, template.ErrClosed)
+	for _, err := range errs {
+		if err != nil {
+			require.ErrorIs(t, err, template.ErrClosed)
+		}
 	}
 }

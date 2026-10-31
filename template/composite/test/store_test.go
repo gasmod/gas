@@ -1,254 +1,239 @@
-package test
+package composite_test
 
 import (
 	"context"
 	"errors"
+	"maps"
+	"slices"
 	"testing"
 	"testing/fstest"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/template"
 	"github.com/gasmod/gas/template/composite"
+	"github.com/gasmod/gas/template/dir"
+	templatefs "github.com/gasmod/gas/template/fs"
+	"github.com/gasmod/gas/template/internal/conformance"
 	"github.com/gasmod/gas/template/memory"
 	"github.com/gasmod/gas/template/templatetest"
 )
 
-func TestGetFromWritable(t *testing.T) {
-	t.Parallel()
-	writable := memory.NewStore()
-	if err := writable.Register(
-		context.Background(),
-		"page.html",
-		[]byte("from writable"),
-	); err != nil {
-		t.Fatalf("writable.Register() error: %v", err)
-	}
+// errDown is a provider's failure that is not a missing template.
+var errDown = errors.New("template: database down")
 
-	s := composite.NewStore(writable)
+// newMemory returns a memory store with the conformance extensions.
+func newMemory(t *testing.T) *memory.Store {
+	t.Helper()
 
-	got, err := s.Get(context.Background(), "page.html")
-	if err != nil {
-		t.Fatalf("Get() error: %v", err)
-	}
-	if string(got) != "from writable" {
-		t.Errorf("Get() = %q, want %q", got, "from writable")
-	}
+	s, err := memory.NewStore(memory.WithExtensions(conformance.Extensions...))()
+	require.NoError(t, err)
+
+	return s
 }
 
-func TestGetFallsBackToReaders(t *testing.T) {
-	t.Parallel()
-	writable := memory.NewStore()
-	reader := memory.NewStore()
-	if err := reader.Register(
-		context.Background(),
-		"fallback.html",
-		[]byte("from reader"),
-	); err != nil {
-		t.Fatalf("reader.Register() error: %v", err)
-	}
+// newComposite returns a composite store over writable and readers.
+func newComposite(
+	t *testing.T,
+	writable gas.TemplateProvider,
+	readers ...gas.TemplateProvider,
+) *composite.Store {
+	t.Helper()
 
-	s := composite.NewStore(writable, reader)
+	s, err := composite.NewStore(writable, readers...)()
+	require.NoError(t, err)
 
-	got, err := s.Get(context.Background(), "fallback.html")
-	if err != nil {
-		t.Fatalf("Get() error: %v", err)
-	}
-	if string(got) != "from reader" {
-		t.Errorf("Get() = %q, want %q", got, "from reader")
-	}
+	return s
 }
 
-func TestGetWritableTakesPrecedence(t *testing.T) {
+// The composite store keeps the contract of the template package, with
+// the seed split between a writable memory store and a read-only fs
+// store under it.
+func TestStore_Conformance(t *testing.T) {
 	t.Parallel()
-	writable := memory.NewStore()
-	if err := writable.Register(
-		context.Background(),
-		"page.html",
-		[]byte("writable version"),
-	); err != nil {
-		t.Fatalf("writable.Register() error: %v", err)
-	}
-	reader := memory.NewStore()
-	if err := reader.Register(
-		context.Background(),
-		"page.html",
-		[]byte("reader version"),
-	); err != nil {
-		t.Fatalf("reader.Register() error: %v", err)
-	}
 
-	s := composite.NewStore(writable, reader)
+	conformance.Run(t, conformance.Subject{
+		New: func(t *testing.T, seed fstest.MapFS) gas.TemplateProvider {
+			t.Helper()
 
-	got, err := s.Get(context.Background(), "page.html")
-	if err != nil {
-		t.Fatalf("Get() error: %v", err)
-	}
-	if string(got) != "writable version" {
-		t.Errorf("Get() = %q, want %q", got, "writable version")
-	}
+			upper, lower := fstest.MapFS{}, fstest.MapFS{}
+
+			for i, name := range slices.Sorted(maps.Keys(seed)) {
+				if i%2 == 0 {
+					upper[name] = seed[name]
+				} else {
+					lower[name] = seed[name]
+				}
+			}
+
+			w := newMemory(t)
+			require.NoError(t, w.RegisterFS(t.Context(), upper))
+
+			r, err := templatefs.NewStore(
+				lower,
+				templatefs.WithExtensions(conformance.Extensions...),
+			)()
+			require.NoError(t, err)
+
+			return newComposite(t, w, r)
+		},
+	})
 }
 
-func TestGetNotFound(t *testing.T) {
+// The constructor refuses a nil provider, a typed nil included, and
+// names its position.
+func TestNewStore_NilProvider(t *testing.T) {
 	t.Parallel()
-	writable := memory.NewStore()
-	s := composite.NewStore(writable)
 
-	_, err := s.Get(context.Background(), "nonexistent")
-	if !errors.Is(err, template.ErrTemplateNotFound) {
-		t.Errorf("Get() error = %v, want %v", err, template.ErrTemplateNotFound)
-	}
+	m := newMemory(t)
+
+	_, err := composite.NewStore(nil, m)()
+	require.ErrorIs(t, err, composite.ErrNilProvider)
+	require.EqualError(t, err, "template: provider is nil: the writable provider")
+
+	_, err = composite.NewStore(m, m, (*memory.Store)(nil))()
+	require.ErrorIs(t, err, composite.ErrNilProvider)
+	require.EqualError(t, err, "template: provider is nil: reader 2")
 }
 
-func TestListMergesAll(t *testing.T) {
+// Get reads the writable provider first, then each reader in order.
+func TestStore_GetOrder(t *testing.T) {
 	t.Parallel()
-	writable := memory.NewStore()
-	if err := writable.Register(context.Background(), "a.html", []byte("a")); err != nil {
-		t.Fatalf("writable.Register() error: %v", err)
-	}
-	if err := writable.Register(context.Background(), "c.html", []byte("c")); err != nil {
-		t.Fatalf("writable.Register() error: %v", err)
-	}
 
-	reader := memory.NewStore()
-	if err := reader.Register(context.Background(), "b.html", []byte("b")); err != nil {
-		t.Fatalf("reader.Register() error: %v", err)
-	}
-	if err := reader.Register(
-		context.Background(),
-		"c.html",
-		[]byte("c-reader"),
-	); err != nil { // duplicate
-		t.Fatalf("reader.Register() error: %v", err)
-	}
+	w, r1, r2 := newMemory(t), newMemory(t), newMemory(t)
+	ctx := t.Context()
 
-	s := composite.NewStore(writable, reader)
+	require.NoError(t, r1.Register(ctx, "a.html", []byte("r1")))
+	require.NoError(t, r2.Register(ctx, "a.html", []byte("r2")))
+	require.NoError(t, r2.Register(ctx, "b.html", []byte("r2")))
 
-	names, err := s.List(context.Background())
-	if err != nil {
-		t.Fatalf("List() error: %v", err)
-	}
+	s := newComposite(t, w, r1, r2)
 
-	// Deduplicated and sorted: a.html, b.html, c.html
-	want := []string{"a.html", "b.html", "c.html"}
-	if len(names) != len(want) {
-		t.Fatalf("List() returned %v, want %v", names, want)
-	}
-	for i, n := range names {
-		if n != want[i] {
-			t.Errorf("List()[%d] = %q, want %q", i, n, want[i])
-		}
-	}
+	b, err := s.Get(ctx, "a.html")
+	require.NoError(t, err)
+	assert.Equal(t, "r1", string(b))
+
+	b, err = s.Get(ctx, "b.html")
+	require.NoError(t, err)
+	assert.Equal(t, "r2", string(b))
+
+	require.NoError(t, s.Register(ctx, "a.html", []byte("w")))
+
+	b, err = s.Get(ctx, "a.html")
+	require.NoError(t, err)
+	assert.Equal(t, "w", string(b))
 }
 
-func TestRegisterDelegatesToWritable(t *testing.T) {
+// A provider's error other than not found is returned unchanged and stops
+// Get, so a closed writable store is not hidden by a fallback, as it was
+// (survey P10).
+func TestStore_GetDoesNotHideErrors(t *testing.T) {
 	t.Parallel()
-	writable := memory.NewStore()
-	s := composite.NewStore(writable)
 
-	if err := s.Register(context.Background(), "new.html", []byte("new content")); err != nil {
-		t.Fatalf("s.Register() error: %v", err)
+	d, err := dir.NewStore(t.TempDir())()
+	require.NoError(t, err)
+	require.NoError(t, d.Init(t.Context()))
+	require.NoError(t, d.Close(t.Context()))
+
+	fallback := newMemory(t)
+	require.NoError(t, fallback.Register(t.Context(), "a.html", []byte("fallback")))
+
+	_, err = newComposite(t, d, fallback).Get(t.Context(), "a.html")
+	require.ErrorIs(t, err, template.ErrClosed)
+	require.EqualError(t, err, "template: store closed")
+
+	down := &templatetest.MockTemplate{
+		GetFn: func(context.Context, string) ([]byte, error) { return nil, errDown },
 	}
 
-	got, err := writable.Get(context.Background(), "new.html")
-	if err != nil {
-		t.Fatalf("writable.Get(context.Background(),) error: %v", err)
-	}
-	if string(got) != "new content" {
-		t.Errorf("writable.Get(context.Background(),) = %q, want %q", got, "new content")
-	}
+	_, err = newComposite(t, newMemory(t), down, fallback).Get(t.Context(), "a.html")
+	require.ErrorIs(t, err, errDown)
+
+	_, err = newComposite(t, newMemory(t), fallback).Get(t.Context(), "missing.html")
+	require.ErrorIs(t, err, template.ErrTemplateNotFound)
+	require.EqualError(t, err, `template: not found: "missing.html"`)
 }
 
-func TestRegisterFSDelegatesToWritable(t *testing.T) {
+// List merges every provider's names once each in byte order, and fails
+// when any provider fails, where the old store returned the others' names
+// (survey P10).
+func TestStore_List(t *testing.T) {
 	t.Parallel()
-	writable := memory.NewStore()
-	s := composite.NewStore(writable)
 
-	fsys := fstest.MapFS{
-		"page.html": {Data: []byte("<p>Page</p>")},
-		"readme.md": {Data: []byte("# Readme")},
-	}
+	w, r := newMemory(t), newMemory(t)
+	ctx := t.Context()
 
-	if err := s.RegisterFS(context.Background(), fsys); err != nil {
-		t.Fatalf("RegisterFS() error: %v", err)
-	}
+	require.NoError(t, w.Register(ctx, "b.html", nil))
+	require.NoError(t, r.Register(ctx, "a.html", nil))
+	require.NoError(t, r.Register(ctx, "b.html", nil))
 
-	got, err := writable.Get(context.Background(), "page.html")
-	if err != nil {
-		t.Fatalf("writable.Get(context.Background(),) error: %v", err)
-	}
-	if string(got) != "<p>Page</p>" {
-		t.Errorf("writable.Get(context.Background(),) = %q, want %q", got, "<p>Page</p>")
+	names, err := newComposite(t, w, r).List(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a.html", "b.html"}, names)
+
+	down := &templatetest.MockTemplate{
+		ListFn: func(context.Context) ([]string, error) { return nil, errDown },
 	}
 
-	// Non-.html files should be skipped.
-	_, err = writable.Get(context.Background(), "readme.md")
-	if !errors.Is(err, template.ErrTemplateNotFound) {
-		t.Errorf(
-			"writable.Get(context.Background(),readme.md) error = %v, want %v",
-			err,
-			template.ErrTemplateNotFound,
-		)
-	}
+	_, err = newComposite(t, w, r, down).List(ctx)
+	require.ErrorIs(t, err, errDown)
 }
 
-func TestMultipleReadersFallbackOrder(t *testing.T) {
+// Register and RegisterFS go to the writable provider and return its
+// error unchanged.
+func TestStore_WritesGoToWritable(t *testing.T) {
 	t.Parallel()
-	writable := memory.NewStore()
-	reader1 := memory.NewStore()
-	reader2 := memory.NewStore()
-	if err := reader2.Register(
-		context.Background(),
-		"deep.html",
-		[]byte("from reader2"),
-	); err != nil {
-		t.Fatalf("reader2.Register() error: %v", err)
-	}
 
-	s := composite.NewStore(writable, reader1, reader2)
+	ro, err := templatefs.NewStore(fstest.MapFS{})()
+	require.NoError(t, err)
 
-	got, err := s.Get(context.Background(), "deep.html")
-	if err != nil {
-		t.Fatalf("Get() error: %v", err)
-	}
-	if string(got) != "from reader2" {
-		t.Errorf("Get() = %q, want %q", got, "from reader2")
-	}
+	s := newComposite(t, ro, newMemory(t))
+
+	require.ErrorIs(t, s.Register(t.Context(), "a.html", nil), template.ErrReadOnly)
+	require.ErrorIs(t, s.RegisterFS(t.Context(), fstest.MapFS{}), template.ErrReadOnly)
 }
 
-func TestListReturnsErrorWhenAllFail(t *testing.T) {
+// A name a provider refuses goes on to the next provider, as a missing
+// one does, so providers of different extensions mix and List and Get
+// agree: a memory store of `.html` over an fs store of `.html` and `.txt`
+// lists `x.txt` and reads it, as the reviewer's probe found it did not.
+// A name no provider has is the last not-found error, and a name every
+// provider refuses the first provider's error.
+func TestStore_InvalidNameFallsThrough(t *testing.T) {
 	t.Parallel()
-	listErr := errors.New("list failed")
-	writable := &templatetest.MockTemplate{
-		ListFn: func(context.Context) ([]string, error) { return nil, listErr },
+
+	html, err := memory.NewStore()()
+	require.NoError(t, err)
+
+	r, err := templatefs.NewStore(
+		fstest.MapFS{"x.txt": {Data: []byte("x")}},
+		templatefs.WithExtensions(".html", ".txt"),
+	)()
+	require.NoError(t, err)
+
+	s := newComposite(t, html, r)
+
+	names, err := s.List(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"x.txt"}, names)
+
+	for _, n := range names {
+		b, getErr := s.Get(t.Context(), n)
+		require.NoError(t, getErr, n)
+		assert.Equal(t, "x", string(b))
 	}
 
-	s := composite.NewStore(writable)
+	_, err = s.Get(t.Context(), "missing.txt")
+	require.ErrorIs(t, err, template.ErrTemplateNotFound)
+	require.EqualError(t, err, `template: not found: "missing.txt"`)
 
-	_, err := s.List(context.Background())
-	if err == nil {
-		t.Fatal("List() expected error when all providers fail, got nil")
-	}
-}
+	_, err = s.Get(t.Context(), "a.env")
+	require.ErrorIs(t, err, template.ErrInvalidName)
+	require.EqualError(t, err, "template: invalid name: extension not allowed")
 
-func TestListPartialErrorStillReturnsNames(t *testing.T) {
-	t.Parallel()
-	// Writable succeeds with names.
-	writable := memory.NewStore()
-	if err := writable.Register(context.Background(), "a.html", []byte("a")); err != nil {
-		t.Fatalf("writable.Register() error: %v", err)
-	}
-
-	// Reader fails.
-	failReader := &templatetest.MockTemplate{
-		ListFn: func(context.Context) ([]string, error) { return nil, errors.New("reader failed") },
-	}
-
-	s := composite.NewStore(writable, failReader)
-
-	names, err := s.List(context.Background())
-	if err != nil {
-		t.Fatalf("List() error: %v", err)
-	}
-	if len(names) != 1 || names[0] != "a.html" {
-		t.Errorf("List() = %v, want [a.html]", names)
-	}
+	_, err = s.Get(t.Context(), "../a.html")
+	require.ErrorIs(t, err, template.ErrInvalidName)
+	require.EqualError(t, err, "template: invalid name: not a clean slash path")
 }
