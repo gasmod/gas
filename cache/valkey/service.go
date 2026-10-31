@@ -2,46 +2,75 @@ package valkey
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
-	"net"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/valkey-io/valkey-go"
 
 	"github.com/gasmod/gas"
-	cache "github.com/gasmod/gas/cache"
+	"github.com/gasmod/gas/cache"
+	"github.com/gasmod/gas/cache/internal/configsrc"
 )
 
-const serviceName = "gas/cache/valkey"
+// ServiceName is the name of the Valkey store, returned by Service.Name
+// and prefixed to every error the store returns.
+const ServiceName = "gas/cache/valkey"
 
-// Service is a Valkey-backed cache implementing gas.Service and
-// gas.CacheProvider.
+// The operations errors name.
+const (
+	opInit   = "init"
+	opGet    = "get"
+	opSet    = "set"
+	opDelete = "delete"
+	opExists = "exists"
+	opHealth = "health"
+	opPing   = "ping"
+)
+
+var (
+	// ErrConnect indicates that Init could not connect to the server, as
+	// described in the package documentation.
+	ErrConnect = errors.New("connect failed")
+	// ErrCommand indicates that a command failed, at the connection or
+	// with a server reply, as described in the package documentation.
+	ErrCommand = errors.New("command failed")
+)
+
+// Service is a cache on a Valkey server, as described in the package
+// documentation. It is safe for concurrent use.
 type Service struct {
-	cfg    *Config
-	logger gas.Logger
-
+	// cfgProvider is the ConfigProvider Init binds from, unless a
+	// configuration was given to WithConfig.
 	cfgProvider gas.ConfigProvider
-
-	// client holds the current Valkey client. It is nil until Init first
-	// connects, and Close keeps it so Client still returns it. Init and
-	// Close swap and read it while operations run, so it is atomic.
-	client atomic.Pointer[clientRef]
-
-	// closed is true from Close until the next successful Init. It
-	// starts false, so an operation also checks that client is set.
+	// logger receives the store's events, with `service` set.
+	logger gas.Logger
+	// tlsConfig is the TLS configuration given to WithTLSConfig, or nil.
+	tlsConfig *tls.Config
+	// initCancel cancels the context of the Init in progress, or is nil.
+	initCancel context.CancelCauseFunc
+	// st is what Init opened, or nil before Init succeeds and after
+	// Close. It is swapped whole, so a call sees one Init's state.
+	st atomic.Pointer[state]
+	// cfgSource records the configuration given to WithConfig.
+	cfgSource configsrc.Source[Config]
+	// closed reports whether Close ran after a successful Init, and Init
+	// has not succeeded since. Close sets it before it clears st, so a
+	// call that finds st nil after a Close finds closed set.
 	closed atomic.Bool
-
-	customConfigProvided bool
+	// mu makes Init and Close run one at a time. Close holds it while it
+	// closes the client too, so a concurrent Close waits for that. Calls
+	// do not take it.
+	mu sync.Mutex
+	// cancelMu guards initCancel, which Close calls before it takes mu.
+	cancelMu sync.Mutex
 }
 
-// clientRef boxes a valkey.Client so it can be held in an
-// atomic.Pointer. Comparing two *clientRef values tells whether Init
-// replaced the client while an operation was using it.
-type clientRef struct {
-	c valkey.Client
-}
+// errCloseCalled is the cause Close cancels an Init in progress with.
+var errCloseCalled = errors.New("close called")
 
 var (
 	_ gas.Service        = (*Service)(nil)
@@ -50,280 +79,244 @@ var (
 	_ gas.ReadyReporter  = (*Service)(nil)
 )
 
-// Option configures a Service.
-type Option func(*Service)
-
-// WithConfig sets a custom configuration.
-func WithConfig(cfg *Config) Option {
-	return func(s *Service) {
-		s.cfg = cfg
-		s.customConfigProvided = true
-	}
+// state is what one Init opened, with the settings calls use. It never
+// changes once published.
+type state struct {
+	// client is the connected client.
+	client valkey.Client
+	// prefix is Settings.KeyPrefix.
+	prefix string
+	// defaultTTL is Settings.DefaultTTL.
+	defaultTTL time.Duration
+	// opTimeout is Settings.OpTimeout.
+	opTimeout time.Duration
 }
 
-// New captures options and returns a DI-injectable constructor.
+// New returns the constructor of a Service with opts applied, in the shape
+// the gas container expects. The constructor returns an error wrapping
+// cache.ErrNilLogger for a nil logger; a nil ConfigProvider is accepted,
+// and Init then requires WithConfig.
 func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) (*Service, error) {
 	return func(cfgProvider gas.ConfigProvider, logger gas.Logger) (*Service, error) {
+		if logger == nil {
+			return nil, fmt.Errorf("%s: %w", ServiceName, cache.ErrNilLogger)
+		}
+
 		s := &Service{
-			cfg:         DefaultConfig(),
 			cfgProvider: cfgProvider,
-			logger:      logger.With().Str("service", serviceName).Logger(),
+			logger:      logger.With().Str("service", ServiceName).Logger(),
 		}
 		for _, opt := range opts {
 			opt(s)
 		}
+
 		return s, nil
 	}
 }
 
-// Name returns the service identifier.
-func (s *Service) Name() string { return serviceName }
+// Name returns ServiceName.
+func (*Service) Name() string { return ServiceName }
 
-// Init binds the configuration, creates the Valkey client, and verifies
-// connectivity. A config bound from the ConfigProvider is validated by Bind
-// against its validate tags; one passed with WithConfig is used as given. The
-// ping and the retry backoff use ctx, so a canceled or expired ctx stops the
-// retries.
+// Init resolves and checks the configuration, connects, and publishes the
+// client, as described in the package documentation. On an initialized
+// store it returns cache.ErrAlreadyInitialized and changes nothing. A
+// failed Init closes what it opened and leaves the store as it was.
 func (s *Service) Init(ctx context.Context) error {
-	if !s.customConfigProvided && s.cfgProvider != nil {
-		if err := s.cfgProvider.Bind(s.cfg); err != nil {
-			return fmt.Errorf("%s: config binding: %w", s.Name(), err)
-		}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.st.Load() != nil {
+		return opError(opInit, cache.ErrAlreadyInitialized)
 	}
 
-	if err := s.connectWithRetry(ctx); err != nil {
+	err := ctx.Err()
+	if err != nil {
+		return opError(opInit, err)
+	}
+
+	cfg, err := s.cfgSource.Resolve(s.cfgProvider, DefaultConfig, rules(s.tlsConfig != nil))
+	if err != nil {
+		return opError(opInit, err)
+	}
+
+	set := &cfg.Cache
+
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+
+	s.setInitCancel(cancel)
+	defer s.setInitCancel(nil)
+
+	client, err := s.connect(ctx, set)
+	if errors.Is(context.Cause(ctx), errCloseCalled) {
+		if client != nil {
+			client.Close()
+		}
+
+		return opError(opInit, cache.ErrClosed)
+	}
+
+	if err != nil {
 		return err
 	}
 
+	s.st.Store(&state{
+		client:     client,
+		prefix:     set.KeyPrefix,
+		defaultTTL: set.DefaultTTL,
+		opTimeout:  set.OpTimeout,
+	})
 	s.closed.Store(false)
-	s.logger.Info("valkey cache initialized").Str("addr", s.cfg.Cache.Addr).Send()
+
+	s.logger.Info("service initialized").
+		Int("db", set.DB).
+		Bool("tls", s.tlsConfig != nil || set.TLS).
+		Send()
+
 	return nil
 }
 
-func (s *Service) connectWithRetry(ctx context.Context) error {
-	err := s.connect(ctx)
-	if err == nil {
+// Close cancels an Init in progress and waits for it to return, makes
+// every later call but Init return an error wrapping cache.ErrClosed, then
+// closes the client, which waits for the commands in progress to finish;
+// each is bounded by OpTimeout. A Close that runs at the same time waits
+// for it too. Close on a store that is not initialized returns nil and
+// logs nothing. It ignores its context.
+func (s *Service) Close(context.Context) error {
+	s.cancelMu.Lock()
+
+	if s.initCancel != nil {
+		s.initCancel(errCloseCalled)
+	}
+
+	s.cancelMu.Unlock()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	st := s.st.Load()
+	if st == nil {
 		return nil
 	}
 
-	maxRetries := s.cfg.Cache.ConnRetries
-	if maxRetries <= 0 {
-		return err
-	}
-
-	interval := s.cfg.Cache.ConnRetryInterval
-	if interval <= 0 {
-		interval = defaultConnRetryInterval
-	}
-
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		s.logger.Warn("valkey connection failed, retrying").
-			Err("error", err).
-			Int("attempt", attempt).
-			Int("max_retries", maxRetries).
-			Str("next_retry_in", interval.String()).
-			Send()
-
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("%s: connect canceled after %d attempts: %w",
-				s.Name(), attempt, errors.Join(ctx.Err(), err))
-		case <-time.After(interval):
-		}
-		interval *= 2
-
-		err = s.connect(ctx)
-		if err == nil {
-			return nil
-		}
-	}
-
-	return fmt.Errorf("%s: connect failed after %d retries: %w", s.Name(), maxRetries, err)
-}
-
-func (s *Service) connect(ctx context.Context) error {
-	client, err := valkey.NewClient(valkey.ClientOption{
-		InitAddress:      []string{s.cfg.Cache.Addr},
-		Password:         s.cfg.Cache.Password,
-		SelectDB:         s.cfg.Cache.DB,
-		Dialer:           net.Dialer{Timeout: s.cfg.Cache.DialTimeout},
-		ConnWriteTimeout: s.cfg.Cache.WriteTimeout,
-	})
-	if err != nil {
-		return fmt.Errorf("%s: new client: %w", s.Name(), err)
-	}
-
-	// verify connectivity
-	pingCtx, cancel := context.WithTimeout(ctx, s.cfg.Cache.DialTimeout)
-	defer cancel()
-
-	if pErr := client.Do(pingCtx, client.B().Ping().Build()).Error(); pErr != nil {
-		client.Close()
-		return fmt.Errorf("%s: ping: %w", s.Name(), pErr)
-	}
-
-	// close previous client if reconnecting
-	if prev := s.client.Swap(&clientRef{c: client}); prev != nil {
-		prev.c.Close()
-	}
-	return nil
-}
-
-// Close shuts down the Valkey client.
-func (s *Service) Close(context.Context) error {
 	s.closed.Store(true)
+	s.st.Store(nil)
 
-	if ref := s.client.Load(); ref != nil {
-		ref.c.Close()
-		s.logger.Info("valkey cache closed").Send()
-	}
+	st.client.Close()
+
+	s.logger.Info("service closed").Send()
 
 	return nil
 }
 
-// acquire returns the current client, or cache.ErrClosed if the service
-// was never started or has been closed.
-func (s *Service) acquire() (*clientRef, error) {
-	if s.closed.Load() {
-		return nil, cache.ErrClosed
-	}
-	ref := s.client.Load()
-	if ref == nil {
-		return nil, cache.ErrClosed
-	}
-	return ref, nil
-}
+// CheckHealth reports liveness without I/O: an error wrapping
+// cache.ErrNotInitialized or cache.ErrClosed when the store is not
+// initialized, the context's error when ctx has ended, and else nil.
+func (s *Service) CheckHealth(ctx context.Context) error {
+	_, err := s.loaded(ctx, opHealth)
 
-// closedDuring reports whether the service was closed, or its client
-// replaced, after acquire returned ref. A command that fails because of
-// that reports cache.ErrClosed rather than the client's own error, which
-// valkey-go also uses for connection failures.
-func (s *Service) closedDuring(ref *clientRef) bool {
-	return s.closed.Load() || s.client.Load() != ref
-}
-
-// Get returns the value for the given key, or cache.ErrKeyNotFound if
-// the key does not exist. It returns cache.ErrClosed if the service was
-// never started or is closed before the command completes.
-func (s *Service) Get(ctx context.Context, key string) ([]byte, error) {
-	ref, err := s.acquire()
-	if err != nil {
-		return nil, err
-	}
-
-	resp := ref.c.Do(ctx, ref.c.B().Get().Key(key).Build())
-	if err = resp.Error(); err != nil {
-		if valkey.IsValkeyNil(err) {
-			return nil, cache.ErrKeyNotFound
-		}
-		if s.closedDuring(ref) {
-			return nil, cache.ErrClosed
-		}
-		return nil, fmt.Errorf("%s: get %q: %w", s.Name(), key, err)
-	}
-
-	b, err := resp.AsBytes()
-	if err != nil {
-		return nil, fmt.Errorf("%s: get %q: %w", s.Name(), key, err)
-	}
-	return b, nil
-}
-
-// Set stores a value with the given TTL. If ttl is 0, the key is set
-// without expiration. It returns cache.ErrClosed if the service was never
-// started or is closed before the command completes.
-func (s *Service) Set(ctx context.Context, key string, value []byte, ttl time.Duration) error {
-	ref, err := s.acquire()
-	if err != nil {
-		return err
-	}
-
-	var cmd valkey.Completed
-	if ttl > 0 {
-		cmd = ref.c.B().Set().Key(key).Value(string(value)).Px(ttl).Build()
-	} else {
-		cmd = ref.c.B().Set().Key(key).Value(string(value)).Build()
-	}
-
-	if err = ref.c.Do(ctx, cmd).Error(); err != nil {
-		if s.closedDuring(ref) {
-			return cache.ErrClosed
-		}
-		return fmt.Errorf("%s: set %q: %w", s.Name(), key, err)
-	}
-	return nil
-}
-
-// Delete removes a key from the cache. It returns cache.ErrClosed if the
-// service was never started or is closed before the command completes.
-func (s *Service) Delete(ctx context.Context, key string) error {
-	ref, err := s.acquire()
-	if err != nil {
-		return err
-	}
-
-	if err = ref.c.Do(ctx, ref.c.B().Del().Key(key).Build()).Error(); err != nil {
-		if s.closedDuring(ref) {
-			return cache.ErrClosed
-		}
-		return fmt.Errorf("%s: del %q: %w", s.Name(), key, err)
-	}
-	return nil
-}
-
-// Exists checks whether a key exists in the cache. It returns
-// cache.ErrClosed if the service was never started or is closed before the
-// command completes.
-func (s *Service) Exists(ctx context.Context, key string) (bool, error) {
-	ref, err := s.acquire()
-	if err != nil {
-		return false, err
-	}
-
-	n, err := ref.c.Do(ctx, ref.c.B().Exists().Key(key).Build()).AsInt64()
-	if err != nil {
-		if s.closedDuring(ref) {
-			return false, cache.ErrClosed
-		}
-		return false, fmt.Errorf("%s: exists %q: %w", s.Name(), key, err)
-	}
-	return n > 0, nil
-}
-
-// CheckHealth reports liveness. The valkey-go client reconnects
-// internally, so a transient network failure is not a liveness failure;
-// only a service that was never started or has been closed is, and it
-// reports cache.ErrClosed.
-func (s *Service) CheckHealth(context.Context) error {
-	_, err := s.acquire()
 	return err
 }
 
-// CheckReady reports readiness by pinging the Valkey server with the
-// caller's context. It returns cache.ErrClosed if the service was never
-// started or is closed before the ping completes.
+// CheckReady reports readiness by sending PING, within ctx and
+// OpTimeout. Its errors are as a command's, after `ping: `.
 func (s *Service) CheckReady(ctx context.Context) error {
-	ref, err := s.acquire()
+	st, err := s.loaded(ctx, opPing)
 	if err != nil {
 		return err
 	}
 
-	if err = ref.c.Do(ctx, ref.c.B().Ping().Build()).Error(); err != nil {
-		if s.closedDuring(ref) {
-			return cache.ErrClosed
-		}
-		return fmt.Errorf("%s: ping: %w", s.Name(), err)
-	}
-	return nil
+	_, err = s.do(ctx, st, opPing, st.client.B().Ping().Build())
+
+	return err
 }
 
-// Client returns the underlying valkey.Client for advanced operations.
-// It returns nil before Init first connects; after Close it returns the
-// closed client.
+// Client returns the connected valkey.Client, or nil when the store is
+// not initialized, as described in the package documentation. Commands
+// sent on it are not prefixed with KeyPrefix and not bounded by
+// OpTimeout, and their errors are valkey-go's own.
 func (s *Service) Client() valkey.Client {
-	ref := s.client.Load()
-	if ref == nil {
+	st := s.st.Load()
+	if st == nil {
 		return nil
 	}
-	return ref.c
+
+	return st.client
+}
+
+// setInitCancel records cancel as the cancel of the Init in progress, or
+// nil when none is.
+func (s *Service) setInitCancel(cancel context.CancelCauseFunc) {
+	s.cancelMu.Lock()
+	defer s.cancelMu.Unlock()
+
+	s.initCancel = cancel
+}
+
+// loaded returns the state of an initialized store whose ctx has not
+// ended, or the error of op: cache.ErrNotInitialized, cache.ErrClosed or
+// the context's.
+func (s *Service) loaded(ctx context.Context, op string) (*state, error) {
+	st := s.st.Load()
+
+	switch {
+	case st == nil && s.closed.Load():
+		return nil, opError(op, cache.ErrClosed)
+	case st == nil:
+		return nil, opError(op, cache.ErrNotInitialized)
+	}
+
+	err := ctx.Err()
+	if err != nil {
+		return nil, opError(op, err)
+	}
+
+	return st, nil
+}
+
+// do sends cmd on st's client within ctx and st.opTimeout, and returns
+// the result, or the error of op: cache.ErrClosed when Close ran during
+// the call, the context's error when ctx ended, context.DeadlineExceeded
+// for a timeout while ctx's deadline was the one in force, and else the
+// command's error, as commandError makes it. A nil reply is not an error.
+func (s *Service) do(
+	ctx context.Context,
+	st *state,
+	op string,
+	cmd valkey.Completed,
+) (valkey.ValkeyResult, error) {
+	opDeadline := time.Now().Add(st.opTimeout)
+
+	opCtx, cancel := context.WithDeadline(ctx, opDeadline)
+	defer cancel()
+
+	resp := st.client.Do(opCtx, cmd)
+
+	err := resp.Error()
+	if err == nil || valkey.IsValkeyNil(err) {
+		return resp, nil
+	}
+
+	if s.st.Load() != st {
+		return resp, opError(op, cache.ErrClosed)
+	}
+
+	ctxErr := ctx.Err()
+	if ctxErr != nil {
+		return resp, opError(op, ctxErr)
+	}
+
+	// The socket's deadline can pass a moment before ctx's timer fires,
+	// so which deadline was in force decides, not ctx.Err.
+	callerDeadline, ok := ctx.Deadline()
+	if ok && !callerDeadline.After(opDeadline) && reason(err) == reasonTimedOut {
+		return resp, opError(op, context.DeadlineExceeded)
+	}
+
+	return resp, commandError(ctx, op, err)
+}
+
+// opError returns err as the failure of op, after ServiceName.
+func opError(op string, err error) error {
+	return fmt.Errorf("%s: %s: %w", ServiceName, op, err)
 }

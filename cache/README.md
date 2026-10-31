@@ -4,8 +4,9 @@
 
 Part of the [Gas](../README.md) monorepo · [Documentation](https://gasmod.github.io/gas) · [All modules](../README.md#modules)
 
-Key-value caching for the [Gas](../README.md) framework, with two interchangeable backends:
-in-memory for development, Valkey (Redis-compatible) for production.
+Key-value caching for the [Gas](../README.md) framework, with two interchangeable stores that
+keep one contract: in-memory with LRU eviction, and Valkey (Redis-compatible) with key prefixes,
+per-command timeouts, TLS and ACL users.
 
 Implements `gas.CacheProvider`.
 
@@ -17,12 +18,14 @@ go get github.com/gasmod/gas/cache
 gas.WithSingletonService[gas.CacheProvider](cachemem.New()),
 ```
 
-Both backends need `gas.ConfigProvider` and `gas.Logger`.
+Both stores need `gas.ConfigProvider` and `gas.Logger`, and read the `cache` section; the Valkey
+store requires `cache.addr`.
 
-| Package | Use case |
+| Package | Provides |
 |---|---|
-| `cache/memory` | Development, testing, single-instance deployments |
-| `cache/valkey` | Production, multi-instance deployments |
+| `cache` | The shared contract and sentinel errors |
+| `cache/memory` | In-process store, for development, tests and single-instance apps |
+| `cache/valkey` | Valkey store, for apps that share a cache across instances |
 | `cache/cachetest` | Recording mock of `gas.CacheProvider` |
 
 ## Documentation
