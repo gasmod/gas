@@ -1,148 +1,147 @@
-package test
+package emailtest_test
 
 import (
 	"context"
 	"errors"
-	"reflect"
 	"sync"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/email/emailtest"
 )
 
-// mockCase drives one MockEmail method: call invokes it, setErr installs an
-// Fn that returns err and records that it ran, and args are the arguments the
-// mock must record.
-type mockCase struct {
-	call   func(m *emailtest.MockEmail) error
-	setErr func(m *emailtest.MockEmail, err error, ran *bool)
-	method string
-	args   []any
-}
+// errBounce is what a test's function returns.
+var errBounce = errors.New("bounce")
 
-func mockCases() []mockCase {
-	ctx := context.Background()
-	msg := &gas.Email{To: []string{"a@example.com"}, Subject: "hi"}
-	tmsg := &gas.TemplatedEmail{HTMLTemplate: "welcome"}
-
-	return []mockCase{
-		{
-			method: "Send",
-			args:   []any{msg},
-			call:   func(m *emailtest.MockEmail) error { return m.Send(ctx, msg) },
-			setErr: func(m *emailtest.MockEmail, err error, ran *bool) {
-				m.SendFn = func(context.Context, *gas.Email) error {
-					*ran = true
-					return err
-				}
-			},
-		},
-		{
-			method: "SendFromTemplate",
-			args:   []any{tmsg},
-			call:   func(m *emailtest.MockEmail) error { return m.SendFromTemplate(ctx, tmsg) },
-			setErr: func(m *emailtest.MockEmail, err error, ran *bool) {
-				m.SendFromTemplateFn = func(context.Context, *gas.TemplatedEmail) error {
-					*ran = true
-					return err
-				}
-			},
-		},
-		{
-			method: "CheckReady",
-			args:   nil,
-			call:   func(m *emailtest.MockEmail) error { return m.CheckReady(ctx) },
-			setErr: func(m *emailtest.MockEmail, err error, ran *bool) {
-				m.CheckReadyFn = func(context.Context) error {
-					*ran = true
-					return err
-				}
-			},
-		},
-	}
-}
-
-func TestMockEmail_Methods(t *testing.T) {
+// The example in the package documentation's Usage section.
+func TestDoc_Usage(t *testing.T) {
 	t.Parallel()
 
-	for _, tc := range mockCases() {
-		t.Run(tc.method, func(t *testing.T) {
-			t.Parallel()
+	ctx := t.Context()
 
-			m := &emailtest.MockEmail{}
-			if err := tc.call(m); err != nil {
-				t.Errorf("default %s = %v, want nil", tc.method, err)
-			}
-			if len(m.Calls) != 1 || m.Calls[0].Method != tc.method {
-				t.Fatalf("Calls = %+v, want one %s call", m.Calls, tc.method)
-			}
-			if !reflect.DeepEqual(m.Calls[0].Args, tc.args) {
-				t.Errorf("recorded args = %#v, want %#v", m.Calls[0].Args, tc.args)
-			}
-
-			wantErr := errors.New("injected")
-			var ran bool
-			tc.setErr(m, wantErr, &ran)
-			if err := tc.call(m); !errors.Is(err, wantErr) {
-				t.Errorf("%s with Fn = %v, want %v", tc.method, err, wantErr)
-			}
-			if !ran {
-				t.Errorf("%s did not call its Fn", tc.method)
-			}
-			if got := m.CallCount(tc.method); got != 2 {
-				t.Errorf("CallCount(%s) = %d, want 2", tc.method, got)
-			}
-		})
+	m := &emailtest.MockEmail{
+		SendFn: func(context.Context, *gas.Email) error { return errBounce },
 	}
+	err := m.Send(ctx, &gas.Email{To: []string{"alice@example.com"}})
+
+	require.ErrorIs(t, err, errBounce)
+	assert.Equal(t, 1, m.CallCount("Send"))
 }
 
-func TestMockEmail_CallCountAndReset(t *testing.T) {
+// With a field nil, every method returns nil; with it set, the method
+// returns what it returns, given the same arguments.
+func TestMockEmail_Fns(t *testing.T) {
 	t.Parallel()
 
+	ctx := t.Context()
 	m := &emailtest.MockEmail{}
-	ctx := context.Background()
-	_ = m.Send(ctx, &gas.Email{})
-	_ = m.Send(ctx, &gas.Email{})
-	_ = m.CheckReady(ctx)
 
-	if got := m.CallCount("Send"); got != 2 {
-		t.Errorf("CallCount(Send) = %d, want 2", got)
+	require.NoError(t, m.Send(ctx, &gas.Email{}))
+	require.NoError(t, m.SendFromTemplate(ctx, &gas.TemplatedEmail{}))
+	require.NoError(t, m.CheckReady(ctx))
+
+	msg := &gas.Email{Subject: "s"}
+	tmsg := &gas.TemplatedEmail{SubjectTemplate: "t"}
+
+	m.SendFn = func(_ context.Context, got *gas.Email) error {
+		assert.Same(t, msg, got)
+
+		return errBounce
 	}
-	if got := m.CallCount("CheckReady"); got != 1 {
-		t.Errorf("CallCount(CheckReady) = %d, want 1", got)
+	m.SendFromTemplateFn = func(_ context.Context, got *gas.TemplatedEmail) error {
+		assert.Same(t, tmsg, got)
+
+		return errBounce
 	}
-	if got := m.CallCount("SendFromTemplate"); got != 0 {
-		t.Errorf("CallCount(SendFromTemplate) = %d, want 0", got)
-	}
+	m.CheckReadyFn = func(context.Context) error { return errBounce }
+
+	require.ErrorIs(t, m.Send(ctx, msg), errBounce)
+	require.ErrorIs(t, m.SendFromTemplate(ctx, tmsg), errBounce)
+	require.ErrorIs(t, m.CheckReady(ctx), errBounce)
+}
+
+// Each call is recorded with copies of its message, nil for nil, so a
+// caller that reuses the message, or changes what Calls returned, changes
+// no recorded call; Data is the same value. Reset forgets the calls.
+func TestMockEmail_Calls(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	m := &emailtest.MockEmail{}
+	data := map[string]string{"Name": "Al"}
+
+	msg := &gas.Email{To: []string{"a@example.com"}, Headers: map[string]string{"X": "1"}}
+	tmsg := &gas.TemplatedEmail{Data: data, Cc: []string{"c@example.com"}}
+
+	require.NoError(t, m.Send(ctx, msg))
+	require.NoError(t, m.SendFromTemplate(ctx, tmsg))
+	require.NoError(t, m.Send(ctx, nil))
+	require.NoError(t, m.SendFromTemplate(ctx, nil))
+	require.NoError(t, m.CheckReady(ctx))
+
+	msg.To[0] = "changed@example.com"
+	msg.Headers["X"] = "2"
+	tmsg.Cc[0] = "changed@example.com"
+
+	calls := m.Calls()
+	require.Len(t, calls, 5)
+
+	sent, ok := calls[0].Args[0].(*gas.Email)
+	require.True(t, ok)
+	assert.Equal(t, "Send", calls[0].Method)
+	assert.Equal(t, []string{"a@example.com"}, sent.To)
+	assert.Equal(t, "1", sent.Headers["X"])
+
+	sent.To[0] = "again@example.com"
+
+	tsent, ok := calls[1].Args[0].(*gas.TemplatedEmail)
+	require.True(t, ok)
+	assert.Equal(t, []string{"c@example.com"}, tsent.Cc)
+	assert.Equal(t, data, tsent.Data)
+
+	assert.Equal(t, []any{(*gas.Email)(nil)}, calls[2].Args)
+	assert.Equal(t, []any{(*gas.TemplatedEmail)(nil)}, calls[3].Args)
+	assert.Equal(t, "CheckReady", calls[4].Method)
+	assert.Empty(t, calls[4].Args)
+
+	again, ok := m.Calls()[0].Args[0].(*gas.Email)
+	require.True(t, ok)
+	assert.Equal(t, []string{"a@example.com"}, again.To)
+
+	assert.Equal(t, 2, m.CallCount("Send"))
+	assert.Equal(t, 1, m.CallCount("CheckReady"))
 
 	m.Reset()
-	if len(m.Calls) != 0 || m.CallCount("Send") != 0 {
-		t.Errorf("after Reset, Calls = %+v, want none", m.Calls)
-	}
+	assert.Empty(t, m.Calls())
+	assert.Zero(t, m.CallCount("Send"))
 }
 
-// TestMockEmail_ConcurrentCalls checks, under -race, that the mock records
-// concurrent calls without a data race and loses none.
-func TestMockEmail_ConcurrentCalls(t *testing.T) {
+// The methods, Calls, CallCount and Reset may run at once, for -race.
+func TestMockEmail_Concurrent(t *testing.T) {
 	t.Parallel()
 
-	const workers, perWorker = 8, 50
 	m := &emailtest.MockEmail{}
-	ctx := context.Background()
 
 	var wg sync.WaitGroup
-	for range workers {
+
+	for range 8 {
 		wg.Go(func() {
-			for range perWorker {
-				_ = m.Send(ctx, &gas.Email{})
-				_ = m.CallCount("Send")
-			}
+			assert.NoError(
+				t,
+				m.Send(context.Background(), &gas.Email{To: []string{"a@example.com"}}),
+			)
+			assert.NoError(t, m.SendFromTemplate(context.Background(), &gas.TemplatedEmail{}))
+
+			_ = m.Calls()
+			_ = m.CallCount("Send")
 		})
 	}
-	wg.Wait()
 
-	if got := m.CallCount("Send"); got != workers*perWorker {
-		t.Errorf("CallCount(Send) = %d, want %d", got, workers*perWorker)
-	}
+	wg.Wait()
+	assert.Equal(t, 8, m.CallCount("Send"))
+
+	m.Reset()
 }

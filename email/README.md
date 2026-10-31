@@ -4,8 +4,10 @@
 
 Part of the [Gas](../README.md) monorepo · [Documentation](https://gasmod.github.io/gas) · [All modules](../README.md#modules)
 
-Transactional email for the [Gas](../README.md) framework, over AWS SES, with optional
-template rendering through `gas.TemplateProvider`.
+Transactional email for the [Gas](../README.md) framework, with two interchangeable senders that
+keep one contract, Amazon SES's rules: Amazon SES through its API v2 (or an emulator that speaks
+it), and an in-memory outbox for tests and local development. Messages are checked and their
+addresses normalized before anything is sent, and templates render through `gas.TemplateProvider`.
 
 Implements `gas.EmailProvider`.
 
@@ -17,12 +19,15 @@ go get github.com/gasmod/gas/email
 gas.WithSingletonService[gas.EmailProvider](ses.New()),
 ```
 
-`ses.New()` needs `gas.TemplateProvider`, `gas.ConfigProvider` and `gas.Logger`, even if you
-only ever call `Send`.
+Both senders need `gas.TemplateProvider`, `gas.ConfigProvider` and `gas.Logger`, even if you only
+ever call `Send`, and read the `email` section; the SES sender takes its region and credentials
+from `email.region` and the static keys, or else from the AWS SDK's default chain.
 
 | Package | Provides |
 |---|---|
-| `email/ses` | AWS SES, and LocalStack via a custom endpoint |
+| `email` | The shared contract, address and header rules, limits and sentinel errors |
+| `email/ses` | Amazon SES (API v2), and emulators via a custom endpoint |
+| `email/memory` | In-process outbox with SES's rules, for tests and local development |
 | `email/emailtest` | Recording mock of `gas.EmailProvider` |
 
 ## Documentation

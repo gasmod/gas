@@ -1,709 +1,549 @@
-package test
+package ses_test
 
 import (
+	"bytes"
 	"context"
-	"errors"
-	"io/fs"
-	"os"
-	"path/filepath"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
-	awsses "github.com/aws/aws-sdk-go-v2/service/ses"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/sesv2"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.yaml.in/yaml/v3"
 
 	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/config/configtest"
 	"github.com/gasmod/gas/email"
+	"github.com/gasmod/gas/email/internal/conformance"
 	"github.com/gasmod/gas/email/ses"
 )
 
-// --- mock SES client ---
-
-type mockSESClient struct {
-	sendEmailFn func(ctx context.Context, params *awsses.SendEmailInput, optFns ...func(*awsses.Options)) (*awsses.SendEmailOutput, error)
-}
-
-func (m *mockSESClient) SendEmail(
-	ctx context.Context,
-	params *awsses.SendEmailInput,
-	optFns ...func(*awsses.Options),
-) (*awsses.SendEmailOutput, error) {
-	return m.sendEmailFn(ctx, params, optFns...)
-}
-
-// --- mock template provider ---
-
-type mockTemplateProvider struct {
-	getFn func(ctx context.Context, name string) ([]byte, error)
-}
-
-func (m *mockTemplateProvider) Get(ctx context.Context, name string) ([]byte, error) {
-	if m.getFn != nil {
-		return m.getFn(ctx, name)
-	}
-	return nil, errors.New("not found")
-}
-
-func (m *mockTemplateProvider) List(
-	_ context.Context,
-) ([]string, error) {
-	return nil, nil
-}
-func (m *mockTemplateProvider) Register(_ context.Context, _ string, _ []byte) error { return nil }
-func (m *mockTemplateProvider) RegisterFS(_ context.Context, _ fs.FS) error          { return nil }
-
-// --- helpers ---
-
-func validConfig() *ses.Config {
-	return &ses.Config{
-		Email: ses.Settings{
-			Region:    "us-east-1",
-			FromEmail: "test@example.com",
-		},
+// message returns a valid message to alice from the shop.
+func message() *gas.Email {
+	return &gas.Email{
+		From:     "shop@example.com",
+		To:       []string{"alice@example.com"},
+		Subject:  "Hi",
+		TextBody: "Hello",
 	}
 }
 
-func newTestService(t *testing.T, mock *mockSESClient, tmpl gas.TemplateProvider) *ses.Service {
-	t.Helper()
-	ctor := ses.New(ses.WithConfig(validConfig()), ses.WithClient(mock))
-	svc, err := ctor(tmpl, nil, &gas.NopLogger{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.Init(t.Context()); err != nil {
-		t.Fatalf("init: %v", err)
-	}
-	return svc
-}
-
-// --- config tests ---
-
-func TestDefaultConfig(t *testing.T) {
+// fmt prints the secret access key and the session token of a Settings
+// or a Config as `[redacted]`, whatever the verb.
+func TestSecret_Redacted(t *testing.T) {
 	t.Parallel()
+
 	cfg := ses.DefaultConfig()
 
-	if cfg.Email.Region != "" {
-		t.Errorf("Region = %q, want empty", cfg.Email.Region)
+	cfg.Email.SecretAccessKey = "zqxsecret"
+	cfg.Email.SessionToken = "zqxtoken"
+
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x"} {
+		text := fmt.Sprintf(verb, cfg) + fmt.Sprintf(verb, cfg.Email) + fmt.Sprintf(verb, *cfg)
+		assert.NotContains(t, text, "zqx", verb)
 	}
-	if cfg.Email.FromEmail != "" {
-		t.Errorf("FromEmail = %q, want empty", cfg.Email.FromEmail)
+
+	assert.Equal(t, "[redacted]", cfg.Email.SecretAccessKey.String())
+	assert.Equal(t, "zqxsecret", string(cfg.Email.SecretAccessKey))
+}
+
+// encoding/json, a YAML encoder and log/slog write the secret access key
+// and the session token as `[redacted]`, in a Config and on their own.
+func TestSecret_Marshal(t *testing.T) {
+	t.Parallel()
+
+	cfg := ses.DefaultConfig()
+
+	cfg.Email.SecretAccessKey = "zqxsecret"
+	cfg.Email.SessionToken = "zqxtoken"
+
+	j, err := json.Marshal(cfg) //nolint:musttag // untagged: the field names an encoder writes.
+	require.NoError(t, err)
+	assert.Contains(t, string(j), `"SecretAccessKey":"[redacted]","SessionToken":"[redacted]"`)
+
+	y, err := yaml.Marshal(cfg)
+	require.NoError(t, err)
+	assert.Contains(t, string(y), "secretaccesskey: '[redacted]'")
+	assert.Contains(t, string(y), "sessiontoken: '[redacted]'")
+
+	var logs bytes.Buffer
+
+	slog.New(slog.NewJSONHandler(&logs, nil)).
+		Info("cfg", "cfg", cfg, "key", cfg.Email.SecretAccessKey)
+	slog.New(slog.NewTextHandler(&logs, nil)).
+		Info("cfg", "cfg", cfg, "key", cfg.Email.SessionToken)
+	assert.Contains(t, logs.String(), `"key":"[redacted]"`)
+	assert.Contains(t, logs.String(), `key=[redacted]`)
+
+	for _, text := range []string{string(j), string(y), logs.String()} {
+		assert.NotContains(t, text, "zqx")
 	}
 }
 
-// --- service lifecycle tests ---
-
-func TestServiceName(t *testing.T) {
+// DefaultConfig has no region, endpoint, default sender or credentials,
+// and the default operation timeout and retries.
+func TestDefaultConfig(t *testing.T) {
 	t.Parallel()
-	ctor := ses.New(ses.WithConfig(validConfig()), ses.WithClient(&mockSESClient{}))
-	svc, err := ctor(&mockTemplateProvider{}, nil, &gas.NopLogger{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if svc.Name() != "gas/email/ses" {
-		t.Errorf("Name() = %q, want %q", svc.Name(), "gas/email/ses")
-	}
+
+	assert.Equal(t, &ses.Config{Email: ses.Settings{
+		OpTimeout:  10 * time.Second,
+		MaxRetries: 2,
+	}}, ses.DefaultConfig())
 }
 
-func TestClientReturnsNilForMock(t *testing.T) {
+// Init binds the `email` section from the ConfigProvider over
+// DefaultConfig, the secret keys included, and normalizes the default
+// sender.
+func TestInit_Binds(t *testing.T) {
 	t.Parallel()
-	svc := newTestService(t, &mockSESClient{}, &mockTemplateProvider{})
-	if svc.Client() != nil {
-		t.Error("Client() should return nil for mock sesClient")
-	}
-}
 
-// --- send tests ---
+	f := newFake(t, nil)
 
-func TestSend(t *testing.T) {
-	t.Parallel()
-	var captured *awsses.SendEmailInput
-
-	mock := &mockSESClient{
-		sendEmailFn: func(_ context.Context, params *awsses.SendEmailInput, _ ...func(*awsses.Options)) (*awsses.SendEmailOutput, error) {
-			captured = params
-			return &awsses.SendEmailOutput{}, nil
+	p, err := configtest.NewMockConfigWithValues(map[string]any{
+		"email": map[string]any{
+			"region":          "eu-west-1",
+			"endpoint":        f.srv.URL,
+			"fromemail":       "Shop <shop@bücher.example>",
+			"accesskeyid":     "AKID",
+			"secretaccesskey": "zqxsecret",
+			"sessiontoken":    "zqxtoken",
+			"optimeout":       "2s",
+			"maxretries":      0,
 		},
-	}
-
-	// Use production env so we actually call SES
-	cfg := validConfig()
-	cfg.GasEnv = "production"
-	ctor := ses.New(ses.WithConfig(cfg), ses.WithClient(mock))
-	svc, err := ctor(&mockTemplateProvider{}, nil, &gas.NopLogger{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = svc.Init(t.Context()); err != nil {
-		t.Fatalf("init: %v", err)
-	}
-
-	err = svc.Send(context.Background(), &gas.Email{
-		To:       []string{"recipient@example.com"},
-		Subject:  "Test Subject",
-		HTMLBody: "<h1>Hello</h1>",
-		TextBody: "Hello",
-		ReplyTo:  "reply@example.com",
 	})
-	if err != nil {
-		t.Fatalf("Send() error = %v", err)
-	}
+	require.NoError(t, err)
 
-	if *captured.Source != "test@example.com" {
-		t.Errorf("Source = %q, want %q", *captured.Source, "test@example.com")
-	}
-	if len(captured.Destination.ToAddresses) != 1 ||
-		captured.Destination.ToAddresses[0] != "recipient@example.com" {
-		t.Errorf("ToAddresses = %v", captured.Destination.ToAddresses)
-	}
-	if *captured.Message.Subject.Data != "Test Subject" {
-		t.Errorf("Subject = %q", *captured.Message.Subject.Data)
-	}
-	if *captured.Message.Body.Html.Data != "<h1>Hello</h1>" {
-		t.Errorf("HTMLBody = %q", *captured.Message.Body.Html.Data)
-	}
-	if *captured.Message.Body.Text.Data != "Hello" {
-		t.Errorf("TextBody = %q", *captured.Message.Body.Text.Data)
-	}
-	if len(captured.ReplyToAddresses) != 1 || captured.ReplyToAddresses[0] != "reply@example.com" {
-		t.Errorf("ReplyToAddresses = %v", captured.ReplyToAddresses)
-	}
+	s, err := ses.New()(conformance.NewTemplates(nil), p, nop)
+	require.NoError(t, err)
+	require.NoError(t, s.Init(t.Context()))
+	t.Cleanup(func() { require.NoError(t, s.Close(context.Background())) })
+
+	o := s.Client().Options()
+	assert.Equal(t, "eu-west-1", o.Region)
+	assert.Equal(t, f.srv.URL, aws.ToString(o.BaseEndpoint))
+
+	creds, err := o.Credentials.Retrieve(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, "AKID", creds.AccessKeyID)
+	assert.Equal(t, "zqxsecret", creds.SecretAccessKey)
+	assert.Equal(t, "zqxtoken", creds.SessionToken)
+	assert.Equal(t, 1, o.Retryer.MaxAttempts())
+
+	m := message()
+
+	m.From = ""
+
+	require.NoError(t, s.Send(t.Context(), m))
+	assert.Equal(t, `"Shop" <shop@xn--bcher-kva.example>`, f.sent(t)[0].From)
 }
 
-func TestSendUsesMessageFrom(t *testing.T) {
+// A configuration given to WithConfig is copied on each Init and checked
+// against its validate tags, and the rules run on it, naming the setting
+// and never its value.
+func TestInit_ConfigRules(t *testing.T) {
 	t.Parallel()
-	var captured *awsses.SendEmailInput
 
-	mock := &mockSESClient{
-		sendEmailFn: func(_ context.Context, params *awsses.SendEmailInput, _ ...func(*awsses.Options)) (*awsses.SendEmailOutput, error) {
-			captured = params
-			return &awsses.SendEmailOutput{}, nil
+	cases := map[string]func(*ses.Settings){
+		"invalid config: Email.Endpoint must be an http or https URL with a host and nothing more but /": func(
+			s *ses.Settings,
+		) {
+			s.Endpoint = "http://zqxuser:zqxpass@127.0.0.1:1"
 		},
+		"invalid config: Email.FromEmail must be one email address": func(s *ses.Settings) {
+			s.FromEmail = "zqx@example.com, other@example.com"
+		},
+		"invalid config: validate config: Key: 'Config.Email.OpTimeout' Error:Field validation for " +
+			"'OpTimeout' failed on the 'gt' tag": func(s *ses.Settings) { s.OpTimeout = 0 },
+		"invalid config: validate config: Key: 'Config.Email.MaxRetries' Error:Field validation for " +
+			"'MaxRetries' failed on the 'max' tag": func(s *ses.Settings) { s.MaxRetries = ses.MaxRetries + 1 },
+		"invalid config: validate config: Key: 'Config.Email.MaxRetries' Error:Field validation for " +
+			"'MaxRetries' failed on the 'min' tag": func(s *ses.Settings) { s.MaxRetries = -1 },
 	}
 
-	cfg := validConfig()
-	cfg.GasEnv = "production"
-	ctor := ses.New(ses.WithConfig(cfg), ses.WithClient(mock))
-	svc, err := ctor(&mockTemplateProvider{}, nil, &gas.NopLogger{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = svc.Init(t.Context()); err != nil {
-		t.Fatalf("init: %v", err)
+	for text, edit := range cases {
+		cfg := config("http://127.0.0.1:1")
+		edit(&cfg.Email)
+
+		err := initErr(t, ses.WithConfig(cfg))
+		require.ErrorIs(t, err, email.ErrInvalidConfig, text)
+		require.EqualError(t, err, "gas/email/ses: init: "+text)
+		assertNoSecrets(t, err.Error(), "example.com")
 	}
 
-	err = svc.Send(context.Background(), &gas.Email{
-		From:    "custom@example.com",
-		To:      []string{"recipient@example.com"},
-		Subject: "Test",
+	for _, endpoint := range []string{"ftp://host", "host:4566", "http://", ":"} {
+		err := initErr(t, ses.WithConfig(config(endpoint)))
+		require.ErrorIs(t, err, email.ErrInvalidConfig, endpoint)
+	}
+
+	cfg := config("https://email.example")
+
+	cfg.Email.FromEmail = "Shop <shop@bücher.example>"
+
+	s := open(t, cfg)
+	require.NoError(t, s.CheckReady(t.Context()))
+	assert.Equal(
+		t,
+		"Shop <shop@bücher.example>",
+		cfg.Email.FromEmail,
+		"Init changed the caller's Config",
+	)
+
+	cfg.Email.OpTimeout = 0
+
+	require.NoError(t, s.Close(t.Context()))
+	require.ErrorIs(
+		t,
+		s.Init(t.Context()),
+		email.ErrInvalidConfig,
+		"Init copies the Config each time",
+	)
+}
+
+// Without WithConfig and without a ConfigProvider, Init fails with
+// ErrNoConfigProvider; a binder's error is ErrInvalidConfig.
+func TestInit_NoConfigProvider(t *testing.T) {
+	t.Parallel()
+
+	err := initErr(t)
+	require.ErrorIs(t, err, email.ErrNoConfigProvider)
+	require.EqualError(t, err, "gas/email/ses: init: no config provider")
+
+	p, err := configtest.NewMockConfigWithValues(map[string]any{
+		"email": map[string]any{"optimeout": "soon"},
 	})
-	if err != nil {
-		t.Fatalf("Send() error = %v", err)
-	}
+	require.NoError(t, err)
 
-	if *captured.Source != "custom@example.com" {
-		t.Errorf("Source = %q, want %q", *captured.Source, "custom@example.com")
-	}
+	s, err := ses.New()(conformance.NewTemplates(nil), p, nop)
+	require.NoError(t, err)
+
+	err = s.Init(t.Context())
+	require.ErrorIs(t, err, email.ErrInvalidConfig)
+	assert.True(t, strings.HasPrefix(err.Error(), "gas/email/ses: init: invalid config: "), err)
 }
 
-func TestSendWithCcBcc(t *testing.T) {
+// The constructor refuses a nil TemplateProvider, a nil logger and
+// WithConfig(nil), in that order.
+func TestNew_Nil(t *testing.T) {
 	t.Parallel()
-	var captured *awsses.SendEmailInput
 
-	mock := &mockSESClient{
-		sendEmailFn: func(_ context.Context, params *awsses.SendEmailInput, _ ...func(*awsses.Options)) (*awsses.SendEmailOutput, error) {
-			captured = params
-			return &awsses.SendEmailOutput{}, nil
-		},
+	templates := conformance.NewTemplates(nil)
+
+	_, err := ses.New()(nil, nil, nil)
+	require.ErrorIs(t, err, email.ErrNilTemplates)
+	require.EqualError(t, err, "gas/email/ses: template provider is nil")
+
+	_, err = ses.New()(templates, nil, nil)
+	require.ErrorIs(t, err, email.ErrNilLogger)
+	require.EqualError(t, err, "gas/email/ses: logger is nil")
+
+	_, err = ses.New(ses.WithConfig(nil))(templates, nil, nop)
+	require.ErrorIs(t, err, email.ErrNilConfig)
+	require.EqualError(t, err, "gas/email/ses: config is nil")
+}
+
+// Send is one POST to /v2/email/outbound-emails with Simple content in
+// the JSON the SES API v2 reference describes: the normalized addresses,
+// the subject and each body that is not empty with the UTF-8 character
+// set, the headers in the order of their names, and no list or reply-to
+// address that is empty.
+func TestSend_Wire(t *testing.T) {
+	t.Parallel()
+
+	f := newFake(t, nil)
+	s := f.open(t, nil)
+
+	m := message()
+
+	m.Headers = map[string]string{"X-B": "2", "X-A": "1"}
+
+	require.NoError(t, s.Send(t.Context(), m))
+
+	m = message()
+	m.ReplyTo, m.Cc, m.TextBody, m.HTMLBody = "Help <help@example.com>", []string{
+		"c@example.com",
+	}, "", "<p>Hi</p>"
+
+	require.NoError(t, s.Send(t.Context(), m))
+
+	calls := f.received()
+	require.Len(t, calls, 2)
+
+	for _, c := range calls {
+		assert.Equal(t, http.MethodPost, c.method)
+		assert.Equal(t, "/v2/email/outbound-emails", c.path)
+		assert.Equal(t, "application/json", c.header.Get("Content-Type"))
+		assert.Contains(t, c.header.Get("Authorization"), "/"+testRegion+"/ses/aws4_request")
 	}
 
-	cfg := validConfig()
-	cfg.GasEnv = "production"
-	ctor := ses.New(ses.WithConfig(cfg), ses.WithClient(mock))
-	svc, err := ctor(&mockTemplateProvider{}, nil, &gas.NopLogger{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = svc.Init(t.Context()); err != nil {
-		t.Fatalf("init: %v", err)
-	}
+	assert.JSONEq(t, `{
+		"Content": {"Simple": {
+			"Body": {"Text": {"Charset": "UTF-8", "Data": "Hello"}},
+			"Headers": [{"Name": "X-A", "Value": "1"}, {"Name": "X-B", "Value": "2"}],
+			"Subject": {"Charset": "UTF-8", "Data": "Hi"}
+		}},
+		"Destination": {"ToAddresses": ["alice@example.com"]},
+		"FromEmailAddress": "shop@example.com"
+	}`, calls[0].raw)
+	assert.JSONEq(t, `{
+		"Content": {"Simple": {
+			"Body": {"Html": {"Charset": "UTF-8", "Data": "<p>Hi</p>"}},
+			"Subject": {"Charset": "UTF-8", "Data": "Hi"}
+		}},
+		"Destination": {"CcAddresses": ["c@example.com"], "ToAddresses": ["alice@example.com"]},
+		"FromEmailAddress": "shop@example.com",
+		"ReplyToAddresses": ["\"Help\" <help@example.com>"]
+	}`, calls[1].raw)
+}
 
-	err = svc.Send(context.Background(), &gas.Email{
-		To:  []string{"to@example.com"},
-		Cc:  []string{"cc@example.com"},
-		Bcc: []string{"bcc@example.com"},
+// A send that fails with a server error is retried up to MaxRetries
+// times, so a retried send can reach SES twice; MaxRetries 0 sends once.
+func TestSend_Retries(t *testing.T) {
+	t.Parallel()
+
+	var n atomic.Int32
+
+	f := newFake(t, func(call) reply {
+		if n.Add(1) == 1 {
+			return awsError(http.StatusInternalServerError, "InternalFailure", "boom")
+		}
+
+		return sendReply
 	})
-	if err != nil {
-		t.Fatalf("Send() error = %v", err)
-	}
+	s := f.open(t, nil)
 
-	if len(captured.Destination.CcAddresses) != 1 ||
-		captured.Destination.CcAddresses[0] != "cc@example.com" {
-		t.Errorf("CcAddresses = %v", captured.Destination.CcAddresses)
-	}
-	if len(captured.Destination.BccAddresses) != 1 ||
-		captured.Destination.BccAddresses[0] != "bcc@example.com" {
-		t.Errorf("BccAddresses = %v", captured.Destination.BccAddresses)
-	}
-}
+	require.NoError(t, s.Send(t.Context(), message()))
+	assert.Len(t, f.received(), 2)
 
-func TestSendClosed(t *testing.T) {
-	t.Parallel()
-	svc := newTestService(t, &mockSESClient{}, &mockTemplateProvider{})
-	_ = svc.Close(context.Background())
-
-	err := svc.Send(context.Background(), &gas.Email{To: []string{"x@x.com"}})
-	if !errors.Is(err, email.ErrClosed) {
-		t.Errorf("got %v, want ErrClosed", err)
-	}
-}
-
-func TestSendSESError(t *testing.T) {
-	t.Parallel()
-	sesErr := errors.New("ses: throttled")
-
-	mock := &mockSESClient{
-		sendEmailFn: func(_ context.Context, _ *awsses.SendEmailInput, _ ...func(*awsses.Options)) (*awsses.SendEmailOutput, error) {
-			return nil, sesErr
-		},
-	}
-
-	cfg := validConfig()
-	cfg.GasEnv = "production"
-	ctor := ses.New(ses.WithConfig(cfg), ses.WithClient(mock))
-	svc, err := ctor(&mockTemplateProvider{}, nil, &gas.NopLogger{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = svc.Init(t.Context()); err != nil {
-		t.Fatalf("init: %v", err)
-	}
-
-	err = svc.Send(context.Background(), &gas.Email{To: []string{"x@x.com"}})
-	if !errors.Is(err, sesErr) {
-		t.Errorf("got %v, want wrapped sesErr", err)
-	}
-}
-
-// --- send from template tests ---
-
-func TestSendFromTemplate(t *testing.T) {
-	t.Parallel()
-	var captured *awsses.SendEmailInput
-
-	mock := &mockSESClient{
-		sendEmailFn: func(_ context.Context, params *awsses.SendEmailInput, _ ...func(*awsses.Options)) (*awsses.SendEmailOutput, error) {
-			captured = params
-			return &awsses.SendEmailOutput{}, nil
-		},
-	}
-
-	tmpl := &mockTemplateProvider{
-		getFn: func(_ context.Context, name string) ([]byte, error) {
-			switch name {
-			case "welcome-subject":
-				return []byte("Welcome, {{.Name}}!"), nil
-			case "welcome-html":
-				return []byte("<h1>Hello, {{.Name}}</h1>"), nil
-			case "welcome-text":
-				return []byte("Hello, {{.Name}}"), nil
-			default:
-				return nil, errors.New("not found")
-			}
-		},
-	}
-
-	cfg := validConfig()
-	cfg.GasEnv = "production"
-	ctor := ses.New(ses.WithConfig(cfg), ses.WithClient(mock))
-	svc, err := ctor(tmpl, nil, &gas.NopLogger{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = svc.Init(t.Context()); err != nil {
-		t.Fatalf("init: %v", err)
-	}
-
-	err = svc.SendFromTemplate(context.Background(), &gas.TemplatedEmail{
-		SubjectTemplate: "welcome-subject",
-		HTMLTemplate:    "welcome-html",
-		TextTemplate:    "welcome-text",
-		Data:            map[string]string{"Name": "Alice"},
-		To:              []string{"alice@example.com"},
+	f = newFake(t, func(call) reply {
+		return awsError(http.StatusInternalServerError, "InternalFailure", "boom")
 	})
-	if err != nil {
-		t.Fatalf("SendFromTemplate() error = %v", err)
-	}
+	s = f.open(t, func(set *ses.Settings) { set.MaxRetries = 0 })
 
-	if *captured.Message.Subject.Data != "Welcome, Alice!" {
-		t.Errorf("Subject = %q", *captured.Message.Subject.Data)
-	}
-	if *captured.Message.Body.Html.Data != "<h1>Hello, Alice</h1>" {
-		t.Errorf("HTMLBody = %q", *captured.Message.Body.Html.Data)
-	}
-	if *captured.Message.Body.Text.Data != "Hello, Alice" {
-		t.Errorf("TextBody = %q", *captured.Message.Body.Text.Data)
-	}
-}
+	err := s.Send(t.Context(), message())
+	require.ErrorIs(t, err, ses.ErrCommand)
+	require.EqualError(t, err, "gas/email/ses: send: failed (InternalFailure)")
+	assert.Len(t, f.received(), 1)
 
-func TestSendFromTemplatePartial(t *testing.T) {
-	t.Parallel()
-	var captured *awsses.SendEmailInput
-
-	mock := &mockSESClient{
-		sendEmailFn: func(_ context.Context, params *awsses.SendEmailInput, _ ...func(*awsses.Options)) (*awsses.SendEmailOutput, error) {
-			captured = params
-			return &awsses.SendEmailOutput{}, nil
-		},
-	}
-
-	tmpl := &mockTemplateProvider{
-		getFn: func(_ context.Context, name string) ([]byte, error) {
-			if name == "body-html" {
-				return []byte("<p>Content</p>"), nil
-			}
-			return nil, errors.New("not found")
-		},
-	}
-
-	cfg := validConfig()
-	cfg.GasEnv = "production"
-	ctor := ses.New(ses.WithConfig(cfg), ses.WithClient(mock))
-	svc, err := ctor(tmpl, nil, &gas.NopLogger{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = svc.Init(t.Context()); err != nil {
-		t.Fatalf("init: %v", err)
-	}
-
-	// Only HTMLTemplate set; subject and text provided directly
-	err = svc.SendFromTemplate(context.Background(), &gas.TemplatedEmail{
-		HTMLTemplate: "body-html",
-		To:           []string{"user@example.com"},
-		Subject:      "Static Subject",
-		TextBody:     "Static text",
+	f = newFake(t, func(call) reply {
+		return awsError(http.StatusTooManyRequests, "TooManyRequestsException", "slow down")
 	})
-	if err != nil {
-		t.Fatalf("SendFromTemplate() error = %v", err)
-	}
+	s = f.open(t, func(set *ses.Settings) { set.MaxRetries = 1 })
 
-	if *captured.Message.Subject.Data != "Static Subject" {
-		t.Errorf("Subject = %q, want %q", *captured.Message.Subject.Data, "Static Subject")
-	}
-	if *captured.Message.Body.Html.Data != "<p>Content</p>" {
-		t.Errorf("HTMLBody = %q", *captured.Message.Body.Html.Data)
-	}
-	if *captured.Message.Body.Text.Data != "Static text" {
-		t.Errorf("TextBody = %q", *captured.Message.Body.Text.Data)
-	}
+	err = s.Send(t.Context(), message())
+	require.ErrorIs(t, err, ses.ErrThrottled)
+	require.EqualError(t, err, "gas/email/ses: send: throttled (TooManyRequestsException)")
+	assert.Len(t, f.received(), 2)
 }
 
-func TestSendFromTemplateClosed(t *testing.T) {
-	t.Parallel()
-	svc := newTestService(t, &mockSESClient{}, &mockTemplateProvider{})
-	_ = svc.Close(context.Background())
-
-	err := svc.SendFromTemplate(context.Background(), &gas.TemplatedEmail{
-		HTMLTemplate: "test",
-		To:           []string{"x@x.com"},
-	})
-	if !errors.Is(err, email.ErrClosed) {
-		t.Errorf("got %v, want ErrClosed", err)
-	}
-}
-
-func TestSendFromTemplateGetError(t *testing.T) {
+// An error reply of SES is classified by its code into the sentinels,
+// with the code shown when it is a known one, and never the reply's
+// message, which can quote an address.
+//
+//nolint:funlen // one case per reply.
+func TestErrors_Replies(t *testing.T) {
 	t.Parallel()
 
-	tmpl := &mockTemplateProvider{
-		getFn: func(_ context.Context, _ string) ([]byte, error) {
-			return nil, errors.New("storage error")
-		},
-	}
+	const leak = "Email address is not verified: zqx@example.com"
 
-	cfg := validConfig()
-	cfg.GasEnv = "production"
-	ctor := ses.New(ses.WithConfig(cfg), ses.WithClient(&mockSESClient{}))
-	svc, err := ctor(tmpl, nil, &gas.NopLogger{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = svc.Init(t.Context()); err != nil {
-		t.Fatalf("init: %v", err)
-	}
-
-	err = svc.SendFromTemplate(context.Background(), &gas.TemplatedEmail{
-		HTMLTemplate: "missing",
-		To:           []string{"x@x.com"},
-	})
-	if err == nil {
-		t.Error("SendFromTemplate() should fail when template Get fails")
-	}
-}
-
-func TestSendFromTemplateParseError(t *testing.T) {
-	t.Parallel()
-
-	tmpl := &mockTemplateProvider{
-		getFn: func(_ context.Context, _ string) ([]byte, error) {
-			return []byte("{{.Invalid template"), nil
-		},
-	}
-
-	cfg := validConfig()
-	cfg.GasEnv = "production"
-	ctor := ses.New(ses.WithConfig(cfg), ses.WithClient(&mockSESClient{}))
-	svc, err := ctor(tmpl, nil, &gas.NopLogger{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = svc.Init(t.Context()); err != nil {
-		t.Fatalf("init: %v", err)
-	}
-
-	err = svc.SendFromTemplate(context.Background(), &gas.TemplatedEmail{
-		HTMLTemplate: "bad",
-		To:           []string{"x@x.com"},
-	})
-	if err == nil {
-		t.Error("SendFromTemplate() should fail on template parse error")
-	}
-}
-
-// --- readiness tests ---
-
-func TestCheckReady(t *testing.T) {
-	t.Parallel()
-	svc := newTestService(t, &mockSESClient{}, &mockTemplateProvider{})
-
-	if err := svc.CheckReady(context.Background()); err != nil {
-		t.Errorf("CheckReady() before close = %v, want nil", err)
-	}
-
-	_ = svc.Close(context.Background())
-
-	err := svc.CheckReady(context.Background())
-	if !errors.Is(err, email.ErrClosed) {
-		t.Errorf("CheckReady() after close = %v, want ErrClosed", err)
-	}
-}
-
-// --- IsErrClosed test ---
-
-func TestIsErrClosed(t *testing.T) {
-	t.Parallel()
-	if !email.IsErrClosed(email.ErrClosed) {
-		t.Error("IsErrClosed(ErrClosed) should be true")
-	}
-	if email.IsErrClosed(errors.New("other")) {
-		t.Error("IsErrClosed(other) should be false")
-	}
-}
-
-// A configuration that fails validation when bound is returned with the
-// service name, so the error is identifiable without a log line.
-func TestInit_InvalidConfigNamesService(t *testing.T) {
-	t.Parallel()
-
-	provider, err := configtest.NewMockConfigWithValues(map[string]any{
-		"email": map[string]any{"region": "us-east-1"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	svc, err := ses.New(ses.WithClient(&mockSESClient{}))(nil, provider, &gas.NopLogger{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = svc.Init(t.Context())
-	if err == nil || !strings.HasPrefix(err.Error(), "gas/email/ses"+": config binding: ") {
-		t.Errorf("Init() error = %v, want it prefixed with the service name", err)
-	}
-}
-
-// isolateAWSCredentials points the AWS SDK at empty config and credentials
-// files, clears credential environment variables, and turns off the EC2
-// instance metadata lookup, so the default credential chain finds nothing
-// and fails fast. It uses t.Setenv, so callers cannot run in parallel.
-func isolateAWSCredentials(t *testing.T) {
-	t.Helper()
-	empty := filepath.Join(t.TempDir(), "empty")
-	if err := os.WriteFile(empty, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	for k, v := range map[string]string{
-		"AWS_CONFIG_FILE":                        empty,
-		"AWS_SHARED_CREDENTIALS_FILE":            empty,
-		"AWS_EC2_METADATA_DISABLED":              "true",
-		"AWS_ACCESS_KEY_ID":                      "",
-		"AWS_SECRET_ACCESS_KEY":                  "",
-		"AWS_SESSION_TOKEN":                      "",
-		"AWS_PROFILE":                            "",
-		"AWS_WEB_IDENTITY_TOKEN_FILE":            "",
-		"AWS_CONTAINER_CREDENTIALS_RELATIVE_URI": "",
-		"AWS_CONTAINER_CREDENTIALS_FULL_URI":     "",
-	} {
-		t.Setenv(k, v)
-	}
-}
-
-// With no credentials anywhere in the default chain, Init fails instead of
-// leaving the failure for the first send.
-func TestInit_NoCredentialsFails(t *testing.T) {
-	isolateAWSCredentials(t)
-
-	svc, err := ses.New(ses.WithConfig(validConfig()))(nil, nil, &gas.NopLogger{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = svc.Init(t.Context())
-	if err == nil {
-		t.Fatal("Init() = nil, want an error for missing AWS credentials")
-	}
-	if !strings.Contains(err.Error(), "retrieve aws credentials") {
-		t.Errorf("Init() error = %v, want it to name the credential lookup", err)
-	}
-}
-
-// Static credentials from the config are retrieved without any network
-// call, so Init succeeds.
-func TestInit_StaticCredentials(t *testing.T) {
-	isolateAWSCredentials(t)
-
-	cfg := validConfig()
-	cfg.Email.AccessKeyID = "AKIDEXAMPLE"
-	cfg.Email.SecretAccessKey = "secret"
-	svc, err := ses.New(ses.WithConfig(cfg))(nil, nil, &gas.NopLogger{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.Init(t.Context()); err != nil {
-		t.Fatalf("Init() = %v, want nil", err)
-	}
-}
-
-// TestSendFromTemplateRenderErrors checks that a failure to get, parse, or
-// execute any of the three templates is returned and stops the send.
-func TestSendFromTemplateRenderErrors(t *testing.T) {
-	t.Parallel()
-
-	errStorage := errors.New("storage error")
-	templates := map[string]string{
-		"bad-parse": "{{.Invalid template",
-		"bad-exec":  `{{template "missing"}}`,
-	}
-	tmpl := &mockTemplateProvider{
-		getFn: func(_ context.Context, name string) ([]byte, error) {
-			if name == "bad-get" {
-				return nil, errStorage
-			}
-			return []byte(templates[name]), nil
-		},
-	}
-
-	tests := []struct {
-		wantIs  error
-		name    string
-		wantMsg string
-		msg     gas.TemplatedEmail
+	cases := []struct {
+		reply reply
+		text  string
+		errs  []error
 	}{
 		{
-			name:   "subject get",
-			msg:    gas.TemplatedEmail{SubjectTemplate: "bad-get"},
-			wantIs: errStorage,
+			awsError(400, "MessageRejected", leak), "not verified (MessageRejected)",
+			[]error{ses.ErrNotVerified, ses.ErrRejected, ses.ErrCommand},
 		},
 		{
-			name:    "subject parse",
-			msg:     gas.TemplatedEmail{SubjectTemplate: "bad-parse"},
-			wantMsg: "parse:",
+			awsError(
+				400,
+				"MessageRejected",
+				"zqx@example.com bad content",
+			),
+			"rejected (MessageRejected)",
+			[]error{ses.ErrRejected, ses.ErrCommand},
 		},
 		{
-			name:    "subject execute",
-			msg:     gas.TemplatedEmail{SubjectTemplate: "bad-exec"},
-			wantMsg: "execute:",
+			awsError(400, "MailFromDomainNotVerifiedException", leak),
+			"not verified (MailFromDomainNotVerifiedException)",
+			[]error{ses.ErrNotVerified, ses.ErrCommand},
 		},
-		{name: "html get", msg: gas.TemplatedEmail{HTMLTemplate: "bad-get"}, wantIs: errStorage},
-		{name: "html parse", msg: gas.TemplatedEmail{HTMLTemplate: "bad-parse"}, wantMsg: "parse:"},
 		{
-			name:    "html execute",
-			msg:     gas.TemplatedEmail{HTMLTemplate: "bad-exec"},
-			wantMsg: "execute:",
+			awsError(400, "LimitExceededException", leak), "throttled (LimitExceededException)",
+			[]error{ses.ErrThrottled, ses.ErrCommand},
 		},
-		{name: "text get", msg: gas.TemplatedEmail{TextTemplate: "bad-get"}, wantIs: errStorage},
-		{name: "text parse", msg: gas.TemplatedEmail{TextTemplate: "bad-parse"}, wantMsg: "parse:"},
 		{
-			name:    "text execute",
-			msg:     gas.TemplatedEmail{TextTemplate: "bad-exec"},
-			wantMsg: "execute:",
+			awsError(
+				400,
+				"SendingPausedException",
+				leak,
+			),
+			"sending paused (SendingPausedException)",
+			[]error{ses.ErrSendingPaused, ses.ErrCommand},
+		},
+		{
+			awsError(
+				400,
+				"AccountSuspendedException",
+				leak,
+			),
+			"sending paused (AccountSuspendedException)",
+			[]error{ses.ErrSendingPaused, ses.ErrCommand},
+		},
+		{
+			awsError(403, "AccessDeniedException", leak), "access denied (AccessDeniedException)",
+			[]error{ses.ErrAccessDenied, ses.ErrCommand},
+		},
+		{
+			awsError(403, "com.amazonaws.sesv2#InvalidSignatureException:http://zqx", leak),
+			"access denied (InvalidSignatureException)",
+			[]error{ses.ErrAccessDenied, ses.ErrCommand},
+		},
+		{
+			awsError(400, "BadRequestException", leak),
+			"failed (BadRequestException)",
+			[]error{ses.ErrCommand},
+		},
+		{awsError(400, "ZqxUnknownCode", leak), "failed", []error{ses.ErrCommand}},
+		{reply{status: 400, body: "not json zqx@example.com"}, "failed", []error{ses.ErrCommand}},
+		{reply{body: "not json zqx@example.com"}, "failed", []error{ses.ErrCommand}},
+		{reply{body: strings.Repeat(" ", 2<<20) + "{}"}, "invalid reply", []error{ses.ErrCommand}},
+		{
+			reply{status: 400, body: strings.Repeat(" ", 2<<20) + "{}"},
+			"invalid reply",
+			[]error{ses.ErrCommand},
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			mock := &mockSESClient{
-				sendEmailFn: func(context.Context, *awsses.SendEmailInput, ...func(*awsses.Options)) (*awsses.SendEmailOutput, error) {
-					t.Error("SendEmail called after a render failure")
-					return &awsses.SendEmailOutput{}, nil
-				},
-			}
-			svc := newTestService(t, mock, tmpl)
-
-			msg := tt.msg
-			msg.To = []string{"x@x.com"}
-			err := svc.SendFromTemplate(context.Background(), &msg)
-			if err == nil {
-				t.Fatal("SendFromTemplate() error = nil, want a render error")
-			}
-			if tt.wantIs != nil && !errors.Is(err, tt.wantIs) {
-				t.Errorf("error = %v, want it to wrap %v", err, tt.wantIs)
-			}
-			if tt.wantMsg != "" && !strings.Contains(err.Error(), tt.wantMsg) {
-				t.Errorf("error = %v, want it to contain %q", err, tt.wantMsg)
-			}
+	for _, c := range cases {
+		s := newFake(t, func(call) reply { return c.reply }).open(t, func(set *ses.Settings) {
+			set.MaxRetries = 0
 		})
+
+		err := s.Send(t.Context(), message())
+		for _, want := range c.errs {
+			require.ErrorIs(t, err, want, c.text)
+		}
+
+		require.EqualError(t, err, "gas/email/ses: send: "+c.text)
+		assertNoSecrets(t, err.Error(), "example.com", "verified:")
 	}
 }
 
-// TestSendFromTemplateEscaping checks that the HTML body is rendered with
-// html/template, which escapes data, and the subject and text body with
-// text/template, which does not.
-func TestSendFromTemplateEscaping(t *testing.T) {
+// fakeAPI is an API whose SendEmail returns out and err, and records its
+// inputs.
+type fakeAPI struct {
+	// err is what SendEmail returns.
+	err error
+	// out is what SendEmail returns.
+	out *sesv2.SendEmailOutput
+	// in are the inputs SendEmail got.
+	in []*sesv2.SendEmailInput
+}
+
+// SendEmail records params and returns out and err.
+func (f *fakeAPI) SendEmail(
+	_ context.Context,
+	params *sesv2.SendEmailInput,
+	_ ...func(*sesv2.Options),
+) (*sesv2.SendEmailOutput, error) {
+	f.in = append(f.in, params)
+
+	return f.out, f.err
+}
+
+// WithClient sends with the given API, and Init then needs no region or
+// credentials; Client returns nil for an API that is not an
+// *sesv2.Client. A client that returns neither an output nor an error
+// gets an invalid reply. A nil client, or a nil *sesv2.Client, fails
+// Init with ErrNilClient.
+func TestWithClient(t *testing.T) {
 	t.Parallel()
 
-	tmpl := &mockTemplateProvider{
-		getFn: func(_ context.Context, _ string) ([]byte, error) {
-			return []byte("{{.}}"), nil
-		},
-	}
-	var captured *awsses.SendEmailInput
-	mock := &mockSESClient{
-		sendEmailFn: func(_ context.Context, params *awsses.SendEmailInput, _ ...func(*awsses.Options)) (*awsses.SendEmailOutput, error) {
-			captured = params
-			return &awsses.SendEmailOutput{}, nil
-		},
-	}
-	svc := newTestService(t, mock, tmpl)
+	api := &fakeAPI{out: &sesv2.SendEmailOutput{}}
+	cfg := ses.DefaultConfig()
+	s, log := build(t, ses.WithConfig(cfg), ses.WithClient(api))
 
-	const data = `<b>"Tom" & Jerry</b>`
-	err := svc.SendFromTemplate(context.Background(), &gas.TemplatedEmail{
-		Email:           gas.Email{To: []string{"x@x.com"}},
-		SubjectTemplate: "subject",
-		HTMLTemplate:    "html",
-		TextTemplate:    "text",
-		Data:            data,
-	})
-	if err != nil {
-		t.Fatalf("SendFromTemplate() error = %v", err)
-	}
+	require.NoError(t, s.Init(t.Context()))
+	require.NoError(t, s.Send(t.Context(), message()))
+	assert.Len(t, api.in, 1)
+	assert.Nil(t, s.Client())
+	assert.NotContains(t, log.entries()[0].fields, "credentials")
+	assert.Equal(t, true, log.entries()[0].fields["client"])
 
-	if got := *captured.Message.Body.Html.Data; got != "&lt;b&gt;&#34;Tom&#34; &amp; Jerry&lt;/b&gt;" {
-		t.Errorf("HTMLBody = %q, want the data HTML-escaped", got)
+	api.out = nil
+
+	err := s.Send(t.Context(), message())
+	require.ErrorIs(t, err, ses.ErrCommand)
+	require.EqualError(t, err, "gas/email/ses: send: invalid reply")
+
+	for _, client := range []ses.API{nil, (*sesv2.Client)(nil)} {
+		err := initErr(t, ses.WithConfig(cfg), ses.WithClient(client))
+		require.ErrorIs(t, err, ses.ErrNilClient)
+		require.EqualError(t, err, "gas/email/ses: init: client is nil")
 	}
-	if got := *captured.Message.Body.Text.Data; got != data {
-		t.Errorf("TextBody = %q, want %q unescaped", got, data)
-	}
-	if got := *captured.Message.Subject.Data; got != data {
-		t.Errorf("Subject = %q, want %q unescaped", got, data)
-	}
+}
+
+// Client returns the *sesv2.Client Init built, and nil before Init and
+// after Close.
+func TestClient(t *testing.T) {
+	t.Parallel()
+
+	s, _ := build(t, ses.WithConfig(config("https://email.example")))
+	assert.Nil(t, s.Client())
+
+	require.NoError(t, s.Init(t.Context()))
+	require.NotNil(t, s.Client())
+	assert.Equal(t, testRegion, s.Client().Options().Region)
+
+	require.NoError(t, s.Close(t.Context()))
+	assert.Nil(t, s.Client())
+}
+
+// Init logs the region, whether an endpoint, a client and a default
+// sender were given, the credential source, the operation timeout and the
+// retries, and Close logs `service closed`; no log holds an address or a
+// credential.
+func TestLogs(t *testing.T) {
+	t.Parallel()
+
+	f := newFake(t, nil)
+	cfg := config(f.srv.URL)
+
+	cfg.Email.FromEmail = "zqx-shop@example.com"
+
+	s, log := build(t, ses.WithConfig(cfg))
+	require.NoError(t, s.Init(t.Context()))
+	require.NoError(t, s.Send(t.Context(), message()))
+	require.NoError(t, s.Close(t.Context()))
+
+	assert.Equal(t, []entry{
+		{level: "info", msg: "service initialized", fields: map[string]any{
+			"service":     ses.ServiceName,
+			"region":      testRegion,
+			"endpoint":    true,
+			"client":      false,
+			"from":        true,
+			"credentials": "static",
+			"op_timeout":  10 * time.Second,
+			"max_retries": 2,
+		}},
+		{level: "info", msg: "service closed", fields: map[string]any{"service": ses.ServiceName}},
+	}, log.entries())
+	assertNoSecrets(t, log.text(), "example.com", testKeyID)
+}
+
+// Name returns ServiceName.
+func TestName(t *testing.T) {
+	t.Parallel()
+
+	s, _ := build(t)
+	assert.Equal(t, "gas/email/ses", s.Name())
 }
