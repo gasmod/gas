@@ -105,7 +105,7 @@ func TestDoc_Errors(t *testing.T) {
 			return rule(func(s *sqs.Settings) { s.VisibilityTimeout = time.Millisecond })
 		},
 		"gas/queue/sqs: init: invalid config: Queue.Endpoint must be an http or https URL with a host " +
-			"and no user information": func() error {
+			"and nothing more but /": func() error {
 			return rule(func(s *sqs.Settings) { s.Endpoint = "localhost:4566" })
 		},
 		"gas/queue/sqs: init: invalid config: AWS configuration failed to load": func() error {

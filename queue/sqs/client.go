@@ -191,6 +191,10 @@ func buildClient(ctx context.Context, set *Settings) (*awssqs.Client, *http.Tran
 		o.Retryer = retry.NewStandard(func(so *retry.StandardOptions) {
 			so.MaxAttempts = set.MaxRetries + 1
 		})
+		// The client applies RetryMaxAttempts over the Retryer after
+		// this option runs, and the AWS configuration sets it from
+		// AWS_MAX_ATTEMPTS, so it is set too, for MaxRetries to hold.
+		o.RetryMaxAttempts = set.MaxRetries + 1
 	})
 
 	return client, transport, nil

@@ -140,7 +140,7 @@ func TestInit_ConfigRules(t *testing.T) {
 		"invalid config: Queue.VisibilityTimeout must be 0 or 1s to 12h": func(s *sqs.Settings) {
 			s.VisibilityTimeout = 500 * time.Millisecond
 		},
-		"invalid config: Queue.Endpoint must be an http or https URL with a host and no user information": func(
+		"invalid config: Queue.Endpoint must be an http or https URL with a host and nothing more but /": func(
 			s *sqs.Settings,
 		) {
 			s.Endpoint = "http://zqxuser:zqxpass@127.0.0.1:1"
@@ -529,6 +529,53 @@ func TestMaxRetries(t *testing.T) {
 		require.ErrorIs(t, err, sqs.ErrCommand)
 		require.EqualError(t, err, `gas/queue/sqs: enqueue "orders": failed (InternalError)`)
 		assert.Len(t, f.received("SendMessage"), retries+1)
+	}
+}
+
+// AWS_MAX_ATTEMPTS and AWS_RETRY_MODE do not override MaxRetries: the
+// client once applied AWS_MAX_ATTEMPTS over the store's retryer, so a
+// MaxRetries of 0 still retried.
+//
+// Not parallel: it sets environment variables.
+func TestMaxRetries_EnvIgnored(t *testing.T) {
+	isolateAWS(t)
+	t.Setenv("AWS_MAX_ATTEMPTS", "5")
+	t.Setenv("AWS_RETRY_MODE", "adaptive")
+
+	for _, retries := range []int{0, 1} {
+		f := newFake(t, func(call) reply { return awsError(500, "InternalError", "", "boom") })
+		s := f.open(t, func(set *sqs.Settings) {
+			set.MaxRetries, set.OpTimeout = retries, time.Minute
+		})
+
+		err := s.Enqueue(t.Context(), "https://sqs.example/1/orders", []byte("v"))
+		require.ErrorIs(t, err, sqs.ErrCommand)
+		assert.Len(t, f.received("SendMessage"), retries+1)
+	}
+}
+
+// An endpoint with a path, a query or a fragment is refused, so a token
+// in it cannot reach the logs; a bare host, with or without `/`, is
+// accepted.
+func TestInit_EndpointRule(t *testing.T) {
+	t.Parallel()
+
+	for _, endpoint := range []string{
+		"https://sqs.example/path",
+		"https://sqs.example/?X-Token=zqx",
+		"https://sqs.example?",
+		"https://sqs.example#zqx",
+		"https:sqs.example",
+	} {
+		err := initErr(t, sqs.WithConfig(config(endpoint)))
+		require.ErrorIs(t, err, queue.ErrInvalidConfig, endpoint)
+		assert.NotContains(t, err.Error(), "zqx")
+	}
+
+	for _, endpoint := range []string{"https://sqs.example", "https://sqs.example/"} {
+		s, _ := build(t, sqs.WithConfig(config(endpoint)))
+		require.NoError(t, s.Init(t.Context()), endpoint)
+		require.NoError(t, s.Close(t.Context()))
 	}
 }
 

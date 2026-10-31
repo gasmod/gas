@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -69,7 +70,8 @@ const redacted = "[redacted]"
 // hide it; MarshalText returns it, so encoding/json and YAML encoders
 // that use encoding.TextMarshaler write it; and LogValue returns it, so
 // log/slog logs it. Configuration binds into it as into a string, and
-// string(s) is the value.
+// string(s) is the value. encoding/gob ignores MarshalText and encodes
+// the value, so a Settings or a Config must never be gob-encoded.
 type Secret string
 
 var (
@@ -109,10 +111,11 @@ func DefaultConfig() *Config {
 var (
 	// errSubSecond reports a visibility timeout between 0 and a second.
 	errSubSecond = errors.New("Queue.VisibilityTimeout must be 0 or 1s to 12h")
-	// errEndpoint reports an endpoint that is not an http or https URL
-	// with a host and without user information.
+	// errEndpoint reports an endpoint that is not an absolute http or
+	// https URL with a host, and with no user information, query,
+	// fragment, or path but `/`.
 	errEndpoint = errors.New(
-		"Queue.Endpoint must be an http or https URL with a host and no user information",
+		"Queue.Endpoint must be an http or https URL with a host and nothing more but /",
 	)
 )
 
@@ -125,13 +128,26 @@ func rules(cfg *Config) error {
 		return errSubSecond
 	}
 
-	if s.Endpoint != "" {
-		u, err := url.Parse(s.Endpoint)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
-			u.User != nil {
-			return errEndpoint
-		}
+	if s.Endpoint != "" && !validEndpoint(s.Endpoint) {
+		return errEndpoint
 	}
 
 	return nil
+}
+
+// validEndpoint reports whether endpoint is an absolute http or https
+// URL with a host, and with no user information, query, fragment, or
+// path but `/`.
+func validEndpoint(endpoint string) bool {
+	u, err := url.Parse(endpoint)
+
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" &&
+		u.User == nil && onlyHost(endpoint, u)
+}
+
+// onlyHost reports whether u, parsed from endpoint, has nothing after
+// its host but `/`: no path, query or fragment, even an empty one.
+func onlyHost(endpoint string, u *url.URL) bool {
+	return u.Opaque == "" && (u.Path == "" || u.Path == "/") &&
+		!strings.ContainsAny(endpoint, "?#")
 }

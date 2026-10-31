@@ -238,6 +238,8 @@ func isolateAWS(t *testing.T) {
 		"AWS_WEB_IDENTITY_TOKEN_FILE",
 		"AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
 		"AWS_CONTAINER_CREDENTIALS_FULL_URI",
+		"AWS_MAX_ATTEMPTS",
+		"AWS_RETRY_MODE",
 	} {
 		t.Setenv(name, "")
 		require.NoError(t, os.Unsetenv(name))

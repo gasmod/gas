@@ -33,7 +33,8 @@
 //   - `queue.region`: the AWS region. Default: none; the AWS SDK's
 //     default chain decides, as under Credentials.
 //   - `queue.endpoint`: the URL requests go to, `http` or `https`, with a
-//     host and no user information, such as an emulator's. Default:
+//     host and nothing after it but `/` (no user information, path,
+//     query or fragment), such as an emulator's. Default:
 //     none, the region's SQS endpoint. An `http` endpoint sends every
 //     request in clear text, the session token and the payloads
 //     included; use it only for an emulator on a network of its own, such
@@ -63,7 +64,7 @@
 //
 //  1. `visibilitytimeout` is 0 or at least a second.
 //  2. `endpoint`, when set, is an `http` or `https` URL with a host and
-//     no user information.
+//     nothing more but `/`.
 //
 // A failure wraps queue.ErrInvalidConfig and names the setting, never its
 // value.
@@ -265,10 +266,12 @@
 // come from, the names of the static keys missing, and the operation
 // timeout. fmt, encoding/json, YAML encoders that use
 // encoding.TextMarshaler, and log/slog write the secret key and the
-// session token of a [Settings] or a [Config] as `[redacted]`. Static
+// session token of a [Settings] or a [Config] as `[redacted]`;
+// encoding/gob does not, so neither must be gob-encoded. Static
 // credentials in configuration are a secret of the app's; prefer a role,
-// which the default chain finds. An `http` endpoint sends them, and the
-// payloads, in clear text, as under Configuration. The client Init builds
+// which the default chain finds. An `http` endpoint sends the access key
+// ID, the session token and the payloads in clear text, as under
+// Configuration; the secret key only signs requests and is never sent. The client Init builds
 // reads no reply past 64 MiB, so an endpoint cannot make it read without
 // bound.
 //
@@ -306,7 +309,7 @@
 //	gas/queue/sqs: init: config is nil
 //	gas/queue/sqs: init: no config provider
 //	gas/queue/sqs: init: invalid config: Queue.VisibilityTimeout must be 0 or 1s to 12h
-//	gas/queue/sqs: init: invalid config: Queue.Endpoint must be an http or https URL with a host and no user information
+//	gas/queue/sqs: init: invalid config: Queue.Endpoint must be an http or https URL with a host and nothing more but /
 //	gas/queue/sqs: init: invalid config: AWS configuration failed to load
 //	gas/queue/sqs: init: no region
 //	gas/queue/sqs: init: no credentials: failed
