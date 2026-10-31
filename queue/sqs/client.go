@@ -12,6 +12,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awssqs "github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/smithy-go/logging"
 
 	"github.com/gasmod/gas/queue"
 )
@@ -187,6 +188,10 @@ func buildClient(ctx context.Context, set *Settings) (*awssqs.Client, *http.Tran
 		if set.Endpoint != "" {
 			o.BaseEndpoint = new(set.Endpoint)
 		}
+
+		// The SDK's default logger writes raw transport errors, which can
+		// hold the endpoint, to stderr; the store reports errors itself.
+		o.Logger = logging.Nop{}
 
 		o.Retryer = retry.NewStandard(func(so *retry.StandardOptions) {
 			so.MaxAttempts = set.MaxRetries + 1

@@ -12,6 +12,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/sesv2"
+	"github.com/aws/smithy-go/logging"
 
 	"github.com/gasmod/gas/email"
 )
@@ -184,6 +185,10 @@ func buildClient(ctx context.Context, set *Settings) (*sesv2.Client, *http.Trans
 		if set.Endpoint != "" {
 			o.BaseEndpoint = new(set.Endpoint)
 		}
+
+		// The SDK's default logger writes raw transport errors, which can
+		// hold the endpoint, to stderr; the store reports errors itself.
+		o.Logger = logging.Nop{}
 
 		o.Retryer = retry.NewStandard(func(so *retry.StandardOptions) {
 			so.MaxAttempts = set.MaxRetries + 1
