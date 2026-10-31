@@ -1,170 +1,168 @@
-package test
+package uitest_test
 
 import (
+	"context"
 	"errors"
 	"html/template"
+	"io"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
 	"sync"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/gasmod/gas/ui"
+	"github.com/gasmod/gas/ui/internal/conformance"
 	"github.com/gasmod/gas/ui/uitest"
 )
 
-// mockCase drives one MockUI method: call invokes it, setErr installs an Fn
-// that returns err and records that it ran, and args are the arguments the
-// mock must record. returnsErr is false for RegisterFuncs, which has no
-// result.
-type mockCase struct {
-	call       func(m *uitest.MockUI) error
-	setErr     func(m *uitest.MockUI, err error, ran *bool)
-	method     string
-	args       []any
-	returnsErr bool
-}
+// errBoom is what the mock's fields return.
+var errBoom = errors.New("boom")
 
-func mockCases() []mockCase {
+// The example in the package documentation's Usage section.
+func TestDoc_Usage(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
 	w := httptest.NewRecorder()
-	data := map[string]any{"k": "v"}
-	funcs := template.FuncMap{}
 
-	return []mockCase{
-		{
-			method:     "Render",
-			args:       []any{"page", data, []ui.RenderOption(nil)},
-			returnsErr: true,
-			call:       func(m *uitest.MockUI) error { return m.Render(w, "page", data) },
-			setErr: func(m *uitest.MockUI, err error, ran *bool) {
-				m.RenderFn = func(http.ResponseWriter, string, any, ...ui.RenderOption) error {
-					*ran = true
-					return err
-				}
-			},
-		},
-		{
-			method:     "RenderFragment",
-			args:       []any{"frag", data, []ui.RenderFragmentOption(nil)},
-			returnsErr: true,
-			call:       func(m *uitest.MockUI) error { return m.RenderFragment(w, "frag", data) },
-			setErr: func(m *uitest.MockUI, err error, ran *bool) {
-				m.RenderFragmentFn = func(http.ResponseWriter, string, any, ...ui.RenderFragmentOption) error {
-					*ran = true
-					return err
-				}
-			},
-		},
-		{
-			method: "RegisterFuncs",
-			args:   []any{funcs},
-			call: func(m *uitest.MockUI) error {
-				m.RegisterFuncs(funcs)
-				return nil
-			},
-			setErr: func(m *uitest.MockUI, _ error, ran *bool) {
-				m.RegisterFuncsFn = func(template.FuncMap) { *ran = true }
-			},
+	m := &uitest.MockUI{
+		RenderFn: func(_ context.Context, w http.ResponseWriter, name string, _ any, _ ...ui.RenderOption) error {
+			_, err := io.WriteString(w, "<h1>"+name+"</h1>")
+
+			return err
 		},
 	}
+	err := m.Render(ctx, w, "home", nil, ui.WithStatus(http.StatusAccepted))
+	require.NoError(t, err)
+	assert.Equal(t, "<h1>home</h1>", w.Body.String())
+	assert.Equal(t, 1, m.CallCount("Render"))
 }
 
-func TestMockUI_Methods(t *testing.T) {
+// With its fields nil, the mock writes nothing and returns nil, for any
+// arguments.
+func TestMock_Defaults(t *testing.T) {
 	t.Parallel()
 
-	for _, tc := range mockCases() {
-		t.Run(tc.method, func(t *testing.T) {
-			t.Parallel()
-
-			m := &uitest.MockUI{}
-			if err := tc.call(m); err != nil {
-				t.Errorf("default %s = %v, want nil", tc.method, err)
-			}
-			if len(m.Calls) != 1 || m.Calls[0].Method != tc.method {
-				t.Fatalf("Calls = %+v, want one %s call", m.Calls, tc.method)
-			}
-			if !reflect.DeepEqual(m.Calls[0].Args, tc.args) {
-				t.Errorf("recorded args = %#v, want %#v", m.Calls[0].Args, tc.args)
-			}
-
-			wantErr := errors.New("injected")
-			var ran bool
-			tc.setErr(m, wantErr, &ran)
-			err := tc.call(m)
-			if tc.returnsErr && !errors.Is(err, wantErr) {
-				t.Errorf("%s with Fn = %v, want %v", tc.method, err, wantErr)
-			}
-			if !ran {
-				t.Errorf("%s did not call its Fn", tc.method)
-			}
-			if got := m.CallCount(tc.method); got != 2 {
-				t.Errorf("CallCount(%s) = %d, want 2", tc.method, got)
-			}
-		})
-	}
-}
-
-// TestMockUI_DefaultWritesNothing checks the documented default: with no Fn
-// set, the render methods leave the response untouched.
-func TestMockUI_DefaultWritesNothing(t *testing.T) {
-	t.Parallel()
-
+	ctx := t.Context()
 	m := &uitest.MockUI{}
 	w := httptest.NewRecorder()
-	_ = m.Render(w, "page", nil)
-	_ = m.RenderFragment(w, "frag", nil)
 
-	if w.Code != http.StatusOK || w.Body.Len() != 0 || len(w.Header()) != 0 {
-		t.Errorf("response = %d %q %v, want untouched", w.Code, w.Body.String(), w.Header())
-	}
+	require.NoError(t, m.Render(ctx, w, "", nil, nil))
+	require.NoError(t, m.RenderFragment(ctx, w, "../x", nil, ui.WithStatus(-1)))
+	require.NoError(t, m.RegisterFuncs(template.FuncMap{"bad-name": nil}))
+	require.NoError(t, m.RegisterFuncs(nil))
+	assert.Equal(t, 0, w.Body.Len())
+	assert.Empty(t, w.Header())
 }
 
-func TestMockUI_CallCountAndReset(t *testing.T) {
+// The mock keeps the defaults its package documents, as the
+// conformance suite of the defaults checks them.
+func TestMock_DefaultsSuite(t *testing.T) {
 	t.Parallel()
 
-	m := &uitest.MockUI{}
-	w := httptest.NewRecorder()
-	_ = m.Render(w, "a", nil)
-	_ = m.Render(w, "b", nil)
-	m.RegisterFuncs(nil)
+	conformance.RunMockDefaults(t, func() ui.Provider { return &uitest.MockUI{} })
+}
 
-	if got := m.CallCount("Render"); got != 2 {
-		t.Errorf("CallCount(Render) = %d, want 2", got)
+// Each method returns what its field returns, with the arguments it got.
+func TestMock_Fields(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	boom := errBoom
+
+	var got []any
+
+	m := &uitest.MockUI{
+		RenderFn: func(_ context.Context, _ http.ResponseWriter, name string, data any, opts ...ui.RenderOption) error {
+			got = append(got, name, data, len(opts))
+
+			return boom
+		},
+		RenderFragmentFn: func(_ context.Context, _ http.ResponseWriter, name string, _ any, _ ...ui.RenderOption) error {
+			got = append(got, name)
+
+			return boom
+		},
+		RegisterFuncsFn: func(funcs template.FuncMap) error {
+			got = append(got, len(funcs))
+
+			return boom
+		},
 	}
-	if got := m.CallCount("RegisterFuncs"); got != 1 {
-		t.Errorf("CallCount(RegisterFuncs) = %d, want 1", got)
-	}
-	if got := m.CallCount("RenderFragment"); got != 0 {
-		t.Errorf("CallCount(RenderFragment) = %d, want 0", got)
-	}
+
+	require.ErrorIs(t, m.Render(ctx, nil, "a", 1, ui.WithLayout("l")), boom)
+	require.ErrorIs(t, m.RenderFragment(ctx, nil, "b", nil), boom)
+	require.ErrorIs(t, m.RegisterFuncs(template.FuncMap{"f": nil}), boom)
+	assert.Equal(t, []any{"a", 1, 1, "b", 1}, got)
+}
+
+// Calls records each call's arguments after the context and the writer,
+// options resolved and function maps copied, in order; changing what it
+// returns changes no recorded call; CallCount and Reset work on them.
+func TestMock_Calls(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	m := &uitest.MockUI{}
+	funcs := template.FuncMap{"f": "x"}
+
+	require.NoError(t, m.Render(ctx, nil, "a", "d", ui.WithLayout("l"), ui.WithStatus(201)))
+	require.NoError(t, m.RenderFragment(ctx, nil, "b", nil, ui.WithBlock("x"), nil))
+	require.NoError(t, m.RegisterFuncs(funcs))
+	require.NoError(t, m.RegisterFuncs(nil))
+
+	funcs["g"] = "y"
+
+	calls := m.Calls()
+	assert.Equal(t, []uitest.Call{
+		{Method: "Render", Args: []any{"a", "d", ui.RenderOptions{Layout: "l", Status: 201}}},
+		{Method: "RenderFragment", Args: []any{"b", nil, ui.RenderOptions{Block: "x"}}},
+		{Method: "RegisterFuncs", Args: []any{template.FuncMap{"f": "x"}}},
+		{Method: "RegisterFuncs", Args: []any{template.FuncMap(nil)}},
+	}, calls)
+
+	calls[2].Args[0].(template.FuncMap)["h"] = "z"
+	calls[0].Args[0] = "changed"
+	assert.Equal(t, template.FuncMap{"f": "x"}, m.Calls()[2].Args[0])
+	assert.Equal(t, "a", m.Calls()[0].Args[0])
+
+	assert.Equal(t, 2, m.CallCount("RegisterFuncs"))
+	assert.Equal(t, 0, m.CallCount("Nope"))
 
 	m.Reset()
-	if len(m.Calls) != 0 || m.CallCount("Render") != 0 {
-		t.Errorf("after Reset, Calls = %+v, want none", m.Calls)
-	}
+	assert.Empty(t, m.Calls())
 }
 
-// TestMockUI_ConcurrentCalls checks, under -race, that the mock records
-// concurrent calls without a data race and loses none.
-func TestMockUI_ConcurrentCalls(t *testing.T) {
+// The mock may be called and read from several goroutines at once; -race
+// checks it, where reading the exported Calls field once raced.
+func TestMock_Concurrent(t *testing.T) {
 	t.Parallel()
 
-	const workers, perWorker = 8, 50
+	ctx := t.Context()
 	m := &uitest.MockUI{}
 
 	var wg sync.WaitGroup
-	for range workers {
+
+	for range 8 {
 		wg.Go(func() {
-			w := httptest.NewRecorder()
-			for range perWorker {
-				_ = m.Render(w, "page", nil)
+			for range 50 {
+				_ = m.Render(ctx, nil, "a", nil)
+				_ = m.RenderFragment(ctx, nil, "a", nil)
+				_ = m.RegisterFuncs(template.FuncMap{"f": "x"})
+				_ = m.Calls()
 				_ = m.CallCount("Render")
 			}
 		})
 	}
-	wg.Wait()
 
-	if got := m.CallCount("Render"); got != workers*perWorker {
-		t.Errorf("CallCount(Render) = %d, want %d", got, workers*perWorker)
-	}
+	wg.Go(func() {
+		for range 50 {
+			m.Reset()
+		}
+	})
+
+	wg.Wait()
 }

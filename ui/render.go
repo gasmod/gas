@@ -3,287 +3,298 @@ package ui
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"html/template"
-	"maps"
+	"io"
 	"net/http"
-	"strings"
 	"sync"
-
-	"github.com/gasmod/gas"
 )
 
-// Engine compiles and caches templates from a [gas.TemplateProvider].
-//
-// Template directory convention:
-//
-//	layouts/   — base layout templates (parsed into every page render)
-//	partials/  — reusable fragments (parsed into every page render)
-//	*          — page templates (each one combined with layouts + partials)
-//
-// A layout file typically defines an entry point template (default name "base")
-// using {{define "base"}} and declares blocks with {{block "content" .}}.
-// Page templates override those blocks with {{define "content"}}.
-//
-// mu guards funcMap, cache, hasLayouts, and built. Build reads the provider
-// and compiles into local values without holding mu, then swaps the result
-// in under it, so renders, AddFuncs, and concurrent rebuilds never see a
-// half-built set.
-type Engine struct {
-	provider      gas.TemplateProvider
-	funcMap       template.FuncMap
-	logger        gas.Logger
-	cache         map[string]*template.Template
-	defaultLayout string
-	mu            sync.RWMutex
-	devMode       bool
-	built         bool
-	hasLayouts    bool
+// contentType is the Content-Type of a rendered page.
+const contentType = "text/html; charset=utf-8"
+
+// maxPooledBuffer is the largest buffer, in bytes, kept for another
+// render: 1 MiB.
+const maxPooledBuffer = 1 << 20
+
+// buffers holds the buffers pages are executed into.
+var buffers = sync.Pool{New: func() any { return new(bytes.Buffer) }}
+
+// Render executes the page name with data through its layout and writes
+// it to w, as described in the package documentation. On error it writes
+// nothing.
+func (s *Service) Render(
+	ctx context.Context,
+	w http.ResponseWriter,
+	name string,
+	data any,
+	opts ...RenderOption,
+) error {
+	return s.render(ctx, w, opRender, name, data, opts)
 }
 
-const (
-	pageMarker = "__page__"
-)
-
-// templateSet is the classified content of one Build.
-type templateSet struct {
-	layouts  []namedContent
-	partials []namedContent
-	pages    []string
+// RenderFragment executes the fragment of the page name with data,
+// without its layout, and writes it to w, as described in the package
+// documentation. On error it writes nothing.
+func (s *Service) RenderFragment(
+	ctx context.Context,
+	w http.ResponseWriter,
+	name string,
+	data any,
+	opts ...RenderOption,
+) error {
+	return s.render(ctx, w, opRenderFragment, name, data, opts)
 }
 
-type namedContent struct {
-	name    string
-	content []byte
-}
-
-// NewEngine creates a template engine backed by a [gas.TemplateProvider].
-func NewEngine(
-	provider gas.TemplateProvider,
-	funcMap template.FuncMap,
-	defaultLayout string,
-	devMode bool,
-	logger gas.Logger,
-) *Engine {
-	if defaultLayout == "" {
-		defaultLayout = "base"
-	}
-	return &Engine{
-		provider:      provider,
-		funcMap:       funcMap,
-		defaultLayout: defaultLayout,
-		devMode:       devMode,
-		cache:         make(map[string]*template.Template),
-		logger:        logger,
-	}
-}
-
-// AddFuncs merges additional template functions into the engine's funcmap
-// and invalidates the cache so the next Render triggers a rebuild.
-func (e *Engine) AddFuncs(funcs map[string]any) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	for k, v := range funcs {
-		if _, ok := e.funcMap[k]; ok {
-			e.logger.Warn("template function already exists, overwriting").Str("function", k).Send()
-		}
-		e.funcMap[k] = v
-	}
-	e.built = false
-}
-
-// Build loads all templates from the provider, classifies them, and compiles
-// page templates into cached *template.Template instances. It is safe to call
-// concurrently with renders, AddFuncs, and other Builds. If it fails, the
-// previously built templates stay in place.
-func (e *Engine) Build() error {
-	ctx := context.Background()
-
-	names, err := e.provider.List(ctx)
+// render renders the page name for op, Render or RenderFragment.
+func (s *Service) render(
+	ctx context.Context,
+	w http.ResponseWriter,
+	op, name string,
+	data any,
+	opts []RenderOption,
+) error {
+	err := checkPageName(name)
 	if err != nil {
-		return fmt.Errorf("ui: listing templates: %w", err)
+		return opError(op, "", err)
 	}
 
-	var set templateSet
-	for _, name := range names {
-		content, getErr := e.provider.Get(ctx, name)
-		if getErr != nil {
-			return fmt.Errorf("ui: loading template %q: %w", name, getErr)
-		}
-		set.classify(namedContent{name: name, content: content})
-	}
-
-	// Compile against a snapshot of the funcmap, so AddFuncs can run while
-	// this Build compiles.
-	e.mu.RLock()
-	funcs := make(template.FuncMap, len(e.funcMap))
-	maps.Copy(funcs, e.funcMap)
-	e.mu.RUnlock()
-
-	cache := make(map[string]*template.Template, len(set.pages))
-	for _, page := range set.pages {
-		t, compileErr := e.compile(&set, funcs, page)
-		if compileErr != nil {
-			return compileErr
-		}
-		cache[e.pageKey(page)] = t
-	}
-
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.cache = cache
-	e.hasLayouts = len(set.layouts) > 0
-	e.built = true
-	return nil
-}
-
-// Render executes the named page template, writing the result to w with a
-// 200 status code. The name is the page path without extension
-// (e.g. "home", "dashboard/index").
-func (e *Engine) Render(
-	w http.ResponseWriter,
-	name string,
-	data any,
-	op ...RenderOption,
-) error {
-	opts := &RenderOptions{
-		status: http.StatusOK,
-		layout: e.defaultLayout,
-	}
-	for _, o := range op {
-		opts.apply(o)
-	}
-
-	return e.render(w, name, data, opts)
-}
-
-// RenderFragment renders the page template's own content, bypassing the
-// layout. Useful for HTMX partial responses.
-func (e *Engine) RenderFragment(
-	w http.ResponseWriter,
-	name string,
-	data any,
-	op ...RenderFragmentOption,
-) error {
-	opts := &RenderOptions{
-		status: http.StatusOK,
-		layout: pageMarker,
-	}
-	opts.apply(op...)
-
-	return e.render(w, name, data, opts)
-}
-
-func (e *Engine) render(
-	w http.ResponseWriter,
-	name string,
-	data any,
-	opts *RenderOptions,
-) error {
-	t, hasLayouts, err := e.lookup(name)
+	st, err := s.loaded(ctx, op, name)
 	if err != nil {
 		return err
 	}
-	if !hasLayouts {
-		if opts.block != "" {
-			// FIXME(@ahmedkamalio): build a custom layout with the block and cache it.
-			if _, err = t.Parse(""); err != nil {
-				return fmt.Errorf("ui: parsing layout %q: %w", " l.name", err)
-			}
-		} else {
-			opts.layout = pageMarker
-		}
+
+	o, err := resolve(op, opts)
+	if err != nil {
+		return opError(op, name, err)
 	}
 
-	// Render into a buffer, so it's all or nothing.
-	var buf bytes.Buffer
-	if execErr := t.ExecuteTemplate(&buf, opts.layout, data); execErr != nil {
-		return fmt.Errorf("ui: executing template %q: %w", name, execErr)
+	run, entry, err := s.target(ctx, st, op, name, &o)
+	if err != nil {
+		return opError(op, name, err)
 	}
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	buf := buffers.Get().(*bytes.Buffer) //nolint:forcetypeassert // the pool holds only buffers.
+	defer release(buf)
 
-	w.WriteHeader(opts.status)
-
-	if _, writeErr := buf.WriteTo(w); writeErr != nil {
-		return fmt.Errorf("ui: writing template response for %q: %w", name, writeErr)
+	err = execute(run, buf, entry, data)
+	if err != nil {
+		return opError(op, name, fmt.Errorf("%w: %w", ErrExecute, err))
 	}
+
+	err = write(w, buf, o.Status)
+	if err != nil {
+		return opError(op, name, fmt.Errorf("%w: %w", ErrWrite, err))
+	}
+
 	return nil
 }
 
-// lookup returns the compiled template for the given page name, and whether
-// the build that produced it had layouts. On the first call it triggers
-// Build() lazily so that template funcs registered by other services during
-// Init are available. In dev mode templates are rebuilt on every call.
-func (e *Engine) lookup(name string) (*template.Template, bool, error) {
-	e.mu.RLock()
-	needsBuild := !e.built || e.devMode
-	e.mu.RUnlock()
-
-	if needsBuild {
-		if err := e.Build(); err != nil {
-			return nil, false, err
-		}
-	}
-
-	e.mu.RLock()
-	t, ok := e.cache[name]
-	hasLayouts := e.hasLayouts
-	e.mu.RUnlock()
-	if !ok {
-		return nil, false, fmt.Errorf("ui: template %q not found", name)
-	}
-	return t, hasLayouts, nil
-}
-
-// classify sorts a template into layouts, partials, or pages based on its
-// name prefix.
-func (s *templateSet) classify(nc namedContent) {
-	switch {
-	case strings.HasPrefix(nc.name, "layouts/"):
-		s.layouts = append(s.layouts, nc)
-	case strings.HasPrefix(nc.name, "partials/"):
-		s.partials = append(s.partials, nc)
-	default:
-		s.pages = append(s.pages, nc.name)
-	}
-}
-
-// compile builds a single *template.Template for a page by combining the
-// set's layouts + partials + the page itself, with funcs as its funcmap.
-func (e *Engine) compile(
-	set *templateSet,
-	funcs template.FuncMap,
-	page string,
-) (*template.Template, error) {
-	t := template.New(pageMarker).Funcs(funcs)
-
-	for _, l := range set.layouts {
-		if _, err := t.Parse(string(l.content)); err != nil {
-			return nil, fmt.Errorf("ui: parsing layout %q: %w", l.name, err)
-		}
-	}
-	for _, p := range set.partials {
-		if _, err := t.Parse(string(p.content)); err != nil {
-			return nil, fmt.Errorf("ui: parsing partial %q: %w", p.name, err)
-		}
-	}
-
-	content, err := e.provider.Get(context.Background(), page)
+// target returns the set of the page name, in st's set built if need
+// be, that op executes with o, and the name of the template to execute
+// in it.
+func (s *Service) target(
+	ctx context.Context,
+	st *state,
+	op, name string,
+	o *RenderOptions,
+) (*template.Template, string, error) {
+	c, err := s.compiledSet(ctx, st)
 	if err != nil {
-		return nil, fmt.Errorf("ui: loading page %q: %w", page, err)
+		return nil, "", err
 	}
-	if _, err := t.Parse(string(content)); err != nil {
-		return nil, fmt.Errorf("ui: parsing page %q: %w", page, err)
+
+	p, ok := c.pages[name]
+	if !ok {
+		return nil, "", ErrPageNotFound
 	}
-	return t, nil
+
+	c.reread(ctx, p)
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.err != nil {
+		return nil, "", p.err
+	}
+
+	var entry string
+
+	if op == opRenderFragment {
+		entry, err = p.fragmentEntry(o, &st.set)
+	} else {
+		entry, err = p.layoutEntry(o, &st.set, c.hasLayouts)
+	}
+
+	if err != nil {
+		return nil, "", err
+	}
+
+	run, err := p.run(entry)
+	if err != nil {
+		return nil, "", err
+	}
+
+	return run, entry, nil
 }
 
-// pageKey strips the .html extension to produce the key callers use in
-// Render (e.g. "home.html" → "home", "dashboard/index.html" → "dashboard/index").
-func (e *Engine) pageKey(name string) string {
-	if strings.HasSuffix(name, ".html") {
-		return name[:len(name)-5]
+// reread reads and compiles the page p again within ctx, over the
+// layouts and partials of c, when it failed to load, and records the
+// outcome in p unless another call recorded one that loaded meanwhile. It
+// holds p.mu only to look and to record, never while it reads the store,
+// so that a read that hangs blocks no other caller of p.mu.
+func (c *compiled) reread(ctx context.Context, p *page) {
+	p.mu.Lock()
+
+	failed := errors.Is(p.err, ErrLoad)
+
+	p.mu.Unlock()
+
+	if !failed {
+		return
 	}
-	return name
+
+	np := c.b.page(ctx, c.base, p.root)
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if errors.Is(p.err, ErrLoad) {
+		p.set, p.err, p.runs, p.fragment = np.set, np.err, np.runs, np.fragment
+	}
+}
+
+// run returns the clone of p's set that entry executes in, made on first
+// use. The caller holds p.mu.
+func (p *page) run(entry string) (*template.Template, error) {
+	run, ok := p.runs[entry]
+	if ok {
+		return run, nil
+	}
+
+	run, err := p.set.Clone()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrExecute, err)
+	}
+
+	p.runs[entry] = run
+
+	return run, nil
+}
+
+// errPanic reports a panic while a page executed.
+var errPanic = errors.New("panic")
+
+// execute executes the template entry of run with data into w. A panic
+// of the execution is returned as an error.
+func execute(run *template.Template, w io.Writer, entry string, data any) (err error) {
+	defer func() {
+		r := recover()
+		if r != nil {
+			err = fmt.Errorf("%w: %v", errPanic, r)
+		}
+	}()
+
+	//nolint:wrapcheck // render wraps it with ErrExecute.
+	return run.ExecuteTemplate(w, entry, data)
+}
+
+// write writes buf to w, after the HTML Content-Type unless w has one,
+// and after status unless it is 0.
+func write(w http.ResponseWriter, buf *bytes.Buffer, status int) error {
+	if w.Header().Get("Content-Type") == "" {
+		w.Header().Set("Content-Type", contentType)
+	}
+
+	if status != 0 {
+		w.WriteHeader(status)
+	}
+
+	_, err := buf.WriteTo(w)
+
+	return err //nolint:wrapcheck // render wraps it with ErrWrite.
+}
+
+// release returns buf to the pool, unless it grew past maxPooledBuffer.
+func release(buf *bytes.Buffer) {
+	if buf.Cap() > maxPooledBuffer {
+		return
+	}
+
+	buf.Reset()
+	buffers.Put(buf)
+}
+
+// resolve returns the options of op, or an error wrapping
+// ErrInvalidOption or ErrInvalidStatus.
+func resolve(op string, opts []RenderOption) (RenderOptions, error) {
+	for _, opt := range opts {
+		if opt == nil {
+			return RenderOptions{}, fmt.Errorf("%w: nil", ErrInvalidOption)
+		}
+	}
+
+	o := ApplyRenderOptions(opts...)
+
+	switch {
+	case op == opRender && o.Block != "":
+		return o, fmt.Errorf("%w: WithBlock applies to RenderFragment only", ErrInvalidOption)
+	case op == opRenderFragment && o.Layout != "":
+		return o, fmt.Errorf("%w: WithLayout applies to Render only", ErrInvalidOption)
+	case o.Status != 0 && !bodyStatus(o.Status):
+		return o, fmt.Errorf("%w: must be 200 to 599, and not 204 or 304", ErrInvalidStatus)
+	}
+
+	return o, nil
+}
+
+// bodyStatus reports whether status is 200 to 599 and allows a body.
+func bodyStatus(status int) bool {
+	return status >= http.StatusOK && status <= 599 &&
+		status != http.StatusNoContent && status != http.StatusNotModified
+}
+
+// fragmentEntry returns the template of the page RenderFragment
+// executes with o, under set.
+func (p *page) fragmentEntry(o *RenderOptions, set *Settings) (string, error) {
+	switch {
+	case o.Block != "":
+		if !has(p.set, o.Block) {
+			return "", fmt.Errorf("%w: %q", ErrBlockNotFound, o.Block)
+		}
+
+		return o.Block, nil
+	case p.fragment == "":
+		return "", fmt.Errorf("%w: the page defines no %q block and has no top-level text",
+			ErrNoFragment, set.FragmentBlock)
+	default:
+		return p.fragment, nil
+	}
+}
+
+// layoutEntry returns the template of the page Render executes with o,
+// under set, in a build that held layouts when hasLayouts is true.
+func (p *page) layoutEntry(o *RenderOptions, set *Settings, hasLayouts bool) (string, error) {
+	layout := o.Layout
+	if layout == "" {
+		layout = set.LayoutName
+	}
+
+	switch {
+	case has(p.set, layout):
+		return layout, nil
+	case o.Layout == "" && !hasLayouts:
+		return p.root, nil
+	default:
+		return "", fmt.Errorf("%w: %q", ErrLayoutNotFound, layout)
+	}
+}
+
+// has reports whether set holds a template of name with a body. The root
+// of the layouts and partials has none.
+func has(set *template.Template, name string) bool {
+	t := set.Lookup(name)
+
+	return t != nil && t.Tree != nil
 }
