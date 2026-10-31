@@ -1,13 +1,17 @@
 package valkey_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.yaml.in/yaml/v3"
 
 	"github.com/gasmod/gas/cache"
 	"github.com/gasmod/gas/cache/valkey"
@@ -199,6 +203,37 @@ func TestConfig_Sources(t *testing.T) {
 	err = initErr(t, valkey.WithConfig(cfg))
 	require.ErrorIs(t, err, valkey.ErrConnect)
 	assert.Equal(t, given, *cfg)
+}
+
+// encoding/json, a YAML encoder and log/slog write the password as
+// `[redacted]`, in a Config and on its own.
+func TestConfig_PasswordMarshalRedacted(t *testing.T) {
+	t.Parallel()
+
+	cfg := valkey.DefaultConfig()
+
+	cfg.Cache.Password = aclPassword
+
+	j, err := json.Marshal(cfg) //nolint:musttag // untagged: the field names an encoder writes.
+	require.NoError(t, err)
+	assert.Contains(t, string(j), `"Password":"[redacted]"`)
+
+	y, err := yaml.Marshal(cfg)
+	require.NoError(t, err)
+	assert.Contains(t, string(y), "password: '[redacted]'")
+
+	var logs bytes.Buffer
+
+	slog.New(slog.NewJSONHandler(&logs, nil)).
+		Info("cfg", "cfg", cfg, "password", cfg.Cache.Password)
+	slog.New(slog.NewTextHandler(&logs, nil)).
+		Info("cfg", "cfg", cfg, "password", cfg.Cache.Password)
+	assert.Contains(t, logs.String(), `"password":"[redacted]"`)
+	assert.Contains(t, logs.String(), `password=[redacted]`)
+
+	for _, text := range []string{string(j), string(y), logs.String()} {
+		assert.NotContains(t, text, aclPassword)
+	}
 }
 
 // fmt prints the password of a Settings or a Config as `[redacted]`,

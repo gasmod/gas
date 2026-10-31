@@ -485,7 +485,10 @@ func untilRefused(t *testing.T, s *valkey.Service) {
 }
 
 // Calls that race Close, and Close followed by Init, complete or return
-// cache.ErrClosed, which -race checks for data races too.
+// cache.ErrClosed, never cache.ErrNotInitialized (Init once cleared the
+// closed flag after storing its state, so a call that found the store
+// empty during a restart could report it never initialized). -race
+// checks for data races too.
 func TestClose_RacesCalls(t *testing.T) {
 	t.Parallel()
 
@@ -522,8 +525,8 @@ func TestClose_RacesCalls(t *testing.T) {
 		})
 	}
 
-	for range 10 {
-		time.Sleep(5 * time.Millisecond)
+	for range 100 {
+		time.Sleep(time.Millisecond)
 		require.NoError(t, s.Close(ctx))
 		require.NoError(t, s.Init(ctx))
 	}

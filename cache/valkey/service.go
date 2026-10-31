@@ -57,9 +57,10 @@ type Service struct {
 	st atomic.Pointer[state]
 	// cfgSource records the configuration given to WithConfig.
 	cfgSource configsrc.Source[Config]
-	// closed reports whether Close ran after a successful Init, and Init
-	// has not succeeded since. Close sets it before it clears st, so a
-	// call that finds st nil after a Close finds closed set.
+	// closed reports whether Close has ever run after a successful Init.
+	// Close sets it before it clears st, and Init never clears it, so a
+	// call that finds st nil after a Close finds closed set, even while
+	// a restart runs.
 	closed atomic.Bool
 	// mu makes Init and Close run one at a time. Close holds it while it
 	// closes the client too, so a concurrent Close waits for that. Calls
@@ -166,7 +167,6 @@ func (s *Service) Init(ctx context.Context) error {
 		defaultTTL: set.DefaultTTL,
 		opTimeout:  set.OpTimeout,
 	})
-	s.closed.Store(false)
 
 	s.logger.Info("service initialized").
 		Int("db", set.DB).

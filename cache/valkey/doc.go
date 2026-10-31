@@ -37,7 +37,8 @@
 //   - `cache.username`: the ACL user to authenticate as. Default: none,
 //     the server's default user.
 //   - `cache.password`: the password to authenticate with, a [Secret],
-//     which fmt prints as `[redacted]`. Default: none; no password is
+//     which fmt, encoding/json, YAML encoders and log/slog write as
+//     `[redacted]`. Default: none; no password is
 //     sent.
 //   - `cache.db`: the database number to select, 0 or more; the server
 //     decides how many there are. Default: [DefaultDB], 0.
@@ -190,8 +191,8 @@
 // the address, the user name or the password. The logs carry the
 // database number, whether TLS is on, the retry `attempt`, `retries` and
 // `wait`, and fixed reasons. Server replies kept in errors hold no key,
-// as under Timeouts. fmt prints the password of a [Settings] or a
-// [Config] as `[redacted]`. Without TLS, the password and every value
+// as under Timeouts. fmt, encoding/json, YAML encoders and log/slog write
+// the password of a [Settings] or a [Config] as `[redacted]`. Without TLS, the password and every value
 // cross the network in plain text; turn TLS on for a server outside the
 // host or its private network.
 //
