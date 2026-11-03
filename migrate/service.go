@@ -88,6 +88,10 @@ var (
 	// ErrLockTimeout indicates that the migration lock was not acquired
 	// within the lock timeout.
 	ErrLockTimeout = errors.New("lock timed out")
+	// ErrChecksumMismatch indicates that the up SQL registered for an
+	// applied version is not the up SQL its row records the checksum of:
+	// the migration was edited after it was applied.
+	ErrChecksumMismatch = errors.New("checksum mismatch")
 )
 
 // Service applies and reverts the migrations the app's services register,
@@ -141,6 +145,9 @@ type AppliedMigration struct {
 	Service string
 	// Description is the migration's description.
 	Description string
+	// Checksum is the checksum of the up SQL the row was written for, in
+	// lowercase hex, or empty for a row written without one.
+	Checksum string
 	// Dirty reports whether the migration is marked dirty.
 	Dirty bool
 }
@@ -180,10 +187,10 @@ func New(opts ...Option) func(gas.DatabaseProvider, gas.Logger) (*Service, error
 func (*Service) Name() string { return ServiceName }
 
 // Init resolves the dialect from the provider's driver and creates the
-// tracking table under the migration lock, as described in the package
-// documentation. On an initialized service it returns
-// ErrAlreadyInitialized and changes nothing. A failed Init leaves the
-// service uninitialized.
+// tracking table under the migration lock, or adds the checksum column to
+// one that lacks it, as described in the package documentation. On an
+// initialized service it returns ErrAlreadyInitialized and changes
+// nothing. A failed Init leaves the service uninitialized.
 func (s *Service) Init(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -216,6 +223,11 @@ func (s *Service) Init(ctx context.Context) error {
 		})
 		if writeErr != nil {
 			return fmt.Errorf("%s: create tracking table: %w", ServiceName, writeErr)
+		}
+
+		writeErr = s.addChecksumColumn(ctx, sess)
+		if writeErr != nil {
+			return fmt.Errorf("%s: add checksum column: %w", ServiceName, writeErr)
 		}
 
 		return nil
@@ -376,7 +388,7 @@ func (s *Service) readRows(
 	for rows.Next() {
 		var m AppliedMigration
 
-		err = rows.Scan(&m.Version, &m.Service, &m.Description, &m.Dirty)
+		err = rows.Scan(&m.Version, &m.Service, &m.Description, &m.Dirty, &m.Checksum)
 		if err != nil {
 			return nil, fmt.Errorf("%s: read tracking table: %w", ServiceName, s.safeErr(err))
 		}

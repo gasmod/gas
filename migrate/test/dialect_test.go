@@ -28,8 +28,13 @@ func TestMySQL_PartialApply(t *testing.T) {
 	require.EqualError(t, err, "gas/migrate: apply 001 (owner app): migration failed: "+
 		"Error 1050 (42S01): Table 'p' already exists")
 	assert.True(t, e.exists(t, "p"), "the first statement's DDL committed")
-	assert.Equal(t, []migrate.AppliedMigration{{Version: "001", Service: "app", Dirty: true}},
-		rows(t, e.svc))
+	assert.Equal(
+		t,
+		[]migrate.AppliedMigration{
+			{Version: "001", Service: "app", Dirty: true, Checksum: sum(m.Up)},
+		},
+		rows(t, e.svc),
+	)
 
 	require.NoError(t, e.svc.ClearDirty(t.Context(), "001"))
 
@@ -42,7 +47,13 @@ func TestMySQL_PartialApply(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, fixed.ClearDirty(t.Context(), "001"))
 	require.NoError(t, fixed.RunPending())
-	assert.Equal(t, []migrate.AppliedMigration{{Version: "001", Service: "app"}}, rows(t, fixed))
+	assert.Equal(
+		t,
+		[]migrate.AppliedMigration{
+			{Version: "001", Service: "app", Checksum: sum("CREATE TABLE p (id INT)")},
+		},
+		rows(t, fixed),
+	)
 }
 
 // On MySQL, a migration of several statements runs through gas/database's
@@ -158,16 +169,17 @@ func TestNoTransaction_FailureKeepsWork(t *testing.T) {
 
 			e := newEnv(t, b)
 
-			e.svc.Register(app, gas.Migration{
-				Version: "001",
-				Up:      "-- gas:no-transaction\nCREATE TABLE kept (id INT); SELECT * FROM missing;",
-			})
+			const up = "-- gas:no-transaction\nCREATE TABLE kept (id INT); SELECT id FROM missing;"
+
+			e.svc.Register(app, gas.Migration{Version: "001", Up: up})
 
 			require.ErrorIs(t, e.svc.RunPending(), migrate.ErrMigrationFailed)
 			assert.True(t, e.exists(t, "kept"))
 			assert.Equal(
 				t,
-				[]migrate.AppliedMigration{{Version: "001", Service: "app", Dirty: true}},
+				[]migrate.AppliedMigration{
+					{Version: "001", Service: "app", Dirty: true, Checksum: sum(up)},
+				},
 				rows(t, e.svc),
 			)
 		})
@@ -267,8 +279,13 @@ func TestNoTransaction_FailedRevertDirty(t *testing.T) {
 			)
 			assert.True(t, e.log.has("migration marked dirty"))
 			assert.Equal(t, []migrate.AppliedMigration{
-				{Version: "001", Service: "app"},
-				{Version: "002", Service: "app", Dirty: true},
+				{Version: "001", Service: "app", Checksum: sum("CREATE TABLE a (id INT)")},
+				{
+					Version:  "002",
+					Service:  "app",
+					Dirty:    true,
+					Checksum: sum("CREATE TABLE b (id INT)"),
+				},
 			}, rows(t, e.svc))
 			require.ErrorIs(t, e.svc.Down(1), migrate.ErrDirty)
 		})

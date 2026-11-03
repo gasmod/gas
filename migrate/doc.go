@@ -105,11 +105,26 @@
 //
 // [Service.RunPending] calls [Service.RunPendingContext] with
 // context.Background(). It takes the migration lock, as described under
-// Concurrency, reads the tracking table, and applies each registered
-// migration whose version has no row, in version order. Rows of versions
-// no service registers are left alone. While any row is dirty it applies
-// nothing and returns [ErrDirty]. The first migration that fails stops
-// the run: those before it stay applied.
+// Concurrency, and then:
+//
+//  1. reads the tracking table. While any row is dirty it applies
+//     nothing and returns [ErrDirty].
+//  2. records the checksum, as described under Tracking table, of each
+//     row that has none and whose version is registered, in version
+//     order, each with an UPDATE of its own that changes the row only
+//     while its checksum is still empty. When it issued any, it reads the
+//     table again, and a row that is dirty now is [ErrDirty].
+//  3. compares the checksum of each row that has one and whose version
+//     is registered with the registered up SQL's. While any differs it
+//     applies nothing and returns [ErrChecksumMismatch], as described
+//     under Edited migrations.
+//  4. applies each registered migration whose version has no row, in
+//     version order.
+//
+// Steps 1 to 3 run on every call, also when nothing is pending. Rows of
+// versions no service registers are left alone: never recorded, checked
+// or reverted by RunPending. The first migration that fails stops the
+// run: those before it stay applied.
 //
 // How a migration is applied depends on the dialect:
 //
@@ -145,10 +160,14 @@
 // `migration marked dirty` at warn level with `version` and `owner`, and
 // never the SQL or the driver's error, when a failed migration's row is
 // left dirty; and `no pending migrations` at debug level when there is
-// nothing to apply. The other logs are `migration reverted` under Down,
-// `dirty mark cleared` under Dirty migrations, the two lock logs under
-// Concurrency, and `service initialized` and `service closed` under
-// Lifecycle.
+// nothing to apply. It logs `checksums recorded` at info level, with
+// `count`, the number of rows step 2 changed, when that is more than
+// none; and `checksum mismatch` at warn level for each version step 3
+// finds, with `version`, `owner`, `stored` and `registered`, the two full
+// checksums, never the SQL. The other logs are `migration reverted` under
+// Down, `dirty mark cleared` under Dirty migrations, the two lock logs
+// under Concurrency, `checksum column added` under Tracking table, and
+// `service initialized` and `service closed` under Lifecycle.
 //
 // # Directives
 //
@@ -219,8 +238,10 @@
 //   - SQLite: there is no lock held for the whole call. Each write takes
 //     the database file's write lock itself, in a transaction started with
 //     BEGIN IMMEDIATE: each migration, each dirty mark, the tracking
-//     table's creation and ClearDirty's delete. Inside it the tracking
-//     table is read again: a migration whose row another instance wrote
+//     table's creation, the check for its checksum column and adding
+//     it, each checksum RunPending records, and ClearDirty's delete.
+//     Inside it the tracking table is read again: a migration whose row
+//     another instance wrote
 //     meanwhile is skipped, a revert whose row is gone too, and a dirty
 //     row is [ErrDirty]. So several instances may share the pending
 //     migrations between them, each applying one at a time, and every one
@@ -287,8 +308,8 @@
 // # Dirty migrations
 //
 // A dirty row blocks RunPending and Down, which return [ErrDirty] naming
-// the dirty versions, and makes CheckReady fail the same way, until
-// [Service.ClearDirty] removes it. ClearDirty takes the lock and deletes
+// the dirty versions, before RunPending checks any checksum, and makes
+// CheckReady fail the same way, until [Service.ClearDirty] removes it. ClearDirty takes the lock and deletes
 // the version's row when it is dirty, so that the next RunPending applies
 // the migration again; a version that is not dirty, or has no row, is
 // [ErrNotDirty], and nothing changes. ClearDirty is not part of
@@ -312,8 +333,10 @@
 // Every write of a tracking row that must change exactly one row, the
 // row written ahead of a migration, the mark cleared after it, and the
 // row inserted or deleted with a migration in its transaction, checks
-// that it did. Any other count fails the run with [ErrTrackingRowLost],
-// wrapping [ErrMigrationFailed] once the migration ran: the row was
+// that it did; the UPDATE that records a checksum is no such write, and
+// changes no row when another instance recorded it first. Any other
+// count fails the run with [ErrTrackingRowLost], wrapping
+// [ErrMigrationFailed] once the migration ran: the row was
 // changed from outside the service, such as deleted by hand, while the
 // migration ran. A migration whose clean mark finds its row gone may be
 // applied with no row, and would be applied again by the next run; no
@@ -343,7 +366,9 @@
 // SQLite a revert whose row another instance deleted meanwhile is
 // skipped, so two instances that revert at once revert the versions they
 // read once. The service logs `migration reverted` at info level for
-// each, with `version`, `owner` and `duration`.
+// each, with `version`, `owner` and `duration`. Down neither checks nor
+// records checksums: the down SQL is not part of one, and an edited
+// migration must stay revertable, as described under Edited migrations.
 //
 // # Readiness
 //
@@ -353,6 +378,8 @@
 // the tracking table, [ErrDirty], or [ErrPending] with the number of
 // pending migrations. It takes no lock, and a migration registered after
 // RunPending makes the service unready until the next start applies it.
+// It neither checks nor records checksums: RunPending, at start, is
+// where an edited migration is caught.
 //
 // On PostgreSQL and MySQL a dirty row may be one a run wrote ahead of a
 // migration it is running, as described under Applying. So while another
@@ -369,15 +396,17 @@
 //
 // [Service.Applied] returns the rows of the tracking table as
 // [AppliedMigration] values, in version order: version, owner service,
-// description and dirty mark.
+// description, dirty mark and checksum, empty for a row written without
+// one.
 //
 // # Lifecycle
 //
 // [Service.Init] checks the lock timeout ([ErrInvalidLockTimeout] unless
 // positive), picks the dialect from the provider's Driver, takes the
 // provider's DB, and creates the tracking table under the lock when it
-// does not exist. Driver `postgres` and `pgx` are PostgreSQL, `mysql` is
-// MySQL, and `sqlite` and `sqlite3` are SQLite; gas/database reports
+// does not exist, or adds its checksum column when it lacks it, as
+// described under Tracking table. Driver `postgres` and `pgx` are
+// PostgreSQL, `mysql` is MySQL, and `sqlite` and `sqlite3` are SQLite; gas/database reports
 // `postgres`, `mysql` and `sqlite`. Any other is [ErrUnsupportedDriver],
 // which lists the supported names and not the one given. A provider whose
 // DB returns nil is [ErrNilDatabase]. Init then logs `service
@@ -410,15 +439,52 @@
 //     service never reads it, so the MySQL driver's parseTime does not
 //     matter.
 //   - `dirty`: whether the migration is marked dirty.
+//   - `checksum`: the checksum of the up SQL the row was written for, or
+//     empty. TEXT on PostgreSQL and SQLite, VARCHAR(64) on MySQL.
 //
-// Init creates the table with CREATE TABLE IF NOT EXISTS and never
-// changes one that exists.
+// The checksum is the SHA-256, in lowercase hex, of the up SQL with every
+// CRLF replaced by LF, and nothing else changed, so that a checkout with
+// Windows line ends records the same checksum; a lone CR counts. It
+// covers the whole up SQL, its directives included, and nothing else:
+// editing the down SQL or the description after a migration was applied
+// is allowed. A migration registered with different SQL per dialect has
+// a checksum per dialect. Every row the service inserts, dirty or clean,
+// holds its migration's checksum; an existing row's checksum is written
+// only by RunPending's recording of an empty one.
+//
+// Init creates the table with CREATE TABLE IF NOT EXISTS. When the table
+// exists without the `checksum` column, Init then adds it, under the
+// lock, with ALTER TABLE ... ADD COLUMN, NOT NULL with an empty default,
+// and logs `checksum column added` at info level. It looks for the column
+// in the schema the unqualified table name reaches: current_schema() on
+// PostgreSQL, DATABASE() on MySQL. On PostgreSQL and MySQL the ALTER's
+// wait for the table's lock is first bounded to the lock timeout or 5
+// seconds, whichever is shorter, with lock_timeout, in whole milliseconds
+// rounded up, on PostgreSQL and lock_wait_timeout, in whole seconds
+// rounded up, on MySQL; the setting dies with the call's connection.
+// While PostgreSQL waits for that lock, later queries on the table queue
+// behind it, which is why the wait is short. A failure fails Init, after
+// `add checksum column: `; an ALTER that waited out the bound fails with
+// the driver's lock timeout error, not [ErrLockTimeout]. So on an existing
+// table Init needs the right to alter it: on PostgreSQL, its ownership.
 //
 // # Upgrading from v0.5
 //
-// The tracking table of earlier releases works as it is: Init leaves an
-// existing table unchanged, and its rows, `applied_at` included, are read
-// as they were written. What changed is the order of versions:
+// The tracking table of earlier releases is upgraded, not replaced: Init
+// adds the `checksum` column, as described under Tracking table, and the
+// rows, `applied_at` included, are read as they were written. v0.5 names
+// its columns in every statement, so instances of v0.5 keep working on
+// the upgraded table while instances of this release roll out, the rows
+// they write get an empty checksum, and going back to v0.5 keeps working.
+// v0.5 takes no lock in the database, so the migration lock does not keep
+// it from the table while the column is added; the bound on the ALTER's
+// wait does.
+//
+// The first RunPending records the checksums of the rows written without
+// one, from the up SQL registered at that time, and from then on checks
+// them. An edit made before that run is therefore not caught.
+//
+// What changed besides is the order of versions:
 //
 //   - All-digit versions are ordered by their value, where v0.5 ordered
 //     every version by its text. A set whose all-digit versions all have
@@ -433,6 +499,29 @@
 //     Down and CheckReady, so such an app fails to start until its
 //     versions are renamed. Tracking tables that already mix them are
 //     read, with the all-digit versions first, as under Versions.
+//
+// # Edited migrations
+//
+// RunPending fails with [ErrChecksumMismatch] while the up SQL registered
+// for an applied version is not the one its row records, and applies
+// nothing; the error names each such version, its owner and both
+// checksums, as listed under Errors. There is no option to accept an
+// edit. What to do:
+//
+//  1. Never edit a migration once it is applied anywhere: write a new
+//     migration that makes the change. That holds for gas's own modules
+//     too: a module never edits a migration it has shipped.
+//  2. In development, for the latest migration: Down(1), then
+//     RunPending. Down reverts it with its down SQL, which is not part of
+//     the checksum, and deletes its row; RunPending applies the edited up
+//     SQL and records its checksum.
+//  3. As a last resort, by hand: `UPDATE __gas_migrations SET checksum =
+//     '<registered>' WHERE version = '<version>'`, with the registered
+//     checksum the error names. Run it before rolling out the edited
+//     build: instances of the previous build fail RunPending on their next
+//     start until they are rolled forward, and rolling back to the
+//     previous build needs the UPDATE undone with the stored checksum the
+//     error names.
 //
 // # Errors
 //
@@ -462,12 +551,20 @@
 //     anything ran, such as taking SQLite's write lock or writing the
 //     dirty mark that comes first on MySQL, does not wrap it.
 //   - [ErrLockTimeout]: the lock was not taken within the lock timeout.
+//   - [ErrChecksumMismatch]: an applied migration's up SQL was edited, as
+//     under Edited migrations.
 //
 // Every error the package returns starts with [ServiceName] once, names
 // what failed, a version with its owner when there is one, and wraps the
 // sentinel and then the cause:
 //
 //	apply 002 (owner gas/auth/session): migration failed: <driver error>
+//
+// A failure to add the checksum column fails Init after `add checksum
+// column: `, and a failure to record a row's checksum fails RunPending
+// after `record checksum <version> (owner <owner>): `, each followed by
+// the driver's error, or on SQLite by a failure of the write
+// transaction, such as `acquire lock: lock timed out`.
 //
 // The errors never hold a migration's SQL, apart from what the driver's
 // own text quotes of it, such as the token a syntax error is near. The
@@ -508,9 +605,12 @@
 //	gas/migrate: acquire lock: context canceled
 //	gas/migrate: dirty migrations: 001, 002
 //	gas/migrate: pending migrations: 2
+//	gas/migrate: checksum mismatch: 001 (owner app) stored e004ebd5b5532a4b85984a62f8ad48a81aa3460c1ca07701f386135d72cdecf5 registered ebbb5b332060a3ede7047bd7528883b0a560e729848f9feb8ff742145e909b01
 //	gas/migrate: apply 001 (owner app): migration failed: SQL logic error: no such table: missing (1)
 //	gas/migrate: revert 001 (owner app): migration failed: SQL logic error: no such table: missing (1)
 //	gas/migrate: revert 001 (owner gone): version not registered
 //	gas/migrate: revert 001 (owner app): no down SQL
 //	gas/migrate: clear 001: migration not dirty
+//
+//nolint:lll // the error lines are verbatim, and a checksum mismatch is longer than a line.
 package migrate

@@ -37,8 +37,18 @@ func TestRunPending_AppliesInOrder(t *testing.T) {
 			require.NoError(t, e.svc.RunPending())
 			assert.True(t, e.exists(t, "users"))
 			assert.Equal(t, []migrate.AppliedMigration{
-				{Version: "001", Service: "users", Description: "create users"},
-				{Version: "002", Service: "users", Description: "add name"},
+				{
+					Version:     "001",
+					Service:     "users",
+					Description: "create users",
+					Checksum:    sum("CREATE TABLE users (id INT)"),
+				},
+				{
+					Version:     "002",
+					Service:     "users",
+					Description: "add name",
+					Checksum:    sum("ALTER TABLE users ADD COLUMN name VARCHAR(10)"),
+				},
 			}, rows(t, e.svc))
 
 			info := e.log.messages("info")
@@ -81,7 +91,7 @@ func TestRunPending_FailureMarksDirty(t *testing.T) {
 
 			e.svc.RegisterSlice(app, []gas.Migration{
 				mig("001", "a"),
-				{Version: "002", Up: "CREATE TABLE b (id INT); SELECT * FROM missing"},
+				{Version: "002", Up: "CREATE TABLE b (id INT); SELECT id FROM missing"},
 				mig("003", "c"),
 			})
 
@@ -93,8 +103,18 @@ func TestRunPending_FailureMarksDirty(t *testing.T) {
 			assert.False(t, e.exists(t, "b"))
 			assert.False(t, e.exists(t, "c"))
 			assert.Equal(t, []migrate.AppliedMigration{
-				{Version: "001", Service: "app", Description: "create a"},
-				{Version: "002", Service: "app", Dirty: true},
+				{
+					Version:     "001",
+					Service:     "app",
+					Description: "create a",
+					Checksum:    sum("CREATE TABLE a (id INT)"),
+				},
+				{
+					Version:  "002",
+					Service:  "app",
+					Dirty:    true,
+					Checksum: sum("CREATE TABLE b (id INT); SELECT id FROM missing"),
+				},
 			}, rows(t, e.svc))
 
 			warns := e.log.messages("warn")
@@ -188,7 +208,12 @@ func TestRunPending_RecordAndMarkFail(t *testing.T) {
 				f.clear()
 				assert.Equal(
 					t,
-					[]migrate.AppliedMigration{{Version: "001", Service: "app", Dirty: true}},
+					[]migrate.AppliedMigration{{
+						Version:  "001",
+						Service:  "app",
+						Dirty:    true,
+						Checksum: sum("CREATE TABLE a (id INT)"),
+					}},
 					rows(t, svc),
 				)
 

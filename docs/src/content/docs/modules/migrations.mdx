@@ -114,6 +114,32 @@ the two services itself:
 
 <Code code={region(mig, 'clear-dirty')} lang="go" title="cmd/migrate-clear/main.go" />
 
+### Editing an applied migration
+
+Each tracking row records a checksum of the up SQL it was applied with.
+`RunPending` compares it with the registered up SQL on every start, also when
+nothing is pending, and while they differ it applies nothing and fails with an
+error wrapping `migrate.ErrChecksumMismatch` that names each version with its
+stored and registered checksums. Editing the down SQL or the description is
+fine; neither is part of the checksum.
+
+When a migration was edited after it was applied:
+
+1. Write a new migration instead. An applied migration is never edited, and
+   that holds for Gas's own modules too: a module never edits a migration it
+   has shipped.
+2. In development, for the latest migration, call `Down(1)` and then
+   `RunPending`. `Down` reverts the migration with its down SQL and deletes
+   its row; `RunPending` applies the edited up SQL and records its checksum.
+3. As a last resort, write the registered checksum from the error into the
+   row by hand: `UPDATE __gas_migrations SET checksum = '<registered>' WHERE
+   version = '<version>'`. Do it before rolling out the edited build.
+   Instances of the previous build then fail `RunPending` on their next start
+   until they are rolled forward, and rolling back to the previous build
+   needs the `UPDATE` undone with the stored checksum from the error.
+
+There is no option to accept an edit in code.
+
 ### Rolling back
 
 `Down(n)` reverts the `n` highest applied versions, running each one's down
@@ -149,8 +175,9 @@ then runs during `Start`, as in production.
 | `migrate.ErrDirty` | `RunPending`, `Down`, `CheckReady` | Any version is marked dirty. The message names the versions |
 | `migrate.ErrDuplicateVersion` | `RunPending`, `Down`, `CheckReady` | Two different migrations share a version. The message names the version and the services |
 | `migrate.ErrNotDirty` | `ClearDirty` | The version is not marked dirty |
+| `migrate.ErrChecksumMismatch` | `RunPending` | An applied migration's up SQL was edited. The message names each version, its owner, and the stored and registered checksums |
 
-All three are returned wrapped; match them with `errors.Is`. Other errors
+All four are returned wrapped; match them with `errors.Is`. Other errors
 start with `gas/migrate:`, including the failure of a migration
 (`... failed (marked dirty): <cause>`, wrapping the driver's error). Before
 `Init`, `RunPending`, `Down`, `ClearDirty` and `CheckReady` return
@@ -261,8 +288,47 @@ changed.
 | `module_version` | The version of the Go module whose path ends in `/` plus the service name, such as `github.com/gasmod/gas/auth` for `gas/auth`; empty when there is none |
 | `applied_at` | When the row was written |
 | `dirty` | Whether the migration failed |
+| `checksum` | The checksum of the up SQL the row was written for, or empty for a row written without one |
 
 Both versions are read from the binary's build information.
+
+### Checksums
+
+The checksum is the SHA-256, in lowercase hex, of the migration's up SQL with
+every CRLF replaced by LF, so a Windows checkout with `core.autocrlf` records
+the same checksum; nothing else is normalized. It covers the whole up SQL,
+`-- gas:` directives included, and not the down SQL or the description. A
+migration registered with different SQL per database has a checksum per
+database. Every row `RunPending` writes, clean or dirty, carries its
+migration's checksum.
+
+On every call, after the dirty check, `RunPending` first records the
+registered checksum into each row of a registered version whose checksum is
+empty, and logs `checksums recorded` with the count. It then compares each
+row of a registered version that has a checksum, logs `checksum mismatch` at
+warn level with both checksums for each difference, and fails with
+`migrate.ErrChecksumMismatch` before applying anything. A dirty version takes
+precedence: `RunPending` returns `migrate.ErrDirty` before it looks at
+checksums. Rows of versions no service registers are never recorded or
+checked. `Down` and `CheckReady` neither check nor record checksums.
+
+### Upgrading the tracking table
+
+A tracking table written by an earlier release has no `checksum` column.
+`Init` adds it with `ALTER TABLE ... ADD COLUMN`, under the migration lock on
+PostgreSQL and MySQL and in a `BEGIN IMMEDIATE` transaction on SQLite, and
+logs `checksum column added`. On an existing table `Init` therefore needs
+the right to alter it; on PostgreSQL that is ownership of the table. On
+PostgreSQL and MySQL the `ALTER` waits for the table's lock for at most the
+lock timeout or 5 seconds, whichever is shorter, and fails `Init` with
+`gas/migrate: add checksum column:` and the driver's error when another
+session holds the table longer.
+
+Instances of v0.5 keep working against the upgraded table, the rows they
+write get an empty checksum, and going back to v0.5 keeps working. The first
+`RunPending` after the upgrade records the checksums of the existing rows
+from the up SQL registered at that time and checks them from then on, so an
+edit made before that run is not caught.
 
 ### Health and readiness
 

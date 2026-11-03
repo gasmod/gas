@@ -47,6 +47,16 @@ func (s *Service) RunPendingContext(ctx context.Context) error {
 			return readErr
 		}
 
+		rows, readErr = s.recordChecksums(ctx, sess, regs, rows)
+		if readErr != nil {
+			return readErr
+		}
+
+		readErr = s.verifyChecksums(regs, rows)
+		if readErr != nil {
+			return readErr
+		}
+
 		pending := pendingOf(regs, rows)
 		if len(pending) == 0 {
 			s.logger.Debug("no pending migrations").Send()
@@ -116,7 +126,7 @@ func (c *change) record(d *dialect) rowWrite {
 		return rowWrite{
 			query: d.insert,
 			step:  "record",
-			args:  []any{c.reg.mig.Version, c.reg.owner, c.reg.mig.Description},
+			args:  []any{c.reg.mig.Version, c.reg.owner, c.reg.mig.Description, c.reg.checksum},
 		}
 	}
 
@@ -130,7 +140,7 @@ func (c *change) mark(d *dialect) rowWrite {
 		return rowWrite{
 			query: d.claim,
 			step:  "mark dirty",
-			args:  []any{c.reg.mig.Version, c.reg.owner, c.reg.mig.Description},
+			args:  []any{c.reg.mig.Version, c.reg.owner, c.reg.mig.Description, c.reg.checksum},
 		}
 	}
 
@@ -285,7 +295,8 @@ func (s *Service) unitFailed(ctx context.Context, sess *session, c *change, caus
 
 	markErr := s.write(markCtx, sess, func(ctx context.Context, x runner) error {
 		res, execErr := x.ExecContext(
-			ctx, sess.dialect.insertDirty, c.reg.mig.Version, c.reg.owner, c.reg.mig.Description,
+			ctx, sess.dialect.insertDirty,
+			c.reg.mig.Version, c.reg.owner, c.reg.mig.Description, c.reg.checksum,
 		)
 		if execErr != nil {
 			return s.safeErr(execErr)

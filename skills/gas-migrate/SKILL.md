@@ -8,8 +8,8 @@ description: >
   and WithLockTimeout, migration registration (single, slice, embedded FS),
   RunPending/RunPendingContext, Down/DownContext rollback, the migration lock
   for concurrent instances, SQL directives (no-transaction, no-split),
-  dirty-state handling and ClearDirty, version ordering, the __gas_migrations
-  tracking table, PostgreSQL/MySQL/SQLite behavior, readiness, sentinel
+  dirty-state handling and ClearDirty, up SQL checksums and edited
+  migrations, version ordering, the __gas_migrations tracking table, PostgreSQL/MySQL/SQLite behavior, readiness, sentinel
   errors, the migratetest mock, and DI wiring with gas/database. Make sure to
   use this skill whenever working with database migrations, schema changes, or
   any code under a gasmod/gas/migrate import path, even if the user doesn't
@@ -86,7 +86,7 @@ Safe for concurrent use.
 | Method       | Signature                                       | Description                                                   |
 |--------------|-------------------------------------------------|---------------------------------------------------------------|
 | `Name`       | `() string`                                     | Returns `ServiceName` (`"gas/migrate"`)                       |
-| `Init`       | `(context.Context) error`                       | Picks the dialect, takes the provider's DB, creates the table under the lock |
+| `Init`       | `(context.Context) error`                       | Picks the dialect, takes the provider's DB, creates the table (or adds its `checksum` column) under the lock |
 | `Close`      | `(context.Context) error`                       | Makes the service uninitialized; registrations stay           |
 | `CheckReady` | `(context.Context) error`                       | nil when every registered migration has a clean row           |
 | `Applied`    | `(context.Context) ([]AppliedMigration, error)` | Tracking rows in version order                                |
@@ -96,8 +96,8 @@ Safe for concurrent use.
 succeeds (and after `Close`), `RunPending`, `Down`, `ClearDirty`, `CheckReady`
 and `Applied` return `ErrNotInitialized`.
 
-`AppliedMigration` has `Version`, `Service` (owner's name), `Description`
-and `Dirty`.
+`AppliedMigration` has `Version`, `Service` (owner's name), `Description`,
+`Checksum` (empty for a row written without one) and `Dirty`.
 
 ### Readiness
 
@@ -157,11 +157,22 @@ func (s *Service) Down(n int) error  // DownContext(context.Background(), n)
 func (s *Service) DownContext(ctx context.Context, n int) error
 ```
 
-`RunPendingContext` takes the lock, reads the tracking table, and applies each
-registered migration whose version has no row, in version order. Rows of
-versions no service registers are left alone. While any row is dirty it
-applies nothing and returns `ErrDirty`. The first failing migration stops the
-run; those before it stay applied. A migration registered after a higher
+`RunPendingContext` takes the lock and then, on every call, also when nothing
+is pending:
+
+1. reads the tracking table; while any row is dirty it applies nothing and
+   returns `ErrDirty` (dirty takes precedence over checksums);
+2. records the registered checksum into each row of a registered version
+   whose checksum is empty (conditional `UPDATE`, logged as `checksums
+   recorded` with `count`), then re-reads the table and checks dirty again;
+3. compares each registered row's stored checksum with the registered up
+   SQL's; any difference logs `checksum mismatch` (warn, both hashes) and
+   returns `ErrChecksumMismatch` with nothing applied;
+4. applies each registered migration whose version has no row, in version
+   order.
+
+Rows of versions no service registers are left alone. The first failing
+migration stops the run; those before it stay applied. A migration registered after a higher
 version was applied is still applied by the next run.
 
 `DownContext` reverts the **n highest versions in the tracking table**,
@@ -172,7 +183,8 @@ anything it checks each version: one no service registers is
 `ErrNoDownSQL`. A failed revert stops the call. On PostgreSQL and SQLite a
 failed revert rolls back and marks nothing dirty; on MySQL (and with
 `-- gas:no-transaction` on PostgreSQL) the row is marked dirty first, so a
-failed revert leaves it dirty.
+failed revert leaves it dirty. `Down` and `CheckReady` neither check nor
+record checksums.
 
 The core `gas.MigrationManager` interface has only `RunPendingContext` and
 `DownContext` for execution; `RunPending`, `Down`, `ClearDirty` and `Applied`
@@ -212,7 +224,8 @@ collide there.
 Upgrading from v0.5: all-digit versions were ordered by text before, so sets
 with mixed digit lengths apply and `Down(n)` in a different order now, and
 mixing digit and non-digit versions now fails startup until renamed. Existing
-tracking tables are read unchanged.
+tracking tables get a `checksum` column from `Init` (see Checksums); v0.5
+instances keep working against the upgraded table and write empty checksums.
 
 ## Directives
 
@@ -290,17 +303,49 @@ session PRAGMA the app relies on (the connection returns to the pool).
 
 ### Tracking Table Schema
 
-`__gas_migrations` is created with `CREATE TABLE IF NOT EXISTS` and never
-altered:
+`__gas_migrations` is created with `CREATE TABLE IF NOT EXISTS`; on an
+existing table without the `checksum` column, `Init` adds it:
 
 | Column       | PostgreSQL    | MySQL             | SQLite    |
 |--------------|---------------|-------------------|-----------|
 | `version`    | `TEXT PK`     | `VARCHAR(255) PK` | `TEXT PK` |
 | `applied_at` | `TIMESTAMPTZ` | `DATETIME`        | `TEXT`    |
 | `dirty`      | `BOOLEAN`     | `BOOLEAN`         | `INTEGER` |
+| `checksum`   | `TEXT`        | `VARCHAR(64)`     | `TEXT`    |
 
 Other columns: `service`, `description`, `migrate_version`, `module_version`
-(all `TEXT NOT NULL`; the last two written empty).
+(all `TEXT NOT NULL`; the last two written empty). `checksum` is `NOT NULL
+DEFAULT ''`.
+
+## Checksums
+
+Each row records `checksum = lowercase hex(sha256(up))`, with every `\r\n` in
+the up SQL replaced by `\n` first (nothing else normalized; a lone `\r`
+counts). It covers the up SQL only, directives included; editing the down SQL
+or description is allowed. Every row the service inserts, clean or dirty,
+carries it.
+
+Upgrade: `Init` adds the column under the lock (`ALTER TABLE ... ADD COLUMN`,
+logged as `checksum column added`), so on an existing table it needs ALTER
+rights (PostgreSQL: table ownership). On PostgreSQL and MySQL the ALTER's
+table-lock wait is bounded to `min(lockTimeout, 5s)` via `lock_timeout` /
+`lock_wait_timeout`; exceeding it fails `Init` with `gas/migrate: add checksum
+column: <driver error>` (not `ErrLockTimeout`). The first `RunPending` records
+checksums of existing rows from what is registered then, so an edit made
+before it is not caught. A failed record is `gas/migrate: record checksum
+<version> (owner <owner>): <cause>`.
+
+When an applied migration was edited (`ErrChecksumMismatch`, message
+`gas/migrate: checksum mismatch: 003 (owner notes) stored <64 hex> registered
+<64 hex>, ...`), there is no in-code accept:
+
+1. Never edit an applied migration; write a new one. Gas modules never edit a
+   shipped migration either.
+2. In development, for the latest migration: `Down(1)`, then `RunPending`.
+3. Last resort, by hand: `UPDATE __gas_migrations SET checksum =
+   '<registered>' WHERE version = '<version>'`, before rolling out the edited
+   build. Previous-build instances then fail `RunPending` until rolled
+   forward; rolling back needs the `UPDATE` reverted to the stored value.
 
 ## Dirty State Resolution
 
@@ -342,6 +387,7 @@ Errors never hold migration SQL beyond what the driver quotes.
 | `ErrUnregisteredVersion`, `ErrNoDownSQL` | Down cannot revert a version |
 | `ErrMigrationFailed` | a migration's SQL or row write failed once started; wraps the driver error |
 | `ErrLockTimeout` | lock not taken within the lock timeout |
+| `ErrChecksumMismatch` | an applied migration's up SQL was edited; RunPending applies nothing |
 
 ## Test Mock
 

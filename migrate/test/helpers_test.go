@@ -3,8 +3,10 @@ package migrate_test
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"maps"
@@ -247,6 +249,15 @@ func mig(version, table string) gas.Migration {
 		Up:          "CREATE TABLE " + table + " (id INT)",
 		Down:        "DROP TABLE " + table,
 	}
+}
+
+// sum returns the checksum of up SQL as the package documentation
+// defines it: the SHA-256, in lowercase hex, of up with every CRLF
+// replaced by LF.
+func sum(up string) string {
+	h := sha256.Sum256([]byte(strings.ReplaceAll(up, "\r\n", "\n")))
+
+	return hex.EncodeToString(h[:])
 }
 
 // docLines returns the code lines of the doc comments in the Go file at
@@ -508,10 +519,15 @@ func (p *safeProvider) SafeError(err error) error {
 type fault struct {
 	// err is the error returned.
 	err error
+	// do, when set, runs once ahead of the first matching operation,
+	// which then runs as it would; err is then unused.
+	do func()
 	// kind is `exec`, `query`, `begin`, `commit` or `rollback`.
 	kind string
 	// match is a substring of the query; empty matches any.
 	match string
+	// done reports that do has run.
+	done bool
 }
 
 // faults are the failures a fault connector injects. It is safe for
@@ -539,18 +555,50 @@ func (f *faults) clear() {
 	f.list = nil
 }
 
-// hit returns the error of the first fault the operation matches, or nil.
-func (f *faults) hit(kind, query string) error {
+// before runs fn once, ahead of the first operation of kind whose query
+// holds match; the operation then runs as it would.
+func (f *faults) before(kind, match string, fn func()) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
+	f.list = append(f.list, &fault{kind: kind, match: match, do: fn})
+}
+
+// hit runs the first unused before function the operation matches, then
+// returns the error of the first fault it matches, or nil.
+func (f *faults) hit(kind, query string) error {
+	do, err := f.match(kind, query)
+	if do != nil {
+		do()
+	}
+
+	return err
+}
+
+// match returns the first unused before function and the error of the
+// first fault that an operation of kind with query matches, marking the
+// function used.
+func (f *faults) match(kind, query string) (func(), error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	var do func()
+
 	for _, x := range f.list {
-		if x.kind == kind && strings.Contains(query, x.match) {
-			return x.err
+		if x.kind != kind || !strings.Contains(query, x.match) {
+			continue
+		}
+
+		if x.do == nil {
+			return do, x.err
+		}
+
+		if do == nil && !x.done {
+			do, x.done = x.do, true
 		}
 	}
 
-	return nil
+	return do, nil
 }
 
 // faultConnector opens connections of a driver that fail as its faults

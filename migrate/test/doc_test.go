@@ -44,7 +44,12 @@ func TestDoc_Usage(t *testing.T) {
 	_, err = db.Exec(ctx, "INSERT INTO notes (body) VALUES ('x')")
 	require.NoError(t, err)
 	assert.Equal(t, []migrate.AppliedMigration{
-		{Version: "001", Service: "app", Description: "create notes"},
+		{
+			Version:     "001",
+			Service:     "app",
+			Description: "create notes",
+			Checksum:    sum("CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)"),
+		},
 	}, rows(t, svc))
 }
 
@@ -229,6 +234,16 @@ func TestDoc_Errors(t *testing.T) {
 
 			return e.svc.RunPending()
 		},
+		"gas/migrate: checksum mismatch: 001 (owner app) " +
+			"stored e004ebd5b5532a4b85984a62f8ad48a81aa3460c1ca07701f386135d72cdecf5 " +
+			"registered ebbb5b332060a3ede7047bd7528883b0a560e729848f9feb8ff742145e909b01": func() error {
+			e := sqliteEnv(t)
+			insertRow(t, e, "001", "app", false)
+			setChecksum(t, e, "001", sum("SELECT 1"))
+			e.svc.Register(app, gas.Migration{Version: "001", Up: "SELECT 2"})
+
+			return e.svc.RunPending()
+		},
 		"gas/migrate: pending migrations: 2": func() error {
 			e := sqliteEnv(t)
 			e.svc.RegisterSlice(app, []gas.Migration{mig("001", "a"), mig("002", "b")})
@@ -283,6 +298,20 @@ func insertRow(t *testing.T, e *env, version, service string, dirty bool) {
 	}
 
 	_, err := e.db.DB().ExecContext(t.Context(), q, version, service, dirty)
+	require.NoError(t, err)
+}
+
+// setChecksum sets the checksum of version's row of the tracking table on
+// e's database.
+func setChecksum(t *testing.T, e *env, version, checksum string) {
+	t.Helper()
+
+	q := "UPDATE __gas_migrations SET checksum = ? WHERE version = ?"
+	if e.b.name == "postgres" {
+		q = "UPDATE __gas_migrations SET checksum = $1 WHERE version = $2"
+	}
+
+	_, err := e.db.DB().ExecContext(t.Context(), q, checksum, version)
 	require.NoError(t, err)
 }
 

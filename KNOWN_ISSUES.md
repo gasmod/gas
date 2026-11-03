@@ -153,3 +153,17 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
     container; it was not run.
 - **Next step**: run each case against real AWS, and the aws-ses-v2-local
   test, then pin the observed behavior in a test or the documentation.
+
+## KI-089: the migrations docs page predates the v0.6.0 migrate rewrite
+
+- **Status**: open
+- **Area**: `docs/src/content/docs/modules/migrations.mdx`.
+- **Found**: 2026-11-02, while adding migration checksums.
+- **Detail**: apart from the checksum material, the page still describes
+  v0.5: the MySQL DSN needing `parseTime=true` (lines 26 and 214), while
+  `migrate/doc.go` says the service never reads `applied_at`, so
+  parseTime does not matter; `migrate_version` as the version of
+  `gas/migrate` that applied it (line 287), while v0.6.0 writes it empty;
+  and, per the review that found this, ordering of versions by text, the
+  `ErrDuplicateVersion` wording and older error text.
+- **Next step**: rewrite the page against `migrate/doc.go`.

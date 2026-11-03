@@ -134,8 +134,18 @@ func TestDown_FailureStops(t *testing.T) {
 			mysql := b.name == "mysql"
 
 			assert.Equal(t, []migrate.AppliedMigration{
-				{Version: "1", Service: "app", Description: "create one"},
-				{Version: "2", Service: "app", Dirty: mysql},
+				{
+					Version:     "1",
+					Service:     "app",
+					Description: "create one",
+					Checksum:    sum("CREATE TABLE one (id INT)"),
+				},
+				{
+					Version:  "2",
+					Service:  "app",
+					Dirty:    mysql,
+					Checksum: sum("CREATE TABLE two (id INT)"),
+				},
 			}, rows(t, e.svc))
 			assert.False(t, e.exists(t, "three"))
 

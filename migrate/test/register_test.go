@@ -156,8 +156,13 @@ func TestRegisterFS(t *testing.T) {
 	}))
 	require.NoError(t, e.svc.RunPending())
 	assert.Equal(t, []migrate.AppliedMigration{
-		{Version: "20250216001", Service: "app", Description: "create users"},
-		{Version: "20250216002", Service: "app"},
+		{
+			Version:     "20250216001",
+			Service:     "app",
+			Description: "create users",
+			Checksum:    sum("CREATE TABLE users (id INT)"),
+		},
+		{Version: "20250216002", Service: "app", Checksum: sum("CREATE TABLE plain (id INT)")},
 	}, rows(t, e.svc))
 
 	require.ErrorIs(t, e.svc.Down(1), migrate.ErrNoDownSQL)

@@ -32,7 +32,11 @@ main ones per module follow.
   supported, `SafeError`, a default SQLite busy timeout, and the DSN is a
   `gas.Secret`.
 - **migrate**: rewritten; all-digit versions order numerically, new
-  directives, `ClearDirty` and `Applied`.
+  directives, `ClearDirty` and `Applied`. The tracking table records a
+  SHA-256 checksum of each migration's up SQL (`AppliedMigration.Checksum`),
+  and `RunPending` fails with `ErrChecksumMismatch` when an applied
+  migration was edited; `Init` adds the `checksum` column to an existing
+  table.
 - **log**: the root package is stdlib only; zerolog moves to
   `log/zerolog`; `NewShippingHandler`; endpoints in errors show the host
   only.

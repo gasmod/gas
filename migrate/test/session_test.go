@@ -215,11 +215,13 @@ func TestMySQL_CancelLeavesDirty(t *testing.T) {
 
 	e := newEnv(t, mysqlBackend)
 
-	e.svc.Register(app, gas.Migration{
+	m := gas.Migration{
 		Version: "001",
 		Up:      "CREATE TABLE a (id INT); SELECT SLEEP(5); CREATE TABLE b (id INT)",
 		Down:    "DROP TABLE b; DROP TABLE a",
-	})
+	}
+
+	e.svc.Register(app, m)
 
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
@@ -231,7 +233,9 @@ func TestMySQL_CancelLeavesDirty(t *testing.T) {
 
 	assert.Equal(
 		t,
-		[]migrate.AppliedMigration{{Version: "001", Service: "app", Dirty: true}},
+		[]migrate.AppliedMigration{
+			{Version: "001", Service: "app", Dirty: true, Checksum: sum(m.Up)},
+		},
 		rows(t, e.svc),
 	)
 	assert.True(t, e.exists(t, "a"))

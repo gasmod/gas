@@ -17,6 +17,8 @@ type registered struct {
 	mig gas.Migration
 	// owner is the name of the owner service.
 	owner string
+	// checksum is the checksum of the up SQL, as checksumOf returns it.
+	checksum string
 	// up are the directives of the up SQL.
 	up directives
 	// down are the directives of the down SQL.
@@ -147,7 +149,7 @@ func (r *registry) addOne(service gas.Service, owner string, m gas.Migration) er
 
 	m.Service = service
 
-	reg := &registered{mig: m, owner: owner, up: up, down: down}
+	reg := &registered{mig: m, owner: owner, up: up, down: down, checksum: checksumOf(m.Up)}
 
 	prev, ok := r.byVersion[m.Version]
 

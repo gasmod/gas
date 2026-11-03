@@ -61,7 +61,7 @@ func TestConcurrency_TwoRunnersOneApplies(t *testing.T) {
 
 			assert.Equal(
 				t,
-				[]migrate.AppliedMigration{{Version: "001", Service: "app"}},
+				[]migrate.AppliedMigration{{Version: "001", Service: "app", Checksum: sum(m.Up)}},
 				rows(t, e.svc),
 			)
 			assert.True(t, e.log.has("migration applied"))
@@ -129,6 +129,7 @@ func TestConcurrency_LockTimeout(t *testing.T) {
 
 			e.svc.Register(app, mig("001", "a"))
 			insertRow(t, e, "000", "app", false)
+			setChecksum(t, e, "000", sum("SELECT 1"))
 			e.svc.Register(app, gas.Migration{Version: "000", Up: "SELECT 1", Down: "SELECT 1"})
 
 			holdLock(t, e)

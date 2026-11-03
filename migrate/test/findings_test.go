@@ -119,7 +119,12 @@ func TestP3_NoWedge(t *testing.T) {
 			assert.Equal(
 				t,
 				[]migrate.AppliedMigration{
-					{Version: "003", Service: "app", Description: "create p3"},
+					{
+						Version:     "003",
+						Service:     "app",
+						Description: "create p3",
+						Checksum:    sum("CREATE TABLE p3 (id INT)"),
+					},
 				},
 				rows(t, e.svc),
 			)
