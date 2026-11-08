@@ -156,7 +156,7 @@ func TestListKeys_StaleAndForeign(t *testing.T) {
 // directory of the index or the metadata directory cannot be read.
 func TestListKeys_Failures(t *testing.T) {
 	t.Parallel()
-	skipIfRoot(t)
+	skipIfModesIgnored(t)
 
 	v, dir := newVFS(t)
 	bk := newBucket(t, v)

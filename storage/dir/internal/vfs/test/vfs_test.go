@@ -95,7 +95,7 @@ func TestOpen_Failures(t *testing.T) {
 // Open fails without writing the marker when its directory is read only.
 func TestOpen_MarkerUnwritable(t *testing.T) {
 	t.Parallel()
-	skipIfRoot(t)
+	skipIfModesIgnored(t)
 
 	dir := t.TempDir()
 	for _, d := range []string{objectsPath, locksPath, bucketsPath, keysPath} {
@@ -200,7 +200,7 @@ func TestCreateBucket_FileInPlace(t *testing.T) {
 // lock cannot be taken before the context ends.
 func TestCreateBucket_Failures(t *testing.T) {
 	t.Parallel()
-	skipIfRoot(t)
+	skipIfModesIgnored(t)
 
 	for _, sub := range []string{objectsPath, locksPath, keysPath, bucketsPath, "."} {
 		t.Run(sub, func(t *testing.T) {
@@ -311,7 +311,7 @@ func TestListBuckets(t *testing.T) {
 // ListBuckets fails when a name record cannot be read.
 func TestListBuckets_Unreadable(t *testing.T) {
 	t.Parallel()
-	skipIfRoot(t)
+	skipIfModesIgnored(t)
 
 	v, dir := newVFS(t)
 	require.NoError(t, v.CreateBucket(t.Context(), testBucket))

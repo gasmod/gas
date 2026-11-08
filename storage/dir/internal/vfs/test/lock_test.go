@@ -254,7 +254,7 @@ func TestLock_OpenFails(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist)
 	requireNoPath(t, err, dir)
 
-	require.NoError(t, os.Symlink(filepath.Join("missingdir", "x"), filepath.Join(dir, "link")))
+	symlink(t, filepath.Join("missingdir", "x"), filepath.Join(dir, "link"))
 
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 
@@ -267,7 +267,9 @@ func TestLock_OpenFails(t *testing.T) {
 // os.ErrPermission.
 func TestLock_UnopenableLockFile(t *testing.T) {
 	t.Parallel()
-	skipIfRoot(t)
+	skipIfModesIgnored(t)
+	// On Windows a read-only lock file gives access denied, which reads as
+	// delete-pending and is retried, so the failure does not come at once.
 
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "n"), nil, 0o000))

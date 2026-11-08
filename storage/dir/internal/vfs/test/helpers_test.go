@@ -4,10 +4,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -155,13 +158,35 @@ func requireNoPath(t *testing.T, err error, dir string) {
 	assert.NotRegexp(t, hashLike, err.Error())
 }
 
-// skipIfRoot skips t when it runs as root, whom no mode stops.
-func skipIfRoot(t *testing.T) {
+// skipIfModesIgnored skips t where a file mode stops no one: as root, and
+// on Windows, which does not enforce POSIX mode bits.
+func skipIfModesIgnored(t *testing.T) {
 	t.Helper()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not enforce POSIX file modes")
+	}
 
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores file modes")
 	}
+}
+
+// errPrivilegeNotHeld is ERROR_PRIVILEGE_NOT_HELD, what Windows gives a
+// process that may not create symlinks.
+const errPrivilegeNotHeld = syscall.Errno(1314)
+
+// symlink creates the symlink path to target. It skips t on a Windows
+// account that may not create symlinks.
+func symlink(t *testing.T, target, path string) {
+	t.Helper()
+
+	err := os.Symlink(target, path)
+	if runtime.GOOS == "windows" && errors.Is(err, errPrivilegeNotHeld) {
+		t.Skip("this Windows account may not create symlinks")
+	}
+
+	require.NoError(t, err)
 }
 
 // chmod sets the mode of path, and restores it when t ends.

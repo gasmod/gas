@@ -180,7 +180,7 @@ func TestSweep_Limit(t *testing.T) {
 // fails when a directory it reads cannot be read.
 func TestSweep_Failures(t *testing.T) {
 	t.Parallel()
-	skipIfRoot(t)
+	skipIfModesIgnored(t)
 
 	v, dir := newVFS(t)
 	newBucket(t, v)
@@ -209,7 +209,7 @@ func TestSweep_Failures(t *testing.T) {
 // Sweep fails when a leftover cannot be removed.
 func TestSweep_Unremovable(t *testing.T) {
 	t.Parallel()
-	skipIfRoot(t)
+	skipIfModesIgnored(t)
 
 	for _, p := range []func(dir string) string{
 		func(dir string) string { return metaPath(dir, testBucket, "k") + testUUID },
@@ -496,7 +496,7 @@ func TestSweep_IndexDirsLimit(t *testing.T) {
 // one, or create the index entry of an object that has none.
 func TestSweep_IndexFailures(t *testing.T) {
 	t.Parallel()
-	skipIfRoot(t)
+	skipIfModesIgnored(t)
 
 	t.Run("read", func(t *testing.T) {
 		t.Parallel()
@@ -545,7 +545,7 @@ func TestSweep_IndexFailures(t *testing.T) {
 // the lock as a write would.
 func TestSweep_LockFileUncreatable(t *testing.T) {
 	t.Parallel()
-	skipIfRoot(t)
+	skipIfModesIgnored(t)
 
 	for name, tc := range map[string]struct {
 		leftover func(dir string) string

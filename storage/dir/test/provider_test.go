@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -260,6 +261,11 @@ func TestProvider_CheckReady(t *testing.T) {
 
 	p, path := open(t)
 	require.NoError(t, p.CheckReady(t.Context()))
+
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not let an open store's directory be removed")
+	}
+
 	require.NoError(t, os.RemoveAll(path))
 
 	err := p.CheckReady(t.Context())

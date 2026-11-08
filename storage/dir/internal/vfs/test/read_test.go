@@ -58,7 +58,7 @@ func TestOpenObject_Symlinks(t *testing.T) {
 			path := target(dir)
 			cp := path + ".copy"
 			require.NoError(t, os.Rename(path, cp))
-			require.NoError(t, os.Symlink(filepath.Base(cp), path))
+			symlink(t, filepath.Base(cp), path)
 
 			_, err := bk.OpenObject(t.Context(), "k")
 			require.ErrorIs(t, err, vfs.ErrCorrupt)

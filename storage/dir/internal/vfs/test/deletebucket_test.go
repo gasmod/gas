@@ -225,7 +225,7 @@ func TestDeleteBucket_LifecycleLock(t *testing.T) {
 // up after the commit.
 func TestDeleteBucket_Failures(t *testing.T) {
 	t.Parallel()
-	skipIfRoot(t)
+	skipIfModesIgnored(t)
 
 	v, dir := newVFS(t)
 	newBucket(t, v)
@@ -271,7 +271,7 @@ func TestDeleteBucket_Failures(t *testing.T) {
 // removes nothing.
 func TestDeleteBucket_UnreadableEntry(t *testing.T) {
 	t.Parallel()
-	skipIfRoot(t)
+	skipIfModesIgnored(t)
 
 	v, dir := newVFS(t)
 	bk := newBucket(t, v)

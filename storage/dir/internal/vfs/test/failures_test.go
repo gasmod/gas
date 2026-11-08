@@ -24,7 +24,7 @@ import (
 // entry cannot be synced, and leaves no data file.
 func TestCreateObject_SyncFails(t *testing.T) {
 	t.Parallel()
-	skipIfRoot(t)
+	skipIfModesIgnored(t)
 
 	v, dir := newVFS(t)
 	bk := newBucket(t, v)
@@ -48,7 +48,7 @@ func TestCreateObject_SyncFails(t *testing.T) {
 // reports each, though the object is deleted.
 func TestDeleteObject_CleanupFails(t *testing.T) {
 	t.Parallel()
-	skipIfRoot(t)
+	skipIfModesIgnored(t)
 
 	v, dir := newVFS(t)
 	bk := newBucket(t, v)
@@ -70,7 +70,7 @@ func TestDeleteObject_CleanupFails(t *testing.T) {
 // reports the release with the missing object.
 func TestOpenObject_ReleaseFails(t *testing.T) {
 	t.Parallel()
-	skipIfRoot(t)
+	skipIfModesIgnored(t)
 
 	v, dir := newVFS(t)
 	bk := newBucket(t, v)
@@ -112,7 +112,7 @@ func TestStat_DeletedWhileWaiting(t *testing.T) {
 // file's name fails, and gives the name up.
 func TestLock_CurrentUnknown(t *testing.T) {
 	t.Parallel()
-	skipIfRoot(t)
+	skipIfModesIgnored(t)
 
 	dir := filepath.Join(t.TempDir(), "locks")
 	require.NoError(t, os.Mkdir(dir, 0o750))
@@ -173,7 +173,7 @@ func filterForeign(got []vfs.Skipped) []vfs.Skipped {
 // the metadata directory, or remove debris, and deletes nothing.
 func TestDeleteBucket_StatFails(t *testing.T) {
 	t.Parallel()
-	skipIfRoot(t)
+	skipIfModesIgnored(t)
 
 	v, dir := newVFS(t)
 	bk := newBucket(t, v)
@@ -208,7 +208,7 @@ func TestDeleteBucket_StatFails(t *testing.T) {
 // at as leftovers.
 func TestDeleteBucket_AfterCommit(t *testing.T) {
 	t.Parallel()
-	skipIfRoot(t)
+	skipIfModesIgnored(t)
 
 	v, dir := newVFS(t)
 	newBucket(t, v)
@@ -235,7 +235,7 @@ func TestDeleteBucket_AfterCommit(t *testing.T) {
 // that means it is gone.
 func TestVFS_RemovedUnknown(t *testing.T) {
 	t.Parallel()
-	skipIfRoot(t)
+	skipIfModesIgnored(t)
 
 	v, dir := newVFS(t)
 	bk := newBucket(t, v)
@@ -250,7 +250,7 @@ func TestVFS_RemovedUnknown(t *testing.T) {
 // cannot be read to look for buckets.
 func TestOpen_Unreadable(t *testing.T) {
 	t.Parallel()
-	skipIfRoot(t)
+	skipIfModesIgnored(t)
 
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, objectsPath), "")
@@ -278,7 +278,7 @@ func TestOpen_Unreadable(t *testing.T) {
 // root cannot be read.
 func TestBuckets_Unreadable(t *testing.T) {
 	t.Parallel()
-	skipIfRoot(t)
+	skipIfModesIgnored(t)
 
 	v, dir := newVFS(t)
 	chmod(t, filepath.Join(dir, locksPath), 0o000)
@@ -305,7 +305,7 @@ func TestBuckets_Unreadable(t *testing.T) {
 // directory of the index cannot be read.
 func TestSweep_Unreadable(t *testing.T) {
 	t.Parallel()
-	skipIfRoot(t)
+	skipIfModesIgnored(t)
 
 	for name, prepare := range map[string]func(dir string){
 		"root":  func(dir string) { chmod(t, dir, 0o300) },
@@ -339,7 +339,7 @@ func TestSweep_Unreadable(t *testing.T) {
 // CreateBucket reports a lifecycle lock file it cannot remove.
 func TestCreateBucket_ReleaseFails(t *testing.T) {
 	t.Parallel()
-	skipIfRoot(t)
+	skipIfModesIgnored(t)
 
 	v, dir := newVFS(t)
 	require.NoError(t, v.CreateBucket(t.Context(), testBucket))
@@ -432,7 +432,7 @@ func TestSweep_CanceledMidway(t *testing.T) {
 // locks directory it cannot read after the commit.
 func TestDeleteBucket_LeftoversUnreadable(t *testing.T) {
 	t.Parallel()
-	skipIfRoot(t)
+	skipIfModesIgnored(t)
 
 	for _, sub := range []func(dir string) string{objDir, lockDir} {
 		v, dir := newVFS(t)

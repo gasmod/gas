@@ -232,7 +232,7 @@ func TestCreateObject_Stopped(t *testing.T) {
 // was and removes the new data file.
 func TestCreateObject_CommitFails(t *testing.T) {
 	t.Parallel()
-	skipIfRoot(t)
+	skipIfModesIgnored(t)
 
 	v, dir := newVFS(t)
 	bk := newBucket(t, v)
@@ -252,7 +252,7 @@ func TestCreateObject_CommitFails(t *testing.T) {
 // read.
 func TestCreateObject_Unwritable(t *testing.T) {
 	t.Parallel()
-	skipIfRoot(t)
+	skipIfModesIgnored(t)
 
 	for key, prepare := range map[string]func(dir string){
 		"k":     func(dir string) { chmod(t, objDir(dir), 0o500) },
@@ -274,7 +274,6 @@ func TestCreateObject_Unwritable(t *testing.T) {
 // creates; they fail the write when they cannot be made.
 func TestCreateObject_LongKeyIndex(t *testing.T) {
 	t.Parallel()
-	skipIfRoot(t)
 
 	v, dir := newVFS(t)
 	bk := newBucket(t, v)
@@ -284,6 +283,7 @@ func TestCreateObject_LongKeyIndex(t *testing.T) {
 	assert.Equal(t, []string{long}, listKeys(t, bk, vfs.Bounds{}))
 	assert.Equal(t, "v", read(t, bk, long))
 
+	skipIfModesIgnored(t)
 	chmod(t, keysDir(dir), 0o500)
 
 	_, err := bk.CreateObject(t.Context(), write(strings.Repeat("b", 300), "v"))
@@ -427,7 +427,7 @@ func TestOpenObject_DataFile(t *testing.T) {
 // read for want of permission.
 func TestOpenObject_Unreadable(t *testing.T) {
 	t.Parallel()
-	skipIfRoot(t)
+	skipIfModesIgnored(t)
 
 	v, dir := newVFS(t)
 	bk := newBucket(t, v)
@@ -519,7 +519,7 @@ func TestDeleteObject(t *testing.T) {
 // the object.
 func TestDeleteObject_Unremovable(t *testing.T) {
 	t.Parallel()
-	skipIfRoot(t)
+	skipIfModesIgnored(t)
 
 	v, dir := newVFS(t)
 	bk := newBucket(t, v)
@@ -684,7 +684,7 @@ func TestCreateObject_CommitOverDirectory(t *testing.T) {
 // HeadBucket fails when the root cannot be read.
 func TestHeadBucket_Unreadable(t *testing.T) {
 	t.Parallel()
-	skipIfRoot(t)
+	skipIfModesIgnored(t)
 
 	v, dir := newVFS(t)
 	require.NoError(t, v.CreateBucket(t.Context(), testBucket))

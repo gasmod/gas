@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -330,6 +331,12 @@ func TestDoc_Errors(t *testing.T) {
 	}
 
 	for _, text := range slices.Sorted(maps.Keys(cases)) {
+		// Windows words this cause its own way, and the case of a removed
+		// directory needs a removal that an open store prevents there.
+		if runtime.GOOS == "windows" && strings.HasSuffix(text, "no such file or directory") {
+			continue
+		}
+
 		require.EqualError(t, cases[text](), text)
 	}
 
