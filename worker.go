@@ -15,8 +15,8 @@ import (
 	"time"
 )
 
-// Lifecycle errors of a Worker or App, as described under Lifecycle in the
-// package documentation.
+// Lifecycle errors of a Worker or App, as described under Starting and
+// Shutting down in the package documentation.
 var (
 	// ErrAlreadyStarted indicates that Start was called on a Worker that
 	// has started or is starting, or ReadyFunc once Start has run the
@@ -164,7 +164,7 @@ func resolveOptional[T any](ctx context.Context, c *ServiceContainer) T {
 }
 
 // Start initializes every service, runs pending migrations and runs the
-// ready hooks, as described under Lifecycle in the package documentation.
+// ready hooks, as described under Starting in the package documentation.
 // It does not block; call Shutdown when done. ctx is passed to the Init of
 // every service built during startup and to the migrations; canceling it
 // aborts startup.
@@ -229,7 +229,7 @@ func (w *Worker) Start(ctx context.Context) error {
 
 // Shutdown emits SystemShuttingDown, waits for its subscribers, and closes
 // every active service newest first, passing ctx to each Close, as
-// described under Lifecycle in the package documentation. The Logger,
+// described under Shutting down in the package documentation. The Logger,
 // when it is a service, is flushed and closed last, after the final log
 // line. A failing Close does not stop the rest; every Close error is
 // returned, joined.
@@ -322,46 +322,58 @@ func closeService(ctx context.Context, svc Service) error {
 	return nil
 }
 
-// Run starts the Worker, blocks until SIGINT or SIGTERM, and then shuts it
-// down within the shutdown timeout, as described under Lifecycle in the
-// package documentation. Start runs under a context the first signal
-// cancels, so a signal during a slow startup stops it. Once the first
-// signal arrives the Worker stops handling them, so a second one ends the
-// process. Shutdown gets context.Background() under the timeout.
-func (w *Worker) Run() error {
-	ctx, sigs, stop := watchSignals()
+// Run starts the Worker, blocks until SIGINT, SIGTERM or the end of ctx,
+// and then shuts it down within the shutdown timeout, as described under
+// Running in the package documentation. Start runs under a context that
+// ctx and the first signal both end, so either during startup fails Start
+// through an Init that honors its ctx. Once the first signal arrives the Worker stops handling them, so
+// a second one ends the process. Shutdown gets ctx's values but not its
+// cancellation, under the timeout. Ending ctx is a normal stop: Run then
+// returns Shutdown's error.
+func (w *Worker) Run(ctx context.Context) error {
+	runCtx, sigs, stop := watchSignals(ctx)
 	defer stop()
 
-	err := w.Start(ctx)
+	err := w.Start(runCtx)
 	if err != nil {
 		return err
 	}
 
 	w.getLogger().Info("worker started").Send()
 
-	sig := <-sigs
-	w.getLogger().Info("shutdown signal received").Str("signal", sig.String()).Send()
+	awaitStop(ctx, sigs, w.getLogger())
 
 	w.mu.Lock()
 
 	timeout := w.shutdownTimeout
 	w.mu.Unlock()
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), timeout)
+	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
 	defer cancel()
 
 	return w.Shutdown(shutdownCtx)
 }
 
+// awaitStop blocks until the first signal on sigs or the end of ctx, and
+// logs which to logger.
+func awaitStop(ctx context.Context, sigs <-chan os.Signal, logger Logger) {
+	select {
+	case sig := <-sigs:
+		logger.Info("shutdown signal received").Str("signal", sig.String()).Send()
+	case <-ctx.Done():
+		logger.Info("shutdown requested").Err("cause", context.Cause(ctx)).Send()
+	}
+}
+
 // watchSignals handles SIGINT and SIGTERM until the first one arrives,
-// which it delivers on the channel after it cancels the context and stops
-// handling signals, so a second one ends the process. stop stops
-// handling them without a signal.
-func watchSignals() (context.Context, <-chan os.Signal, func()) {
+// which it delivers on the channel after it cancels the returned context,
+// a child of parent, and stops handling signals, so a second one ends the
+// process. stop stops handling them without a signal.
+func watchSignals(parent context.Context) (context.Context, <-chan os.Signal, func()) {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(parent)
 	got := make(chan os.Signal, 1)
 	done := make(chan struct{})
 
@@ -865,7 +877,7 @@ func WithServiceInitTimeout(timeout time.Duration) WorkerOption {
 }
 
 // WithShutdownTimeout sets the deadline of the Shutdown that Worker.Run
-// starts after a signal. In an App, Stop and App.Run use the Config's
+// starts after a signal or the end of its ctx. In an App, Stop and App.Run use the Config's
 // ShutdownTimeout instead, and this option has no effect. A timeout that
 // is not positive makes Start fail with an error wrapping
 // ErrInvalidOption.

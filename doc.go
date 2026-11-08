@@ -9,7 +9,7 @@
 // # Usage
 //
 // An App is built from options, registers its routes, and runs until
-// SIGINT or SIGTERM:
+// SIGINT, SIGTERM or the end of the context Run is given:
 //
 //	type Greeter struct{ prefix string }
 //
@@ -25,7 +25,7 @@
 //		return c.Text(http.StatusOK, g.Greet(c.Param("name")))
 //	})
 //
-//	if err := app.Run(); err != nil {
+//	if err := app.Run(context.Background()); err != nil {
 //		log.Fatal(err)
 //	}
 //
@@ -128,16 +128,20 @@
 //
 // [Worker.Run] and [App.Run] run the whole lifecycle:
 //
-//   - They start under a context that the first SIGINT or SIGTERM cancels,
-//     so a signal during a slow startup fails Start.
-//   - They block until that signal, then shut down within the shutdown
-//     timeout: [WithShutdownTimeout] for a Worker, the Config's
-//     ShutdownTimeout for an App.
+//   - They start under a context that both the ctx they are given and the
+//     first SIGINT or SIGTERM end. Each Init gets it, so either one during
+//     startup fails Start through an Init that honors its ctx.
+//   - They block until that signal or the end of ctx, then shut down
+//     within the shutdown timeout: [WithShutdownTimeout] for a Worker, the
+//     Config's ShutdownTimeout for an App. The shutdown keeps ctx's values
+//     but not its cancellation, so the end of ctx that stopped the run does
+//     not cut the shutdown short.
 //   - After the first signal they stop handling signals, so a second one
 //     ends the process.
 //
-// App.Run also logs the route map and serves. It stops when the server
-// fails, and returns that error joined with Stop's.
+// Ending ctx is a normal stop: Run returns the shutdown's error, nil when
+// it is clean. App.Run also logs the route map and serves. It stops when
+// the server fails, and returns that error joined with Stop's.
 //
 // # Services
 //

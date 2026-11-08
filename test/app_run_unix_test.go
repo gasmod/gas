@@ -68,7 +68,7 @@ func TestApp_Run_ShutsDownOnSignal(t *testing.T) {
 
 		done := make(chan error, 1)
 
-		go func() { done <- app.Run() }()
+		go func() { done <- app.Run(t.Context()) }()
 
 		require.Eventually(t, func() bool {
 			req, _ := http.NewRequestWithContext(
@@ -122,7 +122,7 @@ func TestApp_Run_ShutsDownOnSignal(t *testing.T) {
 func TestApp_Run_StartError(t *testing.T) {
 	t.Parallel()
 
-	err := quietApp(gas.WithShutdownTimeout(0)).Run()
+	err := quietApp(gas.WithShutdownTimeout(0)).Run(t.Context())
 	require.ErrorIs(t, err, gas.ErrInvalidOption)
 }
 
@@ -149,7 +149,7 @@ func TestApp_Run_ServerError(t *testing.T) {
 		}),
 	)
 
-	err = app.Run()
+	err = app.Run(t.Context())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "gas: serve: ")
 	assert.Equal(t, int32(1), dep.closes.Load())
@@ -159,6 +159,6 @@ func TestApp_Run_ServerError(t *testing.T) {
 func TestWorker_Run_StartError(t *testing.T) {
 	t.Parallel()
 
-	err := gas.NewWorker(gas.WithShutdownTimeout(-1)).Run()
+	err := gas.NewWorker(gas.WithShutdownTimeout(-1)).Run(t.Context())
 	require.ErrorIs(t, err, gas.ErrInvalidOption)
 }

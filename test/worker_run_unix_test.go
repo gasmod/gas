@@ -29,7 +29,7 @@ func TestWorker_Run_ShutsDownOnSignal(t *testing.T) {
 	w := gas.NewWorker(gas.WithServiceInstance[*testService](svc))
 
 	done := make(chan error, 1)
-	go func() { done <- w.Run() }()
+	go func() { done <- w.Run(t.Context()) }()
 
 	// Run gives no signal that its handler is installed, so wait for Start
 	// to finish, then send SIGINT until Run returns.

@@ -40,7 +40,7 @@ func TestFindings_C1SignalDuringStart(t *testing.T) {
 	w := gas.NewWorker(gas.WithServiceInstance(s))
 	done := make(chan error, 1)
 
-	go func() { done <- w.Run() }()
+	go func() { done <- w.Run(t.Context()) }()
 
 	<-entered
 

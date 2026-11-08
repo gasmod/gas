@@ -121,6 +121,11 @@ the details.
   connections. A server shutdown error, which `Stop` used to log only, is
   returned as `gas: server shutdown: ...`, joined with the other shutdown
   errors; a clean `Stop` returns nil.
+- **BREAKING: `Worker.Run` and `App.Run` take a `context.Context`.** They
+  stop on SIGINT, SIGTERM or the end of ctx, which is a normal stop: Run
+  returns the shutdown's error. Start runs under ctx, so each Init gets
+  its values, and the shutdown keeps its values but not its cancellation.
+  `Run(context.Background())` behaves as `Run()` did.
 - **BREAKING: error responses are RFC 9457 problem details.** A JSON
   error is now `application/problem+json`:
   `{"type","title","status","detail","code","errors","details"}` in place

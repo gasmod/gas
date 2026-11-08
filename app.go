@@ -15,7 +15,7 @@ import (
 
 // ShutdownGracePeriod is how long App.Stop waits for requests that outlive
 // ShutdownTimeout once their contexts are canceled, and the least time it
-// leaves services to close, as described under Lifecycle in the package
+// leaves services to close, as described under Shutting down in the package
 // documentation.
 const ShutdownGracePeriod = time.Second
 
@@ -321,7 +321,7 @@ func (a *App) Serve() error {
 }
 
 // Stop shuts the App down within ShutdownTimeout, as described under
-// Lifecycle in the package documentation: it emits
+// Shutting down in the package documentation: it emits
 // SystemServerShuttingDown, shuts the server down, cancels the context of
 // requests still running at the deadline and waits up to
 // ShutdownGracePeriod for them, then shuts the Worker down. ctx bounds it
@@ -377,16 +377,18 @@ func (a *App) Stop(ctx context.Context) error {
 }
 
 // Run starts the App, logs the route map, serves, and blocks until SIGINT,
-// SIGTERM or a server error, then stops the App and returns Stop's error,
-// joined with the server error. Start runs under a context the first
-// signal cancels, so a signal during a slow startup stops it. Once the
-// first signal arrives the App stops handling them, so a second one ends
-// the process. Stop gets context.Background(); ShutdownTimeout bounds it.
-func (a *App) Run() error {
-	ctx, sigs, stop := watchSignals()
+// SIGTERM, the end of ctx or a server error, then stops the App and
+// returns Stop's error, joined with the server error. Start runs under a
+// context that ctx and the first signal both end, so either during startup
+// fails Start through an Init that honors its ctx. Once the first signal arrives the App stops
+// handling them, so a second one ends the process. Stop gets ctx's values
+// but not its cancellation; ShutdownTimeout bounds it. Ending ctx is a
+// normal stop: Run then returns Stop's error.
+func (a *App) Run(ctx context.Context) error {
+	runCtx, sigs, stop := watchSignals(ctx)
 	defer stop()
 
-	err := a.Start(ctx)
+	err := a.Start(runCtx)
 	if err != nil {
 		return err
 	}
@@ -397,11 +399,15 @@ func (a *App) Run() error {
 
 	go func() { srvErr <- a.Serve() }()
 
-	stopCtx := context.Background()
+	stopCtx := context.WithoutCancel(ctx)
 
 	select {
 	case sig := <-sigs:
 		a.getLogger().Info("shutdown signal received").Str("signal", sig.String()).Send()
+
+		return a.Stop(stopCtx)
+	case <-ctx.Done():
+		a.getLogger().Info("shutdown requested").Err("cause", context.Cause(ctx)).Send()
 
 		return a.Stop(stopCtx)
 	case err = <-srvErr:

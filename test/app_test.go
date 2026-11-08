@@ -46,7 +46,7 @@ func TestApp_Run_ServeErrorStopsApp(t *testing.T) {
 
 	app := gas.NewApp(gas.WithServiceInstance[*runCloser](svc), gas.WithBaseConfig(*cfg))
 
-	err = app.Run()
+	err = app.Run(t.Context())
 	if err == nil {
 		t.Fatal("Run() = nil, want the listen error")
 	}

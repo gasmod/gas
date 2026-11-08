@@ -83,6 +83,7 @@ a SQLite database:
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 
@@ -111,7 +112,7 @@ func main() {
 		return ctx.Text(http.StatusOK, "Hello, World!")
 	})
 
-	if err := app.Run(); err != nil {
+	if err := app.Run(context.Background()); err != nil {
 		log.Fatal(err)
 	}
 }

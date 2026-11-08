@@ -115,7 +115,7 @@ func TestWorker_Run_StartFailure(t *testing.T) {
 	)
 
 	done := make(chan error, 1)
-	go func() { done <- w.Run() }()
+	go func() { done <- w.Run(t.Context()) }()
 
 	select {
 	case err := <-done:
