@@ -54,6 +54,10 @@
 // tags. Then `fromemail`, when set, must be one email address. A failure
 // wraps email.ErrInvalidConfig and names the setting, never its value.
 //
+// [Service.Config] returns a copy of the configuration the last successful
+// Init resolved, defaults included, or the zero Config before one; a
+// failed Init and Close leave it as it was.
+//
 // # Outbox
 //
 // A send that keeps every rule stores a copy of the normalized message

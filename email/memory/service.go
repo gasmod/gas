@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/email"
@@ -44,6 +45,9 @@ type Service struct {
 	logger gas.Logger
 	// outbox holds the messages sent, in order. It outlives Close.
 	outbox []*gas.Email
+	// bound is the configuration the last successful Init resolved, or
+	// nil before one. Close keeps it. Config returns a copy of it.
+	bound atomic.Pointer[Config]
 	// cfgSource records the configuration given to WithConfig.
 	cfgSource configsrc.Source[Config]
 	// lc is the lifecycle, whose sessions hold the resolved settings.
@@ -115,6 +119,10 @@ func (s *Service) Init(ctx context.Context) error {
 
 		set = cfg.Email
 
+		// open returns no error past this point, so lc.Init succeeds,
+		// and its lock orders the Store with other Inits.
+		s.bound.Store(cfg)
+
 		return set, nil
 	})
 	if err != nil {
@@ -152,6 +160,19 @@ func (s *Service) Close(ctx context.Context) error {
 	s.logger.Info("service closed").Send()
 
 	return nil
+}
+
+// Config returns a copy of the configuration the last successful Init
+// resolved, defaults included, or the zero Config before one. A failed
+// Init and Close leave it as it was. Config holds no slice, map or
+// pointer, so the copy shares nothing with the sender.
+func (s *Service) Config() Config {
+	cfg := s.bound.Load()
+	if cfg == nil {
+		return Config{}
+	}
+
+	return *cfg
 }
 
 // CheckReady reports readiness without I/O: an error wrapping

@@ -76,6 +76,11 @@
 // A failure wraps cache.ErrInvalidConfig and names the setting, never its
 // value.
 //
+// [Service.Config] returns a copy of the configuration the last successful
+// Init resolved, defaults included, or the zero Config before one; a
+// failed Init and Close leave it as it was. Its `password` stays a
+// [Secret], which prints as `[redacted]`.
+//
 // # Keys
 //
 // The store sends each key as `keyprefix` followed by the key, so stores
@@ -226,9 +231,9 @@
 // with an error wrapping cache.ErrClosed, `init: service closed`, closes
 // what it built, and leaves the store as it was.
 //
-// Before the first successful Init, every method but Init, Close, Name
-// and Client returns an error wrapping cache.ErrNotInitialized; after
-// Close, until Init succeeds, cache.ErrClosed. A command that Close
+// Before the first successful Init, every method but Init, Close, Name,
+// Client and Config returns an error wrapping cache.ErrNotInitialized;
+// after Close, until Init succeeds, cache.ErrClosed. A command that Close
 // interrupts returns cache.ErrClosed too. [New]'s constructor fails with
 // cache.ErrNilLogger for a nil logger; a nil ConfigProvider is accepted,
 // and Init then requires WithConfig.

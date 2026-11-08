@@ -8,6 +8,7 @@ import (
 	"maps"
 	"net"
 	"os"
+	"reflect"
 	"runtime"
 	"slices"
 	"strconv"
@@ -506,5 +507,30 @@ func goroutinesSettle(t *testing.T, before int) {
 		}
 
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// sharedKinds are the kinds whose values a copy shares with the
+// original.
+var sharedKinds = []reflect.Kind{
+	reflect.Slice, reflect.Map, reflect.Pointer, reflect.Interface,
+	reflect.Chan, reflect.Func, reflect.UnsafePointer,
+}
+
+// assertNoReferences fails the test when typ, named name, holds a value
+// of one of sharedKinds: a slice, map, pointer, interface, channel or
+// function, which a copy of a value of typ would share with the original.
+func assertNoReferences(t *testing.T, typ reflect.Type, name string) {
+	t.Helper()
+
+	switch kind := typ.Kind(); {
+	case kind == reflect.Struct:
+		for f := range typ.Fields() {
+			assertNoReferences(t, f.Type, name+"."+f.Name)
+		}
+	case kind == reflect.Array:
+		assertNoReferences(t, typ.Elem(), name+"[]")
+	case slices.Contains(sharedKinds, kind):
+		t.Errorf("%s is a %s, which a copy shares", name, kind)
 	}
 }

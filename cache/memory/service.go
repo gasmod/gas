@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gasmod/gas"
@@ -35,6 +36,9 @@ type Service struct {
 	// es holds what Init opened, or nil before Init succeeds and after
 	// Close.
 	es *entries
+	// bound is the configuration the last successful Init resolved, or
+	// nil before one. Close keeps it. Config returns a copy of it.
+	bound atomic.Pointer[Config]
 	// cfgSource records the configuration given to WithConfig.
 	cfgSource configsrc.Source[Config]
 	// closed reports whether Close ran after a successful Init, and Init
@@ -101,6 +105,7 @@ func (s *Service) Init(ctx context.Context) error {
 
 	s.es = es
 	s.closed = false
+	s.bound.Store(cfg)
 
 	go s.janitor(es)
 
@@ -241,6 +246,19 @@ func (s *Service) Exists(ctx context.Context, key string) (bool, error) {
 	_, ok := es.get(key, time.Now(), false)
 
 	return ok, nil
+}
+
+// Config returns a copy of the configuration the last successful Init
+// resolved, defaults included, or the zero Config before one. A failed
+// Init and Close leave it as it was. Config holds no slice, map or
+// pointer, so the copy shares nothing with the store.
+func (s *Service) Config() Config {
+	cfg := s.bound.Load()
+	if cfg == nil {
+		return Config{}
+	}
+
+	return *cfg
 }
 
 // Len returns the number of entries the store holds, counting those that

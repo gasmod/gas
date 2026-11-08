@@ -50,6 +50,11 @@
 // cannot express runs: `visibilitytimeout` is 0 or at least a second. A
 // failure wraps queue.ErrInvalidConfig.
 //
+// [Service.Config] returns a copy of the configuration the last successful
+// Init resolved, defaults included, or the zero Config before one; a
+// failed Init and Close leave it as it was. Its `visibilitytimeout` is
+// as resolved, before Init rounds it up.
+//
 // # Queues
 //
 // A queue exists once [Service.CreateQueue] creates it, as an SQS queue
@@ -122,9 +127,9 @@
 // context. Init after Close opens the store again, with a configuration
 // resolved afresh.
 //
-// Before the first successful Init, every method but Init, Close and Name
-// returns an error wrapping queue.ErrNotInitialized; after Close, until
-// Init succeeds, queue.ErrClosed. [New]'s constructor fails with
+// Before the first successful Init, every method but Init, Close, Name and
+// Config returns an error wrapping queue.ErrNotInitialized; after Close,
+// until Init succeeds, queue.ErrClosed. [New]'s constructor fails with
 // queue.ErrNilLogger for a nil logger; a nil ConfigProvider is accepted,
 // and Init then requires WithConfig.
 //

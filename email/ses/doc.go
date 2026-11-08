@@ -78,6 +78,11 @@
 // A failure wraps email.ErrInvalidConfig and names the setting, never its
 // value.
 //
+// [Service.Config] returns a copy of the configuration the last successful
+// Init resolved, defaults included, or the zero Config before one; a
+// failed Init and Close leave it as it was. Its `secretaccesskey` and
+// `sessiontoken` stay a [Secret], which prints as `[redacted]`.
+//
 // # Credentials
 //
 // Init builds the client with the AWS SDK's default configuration, which

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gasmod/gas"
@@ -56,6 +57,9 @@ type Service struct {
 	// sess is what Init opened, or nil before Init succeeds and after
 	// Close.
 	sess *session
+	// bound is the configuration the last successful Init resolved, or
+	// nil before one. Close keeps it. Config returns a copy of it.
+	bound atomic.Pointer[Config]
 	// cfgSource records the configuration given to WithConfig.
 	cfgSource configsrc.Source[Config]
 	// seq is the last message seq given.
@@ -141,6 +145,7 @@ func (s *Service) Init(ctx context.Context) error {
 
 	s.sess = &session{done: make(chan struct{}), settings: set}
 	s.closed = false
+	s.bound.Store(cfg)
 
 	s.logger.Info("service initialized").
 		Int("max_messages", set.MaxMessages).
@@ -177,6 +182,20 @@ func (s *Service) Close(context.Context) error {
 	s.logger.Info("service closed").Send()
 
 	return nil
+}
+
+// Config returns a copy of the configuration the last successful Init
+// resolved, defaults included, or the zero Config before one. A failed
+// Init and Close leave it as it was. Its VisibilityTimeout is as
+// resolved, before Init rounds it up to a whole second. Config holds no
+// slice, map or pointer, so the copy shares nothing with the store.
+func (s *Service) Config() Config {
+	cfg := s.bound.Load()
+	if cfg == nil {
+		return Config{}
+	}
+
+	return *cfg
 }
 
 // CreateQueue creates the queue id with cfg, as described in the package

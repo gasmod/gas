@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/sesv2"
@@ -89,6 +90,9 @@ type Service struct {
 	logger gas.Logger
 	// client is the client given to WithClient.
 	client API
+	// bound is the configuration the last successful Init resolved, or
+	// nil before one. Close keeps it. Config returns a copy of it.
+	bound atomic.Pointer[Config]
 	// cfgSource records the configuration given to WithConfig.
 	cfgSource configsrc.Source[Config]
 	// lc is the lifecycle, whose sessions hold what Init opened.
@@ -191,6 +195,10 @@ func (s *Service) Init(ctx context.Context) error {
 			st.client, region = built, built.Options().Region
 		}
 
+		// open returns no error past this point, so lc.Init succeeds,
+		// and its lock orders the Store with other Inits.
+		s.bound.Store(cfg)
+
 		return st, nil
 	})
 	if err != nil {
@@ -229,6 +237,19 @@ func (s *Service) Close(ctx context.Context) error {
 	s.logger.Info("service closed").Send()
 
 	return nil
+}
+
+// Config returns a copy of the configuration the last successful Init
+// resolved, defaults included, or the zero Config before one. A failed
+// Init and Close leave it as it was. Config holds no slice, map or
+// pointer, so the copy shares nothing with the sender, and SecretAccessKey and SessionToken stay Secrets.
+func (s *Service) Config() Config {
+	cfg := s.bound.Load()
+	if cfg == nil {
+		return Config{}
+	}
+
+	return *cfg
 }
 
 // CheckReady reports readiness without I/O: an error wrapping

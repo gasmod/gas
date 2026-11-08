@@ -69,6 +69,11 @@
 // A failure wraps queue.ErrInvalidConfig and names the setting, never its
 // value.
 //
+// [Service.Config] returns a copy of the configuration the last successful
+// Init resolved, defaults included, or the zero Config before one; a
+// failed Init and Close leave it as it was. Its `secretaccesskey` and
+// `sessiontoken` stay a [Secret], which prints as `[redacted]`.
+//
 // # Credentials
 //
 // Init builds the client with the AWS SDK's default configuration, which
@@ -236,10 +241,10 @@
 // store that is not initialized returns nil and logs nothing. Init after
 // Close builds a new client, with a configuration resolved afresh.
 //
-// Before the first successful Init, every method but Init, Close, Name
-// and Client returns an error wrapping queue.ErrNotInitialized; after
-// Close, until Init succeeds, queue.ErrClosed. [New]'s constructor fails
-// with queue.ErrNilLogger for a nil logger; a nil ConfigProvider is
+// Before the first successful Init, every method but Init, Close, Name,
+// Client and Config returns an error wrapping queue.ErrNotInitialized;
+// after Close, until Init succeeds, queue.ErrClosed. [New]'s constructor
+// fails with queue.ErrNilLogger for a nil logger; a nil ConfigProvider is
 // accepted, and Init then requires WithConfig. A nil client given to
 // WithClient fails Init with [ErrNilClient].
 //

@@ -117,6 +117,9 @@ type Service struct {
 	// st is what Init opened, or nil before Init succeeds and after
 	// Close. It is swapped whole, so a call sees one Init's state.
 	st atomic.Pointer[state]
+	// bound is the configuration the last successful Init resolved, or
+	// nil before one. Close keeps it. Config returns a copy of it.
+	bound atomic.Pointer[Config]
 	// cfgSource records the configuration given to WithConfig.
 	cfgSource configsrc.Source[Config]
 	// clientSet reports whether WithClient was given, so that a nil
@@ -245,6 +248,7 @@ func (s *Service) Init(ctx context.Context) error {
 		opTimeout:  set.OpTimeout,
 		visibility: time.Duration(queue.WholeSeconds(set.VisibilityTimeout)) * time.Second,
 	})
+	s.bound.Store(cfg)
 
 	s.logInitialized(set, region, source)
 
@@ -311,6 +315,19 @@ func (s *Service) Close(ctx context.Context) error {
 	s.logger.Info("service closed").Send()
 
 	return nil
+}
+
+// Config returns a copy of the configuration the last successful Init
+// resolved, defaults included, or the zero Config before one. A failed
+// Init and Close leave it as it was. Config holds no slice, map or
+// pointer, so the copy shares nothing with the store, and SecretAccessKey and SessionToken stay Secrets.
+func (s *Service) Config() Config {
+	cfg := s.bound.Load()
+	if cfg == nil {
+		return Config{}
+	}
+
+	return *cfg
 }
 
 // CheckReady reports readiness without I/O: an error wrapping

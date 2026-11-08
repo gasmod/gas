@@ -48,6 +48,10 @@
 // entries Init opens, so a restart with another configuration is safe
 // while calls run.
 //
+// [Service.Config] returns a copy of the configuration the last successful
+// Init resolved, defaults included, or the zero Config before one; a
+// failed Init and Close leave it as it was.
+//
 // With the defaults the store has no limit: entries without a TTL stay
 // until deleted, and the store grows with the keys it is given. Set
 // MaxEntries, DefaultTTL, or both, for keys that come from requests.
@@ -83,11 +87,11 @@
 // Close starts again with an empty store and a configuration resolved
 // afresh.
 //
-// Before the first successful Init, every method but Init, Close, Name
-// and Len returns an error wrapping cache.ErrNotInitialized; after Close,
-// until Init succeeds, cache.ErrClosed. Len returns 0 then. [New]'s
-// constructor fails with cache.ErrNilLogger for a nil logger; a nil
-// ConfigProvider is accepted, and Init then requires WithConfig.
+// Before the first successful Init, every method but Init, Close, Name,
+// Len and Config returns an error wrapping cache.ErrNotInitialized;
+// after Close, until Init succeeds, cache.ErrClosed. Len returns 0 then.
+// [New]'s constructor fails with cache.ErrNilLogger for a nil logger; a
+// nil ConfigProvider is accepted, and Init then requires WithConfig.
 //
 // # Context
 //
