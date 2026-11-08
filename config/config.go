@@ -63,7 +63,8 @@ type Config struct {
 
 // New returns a Config configured by opts, holding no values until it is
 // loaded. Without a provider, it has an EnvProvider with the default
-// separator and no prefix.
+// separator and no prefix, whose Load fails with ErrEnvPrefixRequired, so
+// an app gives New the providers it loads from.
 func New(opts ...Option) *Config {
 	c := &Config{
 		values:     make(map[string]any),

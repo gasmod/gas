@@ -20,15 +20,22 @@ func TestConfig_EmptyBeforeLoad(t *testing.T) {
 }
 
 // Without a provider, New adds an EnvProvider with the default separator
-// and no prefix.
+// and no prefix, which fails to load and reads nothing.
 //
 // Not parallel: it sets an environment variable.
 func TestConfig_DefaultEnvProvider(t *testing.T) {
 	t.Setenv("CONFIGTEST_DEFAULT__HOST", "db")
 
 	c := config.New()
-	require.NoError(t, c.Load())
-	assert.Equal(t, "db", c.Get("configtest_default.host"))
+	err := c.Load()
+	require.ErrorIs(t, err, config.ErrProviderLoadFailed)
+	require.ErrorIs(t, err, config.ErrEnvPrefixRequired)
+	require.EqualError(
+		t,
+		err,
+		"failed to load from provider Environment Variables: environment prefix is required",
+	)
+	assert.Nil(t, c.Get("configtest_default.host"))
 }
 
 // A key is split on dots into levels, each lowercased and trimmed, for

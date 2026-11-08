@@ -51,10 +51,36 @@ func TestEnvProvider(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, m{"db__host": "db", "db__port": "5432", "debug": "true"}, got)
 
-	got, err = config.NewEnvProvider().Load()
+	got, err = config.NewEnvProvider(config.WithoutEnvPrefix()).Load()
 	require.NoError(t, err)
+	assert.Equal(t, "true", got["cfgtest_debug"])
 	assert.NotContains(t, got, "path")
 	assert.NotContains(t, got, "home")
+}
+
+// A provider with no prefix reads nothing unless WithoutEnvPrefix opts in;
+// an empty prefix is no prefix, and the last of the two options wins.
+//
+// Not parallel: it sets an environment variable.
+func TestEnvProvider_PrefixRequired(t *testing.T) {
+	t.Setenv("CFGTEST_DEBUG", "true")
+
+	for name, opts := range map[string][]config.EnvProviderOption{
+		"none":           nil,
+		"empty prefix":   {config.WithEnvPrefix("")},
+		"prefix wins":    {config.WithoutEnvPrefix(), config.WithEnvPrefix("")},
+		"separator only": {config.WithEnvSeparator("_")},
+	} {
+		got, err := config.NewEnvProvider(opts...).Load()
+		require.ErrorIs(t, err, config.ErrEnvPrefixRequired, name)
+		require.EqualError(t, err, "environment prefix is required", name)
+		assert.Nil(t, got, name)
+	}
+
+	got, err := config.NewEnvProvider(config.WithEnvPrefix("CFGTEST_"), config.WithoutEnvPrefix()).
+		Load()
+	require.NoError(t, err)
+	assert.Equal(t, "true", got["cfgtest_debug"])
 }
 
 // Two variables that map to the same key, or where one needs the other's

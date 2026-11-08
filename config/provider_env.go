@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"strings"
 
@@ -15,14 +16,21 @@ const (
 	EnvProviderName = "Environment Variables"
 )
 
+// ErrEnvPrefixRequired is returned by EnvProvider.Load when the provider
+// has no prefix and was not given WithoutEnvPrefix: give it WithEnvPrefix,
+// or WithoutEnvPrefix to load every variable.
+var ErrEnvPrefixRequired = errors.New("environment prefix is required")
+
 // EnvProvider loads configuration from the process environment, as
-// described in the package documentation. Without WithEnvPrefix, the
-// configuration holds every variable it keeps, such as another tool's
-// API key or a DATABASE_URL, so use WithEnvPrefix in production and never
-// log Config.Values.
+// described in the package documentation. It needs WithEnvPrefix, or
+// WithoutEnvPrefix to load every variable it keeps, such as another tool's
+// API key or a DATABASE_URL; without either, Load fails with
+// ErrEnvPrefixRequired.
 type EnvProvider struct {
 	prefix    string
 	separator string
+	// unprefixed is set by WithoutEnvPrefix.
+	unprefixed bool
 }
 
 var _ Provider = (*EnvProvider)(nil)
@@ -34,9 +42,22 @@ type EnvProviderOption func(*EnvProvider)
 // without regard to case, and removes it from their names. The separator is
 // not added, so `APP_` keeps `APP_HOST` as `host`, where `APP` would make it
 // `_host`.
+// An empty prefix is no prefix.
 func WithEnvPrefix(prefix string) EnvProviderOption {
 	return func(p *EnvProvider) {
 		p.prefix = prefix
+		p.unprefixed = false
+	}
+}
+
+// WithoutEnvPrefix makes the provider load every variable it keeps, with
+// no prefix. The configuration then holds variables of other tools, such
+// as their API keys, so never log Config.Values. The last of WithEnvPrefix
+// and WithoutEnvPrefix wins.
+func WithoutEnvPrefix() EnvProviderOption {
+	return func(p *EnvProvider) {
+		p.prefix = ""
+		p.unprefixed = true
 	}
 }
 
@@ -61,8 +82,14 @@ func NewEnvProvider(opts ...EnvProviderOption) *EnvProvider {
 	return p
 }
 
-// Load reads the process environment.
+// Load reads the process environment. A provider with no prefix that was
+// not given WithoutEnvPrefix returns ErrEnvPrefixRequired and reads
+// nothing.
 func (p *EnvProvider) Load() (map[string]any, error) {
+	if p.prefix == "" && !p.unprefixed {
+		return nil, ErrEnvPrefixRequired
+	}
+
 	environ := os.Environ()
 	vars := make(map[string]string, len(environ))
 

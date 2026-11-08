@@ -30,7 +30,8 @@
 // `db`, and cfg.Get("database.host") returns it too.
 //
 // A Config holds nothing until it is loaded. Without a provider, New adds
-// an [EnvProvider] with the default separator and no prefix. *Config
+// an [EnvProvider] with the default separator and no prefix, which fails
+// to load with [ErrEnvPrefixRequired]. *Config
 // implements [ConfigProvider], the interface services read configuration
 // through.
 //
@@ -53,9 +54,10 @@
 // `SSH_AUTH_SOCK` and `SUDO_USER`, `GITHUB_TOKEN`, `CI` and others. Two
 // names that become the same key, such as `Foo` and `FOO`, or where one
 // needs the other's key as a map, such as `A` and `A__B`, are an error.
-// Without a prefix, the configuration holds every variable that is not
-// left out, such as another tool's API key or a `DATABASE_URL`, so use
-// WithEnvPrefix in production and never log [Config.Values].
+// A provider needs a prefix: without one, Load fails with
+// [ErrEnvPrefixRequired] and reads nothing. [WithoutEnvPrefix] opts in to
+// loading every variable that is not left out, such as another tool's API
+// key or a `DATABASE_URL`; never log [Config.Values] with it.
 //
 // [DotEnvProvider] reads a `.env` file, `.env` unless
 // [WithDotEnvFilePath] says otherwise, and turns its names into keys as
@@ -316,6 +318,8 @@
 //     ErrProviderLoadFailed, or in a value given to Set, SetDefault or
 //     SetDefaults. Two environment variable names that conflict wrap
 //     ErrProviderLoadFailed only.
+//   - [ErrEnvPrefixRequired]: an EnvProvider has no prefix and was not
+//     given WithoutEnvPrefix. It is wrapped with ErrProviderLoadFailed.
 //   - [ErrJSONFilePathNotSet], [ErrJSONFileReadFailed],
 //     [ErrJSONDecodeFailed]: the JSON provider has no path, cannot read the
 //     file, or the file does not hold a JSON object.
@@ -336,6 +340,7 @@
 //
 //	failed to load from provider static: conflicting keys: "Host" and "host"
 //	failed to load from provider Environment Variables: conflicting variable names: "A" and "A__B"
+//	failed to load from provider Environment Variables: environment prefix is required
 //	failed to load from provider JSON: failed to read JSON config file app.json: config file too large
 //	failed to decode JSON from app.json: value is not valid JSON: syntax error after byte 14
 //	failed to parse .env file .env: 1:5: unexpected character, want newline: key: "A"
