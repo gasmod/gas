@@ -59,12 +59,15 @@
 // another kind of file. It checks the context before each entry, and opens
 // each directory without blocking too. A directory it cannot read stops
 // it with an error wrapping template.ErrList that names the directory,
-// relative to the root; it never returns a partial list. An open
-// directory that was removed reads as empty, so after the walk List
-// checks that the directory Init opened is still at its path, and fails
-// with an error wrapping template.ErrList, `directory removed or moved`,
-// when it is not: List returns an empty list only for an empty
-// directory, never for one that is gone or cannot be read.
+// relative to the root; it never returns a partial list. After the
+// walk, and when the walk fails, List checks that the directory Init
+// opened is still at its path, and fails with an error wrapping
+// template.ErrList, `directory removed or moved`, when it is not; a
+// failure of that check takes the place of the walk's error. An open
+// directory that was removed reads as empty on macOS and fails the walk
+// on Linux, and List reports it as removed on both: it returns an empty
+// list only for an empty directory, never for one that is gone or
+// cannot be read.
 //
 // # Symlinks
 //
@@ -113,13 +116,14 @@
 // template.ErrAlreadyInitialized. Close on a store that is not open
 // returns nil.
 //
-// The gas worker tracks services by name, and every Store is named
-// [ServiceName], so of two Stores registered in one container only the
-// first is closed at shutdown; the second keeps its directory open until
-// the process ends. Register one dir Store per container; for several
-// directories, chain the stores of the others, such as fs stores over
-// os.Root's FS, with gas/template/composite. No option gives a Store
-// another name.
+// Every Store is named [ServiceName], and no option gives it another
+// name. The gas worker tracks services by instance, so two Stores
+// registered in one container, under two types, are both closed at
+// shutdown, but its CloseService and RestartService refuse either with
+// gas.ErrDuplicateServiceName, as the worker owns registrations by name.
+// Register one dir Store per container; for several directories, chain
+// the stores of the others, such as fs stores over os.Root's FS, with
+// gas/template/composite.
 //
 // # Concurrency
 //

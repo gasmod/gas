@@ -140,12 +140,13 @@
 // again, template.ErrClosed. Init logs `store initialized` at info level,
 // with `dialect` and `namespace`.
 //
-// The gas container builds one service per registered type, and the gas
-// worker tracks services by name, so a second Store, in another
-// namespace, needs a type of its own, and as every Store is named
-// ServiceName, only the first is closed at shutdown. Closing a Store
-// releases nothing, so the second one's open state ends with the process.
-// No option gives a Store another name.
+// The gas container builds one service per registered type, so a second
+// Store, in another namespace, needs a type of its own, such as one
+// registered as gas.TemplateProvider and the other as *db.Store. The gas
+// worker tracks services by instance and closes both at shutdown, but as
+// every Store is named ServiceName, and no option gives it another name,
+// its CloseService and RestartService refuse either with
+// gas.ErrDuplicateServiceName.
 //
 // # Concurrency
 //
