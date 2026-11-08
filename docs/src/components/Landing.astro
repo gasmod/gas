@@ -1,7 +1,8 @@
 ---
-// The home page: the headline, a complete app as the hero, and the module
-// map, drawn as a manifold: a line from the core with a branch to each
-// module, labelled with the interface the module plugs in through.
+// The home page, laid out on full-width hairlines like a sheet of grid
+// paper, with hatched margins outside the frame: the headline, a complete
+// app beside what it does when run, and a grid of the modules with the
+// interface each plugs in through.
 import { Code } from '@astrojs/starlight/components';
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
@@ -28,6 +29,13 @@ func main() {
 	}
 }`;
 
+// What the app above prints and answers, from a real run.
+const run = `$ go run .
+INFO server started environment=development addr=0.0.0.0:8080
+
+$ curl localhost:8080
+Hello, World!`;
+
 // Each module, what it does, and the interface it plugs in through: a core
 // interface where the module implements one, else the module's own.
 const modules = [
@@ -45,51 +53,92 @@ const modules = [
 ];
 ---
 
-<div class="gas-landing not-content">
-	<section class="gas-intro" aria-labelledby="_top">
-		<h1 id="_top">The modular Go framework for SaaS backends</h1>
-		<p class="gas-lede">
-			The core gives you dependency injection, routing, middleware, events and a service lifecycle.
-			Everything else is a module you add when you need it, so your app only pulls in what it uses.
-		</p>
-		<div class="gas-actions">
-			<a class="gas-button gas-button-primary" href={`${base}/start/installation/`}>Get started</a>
-			<a class="gas-button" href={`${base}/reference/gas/`}>Read the core reference</a>
+<div class="gas-home not-content">
+	<div class="gas-row gas-row-gap"><div class="gas-frame"></div></div>
+
+	<div class="gas-row">
+		<div class="gas-frame">
+			<p class="gas-home-note">github.com/gasmod/gas</p>
 		</div>
-	</section>
+	</div>
+	<div class="gas-row">
+		<div class="gas-frame">
+			<h1 id="_top" class="gas-home-title">Build SaaS backends in Go without rebuilding the wiring.</h1>
+		</div>
+	</div>
+	<div class="gas-row">
+		<div class="gas-frame">
+			<p class="gas-home-lede">
+				Dependency injection, routing, middleware and a service lifecycle in the core. Add{' '}
+				<a href={`${base}/reference/config/`}>config</a>,{' '}
+				<a href={`${base}/reference/database/`}>database</a>,{' '}
+				<a href={`${base}/reference/auth/`}>auth</a> and more as modules, only when you need them.
+			</p>
+		</div>
+	</div>
+	<div class="gas-row">
+		<div class="gas-frame gas-home-actions">
+			<a class="gas-pill gas-pill-dark" href={`${base}/start/installation/`}>Get started</a>
+			<button class="gas-pill gas-pill-search" type="button" data-gas-search>
+				<svg aria-hidden="true" viewBox="0 0 20 20" fill="none">
+					<circle cx="9" cy="9" r="5.5" />
+					<path d="m13 13 3.5 3.5" />
+				</svg>
+				<span>Quick search</span>
+				<kbd>⌘K</kbd>
+			</button>
+		</div>
+	</div>
 
-	<section class="gas-app" aria-label="A complete app">
-		<Code code={app} lang="go" title="main.go" />
-		<p class="gas-caption">
-			<code>go run .</code> starts a server on port 8080. Ctrl+C shuts it down gracefully.
-		</p>
-	</section>
+	<div class="gas-row gas-row-gap"><div class="gas-frame"></div></div>
 
-	<section class="gas-modules" id="modules" aria-labelledby="modules-title">
-		<h2 id="modules-title">One core, eleven modules</h2>
-		<p class="gas-section-lede">
-			Each module is its own Go module and registers as a service, like your own code.
-			Most implement an interface the core defines, so your services depend on the interface, not the module.
-		</p>
+	<div class="gas-row">
+		<div class="gas-frame gas-home-showcase">
+			<div class="gas-home-code">
+				<Code code={app} lang="go" title="main.go" />
+			</div>
+			<div class="gas-home-run">
+				<Code code={run} lang="sh" frame="terminal" title="Terminal" wrap />
+			</div>
+		</div>
+	</div>
 
-		<div class="gas-manifold">
-			<a class="gas-manifold-core" href={`${base}/reference/gas/`}>
-				<span class="gas-manifold-name">gas</span>
-				<span class="gas-manifold-text">The core: services, routing, handlers and middleware.</span>
+	<div class="gas-row gas-row-gap"><div class="gas-frame"></div></div>
+
+	<div class="gas-row" id="modules">
+		<div class="gas-frame">
+			<h2 class="gas-home-heading">One core, eleven modules</h2>
+			<p class="gas-home-text">
+				Each module is its own Go module and registers as a service, like your own code. Most implement an
+				interface the core defines, so your services depend on the interface, not the module.
+			</p>
+		</div>
+	</div>
+	<div class="gas-row">
+		<div class="gas-frame gas-home-grid">
+			<a class="gas-cell gas-cell-core" href={`${base}/reference/gas/`}>
+				<span class="gas-cell-name">gas</span>
+				<span class="gas-cell-text">The core: services, routing, handlers and middleware.</span>
+				<span class="gas-cell-iface">gas.NewApp</span>
 			</a>
-			<ul class="gas-manifold-branches">
-				{
-					modules.map((m) => (
-						<li>
-							<a href={`${base}/reference/${m.name}/`}>
-								<span class="gas-manifold-name">{m.name}</span>
-								<span class="gas-manifold-text">{m.text}</span>
-								<code class="gas-manifold-iface">{m.iface}</code>
-							</a>
-						</li>
-					))
-				}
-			</ul>
+			{
+				modules.map((m) => (
+					<a class="gas-cell" href={`${base}/reference/${m.name}/`}>
+						<span class="gas-cell-name">{m.name}</span>
+						<span class="gas-cell-text">{m.text}</span>
+						<span class="gas-cell-iface">{m.iface}</span>
+					</a>
+				))
+			}
 		</div>
-	</section>
+	</div>
+
+	<div class="gas-row gas-row-gap"><div class="gas-frame"></div></div>
 </div>
+
+<script>
+	// The quick search pill opens the site's search dialog.
+	document.querySelector('[data-gas-search]')?.addEventListener('click', () => {
+		document.querySelector<HTMLButtonElement>('site-search button[data-open-modal]')?.click();
+	});
+</script>

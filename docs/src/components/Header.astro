@@ -6,23 +6,20 @@ import SiteTitle from './SiteTitle.astro';
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const path = Astro.url.pathname;
-const onDocs = path === `${base}/` || path === base;
 const onStart = path.startsWith(`${base}/start/`);
 const onCore = path.startsWith(`${base}/reference/gas/`);
-const onRef = path.startsWith(`${base}/reference/`) && !onCore;
+const onModules = path.startsWith(`${base}/reference/`) && !onCore;
 ---
 
 <div class="gas-header">
-	<div class="gas-header-start">
-		<SiteTitle />
+	<SiteTitle />
+	<div class="gas-header-end">
+		<div class="gas-header-search"><Search /></div>
 		<nav class="gas-header-nav" aria-label="Primary navigation">
-			<a class={onStart ? 'active' : undefined} href={`${base}/`} aria-current={onDocs ? 'page' : undefined}>Docs</a>
+			<a class={onStart ? 'active' : undefined} href={`${base}/start/installation/`}>Docs</a>
 			<a class={onCore ? 'active' : undefined} href={`${base}/reference/gas/`}>Core</a>
-			<a class={onRef ? 'active' : undefined} href={`${base}/#modules`}>Modules</a>
+			<a class={onModules ? 'active' : undefined} href={`${base}/#modules`}>Modules</a>
 		</nav>
-	</div>
-	<div class="gas-header-actions">
-		<Search />
 		<div class="gas-header-social sl-flex"><SocialIcons /></div>
 		<div class="gas-header-theme sl-flex"><ThemeSelect /></div>
 	</div>

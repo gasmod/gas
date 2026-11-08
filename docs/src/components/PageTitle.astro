@@ -1,19 +1,29 @@
 ---
 // Replaces Starlight's PageTitle. The landing page draws its own heading, so
-// a splash page gets none here. A reference page is marked, so its API
-// declaration headings can be set as code.
+// a splash page gets none here. Above the title, a small label names the
+// part of the site the page belongs to: Start, Core, or its module. A
+// reference page is marked, so its API declaration headings can be set as
+// code.
 const { entry, id } = Astro.locals.starlightRoute;
 const { title, template } = entry.data;
 const pageTitleId = '_top';
 const isReference = id.startsWith('reference/');
+
+let section = 'Docs';
+if (id.startsWith('start/')) section = 'Start';
+else if (id === 'reference/gas') section = 'Core';
+else if (isReference) section = id.split('/')[1];
 ---
 
 {
 	template !== 'splash' && (
 		<div class="gas-page-heading" data-reference={isReference ? '' : undefined}>
-			<h1 id={pageTitleId} data-page-title>
-				{title}
-			</h1>
+			<div class="gas-page-heading-text">
+				<p class="gas-eyebrow">{section}</p>
+				<h1 id={pageTitleId} data-page-title>
+					{title}
+				</h1>
+			</div>
 			<button class="gas-copy-page" type="button" data-copy-page>
 				<svg aria-hidden="true" viewBox="0 0 20 20" fill="none">
 					<rect x="7" y="6" width="9" height="11" rx="1.5" />
