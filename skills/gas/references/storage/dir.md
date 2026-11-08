@@ -389,6 +389,8 @@ until it ends or its context does.
 No error the store returns and no log it writes holds a key, a bucket
 name, metadata, a header value, a path or a token. An error of a file
 operation gives its cause only, such as `no such file or directory`.
+The operating system words the cause, so on Windows the same failure
+reads `The system cannot find the file specified.`
 
 The files of the directory are read back as untrusted:
 
