@@ -93,7 +93,7 @@ type etag struct {
 }
 
 // StaticHandler returns a handler that serves the files of fsys under the
-// URL path prefix, as described under Static files in the package
+// URL path prefix, as described under Static handler in the package
 // documentation. prefix is empty, to remove nothing, or starts and ends
 // with `/`; anything else is ErrInvalidPrefix. A nil fsys is ErrNilFS.
 // To serve a directory, pass the FS of an os.Root, which keeps every

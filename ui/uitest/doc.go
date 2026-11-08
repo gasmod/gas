@@ -22,20 +22,29 @@
 // # Defaults
 //
 // With a field nil, its method writes nothing to the response writer and
-// returns nil: Render and RenderFragment render nothing, and
-// RegisterFuncs accepts every map, nil and invalid functions included.
+// returns nil:
+//
+//   - Render and RenderFragment render nothing.
+//   - RegisterFuncs accepts every map, nil and invalid functions included.
 //
 // # Calls
 //
 // Each method appends a [Call] with its name and its arguments after the
-// context and the response writer, before it calls its field: the name,
-// the data and the options, resolved by ui.ApplyRenderOptions into a
-// ui.RenderOptions, for Render and RenderFragment; a copy of the function
-// map, nil for nil, for RegisterFuncs. The data is recorded as given.
-// Calls returns a copy of the calls in the order they were made, with
-// copies of the function maps, so that changing what it returns changes
-// no recorded call; CallCount counts those of one method, and Reset
-// forgets them all.
+// context and the response writer, before it calls its field. The
+// arguments recorded:
+//
+//   - Render and RenderFragment: the name, the data and the options. The
+//     data is recorded as given. The options are resolved by
+//     ui.ApplyRenderOptions into a ui.RenderOptions.
+//   - RegisterFuncs: a copy of the function map, nil for nil.
+//
+// To read the record:
+//
+//   - Calls returns a copy of the calls in the order they were made, with
+//     copies of the function maps, so that changing what it returns
+//     changes no recorded call.
+//   - CallCount counts those of one method.
+//   - Reset forgets them all.
 //
 // The methods may be called from several goroutines at once, as the calls
 // are kept under a lock, which Calls, CallCount and Reset take too.

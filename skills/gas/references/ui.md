@@ -6,10 +6,12 @@ import "github.com/gasmod/gas/ui"
 
 Package ui renders the pages of a template store as HTML with
 html/template, with layouts, partials and fragments for HTMX swaps, and
-serves static files. `Service` implements gas.Service,
-gas.ReadyReporter and `Provider`, the contract this package owns; a
-service that renders pages takes a ui.Provider. Templates come from a
-gas.TemplateProvider, such as a store of gas/template.
+serves static files.
+
+`Service` implements gas.Service, gas.ReadyReporter and `Provider`, the
+contract this package owns. A service that renders pages takes a
+ui.Provider. Templates come from a gas.TemplateProvider, such as a
+store of gas/template.
 
 ## Usage
 
@@ -56,8 +58,8 @@ Every `Provider`, and any implementation that wants to be one, keeps
 these rules:
 
 - Render executes a page through its layout, and RenderFragment
-executes the page's fragment without it, as under Names and layout
-and Fragments; both write the result to the response writer whole.
+executes the page's fragment without it, as under Layout and
+Fragments. Both write the result to the response writer whole.
 - On any error, neither writes anything to the response writer: no
 header, no status, no byte. A handler that returns the error has
 the response written once, by its error handler. A failed write is
@@ -76,198 +78,300 @@ The package's conformance tests run the service through these rules
 over the memory, fs and dir stores of gas/template. The mock of
 gas/ui/uitest keeps none of them, as its package describes.
 
-## Names and layout
+## Names
 
 The store's templates are read by name, and only those whose name ends
 in one of the `ui.extensions`, so that a store shared with gas/email
-keeps its `.txt` templates out. A template whose name starts with
-`LayoutsPrefix`, `layouts/`, is a layout; with `PartialsPrefix`,
-`partials/`, a partial; any other is a page when its name starts with
-`ui.pagesprefix`, empty by default, and is not read otherwise. A page's
-name is its store name without the pages prefix and the longest
-extension it ends in: `users.html` is `users`, and
-`admin/users.html` is `admin/users`. Two store names that make the same
-page name, such as `a.htm` and `a.html`, fail to compile, as does a
-store name that makes no page name, such as `.html`.
+keeps its `.txt` templates out. A template is:
+
+- a layout, when its name starts with `LayoutsPrefix`, `layouts/`;
+- a partial, when its name starts with `PartialsPrefix`, `partials/`;
+- a page, when its name starts with `ui.pagesprefix`, empty by
+default.
+
+Any other template is not read.
+
+A page's name is its store name without the pages prefix and the
+longest extension it ends in: `users.html` is `users`, and
+`admin/users.html` is `admin/users`. These fail to compile:
+
+- two store names that make the same page name, such as `a.htm` and
+`a.html`;
+- a store name that makes no page name, such as `.html`.
 
 A page name is valid UTF-8 without a NUL byte or a backslash, and a
-clean slash path, as fs.ValidPath accepts; any other name is
+clean slash path, as fs.ValidPath accepts. Any other name is
 `ErrInvalidName`, which gives the reason and never the name. A valid
 name that is no page, such as `users.html` or `layouts/base`, is
 `ErrPageNotFound`, with the name quoted.
 
+## Template sets
+
 Each page compiles into a set of its own: every layout and partial, in
-byte order of their names, and then the page. The set is never
-executed: each template a render executes, the layout, the fragment or
-a name given to WithBlock or WithLayout, runs in a copy of the set of
-its own, made on its first render and kept. html/template escapes a
-template for the context it is first executed in and keeps the result;
-with a copy each, a template's output never depends on which others
-ran before it, and one that fails to escape alone, such as a partial
-that opens an attribute its caller closes, fails each time without
-breaking the page. Each file's top-level
-text is the template of its store name, such as `layouts/base.html`, and
-each `{{define}}` adds a template of its name to the set. A later
-definition of a name replaces an earlier one, unless it is empty, as in
-html/template; so a page overrides a layout's `{{block}}` by defining
-it, and a partial defined twice keeps the later one. A template that
-defines a name ending in one of the extensions fails to compile, so
-that no file can replace another file's top-level text.
+byte order of their names, and then the page.
+
+Each file's top-level text is the template of its store name, such as
+`layouts/base.html`, and each `{{define}}` adds a template of its name
+to the set. A later definition of a name replaces an earlier one,
+unless it is empty, as in html/template. So a page overrides a layout's
+`{{block}}` by defining it, and a partial defined twice keeps the later
+one.
+
+A template that defines a name ending in one of the extensions fails to
+compile, so that no file can replace another file's top-level text.
+
+The set is never executed. Each template a render executes, the layout,
+the fragment or a name given to WithBlock or WithLayout, runs in a copy
+of the set of its own, made on its first render and kept. The reason:
+html/template escapes a template for the context it is first executed
+in, and keeps the result. With a copy each:
+
+- a template's output never depends on which others ran before it;
+- a template that fails to escape alone, such as a partial that opens
+an attribute its caller closes, fails each time without breaking
+the page.
+
+## Layout
 
 Render executes the template of the layout's name, `ui.layoutname`
-unless `WithLayout` gives another, in the page's set. When the store
-holds no layout and WithLayout is not given, it executes the page's
-top-level text instead, so a site without layouts renders its pages
-whole. Otherwise a set without the layout's name is
+unless `WithLayout` gives another, in the page's set.
+
+When the store holds no layout and WithLayout is not given, Render
+executes the page's top-level text instead, so a site without layouts
+renders its pages whole. Otherwise a set without the layout's name is
 `ErrLayoutNotFound`.
 
 ## Fragments
 
-RenderFragment executes the page's fragment: the block named
-`ui.fragmentblock`, `content` by default, when the page itself defines
-it, else the page's top-level text when it has any, else nothing, with
-`ErrNoFragment`. So one page serves both the full document and the HTMX
-swap of its content. A layout's or a partial's top-level text is never
-a page's fragment, and a define with nothing in it does not count, as
-html/template keeps the layout's non-empty one in its place. A page
-that does not define the block but has top-level text has that text as
-the block too, so that under a layout Render shows what RenderFragment
-does, unless the text calls the block itself with `{{template}}` or a
-partial defines it.
-`WithBlock` executes any template of the page's set instead, such as a
-partial's define or a layout's block; a name the set lacks is
-`ErrBlockNotFound`. The name given to WithBlock or `WithLayout` picks
-the code that runs: take it from a fixed list in the app, never from
-the request, such as an HX-Target header, as it would run a template
-the page reaches only behind a guard such as `{{if .IsAdmin}}`. WithBlock applies to RenderFragment and WithLayout
-to Render; the other method refuses each with `ErrInvalidOption`, as
-it does a nil option.
+RenderFragment executes the page's fragment. So one page serves both
+the full document and the HTMX swap of its content. The fragment is,
+in order of preference:
+
+1. the block named `ui.fragmentblock`, `content` by default, when the
+page itself defines it;
+2. else the page's top-level text, when it has any;
+3. else nothing, with `ErrNoFragment`.
+
+A layout's or a partial's top-level text is never a page's fragment. A
+define with nothing in it does not count, as html/template keeps the
+layout's non-empty one in its place.
+
+A page that does not define the block but has top-level text has that
+text as the block too. So under a layout Render shows what
+RenderFragment does, unless the text calls the block itself with
+`{{template}}` or a partial defines it.
+
+## Blocks
+
+`WithBlock` executes any template of the page's set instead of the
+fragment, such as a partial's define or a layout's block. A name the set
+lacks is `ErrBlockNotFound`.
+
+WithBlock applies to RenderFragment, and WithLayout to Render. The other
+method refuses each with `ErrInvalidOption`, as it does a nil option.
+
+The name given to WithBlock or `WithLayout` picks the code that runs.
+Take it from a fixed list in the app, never from the request, such as
+an HX-Target header: it would run a template the page reaches only
+behind a guard such as `{{if .IsAdmin}}`.
 
 ## Status and writes
 
-A page executes into a buffer first, so an execute error writes
-nothing. Then the method sets `Content-Type: text/html; charset=utf-8`
-unless the handler set a Content-Type, calls WriteHeader only with the
-status of WithStatus, and writes the page. A status must be 200 to 599
-and allow a body, so not 204 or 304; any other is `ErrInvalidStatus`,
-before the page executes. A failed write is `ErrWrite`; the response
-has started by then, often with the client gone. Buffers are reused,
-but for those that grew past 1 MiB. A render whose context has ended
-before it starts returns the context's error and writes nothing.
+A render runs these steps:
+
+1. A render whose context has ended before it starts returns the
+context's error and writes nothing.
+2. A status given with WithStatus must be 200 to 599 and allow a body,
+so not 204 or 304. Any other is `ErrInvalidStatus`, before the page
+executes.
+3. The page executes into a buffer first, so an execute error writes
+nothing.
+4. The method sets `Content-Type: text/html; charset=utf-8` unless the
+handler set a Content-Type.
+5. It calls WriteHeader only with the status of WithStatus.
+6. It writes the page. A failed write is `ErrWrite`; the response has
+started by then, often with the client gone.
+
+Buffers are reused, but for those that grew past 1 MiB.
 
 ## Functions
 
 Every page can call html/template's built-in functions and these:
-`upper`, `lower`, `trimSpace`, `contains`, `hasPrefix`, `hasSuffix`,
-`replace` (strings.ReplaceAll), `join`, `split`; `truncate n s`, the
-first n runes of s and `...` when s has more, an error for a negative
-n; `now`, `formatTime layout t`, `formatTimePtr layout t`, empty for a
-nil t; `add`, `sub` on ints; `dict k v ...`, a map of string keys, an
-error for an odd count or a key that is not a string; `list v ...`;
-`json v`, v as JSON, an error when it cannot be encoded; and
-`buildId`, an ID of the build, the same for every call within it and
-new with each, to bust caches of assets. There is no `title`: the
-rules of title case depend on the language, so an app that needs it
-registers its own, such as one built on golang.org/x/text/cases.
 
-`WithFuncs` and `Service.RegisterFuncs` add functions over these,
-replacing one of the same name, which RegisterFuncs logs at warn level.
-A function's name must be a Go identifier, and its value a non-nil
-function with one result, or two with an error second, or the call is
-`ErrInvalidFunc`; html/template would panic on these. The names `html`,
-`urlquery` and those that start with `_html_template_` are
-`ErrInvalidFunc` too: html/template escapes through them, and a
-replacement would write data unescaped. A function named as another
-built-in of text/template, such as `len` or `printf`, replaces it, and
-Init or RegisterFuncs logs `template func replaces a builtin` at warn
-level. The functions
-given to RegisterFuncs belong to the Service, not to one Init: they
-outlive Close and every later Init, so a dependent that registers its
-functions in its own Init need not run again after a restart.
+- `upper`, `lower`, `trimSpace`, `contains`, `hasPrefix`, `hasSuffix`,
+`replace` (strings.ReplaceAll), `join`, `split`.
+- `truncate n s`: the first n runes of s and `...` when s has more; an
+error for a negative n.
+- `now`; `formatTime layout t`; `formatTimePtr layout t`, empty for a
+nil t.
+- `add`, `sub`: on ints.
+- `dict k v ...`: a map of string keys; an error for an odd count or a
+key that is not a string.
+- `list v ...`.
+- `json v`: v as JSON; an error when it cannot be encoded.
+- `buildId`: an ID of the build, the same for every call within it and
+new with each, to bust caches of assets.
+
+There is no `title`: the rules of title case depend on the language.
+An app that needs it registers its own, such as one built on
+golang.org/x/text/cases.
+
+## Adding functions
+
+`WithFuncs` and `Service.RegisterFuncs` add functions over the default
+ones, replacing one of the same name, which RegisterFuncs logs at warn
+level. A call is `ErrInvalidFunc`, where html/template would panic,
+unless:
+
+- the function's name is a Go identifier;
+- its value is a non-nil function with one result, or two with an
+error second.
+
+The names `html`, `urlquery` and those that start with
+`_html_template_` are `ErrInvalidFunc` too: html/template escapes
+through them, and a replacement would write data unescaped.
+
+A function named as another built-in of text/template, such as `len`
+or `printf`, replaces it. Init or RegisterFuncs then logs `template
+func replaces a builtin` at warn level.
+
+The functions given to RegisterFuncs belong to the Service, not to one
+Init. They outlive Close and every later Init, so a dependent that
+registers its functions in its own Init need not run again after a
+restart.
 
 ## Builds and Reload
 
 A build lists the store once, reads each template once and compiles
-every page, within the context of the call that runs it. Init builds
-nothing: the first render does, so the functions dependents register in
-their Init are in. Renders that need a build at once run one build.
-Outside reload mode, the set is kept until a function is registered or
-`Service.Reload` runs: a change to the store, such as a row of the
-gas/template db store edited at runtime, is seen on Reload only.
-Reload builds now with its own context and returns the build's error.
-With `ui.reload` true, every render builds anew from the store, which
-suits development and costs a read of every template per request.
+every page, within the context of the call that runs it.
 
-A build fails as a whole when the store cannot list, a layout or a
-partial cannot be read (`ErrLoad`) or compiled (`ErrCompile`), or its
-context ends. Outside reload mode, renders then keep the set of the
-build before it, and, when there is none, fail with the error and build
-again on the next render. A page that cannot be read or compiled fails
-its own renders only. Outside reload mode, such a page keeps its
-version of the build before, when that one compiled; a page that could
-not be read and has none is read again by the next render that needs
-it. A build with any error is logged once at error level, `template
-build failed`, when a set is kept or other pages compiled, and Reload
-returns its error; a build its context ended is neither kept nor
-reported. In reload mode nothing is logged, and a render fails with its
-own build's error.
+Init builds nothing: the first render does, so the functions dependents
+register in their Init are in. Renders that need a build at once run
+one build.
+
+Outside reload mode, the set is kept until a function is registered or
+`Service.Reload` runs. A change to the store, such as a row of the
+gas/template db store edited at runtime, is seen on Reload only. Reload
+builds now with its own context and returns the build's error.
+
+With `ui.reload` true, every render builds anew from the store. This
+suits development, and costs a read of every template per request.
+
+## Build failures
+
+A build fails as a whole when:
+
+- the store cannot list;
+- a layout or a partial cannot be read (`ErrLoad`) or compiled
+(`ErrCompile`);
+- its context ends.
+
+Outside reload mode, renders then keep the set of the build before it.
+When there is none, they fail with the error and build again on the
+next render.
+
+A page that cannot be read or compiled fails its own renders only.
+Outside reload mode, such a page keeps its version of the build before,
+when that one compiled. A page that could not be read and has none is
+read again by the next render that needs it.
+
+How a failed build is reported:
+
+- A build with any error is logged once at error level, `template
+build failed`, when a set is kept or other pages compiled.
+- Reload returns its error.
+- A build its context ended is neither kept nor reported.
+- In reload mode nothing is logged, and a render fails with its own
+build's error.
+
+## Readiness
 
 `Service.CheckReady` runs the first build within its own context when
-none has been tried, as a render would, and fails only while no set
+none has been tried, as a render would. It fails only while no set
 exists that renders can use: the first build failed as a whole, or, in
 reload mode, the last one did. A page that fails to compile does not
 fail it.
 
 ## Static files
 
-With `ui.staticdir` set, or a file system given to `WithStaticFS`, Init
-registers a GET route, which serves HEAD too, on each static route, and
-the files are served as `StaticHandler` serves them. Init opens
-`ui.staticdir` with os.OpenRoot, wherever it is: a directory that is
-missing or is not one fails Init, and no path or symlink can reach a
-file outside it. The directory is opened once, so moving it, or
-changing the working directory, changes nothing until the next Init.
+Static files are served with `ui.staticdir` set, or a file system given
+to `WithStaticFS`. Init then registers a GET route, which serves HEAD
+too, on each static route, and the files are served as `StaticHandler`
+serves them.
 
-StaticHandler serves the files of an fs.FS under a URL path prefix:
-it removes the prefix and serves the regular file the rest names. It
-answers 404 Not Found for a path outside the prefix, an empty rest, one
-that is not clean as path.Clean makes it, so with a `.` or `..`
-element, an empty one as in `a//b`, or a trailing `/`, also when they
-came percent-encoded, one that holds a NUL byte or a backslash, or is
-not valid UTF-8, for a directory, so nothing is listed and nothing
-redirects, for a file that is not regular, and, unless dotfiles are
-on, for a path with an element that starts with `.`, such as `.env` or
-`.git/config`. A file that leaves the root through a symlink is not
-found either, nor is a file it may not read, so that no response tells
-a file that exists from one that does not. It answers 503 Service
-Unavailable once the root is closed, and 405 Method Not Allowed, with
-`Allow: GET, HEAD`, for any other method. Any other error is 500,
-given to `WithErrorFunc`; the service logs it at error level.
+Init opens `ui.staticdir` with os.OpenRoot, wherever it is:
+
+- A directory that is missing, or is not one, fails Init.
+- No path or symlink can reach a file outside it.
+- The directory is opened once, so moving it, or changing the working
+directory, changes nothing until the next Init.
 
 Through the service's routes, a method other than GET and HEAD never
-reaches the handler: the router of gas answers 405 in its unified
-error shape, with one `Allow` field per method of the route, GET and
-HEAD. The dotfile rule applies to the URL path, not
-to where a symlink leads: a symlink inside the root named without a
-dot, to a dotfile inside the root, serves that file.
+reaches the handler. The router of gas answers 405 in its unified error
+shape, with one `Allow` field per method of the route, GET and HEAD.
+
+The prefix the service's handler removes is the first of these that
+applies:
+
+1. `ui.staticstripprefix`;
+2. nothing, with `ui.staticpaths` set;
+3. `ui.staticpath` up to the last `/` before its first `*` or `{`:
+`/static/*` removes `/static/`.
+
+## Static handler
+
+StaticHandler serves the files of an fs.FS under a URL path prefix: it
+removes the prefix and serves the regular file the rest names.
+
+It answers 404 Not Found for:
+
+- a path outside the prefix, or an empty rest;
+- a rest that is not clean as path.Clean makes it, so with a `.` or
+`..` element, an empty one as in `a//b`, or a trailing `/`, also
+when they came percent-encoded;
+- a rest that holds a NUL byte or a backslash, or is not valid UTF-8;
+- a directory, so nothing is listed and nothing redirects;
+- a file that is not regular;
+- unless dotfiles are on, a path with an element that starts with `.`,
+such as `.env` or `.git/config`;
+- a file that leaves the root through a symlink;
+- a file it may not read, so that no response tells a file that exists
+from one that does not.
+
+The dotfile rule applies to the URL path, not to where a symlink leads:
+a symlink inside the root named without a dot, to a dotfile inside the
+root, serves that file.
+
+Its other answers:
+
+- 503 Service Unavailable once the root is closed.
+- 405 Method Not Allowed, with `Allow: GET, HEAD`, for any other
+method than GET and HEAD.
+- 500 for any other error, which is given to `WithErrorFunc`; the
+service logs it at error level.
+
+## Static responses
 
 Every response carries `X-Content-Type-Options: nosniff`. A file is
-served with http.ServeContent: its type by extension, else sniffed,
-HTML included; ranges; and conditional requests, by Last-Modified for a
-file with a mod time, and else by an ETag, a hash of its content, which
-suits an embed.FS. The handler keeps the ETags of the first 4096 files
-it serves; a file it has no room for is served without an ETag, never
-hashed. A tag is computed on a GET without a Range header only, so a
-HEAD or a range request for a file without a kept tag is served
-without one. A tag is computed again when a file's size changes, so an
-fs.FS whose files change in place without a mod time and keep their
-size keeps its old tag. With a max age, set by `WithMaxAge` or
-`ui.staticmaxage`, every file carries `Cache-Control: public,
-max-age=N`.
+served with http.ServeContent:
 
-The prefix the service's handler removes is `ui.staticstripprefix`,
-else nothing with `ui.staticpaths` set, else `ui.staticpath` up to the
-last `/` before its first `*` or `{`: `/static/*` removes `/static/`.
+- its type by extension, else sniffed, HTML included;
+- ranges;
+- conditional requests, by Last-Modified for a file with a mod time,
+and else by an ETag, a hash of its content, which suits an embed.FS.
+
+The handler keeps ETags under these rules:
+
+- It keeps the ETags of the first 4096 files it serves. A file it has
+no room for is served without an ETag, never hashed.
+- A tag is computed on a GET without a Range header only. So a HEAD or
+a range request for a file without a kept tag is served without one.
+- A tag is computed again when a file's size changes. So an fs.FS
+whose files change in place without a mod time, and keep their size,
+keeps its old tag.
+
+With a max age, set by `WithMaxAge` or `ui.staticmaxage`, every file
+carries `Cache-Control: public, max-age=N`.
 
 ## Configuration
 
@@ -304,14 +408,17 @@ A route starts with `/`, holds `*` only at its end, and holds `{` and
 when the app starts. The static rules apply only when static files are
 served.
 
-`Service.Init` resolves the configuration each time it runs. Without
-`WithConfig`, it binds `DefaultConfig` from the gas.ConfigProvider,
-which checks the `validate` tags; a nil ConfigProvider is
-`ErrNoConfigProvider`. With WithConfig, it takes a copy of the given
-Config, slices included, never changing the caller's struct, and checks
-the same tags; a nil Config is `ErrNilConfig`. Then the rules above
-run. A failure wraps `ErrInvalidConfig` and names the setting, never
-its value.
+`Service.Init` resolves the configuration each time it runs:
+
+- Without `WithConfig`, it binds `DefaultConfig` from the
+gas.ConfigProvider, which checks the `validate` tags. A nil
+ConfigProvider is `ErrNoConfigProvider`.
+- With WithConfig, it takes a copy of the given Config, slices
+included, never changing the caller's struct, and checks the same
+tags. A nil Config is `ErrNilConfig`.
+
+Then the rules above run. A failure wraps `ErrInvalidConfig` and names
+the setting, never its value.
 
 `Service.Config` returns a copy of the configuration the last
 successful Init resolved, defaults and slices included, or the zero
@@ -319,66 +426,96 @@ Config before one. A failed Init and Close leave it as it was.
 
 ## Lifecycle
 
-A successful Init resolves the configuration, checks the functions of
-WithFuncs, opens the static files, registers the static routes, and
-logs `service initialized` at info level with `reload` and `static`.
-Init on an initialized service returns `ErrAlreadyInitialized` and
-changes nothing. `Service.Close` makes the service closed, closes the
-static directory, and logs `service closed` at info level; renders in
-progress complete. Close on a service that is not initialized returns
-nil and logs nothing. Close ignores its context. Init after Close
-starts the service again, with the configuration resolved afresh, the
-first render building anew, and the static routes registered again;
-through an app, core answers 503 on the static routes while the
-service is closed.
+`New`'s constructor checks the dependencies:
 
-Before the first successful Init, every method but Init, Close, Name
-and Config returns an error wrapping `ErrNotInitialized`; after Close, until Init
-succeeds, `ErrClosed`; and a static route answers 503. `New`'s
-constructor fails with `ErrNilLogger` for a nil logger and
-`ErrNilTemplateProvider` for a nil store; a nil ConfigProvider is
-accepted, and Init then requires WithConfig; a nil router is accepted,
-and Init then fails with `ErrNilRouter` when static files are on.
+- A nil logger is `ErrNilLogger`, and a nil store
+`ErrNilTemplateProvider`.
+- A nil ConfigProvider is accepted, and Init then requires WithConfig.
+- A nil router is accepted, and Init then fails with `ErrNilRouter`
+when static files are on.
+
 `WithStaticFS` with a nil file system fails Init with `ErrNilFS`.
+
+A successful Init runs these steps, in order:
+
+1. It resolves the configuration.
+2. It checks the functions of WithFuncs.
+3. It opens the static files.
+4. It registers the static routes.
+5. It logs `service initialized` at info level, with `reload` and
+`static`.
+
+`Service.Close` makes the service closed, closes the static directory,
+and logs `service closed` at info level. Renders in progress complete.
+Close ignores its context.
+
+Init after Close starts the service again: the configuration is
+resolved afresh, the first render builds anew, and the static routes
+are registered again. Through an app, core answers 503 on the static
+routes while the service is closed.
+
+Out of the usual order:
+
+- Before the first successful Init, every method but Init, Close,
+Name and Config returns an error wrapping `ErrNotInitialized`.
+- After Close, until Init succeeds, they return `ErrClosed`, and a
+static route answers 503.
+- Init on an initialized service returns `ErrAlreadyInitialized` and
+changes nothing.
+- Close on a service that is not initialized returns nil and logs
+nothing.
 
 ## Concurrency
 
-A Service is safe for concurrent use. Its state is swapped whole by
-Init and Close, so a call sees one Init's state, and a call that runs
-beside Close completes or returns ErrClosed. Compiled sets never change
-once built, and each page's copies are made under a lock of the page;
-renders execute them concurrently, WithBlock included. Builds run one
-at a time: a render that waited while another build finished takes
-that build's outcome, unless functions were registered since. A panic
-while a page executes is returned as `ErrExecute`. RegisterFuncs takes
-a lock the builds read the functions under.
+A Service is safe for concurrent use:
+
+- Its state is swapped whole by Init and Close, so a call sees one
+Init's state. A call that runs beside Close completes or returns
+ErrClosed.
+- Compiled sets never change once built, and each page's copies are
+made under a lock of the page. Renders execute them concurrently,
+WithBlock included.
+- Builds run one at a time. A render that waited while another build
+finished takes that build's outcome, unless functions were
+registered since.
+- RegisterFuncs takes a lock the builds read the functions under.
+
+A panic while a page executes is returned as `ErrExecute`.
 
 ## Security
 
 html/template escapes data for the context it lands in: text,
 attributes, URLs, scripts and styles. None of the default functions
-returns a trusted type such as template.HTML, so none bypasses it. A
-function given to WithFuncs or RegisterFuncs that returns template.HTML,
-template.JS, template.URL or another trusted type writes its result
-unescaped: it must never return data from a user unescaped.
+returns a trusted type such as template.HTML, so none bypasses it.
+
+A function given to WithFuncs or RegisterFuncs that returns
+template.HTML, template.JS, template.URL or another trusted type writes
+its result unescaped. It must never return data from a user unescaped.
 
 Templates are code: a template can call every function and reach every
-value passed to it, and the store's source is trusted as the app's own,
-as gas/template describes. Errors carry what html/template gives: the
-file, the position and the action, such as `at <.User.Name>`, and the
-text of a function's error. They reach the app's logs, not the client,
-through core's error handler; keep secrets out of the errors of your
-functions. A page name from a request is quoted in an error only when
-it is valid, and only ever reaches the store's pages; map user input to
-a fixed set of names instead.
+value passed to it. The store's source is trusted as the app's own, as
+gas/template describes.
 
-Static files are served from inside their root only, without dotfiles
-unless asked, without listings, with nosniff, so a browser never runs
-a file as another type, and with their own type, so an `.html` file is
-HTML on the app's origin, an `.svg` file is an image that runs its
-scripts when opened, and a file without an extension whose content
-looks like HTML is sniffed as HTML: never let users write to the static
-directory.
+Errors carry what html/template gives: the file, the position and the
+action, such as `at <.User.Name>`, and the text of a function's error.
+They reach the app's logs, not the client, through core's error
+handler. Keep secrets out of the errors of your functions.
+
+A page name from a request is quoted in an error only when it is valid,
+and only ever reaches the store's pages. Map user input to a fixed set
+of names instead.
+
+Static files are served:
+
+- from inside their root only;
+- without dotfiles unless asked, and without listings;
+- with nosniff, so a browser never runs a file as another type;
+- with their own type. So an `.html` file is HTML on the app's origin,
+an `.svg` file is an image that runs its scripts when opened, and a
+file without an extension whose content looks like HTML is sniffed
+as HTML.
+
+Never let users write to the static directory.
 
 ## Errors
 
@@ -391,12 +528,13 @@ Lifecycle.
 missing, as under Lifecycle.
 - `ErrInvalidConfig`: the configuration failed to bind, its tags or
 a rule.
-- `ErrInvalidFunc`: a function's name or value, as under Functions.
-- `ErrInvalidName`, `ErrPageNotFound`: as under Names and layout.
+- `ErrInvalidFunc`: a function's name or value, as under Adding
+functions.
+- `ErrInvalidName`, `ErrPageNotFound`: as under Names.
 - `ErrLayoutNotFound`, `ErrBlockNotFound`, `ErrNoFragment`: the
 template to execute is not in the page's set.
-- `ErrInvalidOption`, `ErrInvalidStatus`: as under Fragments and
-Status and writes, and StaticHandler's options.
+- `ErrInvalidOption`, `ErrInvalidStatus`: as under Blocks and Status
+and writes, and StaticHandler's options.
 - `ErrInvalidPrefix`: StaticHandler's prefix.
 - `ErrLoad`: the store failed to list or read; it wraps the store's
 error.
@@ -410,8 +548,9 @@ html/template *Error, and a function's own error.
 
 Every error starts with `ServiceName` and the operation, and, for a
 render of a valid name, the quoted page name. Reload joins the errors of
-the pages that failed, one per line. A configuration that fails its tags
-gets the validator's error after
+the pages that failed, one per line.
+
+A configuration that fails its tags gets the validator's error after
 `gas/ui: init: invalid config: validate config: `, such as:
 
 ```go
