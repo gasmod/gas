@@ -122,7 +122,7 @@ func fuzzBucket(f *testing.F) (*os.Root, *vfs.Bucket) {
 func unplant(t *testing.T, root *os.Root, keys, meta string, planted []string) {
 	t.Helper()
 
-	entries, err := fs.ReadDir(root.FS(), keys)
+	entries, err := fs.ReadDir(root.FS(), filepath.ToSlash(keys))
 	require.NoError(t, err)
 
 	for _, e := range entries {

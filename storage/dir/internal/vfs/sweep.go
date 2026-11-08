@@ -353,7 +353,7 @@ func (b *Bucket) indexed(name string) (bool, error) {
 
 	entry, _ := indexPath(meta.Key)
 
-	_, err = lstatIn(b.keysRoot, entry)
+	_, err = retryPending(func() (os.FileInfo, error) { return lstatIn(b.keysRoot, entry) })
 
 	switch {
 	case err == nil:
@@ -479,7 +479,9 @@ func (b *Bucket) sweepIndex(ctx context.Context, s *sweeper) error {
 			return false
 		}
 
-		_, sErr := lstatIn(b.metaRoot, hash(key)+metaFileExt)
+		_, sErr := retryPending(func() (os.FileInfo, error) {
+			return lstatIn(b.metaRoot, hash(key)+metaFileExt)
+		})
 
 		switch {
 		case errors.Is(sErr, os.ErrNotExist):
@@ -551,7 +553,7 @@ func (b *Bucket) sweepIndexDirs(ctx context.Context, s *sweeper, dir string) err
 // its directory dir, as sweepIndexDirs walks them: none for a directory
 // below the keys directory that is gone.
 func (b *Bucket) indexSubdirs(dir string) ([]string, error) {
-	des, err := readDirIn(b.keysRoot, dir)
+	des, err := retryPending(func() ([]fs.DirEntry, error) { return readDirIn(b.keysRoot, dir) })
 
 	switch {
 	case dir != "." && errors.Is(err, os.ErrNotExist):
@@ -574,7 +576,7 @@ func (b *Bucket) indexSubdirs(dir string) ([]string, error) {
 // removeIndexDir removes the directory dir of the key index of b when it
 // is empty. One that holds an entry, or that is gone, is left.
 func (s *sweeper) removeIndexDir(b *Bucket, dir string) error {
-	err := b.keysRoot.Remove(dir)
+	_, err := retryPending(func() (struct{}, error) { return struct{}{}, b.keysRoot.Remove(dir) })
 
 	switch {
 	case err == nil:

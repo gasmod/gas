@@ -151,12 +151,13 @@ func openRootIn(r *os.Root, name string) (*os.Root, error) {
 }
 
 // readDirIn returns the entries of the directory name in r, sorted by
-// name.
+// name. An fs.FS path is slash-separated: on Windows r.FS rejects one with
+// a backslash as invalid, so name, joined with filepath.Join, is converted.
 func readDirIn(r *os.Root, name string) ([]fs.DirEntry, error) {
 	err := fault(OpReadDir, inRoot(r, name))
 	if err != nil {
 		return nil, err
 	}
 
-	return fs.ReadDir(r.FS(), name) //nolint:wrapcheck // the caller wraps it.
+	return fs.ReadDir(r.FS(), filepath.ToSlash(name)) //nolint:wrapcheck // the caller wraps it.
 }

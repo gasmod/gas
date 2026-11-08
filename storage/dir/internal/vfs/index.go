@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -64,8 +65,9 @@ func (b *Bucket) addIndex(key string) (bool, error) {
 
 	for attempt := 1; ; attempt++ {
 		created, err := b.createIndexEntry(entry, parent)
-		// A Sweep removed a directory of the entry as empty.
-		if IsMissing(err) && parent != "" && attempt < maxIndexAttempts {
+		// A Sweep removed a directory of the entry as empty. A name still
+		// being removed after retryPending gave up has another cause.
+		if IsMissing(err) && !isDeletePending(err) && parent != "" && attempt < maxIndexAttempts {
 			continue
 		}
 
@@ -90,7 +92,9 @@ func (b *Bucket) createIndexEntry(entry, parent string) (bool, error) {
 		}
 	}
 
-	f, err := b.keysRoot.OpenFile(entry, os.O_CREATE|os.O_EXCL|os.O_WRONLY, filePerm)
+	f, err := retryPending(func() (*os.File, error) {
+		return b.keysRoot.OpenFile(entry, os.O_CREATE|os.O_EXCL|os.O_WRONLY, filePerm)
+	})
 
 	switch {
 	case errors.Is(err, os.ErrExist):
@@ -131,7 +135,9 @@ func (b *Bucket) ensureIndexDirs(parent string) ([]string, error) {
 	for elem := range strings.SplitSeq(parent, string(filepath.Separator)) {
 		dir = join(dir, elem)
 
-		err := b.keysRoot.Mkdir(dir, dirPerm)
+		_, err := retryPending(func() (struct{}, error) {
+			return struct{}{}, b.keysRoot.Mkdir(dir, dirPerm)
+		})
 
 		switch {
 		case err == nil:
@@ -151,7 +157,11 @@ func (b *Bucket) ensureIndexDirs(parent string) ([]string, error) {
 func (b *Bucket) removeIndex(key string) error {
 	entry, _ := indexPath(key)
 
-	return rmInRoot(b.keysRoot, entry, "index entry")
+	_, err := retryPending(func() (struct{}, error) {
+		return struct{}{}, rmInRoot(b.keysRoot, entry, "index entry")
+	})
+
+	return err
 }
 
 // indexEntry is an entry of a directory of the key index, parsed.
@@ -306,7 +316,7 @@ func (b *Bucket) walkEntry(
 // directory that is gone holds no entry: a Sweep removed it as empty
 // since its parent was read.
 func (b *Bucket) readIndexDir(dir string, report func(Skipped)) ([]indexEntry, error) {
-	des, err := readDirIn(b.keysRoot, dir)
+	des, err := retryPending(func() ([]fs.DirEntry, error) { return readDirIn(b.keysRoot, dir) })
 
 	switch {
 	case dir != "." && errors.Is(err, os.ErrNotExist):
