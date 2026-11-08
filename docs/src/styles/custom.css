@@ -588,99 +588,184 @@ html:has(.gas-home) body {
 	height: clamp(2.5rem, 6vw, 4.5rem);
 }
 
-/* The headline shares its row with the Gas mark, drawn as line work. */
+/* The headline shares its row with the trace. */
 .gas-home-hero {
 	display: grid;
-	grid-template-columns: minmax(0, 1fr) auto;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 30rem);
 	align-items: center;
-	gap: 2rem;
+	gap: clamp(1.5rem, 3vw, 3rem);
 }
 
 /*
- * The wiring: the core with six modules around it. On load the wires draw
- * out from the core and the modules appear; then a pulse runs from each
- * module into the core in turn, as a service resolving a dependency.
+ * The trace: a request through a Gas app, drawn as a tracing tool draws
+ * it, in a dark panel like the code frames. Framework spans are grey,
+ * the app's own calls take the accent, and an error is red.
  */
-.gas-wiring {
-	width: clamp(13rem, 21vw, 18rem);
-	height: auto;
-	margin-inline-end: clamp(0rem, 2vw, 2rem);
-	overflow: visible;
-}
-
-.gas-wire {
-	fill: none;
-	stroke: var(--gas-muted);
-	stroke-opacity: 0.45;
-	stroke-width: 1.25;
-	stroke-dasharray: 1;
-	stroke-dashoffset: 1;
-	animation: gas-draw 700ms cubic-bezier(0.2, 0.7, 0.2, 1) forwards;
-	animation-delay: calc(200ms + var(--i) * 90ms);
-}
-
-.gas-node {
-	opacity: 0;
-	animation: gas-appear 500ms ease-out forwards;
-	animation-delay: calc(650ms + var(--i) * 90ms);
-}
-
-.gas-node rect {
-	fill: var(--gas-paper);
-	stroke: var(--gas-muted);
-	stroke-opacity: 0.5;
-}
-
-.gas-node text {
-	fill: var(--gas-body);
+.gas-trace {
+	--trace-bg: #0d1117;
+	--trace-ink: #f3f4f6;
+	--trace-dim: #9ca3af;
+	--trace-faint: rgb(255 255 255 / 0.08);
+	--trace-gas: #4b5563;
+	--trace-app: #8b9cff;
+	--trace-err: #f87171;
+	--trace-ok: #8b9cff;
+	margin: 1.25rem 0;
+	padding: 0.25rem;
+	border-radius: 0.875rem;
+	background: #030712;
+	box-shadow: 0 0 0 1px rgb(255 255 255 / 0.1), 0 24px 60px -24px rgb(3 7 18 / 0.45);
 	font-family: var(--sl-font-mono);
-	font-size: 11px;
-	text-anchor: middle;
+	font-size: 0.75rem;
 }
 
-.gas-node-core {
-	animation-delay: 0ms;
+.gas-trace-head {
+	display: flex;
+	align-items: center;
+	gap: 0.6rem;
+	padding: 0.6rem 0.75rem 0.7rem;
+	color: var(--trace-ink);
 }
 
-/* Opaque, so the wires end at the node's edge. */
-.gas-node-core rect {
-	fill: color-mix(in srgb, var(--gas-accent) 12%, var(--gas-paper));
-	stroke: var(--gas-accent);
-	stroke-opacity: 1;
-}
-
-.gas-node-core text {
-	fill: var(--gas-ink);
-	font-size: 14px;
+.gas-trace-method {
+	padding: 0.1rem 0.4rem;
+	border-radius: 0.3rem;
+	background: rgb(139 156 255 / 0.16);
+	color: var(--trace-app);
 	font-weight: 600;
 }
 
-.gas-pulse {
-	fill: var(--gas-accent);
+.gas-trace-path {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
-@keyframes gas-draw {
-	to {
-		stroke-dashoffset: 0;
-	}
+.gas-trace-status,
+.gas-trace-total {
+	opacity: 0;
+	transition: opacity 300ms ease;
 }
 
-@keyframes gas-appear {
-	to {
-		opacity: 1;
-	}
+.gas-trace-status {
+	margin-inline-start: auto;
+	padding: 0.1rem 0.45rem;
+	border-radius: 999px;
+	background: rgb(139 156 255 / 0.16);
+	color: var(--trace-ok);
+	white-space: nowrap;
+}
+
+.gas-trace[data-ok='false'] .gas-trace-status {
+	background: rgb(248 113 113 / 0.14);
+	color: var(--trace-err);
+}
+
+.gas-trace-total {
+	color: var(--trace-dim);
+}
+
+.gas-trace.is-done :is(.gas-trace-status, .gas-trace-total, .gas-trace-log) {
+	opacity: 1;
+}
+
+/* A fixed height, so a shorter trace never moves the headline. */
+.gas-trace-spans {
+	display: grid;
+	align-content: start;
+	gap: 0.15rem;
+	height: 15.5rem;
+	margin: 0;
+	padding: 0.75rem 0.75rem 0.85rem;
+	border-radius: 0.6rem;
+	background: var(--trace-bg);
+	box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.06);
+	list-style: none;
+	opacity: 1;
+	transition: opacity 400ms ease;
+}
+
+.gas-trace:not(.is-in, .is-done) .gas-trace-spans {
+	opacity: 0;
+}
+
+/* The rows are list items inside the page's content; the article's list spacing is not theirs. */
+.gas-trace .gas-span + .gas-span {
+	margin-top: 0;
+}
+
+.gas-span {
+	display: grid;
+	grid-template-columns: 13.5rem minmax(0, 1fr);
+	align-items: center;
+	gap: 0.75rem;
+	margin: 0;
+	min-height: 1.6rem;
+}
+
+.gas-span-label {
+	overflow: hidden;
+	padding-inline-start: calc(var(--depth) * 0.75rem);
+	color: var(--trace-ink);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.gas-span-note {
+	color: var(--trace-dim);
+}
+
+.gas-span-track {
+	position: relative;
+	height: 0.55rem;
+	border-radius: 999px;
+	background: var(--trace-faint);
+}
+
+.gas-span-bar {
+	position: absolute;
+	inset-block: 0;
+	width: 0;
+	border-radius: 999px;
+	background: var(--trace-gas);
+	transition: width var(--dur) linear;
+}
+
+.gas-span-app .gas-span-bar {
+	background: var(--trace-app);
+}
+
+.gas-span-err .gas-span-bar {
+	background: var(--trace-err);
+}
+
+.gas-span-err .gas-span-label {
+	color: var(--trace-err);
+}
+
+/* The closing line: the log line, or the problem the client got. Two lines, always. */
+.gas-trace-log {
+	display: -webkit-box;
+	height: 3.6em;
+	margin: 0;
+	padding: 0.65rem 0.75rem 0.55rem;
+	overflow: hidden;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
+	color: var(--trace-dim);
+	line-height: 1.5;
+	overflow-wrap: anywhere;
+	box-sizing: content-box;
+	opacity: 0;
+	transition: opacity 300ms ease;
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.gas-wire,
-	.gas-node {
-		animation: none;
-		opacity: 1;
-		stroke-dashoffset: 0;
-	}
-
-	.gas-pulse {
-		display: none;
+	.gas-span-bar,
+	.gas-trace-spans,
+	:is(.gas-trace-status, .gas-trace-total, .gas-trace-log) {
+		transition: none;
 	}
 }
 
@@ -689,7 +774,7 @@ html:has(.gas-home) body {
 	margin: 0;
 	padding-block: 0.25rem 0.75rem;
 	color: var(--gas-ink);
-	font-size: clamp(2.75rem, 6.4vw, 5.25rem);
+	font-size: clamp(2.75rem, 5.6vw, 4.75rem);
 	font-weight: 500;
 	letter-spacing: -0.05em;
 	line-height: 1;
@@ -856,8 +941,8 @@ html:has(.gas-home) body {
 		grid-template-columns: minmax(0, 1fr);
 	}
 
-	.gas-wiring {
-		display: none;
+	.gas-trace {
+		margin-top: 0;
 	}
 
 	.gas-home-showcase {
