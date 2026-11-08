@@ -124,6 +124,17 @@ func rules(cfg *Config) error {
 	return nil
 }
 
+// clone returns a deep copy of c, whose UsePathStyle, when set, points to
+// a bool of its own.
+func (c *Config) clone() *Config {
+	out := *c
+	if c.Storage.UsePathStyle != nil {
+		out.Storage.UsePathStyle = new(*c.Storage.UsePathStyle)
+	}
+
+	return &out
+}
+
 // pathStyle returns whether requests send the bucket in the URL's path:
 // UsePathStyle when it is set, else whether an endpoint is.
 func (s *Settings) pathStyle() bool {

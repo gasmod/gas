@@ -25,7 +25,7 @@
 // one: CreateBucket, DeleteBucket and DeleteObject return nil; HeadBucket
 // a Bucket with the name asked for; ListBuckets and ListObjects an empty
 // page; PutObject a zero PutObjectOutput, without reading the body;
-// PresignUploadURL and PresignDownloadURL a PresignURLResponse with only
+// CopyObject a zero CopyObjectOutput; PresignUploadURL and PresignDownloadURL a PresignURLResponse with only
 // its Method, PUT or GET. HeadObject and GetObject return
 // storage.ErrObjectNotFound, as a store that holds no object does, so that
 // code under test never gets a nil object with a nil error.

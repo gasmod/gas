@@ -71,9 +71,10 @@
 //     GetObject returned is not a call in flight: it stays readable after
 //     Close, until it is closed.
 //   - A write is whole or nothing: PutObject stores the object once its
-//     body is read to the end and its condition holds, and a failed
-//     PutObject leaves the object under the key, if any, as it was. A read
-//     sees an object as one write stored it.
+//     body is read to the end and its condition holds, CopyObject once it
+//     has read the source whole, and a failed write leaves the object
+//     under the key, if any, as it was. A read sees an object as one
+//     write stored it.
 //   - A backend never changes the caller's input, and keeps none of its
 //     maps; what it returns is the caller's own copy.
 //   - A constructor refuses a nil logger ([ErrNilLogger]), a nil option
@@ -196,6 +197,48 @@
 // optimistic update is a HeadObject, then a PutObject with IfMatch set to
 // the ETag it returned.
 //
+// # Copies
+//
+// CopyObject copies an object, as S3's CopyObject does: the embedded
+// BaseObjectInput of [CopyObjectInput] names the destination, and Source
+// the source, each with a nil Bucket as the configured bucket, so that a
+// copy may go to another bucket. By default the destination gets the
+// source's contents, header fields and metadata, and every field of the
+// embedded ObjectHeaders must be nil, and Metadata empty. With Replace
+// set, it gets the header fields and metadata of ObjectHeaders instead,
+// kept to the rules of PutObject's, a nil ContentType as
+// DefaultContentType, as S3's REPLACE metadata directive does. A copy of
+// an object onto itself, the same bucket and key, is refused without
+// Replace, as S3 refuses it; with Replace it replaces the object's header
+// fields and metadata and keeps its contents.
+//
+//	_, err := store.CopyObject(ctx, &storage.CopyObjectInput{
+//		Bucket: &archive,
+//		Key:    "cats/tom.jpg",
+//		Source: storage.BaseObjectInput{Key: "cats/tom.jpg"},
+//	})
+//
+// After this, with the bucket `photos` configured and `archive` set to
+// `archive`, the bucket `archive` holds a copy of `cats/tom.jpg` of
+// `photos`, with its header fields and metadata.
+//
+// [CheckCopy] checks the source's key and bucket, its errors after
+// `source: `, the destination's, after `destination: `, then, with
+// Replace, the header fields and the metadata, and without it, that none
+// is set and that the source is not the destination
+// ([ErrInvalidArgument]), all before any I/O.
+//
+// CopyObject then looks up the source, then the destination's bucket. A
+// missing source is ErrObjectNotFound, and a source in a missing bucket
+// ErrObjectNotFound and ErrBucketNotFound, as GetObject reports them; a
+// missing destination bucket is ErrBucketNotFound, as PutObject reports
+// it. A source longer than [MaxCopySize], 5 GiB, the most one S3
+// CopyObject copies, is ErrInvalidArgument, as [CheckCopySize] returns it,
+// and nothing is written. There is no copy in parts and no conditional
+// copy. The copy is written whole or not at all, and CopyObject returns
+// its ETag, its size and, on a backend that keeps versions, its version,
+// as PutObject does; its LastModified is when it was written.
+//
 // # Ranges
 //
 // HeadObjectInput.Range and GetObjectInput's select a range of the
@@ -301,8 +344,8 @@
 // `gas/storage/memory`, then the operation: `init`, `ready`, `close`,
 // `create bucket`, `head bucket`, `delete bucket`, `list buckets`,
 // `head object`, `put object`, `get object`, `delete object`,
-// `list objects`, `presign upload` or `presign download`; then what
-// failed, and wraps one of these sentinels, to be tested with
+// `list objects`, `copy object`, `presign upload` or `presign download`;
+// then what failed, and wraps one of these sentinels, to be tested with
 // [errors.Is]:
 //
 //   - [ErrNilInput]: the input is nil.
@@ -315,7 +358,7 @@
 //   - [ErrInvalidRange], [ErrRangeNotSatisfiable]: as under Ranges.
 //   - [ErrInvalidToken]: as under Listing.
 //   - [ErrInvalidArgument]: a length, a part number, a version, a listing
-//     argument or a TTL out of its bounds.
+//     argument or a TTL out of its bounds, or a copy the rules refuse.
 //   - [ErrContentLengthMismatch]: as under Objects.
 //   - [ErrNotSupported], [ErrObjectNotFound], [ErrVersionNotFound]: as
 //     under Objects.
@@ -374,6 +417,11 @@
 //	invalid argument: Prefix is not valid UTF-8 of at most 1024 bytes
 //	invalid argument: Delimiter is empty
 //	invalid argument: TTL is not 1s to 168h0m0s
+//	source: invalid key: empty
+//	destination: invalid bucket: none given and none configured
+//	invalid argument: header fields or metadata set without Replace
+//	invalid argument: copies an object onto itself without Replace
+//	invalid argument: source is longer than 5368709120 bytes
 //	invalid continuation token: empty
 //	content length mismatch: body has 3 bytes, ContentLength is 5
 //	content length mismatch: body is longer than ContentLength 5

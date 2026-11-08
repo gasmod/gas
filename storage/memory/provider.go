@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/storage"
@@ -31,6 +32,7 @@ const (
 	opGetObject    = "get object"
 	opDeleteObject = "delete object"
 	opListObjects  = "list objects"
+	opCopyObject   = "copy object"
 )
 
 // ErrStorageFull indicates that a write would take the store past
@@ -47,6 +49,9 @@ type Provider struct {
 	logger gas.Logger
 	// buckets holds the buckets by name. They outlive Close.
 	buckets map[string]*bucket
+	// cfg is the configuration the last successful Init bound, or nil
+	// before the first. It outlives Close.
+	cfg atomic.Pointer[Config]
 	// cfgSource records the configuration given to WithConfig.
 	cfgSource configsrc.Source[Config]
 	// lc is the lifecycle, whose sessions hold what one Init opened.
@@ -149,6 +154,9 @@ func (p *Provider) Init(ctx context.Context) error {
 
 		set = cfg.Storage
 
+		// Nothing fails once this function returns, so the Init succeeds.
+		p.cfg.Store(new(*cfg))
+
 		return &session{codec: codec, settings: set}, nil
 	})
 	if err != nil {
@@ -162,6 +170,25 @@ func (p *Provider) Init(ctx context.Context) error {
 		Send()
 
 	return nil
+}
+
+// Config returns a copy of the configuration the last successful Init
+// bound, defaults included, as described in the package documentation:
+// the zero Config before the first successful Init, and on a nil
+// Provider, and the last one bound after Close. Changing it changes
+// nothing in the store. It is safe to call at any time, while Init or
+// Close runs included.
+func (p *Provider) Config() Config {
+	if p == nil {
+		return Config{}
+	}
+
+	cfg := p.cfg.Load()
+	if cfg == nil {
+		return Config{}
+	}
+
+	return *cfg
 }
 
 // Close makes every later call but Init return an error wrapping

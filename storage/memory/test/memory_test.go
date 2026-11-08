@@ -179,6 +179,9 @@ func TestNilProvider(t *testing.T) {
 
 	_, err = p.ListBuckets(ctx, &storage.ListBucketsInput{})
 	require.ErrorIs(t, err, storage.ErrNotInitialized)
+
+	_, err = p.CopyObject(ctx, &storage.CopyObjectInput{})
+	require.EqualError(t, err, "gas/storage/memory: copy object: service not initialized")
 }
 
 // A body is also an io.Seeker, and stays readable after its object is

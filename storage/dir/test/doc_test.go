@@ -195,6 +195,23 @@ func TestDoc_Errors(t *testing.T) {
 
 			return putErr(p, in)
 		},
+		"gas/storage/dir: copy object: source: invalid key: empty": func() error {
+			p, _ := opened()
+
+			_, err := p.CopyObject(ctx, &storage.CopyObjectInput{})
+
+			return err
+		},
+		"gas/storage/dir: copy object: invalid argument: copies an object onto itself without Replace": func() error { //nolint:lll // the documented text.
+			p, _ := opened()
+
+			_, err := p.CopyObject(ctx, &storage.CopyObjectInput{
+				Key:    "k",
+				Source: storage.BaseObjectInput{Key: "k"},
+			})
+
+			return err
+		},
 		"gas/storage/dir: put object: object not found": func() error {
 			p, _ := opened()
 			in := putIn("k", "v")

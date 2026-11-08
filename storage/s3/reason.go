@@ -177,9 +177,16 @@ func classify(op string, err error) (string, []error) {
 }
 
 // reply returns the text and the sentinels of an error reply with code to
-// a request of op: the sentinel of the storage package the code stands
-// for, else a reason with the code.
+// a request of op: a conflict for a PreconditionFailed of CopyObject, the
+// sentinel of the storage package the code stands for, else a reason with
+// the code.
 func reply(op, code string) (string, []error) {
+	if code == codePreconditionFailed && op == opCopyObject {
+		// CopyObject's only condition is the source's ETag, which a write of
+		// the source since its HeadObject changed.
+		return reasonConflict + " (" + code + ")", []error{ErrConflict, storage.ErrBackend}
+	}
+
 	if errs := sentinels(op, code); errs != nil {
 		return joinText(errs), errs
 	}
@@ -198,6 +205,9 @@ func reply(op, code string) (string, []error) {
 	}
 }
 
+// codePreconditionFailed is the code of a condition that did not hold.
+const codePreconditionFailed = "PreconditionFailed"
+
 // sentinelCodes are the codes that stand for a sentinel of the storage
 // package whatever the request.
 var sentinelCodes = map[string][]error{
@@ -205,7 +215,7 @@ var sentinelCodes = map[string][]error{
 	"NoSuchVersion":                errMissingVersion,
 	"BucketAlreadyExists":          {storage.ErrBucketExists},
 	"BucketNotEmpty":               {storage.ErrBucketNotEmpty},
-	"PreconditionFailed":           {storage.ErrPreconditionFailed},
+	codePreconditionFailed:         {storage.ErrPreconditionFailed},
 	"InvalidRange":                 {storage.ErrRangeNotSatisfiable},
 	"RequestedRangeNotSatisfiable": {storage.ErrRangeNotSatisfiable},
 }

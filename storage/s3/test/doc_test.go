@@ -434,6 +434,55 @@ func TestDoc_Errors(t *testing.T) {
 				Body:            iotest.ErrReader(errDiskGone),
 			})
 		},
+		"gas/storage/s3: copy object: source: invalid key: empty": func() error {
+			_, err := initial().CopyObject(ctx, &storage.CopyObjectInput{BaseObjectInput: key})
+
+			return err
+		},
+		"gas/storage/s3: copy object: invalid argument: copies an object onto itself without Replace": func() error { //nolint:lll // the documented text.
+			_, err := initial().CopyObject(ctx, &storage.CopyObjectInput{
+				BaseObjectInput: key,
+				Source:          key,
+			})
+
+			return err
+		},
+		"gas/storage/s3: copy object: invalid argument: source is longer than 5368709120 bytes": func() error { //nolint:lll // the documented text.
+			p := replying(t, func(w http.ResponseWriter, _ *http.Request) bool {
+				w.Header().Set("Content-Length", strconv.Itoa(storage.MaxCopySize+1))
+				w.WriteHeader(http.StatusOK)
+
+				return true
+			})
+
+			_, err := p.CopyObject(ctx, &storage.CopyObjectInput{
+				Key:    "dst",
+				Source: key,
+			})
+
+			return err
+		},
+		"gas/storage/s3: copy object: conflict (PreconditionFailed)": func() error {
+			p := replying(t, func(w http.ResponseWriter, r *http.Request) bool {
+				if r.Method == http.MethodHead {
+					w.Header().Set("ETag", `"abc"`)
+					w.WriteHeader(http.StatusOK)
+
+					return true
+				}
+
+				fakeError(w, r, http.StatusPreconditionFailed, "PreconditionFailed")
+
+				return true
+			})
+
+			_, err := p.CopyObject(ctx, &storage.CopyObjectInput{
+				Key:    "dst",
+				Source: key,
+			})
+
+			return err
+		},
 		"gas/storage/s3: put object: precondition failed": func() error {
 			p := initial()
 			putString(t, p, "k", "v")

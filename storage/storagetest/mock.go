@@ -118,6 +118,12 @@ type MockProvider struct {
 		ctx context.Context,
 		in *storage.ListObjectsInput,
 	) (*storage.ListObjectsOutput, error)
+	// CopyObjectFn is what CopyObject returns. When it is nil, CopyObject
+	// returns a zero CopyObjectOutput.
+	CopyObjectFn func(
+		ctx context.Context,
+		in *storage.CopyObjectInput,
+	) (*storage.CopyObjectOutput, error)
 }
 
 var _ storage.Provider = (*MockProvider)(nil)
@@ -244,6 +250,20 @@ func (m *MockProvider) ListObjects(
 	return &storage.ListObjectsOutput{}, nil
 }
 
+// CopyObject records the call and returns CopyObjectFn's result.
+func (m *MockProvider) CopyObject(
+	ctx context.Context,
+	in *storage.CopyObjectInput,
+) (*storage.CopyObjectOutput, error) {
+	m.record("CopyObject", in)
+
+	if m.CopyObjectFn != nil {
+		return m.CopyObjectFn(ctx, in)
+	}
+
+	return &storage.CopyObjectOutput{}, nil
+}
+
 // MockPresigner is a storage.Presigner that records its calls, as
 // described in the package documentation. The zero MockPresigner is ready
 // to use.
@@ -339,7 +359,7 @@ func cloneArg(a any) any {
 }
 
 // cloneOther returns a copy of a, a recorded input of a bucket method
-// but ListBuckets or of a presigner, as cloneArg does.
+// but ListBuckets, of CopyObject or of a presigner, as cloneArg does.
 func cloneOther(a any) any {
 	switch v := a.(type) {
 	case *storage.CreateBucketInput:
@@ -348,6 +368,11 @@ func cloneOther(a any) any {
 		return clonePtr(v, nil)
 	case *storage.DeleteBucketInput:
 		return clonePtr(v, nil)
+	case *storage.CopyObjectInput:
+		return clonePtr(v, func(c *storage.CopyObjectInput) {
+			c.Source.Bucket = cloneVal(c.Source.Bucket)
+			cloneWrite(&c.BaseObjectInput, &c.ObjectHeaders, &storage.WriteCondition{})
+		})
 	case *storage.PresignUploadURLInput:
 		return clonePtr(v, func(c *storage.PresignUploadURLInput) {
 			c.ContentLength = cloneVal(c.ContentLength)

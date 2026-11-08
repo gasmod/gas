@@ -181,6 +181,19 @@ func TestDoc_Errors(t *testing.T) {
 
 			return putErr(p, &storage.PutObjectInput{Key: "b"})
 		},
+		"gas/storage/memory: copy object: source: invalid key: empty": func() error {
+			_, err := opened(cfg()).CopyObject(ctx, &storage.CopyObjectInput{})
+
+			return err
+		},
+		"gas/storage/memory: copy object: invalid argument: copies an object onto itself without Replace": func() error { //nolint:lll // the documented text.
+			_, err := opened(cfg()).CopyObject(ctx, &storage.CopyObjectInput{
+				Key:    "k",
+				Source: storage.BaseObjectInput{Key: "k"},
+			})
+
+			return err
+		},
 		"gas/storage/memory: create bucket: storage full": func() error {
 			p := opened(memory.DefaultConfig())
 

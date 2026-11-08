@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
@@ -36,6 +37,7 @@ const (
 	opGetObject    = "get object"
 	opDeleteObject = "delete object"
 	opListObjects  = "list objects"
+	opCopyObject   = "copy object"
 )
 
 var (
@@ -146,6 +148,12 @@ type API interface {
 		params *s3.CompleteMultipartUploadInput,
 		optFns ...func(*s3.Options),
 	) (*s3.CompleteMultipartUploadOutput, error)
+	// CopyObject copies an object.
+	CopyObject(
+		ctx context.Context,
+		params *s3.CopyObjectInput,
+		optFns ...func(*s3.Options),
+	) (*s3.CopyObjectOutput, error)
 	// AbortMultipartUpload aborts an upload in parts.
 	AbortMultipartUpload(
 		ctx context.Context,
@@ -170,6 +178,9 @@ type Provider struct {
 	logger gas.Logger
 	// client is the client given to WithClient.
 	client API
+	// cfg is the configuration the last successful Init bound, or nil
+	// before the first. It outlives Close, and nothing changes it.
+	cfg atomic.Pointer[Config]
 	// cfgSource records the configuration given to WithConfig.
 	cfgSource configsrc.Source[Config]
 	// lc is the lifecycle, whose sessions hold what one Init opened.
@@ -277,6 +288,9 @@ func (p *Provider) Init(ctx context.Context) error {
 
 		region = st.region
 
+		// Nothing fails once this function returns, so the Init succeeds.
+		p.cfg.Store(cfg.clone())
+
 		return st, nil
 	})
 	if err != nil {
@@ -286,6 +300,26 @@ func (p *Provider) Init(ctx context.Context) error {
 	p.logInitialized(set, region, source)
 
 	return nil
+}
+
+// Config returns a deep copy of the configuration the last successful
+// Init bound, defaults included, as described in the package
+// documentation: the zero Config before the first successful Init, and
+// on a nil Provider, and the last one bound after Close. UsePathStyle,
+// when set, points to a bool of its own, so changing the copy changes
+// nothing in the store. The secrets keep their type, Secret. It is safe
+// to call at any time, while Init or Close runs included.
+func (p *Provider) Config() Config {
+	if p == nil {
+		return Config{}
+	}
+
+	cfg := p.cfg.Load()
+	if cfg == nil {
+		return Config{}
+	}
+
+	return *cfg.clone()
 }
 
 // Close makes every later call but Init return an error wrapping

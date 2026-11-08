@@ -138,6 +138,7 @@ func nilInput(t *testing.T, s Subject) {
 	_, putErr := st.PutObject(ctx, nil)
 	_, getErr := st.GetObject(ctx, nil)
 	_, list := st.ListObjects(ctx, nil)
+	_, copyErr := st.CopyObject(ctx, nil)
 
 	for op, err := range map[string]error{
 		opCreateBucket: st.CreateBucket(ctx, nil),
@@ -149,6 +150,7 @@ func nilInput(t *testing.T, s Subject) {
 		opGetObject:    getErr,
 		opDeleteObject: st.DeleteObject(ctx, nil),
 		opListObjects:  list,
+		opCopyObject:   copyErr,
 	} {
 		requireErr(t, err, storage.ErrNilInput, errText(s, op, "input is nil"))
 	}

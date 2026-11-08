@@ -50,6 +50,9 @@ const (
 	// MaxPresignUploadSize is the largest ContentLength of a presigned
 	// upload: 5 GiB, the most one S3 PUT takes.
 	MaxPresignUploadSize = 5 << 30
+	// MaxCopySize is the longest source CopyObject copies: 5 GiB, the
+	// most one S3 CopyObject copies.
+	MaxCopySize = 5 << 30
 )
 
 // ObjectRef is an object that the rules have checked: its bucket, with
@@ -97,6 +100,28 @@ type PutRequest struct {
 	ContentLength int64
 	// IfNoneMatch reports whether IfNoneMatch is set.
 	IfNoneMatch bool
+}
+
+// CopyRequest is a CopyObjectInput that the rules have checked.
+//
+//nolint:govet // fieldalignment: the embedded fields come first, as embeddedstructfieldcheck wants.
+type CopyRequest struct {
+	// HeaderValues are the header fields the destination gets when
+	// Replace is set, ContentType DefaultContentType for a nil one, and
+	// else empty.
+	HeaderValues
+
+	// Source is the object copied.
+	Source ObjectRef
+	// Destination is the object written.
+	Destination ObjectRef
+	// Metadata is a copy of the user metadata the destination gets when
+	// Replace is set, with the names in lower case, or nil when there is
+	// none or Replace is not set.
+	Metadata map[string]string
+	// Replace reports whether the destination gets HeaderValues and
+	// Metadata rather than the source's.
+	Replace bool
 }
 
 // ListObjectsRequest is a ListObjectsInput that the rules have checked,
@@ -332,6 +357,81 @@ func CheckRead(in *HeadObjectInput, configured string) (ReadRequest, error) {
 	}
 
 	return req, nil
+}
+
+// The errors of the copy rules.
+var (
+	// errCopyFields reports header fields or metadata set without
+	// Replace.
+	errCopyFields = fmt.Errorf("%w: header fields or metadata set without Replace",
+		ErrInvalidArgument)
+	// errCopySelf reports a copy of an object onto itself without
+	// Replace.
+	errCopySelf = fmt.Errorf("%w: copies an object onto itself without Replace",
+		ErrInvalidArgument)
+	// errCopySize reports a source longer than MaxCopySize.
+	errCopySize = fmt.Errorf("%w: source is longer than %d bytes", ErrInvalidArgument, MaxCopySize)
+)
+
+// CheckCopy checks in as described in the package documentation: the
+// source's key and bucket, after `source: `, the destination's, after
+// `destination: `, then, with Replace, the header fields and the metadata,
+// and without it, that none is set and that the source is not the
+// destination.
+func CheckCopy(in *CopyObjectInput, configured string) (CopyRequest, error) {
+	src, err := CheckObject(&in.Source, configured)
+	if err != nil {
+		return CopyRequest{}, fmt.Errorf("source: %w", err)
+	}
+
+	dst, err := CheckObject(&in.BaseObjectInput, configured)
+	if err != nil {
+		return CopyRequest{}, fmt.Errorf("destination: %w", err)
+	}
+
+	req := CopyRequest{Source: src, Destination: dst, Replace: in.Replace}
+
+	if in.Replace {
+		req.HeaderValues, err = CheckHeaders(&in.ObjectHeaders)
+		if err != nil {
+			return CopyRequest{}, err
+		}
+
+		req.Metadata, err = CheckMetadata(in.Metadata)
+		if err != nil {
+			return CopyRequest{}, err
+		}
+
+		return req, nil
+	}
+
+	switch {
+	case anySet(&in.ObjectHeaders):
+		return CopyRequest{}, errCopyFields
+	case src == dst:
+		return CopyRequest{}, errCopySelf
+	}
+
+	return req, nil
+}
+
+// anySet reports whether h sets a header field or holds metadata.
+func anySet(h *ObjectHeaders) bool {
+	return len(h.Metadata) > 0 || slices.ContainsFunc([]*string{
+		h.CacheControl, h.ContentDisposition, h.ContentEncoding, h.ContentLanguage,
+		h.ContentType, h.Expires,
+	}, func(v *string) bool { return v != nil })
+}
+
+// CheckCopySize returns an error wrapping ErrInvalidArgument when size,
+// the length of the source of a copy, is longer than MaxCopySize, and nil
+// otherwise.
+func CheckCopySize(size int64) error {
+	if size > MaxCopySize {
+		return errCopySize
+	}
+
+	return nil
 }
 
 // CheckPut checks in as described in the package documentation: the key,

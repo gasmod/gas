@@ -78,6 +78,7 @@ const (
 	opGetObject    = "get object"
 	opDeleteObject = "delete object"
 	opListObjects  = "list objects"
+	opCopyObject   = "copy object"
 	opPresignUp    = "presign upload"
 	opPresignDown  = "presign download"
 )
@@ -87,7 +88,8 @@ func Run(t *testing.T, s Subject) {
 	t.Helper()
 
 	for _, group := range []map[string]func(*testing.T, Subject){
-		lifecycleRules(), objectRules(), inputRules(), bucketRules(), listRules(), presignRules(),
+		lifecycleRules(), objectRules(), inputRules(), bucketRules(), listRules(), copyRules(),
+		presignRules(),
 	} {
 		for name, rule := range group {
 			t.Run(name, func(t *testing.T) {
@@ -287,6 +289,11 @@ func calls() []call {
 
 			return err
 		}, opListObjects},
+		{func(ctx context.Context, st Store, b string) error {
+			_, err := st.CopyObject(ctx, copyIn(b, "k", b, "k2"))
+
+			return err
+		}, opCopyObject},
 		{func(ctx context.Context, st Store, _ string) error {
 			return st.CheckReady(ctx)
 		}, opReady},

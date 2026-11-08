@@ -55,6 +55,12 @@
 // failure wraps storage.ErrInvalidConfig and names the setting, never its
 // value.
 //
+// [Provider.Config] returns a copy of the configuration the last
+// successful Init bound, defaults included: the zero Config before the
+// first, and the last one bound after Close. A failed Init leaves it as
+// it was, and changing the copy changes nothing in the store. It is safe
+// to call at any time, while Init or Close runs included.
+//
 // # Directory
 //
 // Init opens the directory of `storage.dir` with os.OpenRoot, and Close
@@ -114,6 +120,18 @@
 // index entry. A delete of an object whose metadata cannot be used is
 // an error wrapping [ErrCorrupt], and deletes nothing; a PutObject of the
 // key replaces it, but a directory in place of its metadata file.
+//
+// CopyObject opens the source under its key's lock, as GetObject does,
+// and gives the lock up; it then checks the source's length, and writes
+// the destination as PutObject does, under the destination key's lock,
+// reading the open data file as the body, so that the copy is written
+// whole or not at all and holds the contents the source had when it was
+// opened. It never holds two keys' locks at once, so copies that cross,
+// a to b and b to a, or that copy an object onto itself, cannot deadlock:
+// each waits only for the one key it is about to lock. It closes the
+// source's data file once it has read it, before the write removes the
+// data file of the object it replaces, so a copy of an object onto
+// itself leaves no data file behind, on Windows too.
 //
 // The ETag is the hex MD5 of the contents. The store keeps no versions
 // and no parts: a Version or a PartNumber is storage.ErrNotSupported.
@@ -259,7 +277,8 @@
 // ends, the call returns, and the goroutine that waits in the lock call
 // stays until the holder gives the lock up, then gives it up itself. The
 // conditions of PutObject are evaluated under the key's lock, so they hold
-// across processes. A PutObject holds its key's lock while it reads its
+// across processes. CopyObject takes the source's lock, then the
+// destination's, never both at once. A PutObject holds its key's lock while it reads its
 // body, so a slow body holds the other calls on its key, and a
 // DeleteBucket of its bucket, until it ends or its context does.
 //
@@ -296,7 +315,8 @@
 // operation. A configuration that fails its tags gets the validator's
 // error after `gas/storage/dir: init: invalid config: validate config: `.
 // The other errors, as returned, with `put object`, `get object` and
-// `delete bucket` standing for each operation that can fail the same way:
+// `delete bucket` standing for each operation that can fail the same way,
+// `copy object` included:
 //
 //	gas/storage/dir: logger is nil
 //	gas/storage/dir: option is nil: at position 0
@@ -320,6 +340,8 @@
 //	gas/storage/dir: put object: bucket not found
 //	gas/storage/dir: put object: precondition failed
 //	gas/storage/dir: put object: object not found
+//	gas/storage/dir: copy object: source: invalid key: empty
+//	gas/storage/dir: copy object: invalid argument: copies an object onto itself without Replace
 //	gas/storage/dir: get object: object not found
 //	gas/storage/dir: get object: object not found: bucket not found
 //	gas/storage/dir: get object: not supported: the store keeps no versions

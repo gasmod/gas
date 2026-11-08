@@ -61,15 +61,23 @@ func (p *Provider) PutObject(
 		return nil, opError(opPutObject, failure(ctx, sess, err, !isRead))
 	}
 
-	if out.Stale != "" {
-		err = fmt.Errorf("data file of the object replaced left in place: %w", out.StaleErr)
-		p.logger.Warn("put object: data file of the object replaced left in place").
-			Err("error", err).
-			Send()
-		p.report(vfs.Skipped{Path: out.Stale, Err: err})
-	}
+	p.reportStale(opPutObject, &out)
 
 	return &storage.PutObjectOutput{ETag: out.ETag, Size: out.Size}, nil
+}
+
+// reportStale logs at warn level, and passes to the skip handler, the data
+// file of the object a write of op replaced, when out says it stayed.
+func (p *Provider) reportStale(op string, out *vfs.Written) {
+	if out.Stale == "" {
+		return
+	}
+
+	err := fmt.Errorf("data file of the object replaced left in place: %w", out.StaleErr)
+	p.logger.Warn(op+": data file of the object replaced left in place").
+		Err("error", err).
+		Send()
+	p.report(vfs.Skipped{Path: out.Stale, Err: err})
 }
 
 // headers returns the header fields of v as the vfs package stores them.

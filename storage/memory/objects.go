@@ -273,27 +273,38 @@ func (p *Provider) commit(
 		return storage.ErrBucketNotFound
 	}
 
-	old := b.objects[req.Key]
-
-	err = condition(req, old)
+	err = condition(req, b.objects[req.Key])
 	if err != nil {
 		return err
 	}
+
+	err = p.place(b, req.Key, o, sess.Value.settings, r.held)
+	if err != nil {
+		return err
+	}
+
+	r.releaseLocked()
+
+	return nil
+}
+
+// place stores o under key in b, replacing the object stored there, if
+// any, when the limits of set allow it, with the room the writes in
+// flight hold but held, the room of o's own write. The caller holds p.mu.
+func (p *Provider) place(b *bucket, key string, o *object, set Settings, held int64) error {
+	old := b.objects[key]
 
 	objects, bytes := p.objects+1, p.bytes+o.size
 	if old != nil {
 		objects, bytes = p.objects, bytes-old.size
 	}
 
-	set := sess.Value.settings
-	if objects > set.MaxObjects || bytes+p.reserved-r.held > set.MaxBytes {
+	if objects > set.MaxObjects || bytes+p.reserved-held > set.MaxBytes {
 		return ErrStorageFull
 	}
 
-	b.objects[req.Key] = o
+	b.objects[key] = o
 	p.objects, p.bytes = objects, bytes
-
-	r.releaseLocked()
 
 	return nil
 }

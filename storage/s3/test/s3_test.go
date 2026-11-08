@@ -136,6 +136,9 @@ func TestNil(t *testing.T) {
 
 	_, err = sg.PresignUploadURL(ctx, &storage.PresignUploadURLInput{BaseObjectInput: keyK})
 	require.ErrorIs(t, err, storage.ErrNotInitialized)
+
+	_, err = p.CopyObject(ctx, &storage.CopyObjectInput{BaseObjectInput: keyK, Source: keyK})
+	require.EqualError(t, err, "gas/storage/s3: copy object: service not initialized")
 }
 
 // Init logs what it resolved and Close that it closed, and neither logs a

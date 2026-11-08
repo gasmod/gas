@@ -35,6 +35,9 @@ type Provider interface {
 	// ListObjects returns one page of the objects of a bucket, in the byte
 	// order of their keys.
 	ListObjects(ctx context.Context, in *ListObjectsInput) (*ListObjectsOutput, error)
+	// CopyObject copies an object, within a bucket or to another, and
+	// writes the copy at once and whole, as PutObject does.
+	CopyObject(ctx context.Context, in *CopyObjectInput) (*CopyObjectOutput, error)
 }
 
 // CreateBucketInput names the bucket CreateBucket creates.
@@ -145,6 +148,37 @@ type PutObjectInput struct {
 
 // PutObjectOutput is what PutObject reports of the object it wrote.
 type PutObjectOutput struct {
+	// ETag identifies the contents written, as ObjectInfo.ETag.
+	ETag string
+	// Version identifies the version written, or is empty on a backend
+	// that does not keep versions.
+	Version string
+	// Size is the length of the contents written, in bytes.
+	Size int64
+}
+
+// CopyObjectInput names the object CopyObject copies and the object it
+// writes, as S3's CopyObject does: the embedded BaseObjectInput names the
+// destination, and Source the source. By default the copy keeps the
+// source's header fields and metadata; with Replace set it gets those of
+// the embedded ObjectHeaders instead, as PutObject would store them.
+type CopyObjectInput struct {
+	BaseObjectInput
+	ObjectHeaders
+
+	// Source names the object copied, as BaseObjectInput does: a nil
+	// Bucket is the configured bucket.
+	Source BaseObjectInput
+	// Replace gives the destination the header fields and metadata of
+	// ObjectHeaders, nil ContentType as DefaultContentType, instead of the
+	// source's, as S3's REPLACE metadata directive does. Without it every
+	// field of ObjectHeaders must be nil, and Metadata empty.
+	Replace bool
+}
+
+// CopyObjectOutput is what CopyObject reports of the object it wrote, as
+// PutObjectOutput does.
+type CopyObjectOutput struct {
 	// ETag identifies the contents written, as ObjectInfo.ETag.
 	ETag string
 	// Version identifies the version written, or is empty on a backend

@@ -71,6 +71,12 @@ func TestConformance_LocalStack(t *testing.T) {
 
 	skip["ListNonASCII"] = "LocalStack 4.14 ends a page listed with encoding-type=url " +
 		"and a continuation token before a key that is not ASCII, which S3 lists"
+	skip["CopyKeepsExpires"] = "LocalStack 4.14 drops Expires from a copy with the COPY " +
+		"metadata directive, which S3 documents as keeping all metadata but the " +
+		"website redirect location"
+	skip["CopyConcurrent"] = "LocalStack 4.14 at times stalls CopyObjects that cross, a to b " +
+		"and b to a, at once, until they time out, as it does those the AWS SDK sends " +
+		"without the store"
 
 	conformance.Run(t, subject(func(bucket string) *s3store.Config {
 		return localStackConfig(endpoint, bucket)

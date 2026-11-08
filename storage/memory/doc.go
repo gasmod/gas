@@ -57,6 +57,12 @@
 // tags. Then `bucket`, when set, must be a valid bucket name. A failure
 // wraps storage.ErrInvalidConfig and names the setting, never its value.
 //
+// [Provider.Config] returns a copy of the configuration the last
+// successful Init bound, defaults included: the zero Config before the
+// first, and the last one bound after Close. A failed Init leaves it as
+// it was, and changing the copy changes nothing in the store. It is safe
+// to call at any time, while Init or Close runs included.
+//
 // # Store
 //
 // The buckets and their objects belong to the Provider, not to one Init:
@@ -80,6 +86,13 @@
 // missing bucket are storage.ErrObjectNotFound and
 // storage.ErrBucketNotFound. HeadBucket returns the name, and the region
 // is always empty.
+//
+// CopyObject looks up the source, then the destination's bucket, and
+// stores the copy, all under the store's lock, so that it sees the source
+// as one write stored it and stores the copy whole. The copy shares the
+// source's contents, which no write changes, but counts toward
+// `maxbytes` and `maxobjects` as an object of its own, and one past them
+// fails with ErrStorageFull and writes nothing.
 //
 // GetObject's Body is also an io.Seeker over the bytes selected. It
 // shares the stored bytes, which no write changes, so it stays readable
@@ -131,7 +144,8 @@
 // operation. A configuration that fails its tags gets the validator's
 // error after `gas/storage/memory: init: invalid config: validate config: `.
 // The other errors, as returned, with `put object` and `get object`
-// standing for each operation that can fail the same way:
+// standing for each operation that can fail the same way, `copy object`
+// included:
 //
 //	gas/storage/memory: logger is nil
 //	gas/storage/memory: option is nil: at position 0
@@ -150,6 +164,8 @@
 //	gas/storage/memory: put object: precondition failed
 //	gas/storage/memory: put object: object not found
 //	gas/storage/memory: put object: storage full
+//	gas/storage/memory: copy object: source: invalid key: empty
+//	gas/storage/memory: copy object: invalid argument: copies an object onto itself without Replace
 //	gas/storage/memory: create bucket: storage full
 //	gas/storage/memory: get object: object not found
 //	gas/storage/memory: get object: object not found: bucket not found

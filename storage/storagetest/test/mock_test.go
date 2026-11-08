@@ -69,6 +69,13 @@ func TestMockProvider_Defaults(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, &storage.PutObjectOutput{}, out)
 
+	copied, err := m.CopyObject(
+		ctx,
+		&storage.CopyObjectInput{Source: storage.BaseObjectInput{Key: "k"}},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, &storage.CopyObjectOutput{}, copied)
+
 	_, err = m.HeadObject(ctx, &storage.HeadObjectInput{Key: "k"})
 	require.ErrorIs(t, err, storage.ErrObjectNotFound)
 
@@ -112,6 +119,9 @@ func TestMockProvider_Fields(t *testing.T) {
 		ListObjectsFn: func(context.Context, *storage.ListObjectsInput) (*storage.ListObjectsOutput, error) {
 			return nil, errOffline
 		},
+		CopyObjectFn: func(context.Context, *storage.CopyObjectInput) (*storage.CopyObjectOutput, error) {
+			return nil, errOffline
+		},
 	}
 	ctx := t.Context()
 
@@ -129,6 +139,9 @@ func TestMockProvider_Fields(t *testing.T) {
 	require.ErrorIs(t, err, errOffline)
 
 	_, err = m.ListObjects(ctx, nil)
+	require.ErrorIs(t, err, errOffline)
+
+	_, err = m.CopyObject(ctx, nil)
 	require.ErrorIs(t, err, errOffline)
 
 	info, err := m.HeadObject(ctx, nil)
@@ -226,6 +239,8 @@ func TestMock_CallsAreCopies(t *testing.T) {
 }
 
 // Every input type is recorded as a copy of its own type.
+//
+//nolint:funlen // one call per input type.
 func TestMock_EveryInput(t *testing.T) {
 	t.Parallel()
 
@@ -243,6 +258,22 @@ func TestMock_EveryInput(t *testing.T) {
 	_, _ = m.HeadObject(ctx, &storage.HeadObjectInput{Key: "k", Range: new("bytes=0-1")})
 	_, _ = m.GetObject(ctx, &storage.GetObjectInput{Key: "k", Version: new("v")})
 	_ = m.DeleteObject(ctx, &storage.DeleteObjectInput{Key: "k", Version: new("v")})
+
+	copyIn := &storage.CopyObjectInput{
+		Bucket: new("b"), Key: "k",
+		Metadata:    map[string]string{"a": "1"},
+		ContentType: new("text/plain"),
+		Source:      storage.BaseObjectInput{Bucket: new("s"), Key: "src"},
+		Replace:     true,
+	}
+
+	_, _ = m.CopyObject(ctx, copyIn)
+
+	copyIn.Metadata["a"] = "changed"
+	*copyIn.ContentType = "changed"
+	*copyIn.Bucket = "changed"
+	*copyIn.Source.Bucket = "changed"
+
 	_, _ = p.PresignUploadURL(ctx, &storage.PresignUploadURLInput{Key: "k", TTL: new(time.Minute)})
 	_, _ = p.PresignDownloadURL(ctx, &storage.PresignDownloadURLInput{
 		Key: "k", ResponseContentType: new("text/plain"),
@@ -256,6 +287,7 @@ func TestMock_EveryInput(t *testing.T) {
 		"HeadObject",
 		"GetObject",
 		"DeleteObject",
+		"CopyObject",
 	}
 
 	calls := m.Calls()
@@ -267,6 +299,13 @@ func TestMock_EveryInput(t *testing.T) {
 	}
 
 	assert.Equal(t, &storage.GetObjectInput{Key: "k", Version: new("v")}, calls[5].Args[0])
+	assert.Equal(t, &storage.CopyObjectInput{
+		Bucket: new("b"), Key: "k",
+		Metadata:    map[string]string{"a": "1"},
+		ContentType: new("text/plain"),
+		Source:      storage.BaseObjectInput{Bucket: new("s"), Key: "src"},
+		Replace:     true,
+	}, calls[7].Args[0])
 
 	pcalls := p.Calls()
 	require.Len(t, pcalls, 2)

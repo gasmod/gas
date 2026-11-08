@@ -62,6 +62,52 @@ func TestDoc_Usage(t *testing.T) {
 	assert.Equal(t, map[string]string{"author": "Ann"}, obj.Metadata)
 }
 
+// The example of the package documentation's Copies section copies an
+// object of the configured bucket to another bucket, with its header
+// fields and metadata.
+func TestDoc_Copy(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	cfg := memory.DefaultConfig()
+
+	cfg.Storage.Bucket = "photos"
+
+	store, err := memory.New(memory.WithConfig(cfg))(nil, &gas.NopLogger{})
+	require.NoError(t, err)
+	require.NoError(t, store.Init(ctx))
+
+	defer func() { require.NoError(t, store.Close(ctx)) }()
+
+	archive := "archive"
+
+	require.NoError(t, store.CreateBucket(ctx, &storage.CreateBucketInput{Bucket: archive}))
+
+	_, err = store.PutObject(ctx, &storage.PutObjectInput{
+		Key:         "cats/tom.jpg",
+		Body:        strings.NewReader("Tom"),
+		ContentType: new("image/jpeg"),
+		Metadata:    map[string]string{"Author": "Ann"},
+	})
+	require.NoError(t, err)
+
+	_, err = store.CopyObject(ctx, &storage.CopyObjectInput{
+		Bucket: &archive,
+		Key:    "cats/tom.jpg",
+		Source: storage.BaseObjectInput{Key: "cats/tom.jpg"},
+	})
+	require.NoError(t, err)
+
+	info, err := store.HeadObject(
+		ctx,
+		&storage.HeadObjectInput{Bucket: &archive, Key: "cats/tom.jpg"},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), info.Size)
+	assert.Equal(t, "image/jpeg", info.ContentType)
+	assert.Equal(t, map[string]string{"author": "Ann"}, info.Metadata)
+}
+
 // The listing loop of the package documentation's Listing section lists
 // every key under the prefix once.
 func TestDoc_Listing(t *testing.T) {
@@ -178,6 +224,19 @@ func TestDoc_Errors(t *testing.T) {
 			edit(in)
 
 			_, err := storage.CheckPresignUpload(in, "photos")
+
+			return err
+		}
+	}
+	copyIn := func(edit func(*storage.CopyObjectInput)) func() error {
+		return func() error {
+			in := &storage.CopyObjectInput{
+				Key:    "dst",
+				Source: storage.BaseObjectInput{Key: "src"},
+			}
+			edit(in)
+
+			_, err := storage.CheckCopy(in, "photos")
 
 			return err
 		}
@@ -318,6 +377,23 @@ func TestDoc_Errors(t *testing.T) {
 			_, err := storage.CheckPresignTTL(new(time.Millisecond))
 
 			return err
+		},
+		"source: invalid key: empty": copyIn(
+			func(in *storage.CopyObjectInput) { in.Source.Key = "" }),
+		"destination: invalid bucket: none given and none configured": func() error {
+			_, err := storage.CheckCopy(&storage.CopyObjectInput{
+				Key:    "k",
+				Source: storage.BaseObjectInput{Bucket: new("photos"), Key: "k"},
+			}, "")
+
+			return err
+		},
+		"invalid argument: header fields or metadata set without Replace": copyIn(
+			func(in *storage.CopyObjectInput) { in.ContentType = new("text/plain") }),
+		"invalid argument: copies an object onto itself without Replace": copyIn(
+			func(in *storage.CopyObjectInput) { in.Key = "src" }),
+		"invalid argument: source is longer than 5368709120 bytes": func() error {
+			return storage.CheckCopySize(storage.MaxCopySize + 1)
 		},
 		"invalid continuation token: empty": func() error {
 			_, err := storage.CheckListBuckets(

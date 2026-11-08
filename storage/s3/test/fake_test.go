@@ -424,6 +424,9 @@ func (f *fakeS3) objectOp(w http.ResponseWriter, r *http.Request, bucket, key st
 	case r.Method == http.MethodDelete && q.Has("uploadId"):
 		f.record("AbortMultipartUpload")
 		f.abort(w, r)
+	case r.Method == http.MethodPut && r.Header.Get("X-Amz-Copy-Source") != "":
+		f.record("CopyObject")
+		f.copyObject(w, r, b, key)
 	case r.Method == http.MethodPut:
 		f.record("PutObject")
 		f.put(w, r, b, key, body)
@@ -549,6 +552,77 @@ func (f *fakeS3) put(
 
 	f.store(w, b, key, &fakeObject{header: h, meta: meta, etag: md5Hex(body), data: body})
 	w.WriteHeader(http.StatusOK)
+}
+
+// copyResult is the reply of CopyObject.
+type copyResult struct {
+	XMLName      xml.Name `xml:"CopyObjectResult"`
+	ETag         string   `xml:"ETag"`
+	LastModified string   `xml:"LastModified"`
+}
+
+// copyObject copies the object x-amz-copy-source names to key in b, with
+// its header fields and metadata, or those of r under the REPLACE
+// metadata directive, honoring x-amz-copy-source-if-match, and refusing
+// a copy onto itself without REPLACE, as S3 does. The caller holds f.mu.
+//
+//nolint:cyclop // one case per rule S3 serves a copy with.
+func (f *fakeS3) copyObject(w http.ResponseWriter, r *http.Request, b *fakeBucket, key string) {
+	source, err := url.PathUnescape(r.Header.Get("X-Amz-Copy-Source"))
+	srcBucket, srcKey, ok := strings.Cut(strings.TrimPrefix(source, "/"), "/")
+
+	if err != nil || !ok {
+		fakeError(w, r, http.StatusBadRequest, "InvalidArgument")
+
+		return
+	}
+
+	sb, ok := f.buckets[srcBucket]
+
+	switch {
+	case !ok:
+		fakeError(w, r, http.StatusNotFound, "NoSuchBucket")
+
+		return
+	case sb.owner != testKeyID:
+		fakeError(w, r, http.StatusForbidden, "AccessDenied")
+
+		return
+	}
+
+	src := sb.objects[srcKey]
+	replace := r.Header.Get("X-Amz-Metadata-Directive") == "REPLACE"
+
+	switch m := r.Header.Get("X-Amz-Copy-Source-If-Match"); {
+	case src == nil:
+		fakeError(w, r, http.StatusNotFound, "NoSuchKey")
+
+		return
+	case m != "" && m != `"`+src.etag+`"`:
+		fakeError(w, r, http.StatusPreconditionFailed, "PreconditionFailed")
+
+		return
+	case !replace && sb == b && srcKey == key:
+		fakeError(w, r, http.StatusBadRequest, "InvalidRequest")
+
+		return
+	}
+
+	o := &fakeObject{
+		header: src.header.Clone(),
+		meta:   maps.Clone(src.meta),
+		etag:   src.etag,
+		data:   src.data,
+	}
+	if replace {
+		o.header, o.meta = headersOf(r)
+	}
+
+	f.store(w, b, key, o)
+	writeXML(w, copyResult{
+		ETag:         `"` + o.etag + `"`,
+		LastModified: o.modified.UTC().Format(listingTime),
+	})
 }
 
 // get answers a GetObject or a HeadObject of o, honoring a Range, a

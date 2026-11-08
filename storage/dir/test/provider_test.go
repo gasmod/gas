@@ -139,6 +139,7 @@ func TestProvider_Nil(t *testing.T) {
 	_, putErr := p.PutObject(ctx, &storage.PutObjectInput{BaseObjectInput: b})
 	_, getErr := p.GetObject(ctx, getIn("k"))
 	_, list := p.ListObjects(ctx, &storage.ListObjectsInput{})
+	_, copyErr := p.CopyObject(ctx, &storage.CopyObjectInput{BaseObjectInput: b, Source: b})
 
 	for _, err := range []error{
 		p.Init(ctx),
@@ -152,6 +153,7 @@ func TestProvider_Nil(t *testing.T) {
 		getErr,
 		p.DeleteObject(ctx, &storage.DeleteObjectInput{BaseObjectInput: b}),
 		list,
+		copyErr,
 	} {
 		require.ErrorIs(t, err, storage.ErrNotInitialized)
 	}

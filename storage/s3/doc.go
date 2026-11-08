@@ -91,6 +91,14 @@
 // A failure wraps storage.ErrInvalidConfig and names the setting, never
 // its value.
 //
+// [Provider.Config] returns a deep copy of the configuration the last
+// successful Init bound, defaults included: the zero Config before the
+// first, and the last one bound after Close. A failed Init leaves it as
+// it was. UsePathStyle, when set, points to a bool of its own, so
+// changing the copy changes nothing in the store, and the secrets keep
+// their type, [Secret], so they print and marshal as `[redacted]`. It is
+// safe to call at any time, while Init or Close runs included.
+//
 // # Credentials
 //
 // Init builds the client with the AWS SDK's default configuration, which
@@ -173,6 +181,30 @@
 // that printed the ID would write it to standard error, so the version
 // is pinned and must be checked when it changes.
 //
+// CopyObject sends a HeadObject of the source, which gives its length
+// and its ETag, then S3's CopyObject, with the source in
+// x-amz-copy-source, its bucket, `/` and its key with every byte but the
+// unreserved characters of RFC 3986 percent-encoded, and the ETag in
+// x-amz-copy-source-if-match, so that the size CopyObject returns is that
+// of the contents S3 copied. Without Replace it sends the COPY metadata
+// directive and no header field or metadata; with Replace, the REPLACE
+// directive with the input's, as PutObject sends them. A HeadObject that
+// finds no source, whose bodiless 404 does not tell a missing bucket from
+// a missing key, is followed by a HeadBucket of the source's bucket, so
+// that a source in a missing bucket is storage.ErrObjectNotFound and
+// storage.ErrBucketNotFound, as on the other backends; a NoSuchBucket
+// reply to the CopyObject is the destination's bucket, and is
+// storage.ErrBucketNotFound alone. A source that a write replaced since
+// its HeadObject fails the CopyObject with PreconditionFailed, which
+// writes nothing; CopyObject then starts again from the HeadObject, and
+// a copy refused with a conflict three times in all is [ErrConflict],
+// with the reason `conflict` and the code PreconditionFailed, never
+// storage.ErrPreconditionFailed, as the input holds no condition. S3
+// copies a source of up to 5 GiB in one request, in its own time, which
+// `optimeout` bounds, so copying a large object needs an `optimeout` long
+// enough. The copy's ETag is S3's: the MD5 of the contents for a source
+// written in one part without SSE-KMS.
+//
 // ListObjects sends ListObjectsV2 with encoding-type url, and decodes the
 // keys and the common prefixes, so that a key XML cannot carry is listed.
 // A continuation token of ListObjects or ListBuckets seals S3's own token,
@@ -218,7 +250,8 @@
 // first, the AWS SDK's retries and their backoff included, so a server
 // that stops answering cannot hold a call longer than `optimeout`, even
 // with a context that never ends. PutObject bounds each of its requests,
-// each part, by `optimeout`, so the whole write may take longer.
+// each part, by `optimeout`, so the whole write may take longer, and so
+// does CopyObject, each of its HeadObject, HeadBucket and CopyObject.
 // GetObject bounds the time until the response headers arrive; the Body
 // is then governed by GetObject's context alone, so that an object of any
 // size can be read, and a Close does not cut it short. Init retrieves the
@@ -240,7 +273,8 @@
 // too from HeadObject and GetObject; NoSuchKey storage.ErrObjectNotFound;
 // NoSuchVersion storage.ErrVersionNotFound; BucketAlreadyExists
 // storage.ErrBucketExists; BucketNotEmpty storage.ErrBucketNotEmpty;
-// PreconditionFailed storage.ErrPreconditionFailed; InvalidRange
+// PreconditionFailed storage.ErrPreconditionFailed, but from CopyObject,
+// as under Requests; InvalidRange
 // storage.ErrRangeNotSatisfiable. The bodiless 404 of a HEAD is
 // storage.ErrObjectNotFound from HeadObject, and storage.ErrBucketNotFound
 // from HeadBucket and CheckReady.
@@ -261,8 +295,9 @@
 //     AuthorizationHeaderMalformed and IllegalLocationConstraintException,
 //     wrapping [ErrWrongRegion] and storage.ErrBackend: the bucket is in
 //     another region than the client's.
-//   - `conflict`: ConditionalRequestConflict and OperationAborted,
-//     wrapping [ErrConflict] and storage.ErrBackend.
+//   - `conflict`: ConditionalRequestConflict and OperationAborted, and
+//     PreconditionFailed from CopyObject, wrapping [ErrConflict] and
+//     storage.ErrBackend.
 //   - `failed`: any other reply, wrapping storage.ErrBackend.
 //
 // A reply that a deadline cut the retries of short wraps
@@ -393,7 +428,8 @@
 //	Key: 'Config.Storage.OpTimeout' Error:Field validation for 'OpTimeout' failed on the 'gt' tag
 //
 // The other errors, as returned, with `get object` and `put object`
-// standing for each operation that can fail the same way:
+// standing for each operation that can fail the same way, `copy object`
+// included:
 //
 //	gas/storage/s3: logger is nil
 //	gas/storage/s3: option is nil: at position 0
@@ -439,6 +475,10 @@
 //	gas/storage/s3: put object: read body: disk gone
 //	gas/storage/s3: put object: precondition failed
 //	gas/storage/s3: put object: conflict (ConditionalRequestConflict)
+//	gas/storage/s3: copy object: source: invalid key: empty
+//	gas/storage/s3: copy object: invalid argument: copies an object onto itself without Replace
+//	gas/storage/s3: copy object: invalid argument: source is longer than 5368709120 bytes
+//	gas/storage/s3: copy object: conflict (PreconditionFailed)
 //	gas/storage/s3: put object: context canceled; upload not aborted: failed (InternalError)
 //	gas/storage/s3: close: context deadline exceeded
 //	gas/storage/s3/presigner: presign upload: invalid argument: ContentLength is required

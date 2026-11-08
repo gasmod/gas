@@ -192,6 +192,103 @@ func TestCheckPut(t *testing.T) {
 	}
 }
 
+// CheckCopy returns the checked copy: the source, then the destination,
+// each with the configured bucket for a nil one; with Replace, the header
+// values with the default Content-Type and a copy of the metadata in
+// lower case; without it, none, and never the source as the destination.
+//
+//nolint:funlen // one case per rule.
+func TestCheckCopy(t *testing.T) {
+	t.Parallel()
+
+	src := storage.BaseObjectInput{Key: "src"}
+	md := map[string]string{"Author": "Ann"}
+
+	req, err := storage.CheckCopy(&storage.CopyObjectInput{
+		Bucket: new("archive"), Key: "dst",
+		Source: src,
+	}, "photos")
+	require.NoError(t, err)
+	assert.Equal(t, storage.CopyRequest{
+		Source:      storage.ObjectRef{Bucket: "photos", Key: "src"},
+		Destination: storage.ObjectRef{Bucket: "archive", Key: "dst"},
+	}, req)
+
+	req, err = storage.CheckCopy(&storage.CopyObjectInput{
+		BaseObjectInput: src,
+		Metadata:        md, CacheControl: new("no-cache"),
+		Source:  src,
+		Replace: true,
+	}, "photos")
+	require.NoError(t, err)
+	assert.True(t, req.Replace)
+	assert.Equal(t, req.Source, req.Destination)
+	assert.Equal(t, storage.HeaderValues{
+		ContentType:  storage.DefaultContentType,
+		CacheControl: "no-cache",
+	}, req.HeaderValues)
+	assert.Equal(t, map[string]string{"author": "Ann"}, req.Metadata)
+	assert.Equal(t, map[string]string{"Author": "Ann"}, md)
+
+	for want, in := range map[string]*storage.CopyObjectInput{
+		"source: invalid key: empty": {BaseObjectInput: src},
+		"source: invalid bucket: not 3 to 63 bytes": {
+			BaseObjectInput: storage.BaseObjectInput{Key: ""},
+			Source:          storage.BaseObjectInput{Bucket: new(""), Key: "k"},
+		},
+		"destination: invalid key: empty": {Source: src},
+		"destination: invalid bucket: holds a character other than a-z, 0-9, . and -": {
+			BaseObjectInput: storage.BaseObjectInput{Bucket: new("A_B"), Key: "k"},
+			Source:          src,
+		},
+		"invalid header: ContentType is empty": {
+			BaseObjectInput: src,
+			ObjectHeaders: storage.ObjectHeaders{
+				ContentType: new(""),
+				Metadata:    map[string]string{"": "v"},
+			},
+			Source:  src,
+			Replace: true,
+		},
+		"invalid metadata: a name is not an HTTP token": {
+			BaseObjectInput: src,
+			ObjectHeaders:   storage.ObjectHeaders{Metadata: map[string]string{"": "v"}},
+			Source:          src,
+			Replace:         true,
+		},
+		"invalid argument: header fields or metadata set without Replace": {
+			BaseObjectInput: src,
+			ObjectHeaders:   storage.ObjectHeaders{Metadata: map[string]string{"n": "v"}},
+			Source:          src,
+		},
+		"invalid argument: header fields or metadata set without Replace ": {
+			BaseObjectInput: storage.BaseObjectInput{Key: "dst"},
+			ObjectHeaders:   storage.ObjectHeaders{Expires: new("")},
+			Source:          src,
+		},
+		"invalid argument: copies an object onto itself without Replace": {
+			BaseObjectInput: storage.BaseObjectInput{Bucket: new("photos"), Key: "src"},
+			ObjectHeaders:   storage.ObjectHeaders{Metadata: map[string]string{}},
+			Source:          src,
+		},
+	} {
+		_, err = storage.CheckCopy(in, "photos")
+		require.EqualError(t, err, strings.TrimRight(want, " "))
+	}
+}
+
+// CheckCopySize refuses a source longer than MaxCopySize, and only that.
+func TestCheckCopySize(t *testing.T) {
+	t.Parallel()
+
+	require.NoError(t, storage.CheckCopySize(0))
+	require.NoError(t, storage.CheckCopySize(storage.MaxCopySize))
+
+	err := storage.CheckCopySize(storage.MaxCopySize + 1)
+	require.ErrorIs(t, err, storage.ErrInvalidArgument)
+	require.EqualError(t, err, "invalid argument: source is longer than 5368709120 bytes")
+}
+
 // CheckHeaders checks the fields in their order and names the one that
 // breaks a rule; a nil ContentType is the default.
 func TestCheckHeaders(t *testing.T) {
