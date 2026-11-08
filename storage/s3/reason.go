@@ -7,7 +7,6 @@ import (
 	"net"
 	"os"
 	"strings"
-	"syscall"
 
 	"github.com/aws/smithy-go"
 
@@ -167,7 +166,7 @@ func classify(op string, err error) (string, []error) {
 		return reasonInvalidReply, []error{storage.ErrBackend}
 	case errors.Is(err, io.ErrUnexpectedEOF):
 		return reasonUnexpectedEOF, []error{storage.ErrBackend, io.ErrUnexpectedEOF}
-	case errors.Is(err, syscall.ECONNREFUSED):
+	case isRefused(err):
 		return reasonRefused, []error{ErrConnect, storage.ErrBackend}
 	case errors.As(err, &netErr):
 		return reasonUnreachable, []error{ErrConnect, storage.ErrBackend}
