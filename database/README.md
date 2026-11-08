@@ -28,10 +28,10 @@ dialect, `postgres`, `mysql` or `sqlite`, and a DSN; SQLite needs the app to imp
 
 ## Documentation
 
-The full guide, with configuration, testing, and worked examples, is on the docs site.
+The full documentation is on the docs site.
 This README is deliberately a signpost: keeping a second copy here is how the docs drifted before.
 
-- **Guide:** [Database](https://gasmod.github.io/gas/modules/database/)
+- **Docs:** [database](https://gasmod.github.io/gas/reference/database/)
 - **API reference:** [pkg.go.dev/github.com/gasmod/gas/database](https://pkg.go.dev/github.com/gasmod/gas/database)
 - **Contributing:** [CONTRIBUTING.md](../CONTRIBUTING.md)
 

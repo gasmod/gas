@@ -28,10 +28,10 @@ endpoint and a `Marshaler`, such as `gaslog.NewOTLPMarshaler()`.
 
 ## Documentation
 
-The full guide, with configuration, testing, and worked examples, is on the docs site.
+The full documentation is on the docs site.
 This README is deliberately a signpost: keeping a second copy here is how the docs drifted before.
 
-- **Guide:** [Logging](https://gasmod.github.io/gas/modules/logging/)
+- **Docs:** [log](https://gasmod.github.io/gas/reference/log/)
 - **API reference:** [pkg.go.dev/github.com/gasmod/gas/log](https://pkg.go.dev/github.com/gasmod/gas/log)
 - **Contributing:** [CONTRIBUTING.md](../CONTRIBUTING.md)
 

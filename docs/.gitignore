@@ -19,3 +19,6 @@ pnpm-debug.log*
 
 # macOS-specific files
 .DS_Store
+
+# reference pages, generated from the Go doc by gen/
+src/content/docs/reference/

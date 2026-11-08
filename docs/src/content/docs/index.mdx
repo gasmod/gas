@@ -1,67 +1,69 @@
 ---
-title: Gas Docs
-description: Documentation for the modular Go framework for SaaS backends.
+title: Gas
+description: A modular Go framework for building SaaS backends.
 ---
 
-import { CardGrid, Code, LinkCard } from '@astrojs/starlight/components';
-import landing from '../../../snippets/landing/main.go?raw';
-import { region } from '../../lib/snippet';
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
 
-## What is Gas?
+Gas is a modular Go framework for SaaS backends. The core gives you
+dependency injection, routing, middleware, events and a service lifecycle.
+Everything else is an optional module, each its own Go module, so your app
+only pulls in what it uses.
 
-Gas is a modular Go framework for building SaaS backends. It provides
-dependency injection, routing, middleware, events, and service lifecycle so
-each application starts with working infrastructure and a clear structure.
+## A complete app
 
-The framework has a small core package, `github.com/gasmod/gas`, and optional
-modules for databases, configuration, authentication, storage, email, queues,
-and more. Each module is its own Go module, so applications only add the
-dependencies they use.
+```go
+package main
 
-## How to use these docs
+import (
+	"log"
+	"net/http"
 
-The docs are organized by the parts of an application:
+	"github.com/gasmod/gas"
+)
 
-- **[Getting started](/gas/start/introduction/)**: install Gas, learn the
-  project structure, and build a notes API.
-- **[Core](/gas/core/lifecycle/)**: services, routing, middleware, events, and
-  application lifecycle.
-- **[Modules](/gas/modules/overview/)**: optional integrations and their
-  provider interfaces.
-- **[Production](/gas/production/deployment/)**: testing and deployment.
+func main() {
+	app := gas.NewApp()
 
-Use the sidebar to browse topics, or search with `Ctrl+K` / `⌘K` to find a
-specific API or behavior.
+	app.Router().Handle(nil, http.MethodGet, "/", func(ctx gas.Context) error {
+		return ctx.Text(http.StatusOK, "Hello, World!")
+	})
 
-## Start a new app
-
-Add the core package to your Go module:
-
-```sh
-go get github.com/gasmod/gas
+	if err := app.Run(); err != nil {
+		log.Fatal(err)
+	}
+}
 ```
 
-This small program is a complete Gas app. `Run` starts the server, waits for a
-shutdown signal, and closes the app's services.
+`go run .` starts a server on port 8080. Ctrl+C shuts it down gracefully.
 
-<Code code={region(landing, 'app')} lang="go" title="main.go" />
-
-## Next steps
+## Get started
 
 <CardGrid>
 	<LinkCard
-		title="Build a JSON API"
-		href="/gas/start/tutorial/"
-		description="Follow the notes API tutorial with SQLite, migrations, API keys, and tests."
+		title="Installation"
+		description="Add Gas to your project, register modules and run your first app."
+		href="/gas/start/installation/"
 	/>
 	<LinkCard
-		title="Build an HTML app"
-		href="/gas/project/examples/#templates-basic"
-		description="See layouts, partials, static files, and server-rendered pages."
+		title="Core"
+		description="The App, services and dependency injection, routing, handlers and middleware."
+		href="/gas/reference/gas/"
 	/>
-	<LinkCard
-		title="Run a background worker"
-		href="/gas/core/workers/"
-		description="Use the same service lifecycle without starting an HTTP server."
-	/>
+</CardGrid>
+
+## Modules
+
+<CardGrid>
+	<LinkCard title="config" description="Environment variables, .env, JSON and AWS Secrets Manager, bound to structs." href="/gas/reference/config/" />
+	<LinkCard title="log" description="Structured logging over slog or zerolog, with log shipping." href="/gas/reference/log/" />
+	<LinkCard title="database" description="PostgreSQL, MySQL and SQLite, with transaction helpers." href="/gas/reference/database/" />
+	<LinkCard title="migrate" description="Database migrations owned by the services that need them." href="/gas/reference/migrate/" />
+	<LinkCard title="auth" description="JWTs, sessions, API keys and single-use tokens." href="/gas/reference/auth/" />
+	<LinkCard title="cache" description="Key-value caching in memory or on Valkey." href="/gas/reference/cache/" />
+	<LinkCard title="storage" description="Object storage on S3, a local directory or memory." href="/gas/reference/storage/" />
+	<LinkCard title="queue" description="Job queues on Amazon SQS or in memory." href="/gas/reference/queue/" />
+	<LinkCard title="email" description="Transactional email over Amazon SES or an in-memory outbox." href="/gas/reference/email/" />
+	<LinkCard title="template" description="Template storage in memory, a directory, an embedded FS or a database." href="/gas/reference/template/" />
+	<LinkCard title="ui" description="HTML pages with layouts, partials, static files and HTMX fragments." href="/gas/reference/ui/" />
 </CardGrid>

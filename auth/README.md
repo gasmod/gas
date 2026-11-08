@@ -36,10 +36,10 @@ credentials and own migrations.
 
 ## Documentation
 
-The full guide, with configuration, testing, and worked examples, is on the docs site.
+The full documentation is on the docs site.
 This README is deliberately a signpost: keeping a second copy here is how the docs drifted before.
 
-- **Guide:** [Auth](https://gasmod.github.io/gas/modules/auth/)
+- **Docs:** [auth](https://gasmod.github.io/gas/reference/auth/)
 - **API reference:** [pkg.go.dev/github.com/gasmod/gas/auth](https://pkg.go.dev/github.com/gasmod/gas/auth)
 - **Contributing:** [CONTRIBUTING.md](../CONTRIBUTING.md)
 

@@ -6,13 +6,17 @@ on:
       - main
     paths:
       - 'docs/**'
-      - 'KNOWN_ISSUES.md'
+      # The reference pages are generated from the Go doc, so a Go change
+      # can change the site.
+      - '**/*.go'
       - '.github/workflows/docs.yml'
   # Pull requests build and check the site but never deploy it.
   pull_request:
     paths:
       - 'docs/**'
-      - 'KNOWN_ISSUES.md'
+      # The reference pages are generated from the Go doc, so a Go change
+      # can change the site.
+      - '**/*.go'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
 
@@ -30,15 +34,6 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
-      - name: Check claim quotes
-        # Every claim test quotes the page it backs; this fails when a quoted
-        # claim, its page, or its heading anchor no longer exists.
-        run: go test ./claims -run TestQuotes
-        working-directory: docs/snippets
-      - name: Check known issues page
-        # Keeps project/known-issues.mdx in sync with KNOWN_ISSUES.md.
-        run: go test ./claims/project-known-issues -run TestPageMatchesKnownIssues
-        working-directory: docs/snippets
       - uses: pnpm/action-setup@v6
         with:
           # Installs the pnpm version pinned by packageManager.
@@ -54,9 +49,8 @@ jobs:
         run: pnpm install --frozen-lockfile
         working-directory: docs
       - name: Build site
-        # Fails when a snippet region referenced by a page no longer exists in
-        # docs/snippets, or when an internal link does not resolve, so
-        # documentation drift breaks the build.
+        # Generates the reference pages from the Go doc, then builds. Fails
+        # when a link, including a doc link in a Go comment, does not resolve.
         run: pnpm build
         working-directory: docs
       - uses: actions/upload-pages-artifact@v5

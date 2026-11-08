@@ -6,7 +6,7 @@
 needs (dependency injection, routing, middleware, events, migrations, and service lifecycle management) so you
 can spend your time on business logic instead of rebuilding the same wiring for each project.
 
-📚 **[Documentation](https://gasmod.github.io/gas)** · [Getting started](https://gasmod.github.io/gas/start/installation/) · [Modules](https://gasmod.github.io/gas/modules/overview/) · [API reference](https://pkg.go.dev/github.com/gasmod/gas)
+📚 **[Documentation](https://gasmod.github.io/gas)** · [Getting started](https://gasmod.github.io/gas/start/installation/) · [Modules](https://gasmod.github.io/gas/#modules) · [API reference](https://pkg.go.dev/github.com/gasmod/gas)
 
 ## Quick start
 
@@ -42,7 +42,7 @@ go run .
 # ... INFO server started environment=development addr=0.0.0.0:8080
 ```
 
-That is a complete Gas app. From there you write [services](https://gasmod.github.io/gas/core/services/)
+That is a complete Gas app. From there you write [services](https://gasmod.github.io/gas/reference/gas/)
 and register modules the same way, letting the DI container wire them together.
 
 ## Modules

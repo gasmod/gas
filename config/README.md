@@ -32,10 +32,10 @@ anything else starts.
 
 ## Documentation
 
-The full guide, with configuration, testing, and worked examples, is on the docs site.
+The full documentation is on the docs site.
 This README is deliberately a signpost: keeping a second copy here is how the docs drifted before.
 
-- **Guide:** [Config](https://gasmod.github.io/gas/modules/config/)
+- **Docs:** [config](https://gasmod.github.io/gas/reference/config/)
 - **API reference:** [pkg.go.dev/github.com/gasmod/gas/config](https://pkg.go.dev/github.com/gasmod/gas/config)
 - **Contributing:** [CONTRIBUTING.md](../CONTRIBUTING.md)
 

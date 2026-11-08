@@ -29,10 +29,10 @@ registers the static routes, `/static/*` by default; there is none by default.
 
 ## Documentation
 
-The full guide, with configuration, testing, and worked examples, is on the docs site.
+The full documentation is on the docs site.
 This README is deliberately a signpost: keeping a second copy here is how the docs drifted before.
 
-- **Guide:** [UI](https://gasmod.github.io/gas/modules/ui/)
+- **Docs:** [ui](https://gasmod.github.io/gas/reference/ui/)
 - **API reference:** [pkg.go.dev/github.com/gasmod/gas/ui](https://pkg.go.dev/github.com/gasmod/gas/ui)
 - **Contributing:** [CONTRIBUTING.md](../CONTRIBUTING.md)
 

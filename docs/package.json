@@ -4,9 +4,10 @@
   "version": "0.0.1",
   "packageManager": "pnpm@12.11.2",
   "scripts": {
-    "dev": "astro dev",
-    "start": "astro dev",
-    "build": "astro build",
+    "gen": "cd gen && GOWORK=off go run . ../.. ../src/content/docs/reference",
+    "dev": "pnpm gen && astro dev",
+    "start": "pnpm gen && astro dev",
+    "build": "pnpm gen && astro build",
     "preview": "astro preview",
     "astro": "astro"
   },

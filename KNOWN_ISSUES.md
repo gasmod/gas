@@ -71,31 +71,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
 - **Next step**: decide whether the env provider requires a prefix by
   default, which is a breaking change, or keeps the warning only.
 
-## KI-085: the docs site does not build
-
-- **Status**: decision needed
-- **Area**: `docs`.
-- **Found**: 2026-10-31, v0.6.0 docs sweep.
-- **Detail**: commit a615e4c (`refactor: rework core and modules for
-  v0.6.0`) deleted `docs/snippets` (243 files). 31 of the 33 pages under
-  `docs/src/content/docs` import from it, such as
-  `from '../../../../snippets/core-errors/...'`, so `astro build` cannot
-  resolve them. The docs CI workflow (`.github/workflows/docs.yml:33-41`)
-  runs its claim and known-issues sync tests from `docs/snippets`, so it
-  fails too, and `.github/workflows/release.yml` still filters out the
-  removed `example/` and snippet directories. The
-  pages also describe the pre-v0.6.0 APIs: `WithGasEnv`, removed in
-  a615e4c, still appears in `modules/config.mdx`,
-  `production/deployment.mdx` and others, and `project/examples.mdx`
-  links to an `example/` directory that a615e4c also deleted (as do
-  `start/project-structure.mdx`, `core/workers.mdx` and
-  `production/deployment.mdx`). The build was not
-  run for this entry; the evidence is the missing import targets.
-- **Next step**: decide whether the site is rebuilt on the
-  `docs/site-rebuild` branch or on `release/v0.6.0`, then rebuild it
-  against the v0.6.0 APIs and fix the two workflows. A page-by-page change
-  list was drafted during the v0.6.0 rewrite.
-
 ## KI-086: the transfer manager logs a failed completion outside the store's logger
 
 - **Status**: open
@@ -153,17 +128,3 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
     container; it was not run.
 - **Next step**: run each case against real AWS, and the aws-ses-v2-local
   test, then pin the observed behavior in a test or the documentation.
-
-## KI-089: the migrations docs page predates the v0.6.0 migrate rewrite
-
-- **Status**: open
-- **Area**: `docs/src/content/docs/modules/migrations.mdx`.
-- **Found**: 2026-11-02, while adding migration checksums.
-- **Detail**: apart from the checksum material, the page still describes
-  v0.5: the MySQL DSN needing `parseTime=true` (lines 26 and 214), while
-  `migrate/doc.go` says the service never reads `applied_at`, so
-  parseTime does not matter; `migrate_version` as the version of
-  `gas/migrate` that applied it (line 287), while v0.6.0 writes it empty;
-  and, per the review that found this, ordering of versions by text, the
-  `ErrDuplicateVersion` wording and older error text.
-- **Next step**: rewrite the page against `migrate/doc.go`.

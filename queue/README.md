@@ -33,10 +33,10 @@ Each store's `Config()` returns the configuration its last successful `Init` res
 
 ## Documentation
 
-The full guide, with configuration, testing, and worked examples, is on the docs site.
+The full documentation is on the docs site.
 This README is deliberately a signpost: keeping a second copy here is how the docs drifted before.
 
-- **Guide:** [Queue](https://gasmod.github.io/gas/modules/queue/)
+- **Docs:** [queue](https://gasmod.github.io/gas/reference/queue/)
 - **API reference:** [pkg.go.dev/github.com/gasmod/gas/queue](https://pkg.go.dev/github.com/gasmod/gas/queue)
 - **Contributing:** [CONTRIBUTING.md](../CONTRIBUTING.md)
 

@@ -31,10 +31,10 @@ Each store's `Config()` returns the configuration its last successful `Init` res
 
 ## Documentation
 
-The full guide, with configuration, testing, and worked examples, is on the docs site.
+The full documentation is on the docs site.
 This README is deliberately a signpost: keeping a second copy here is how the docs drifted before.
 
-- **Guide:** [Cache](https://gasmod.github.io/gas/modules/cache/)
+- **Docs:** [cache](https://gasmod.github.io/gas/reference/cache/)
 - **API reference:** [pkg.go.dev/github.com/gasmod/gas/cache](https://pkg.go.dev/github.com/gasmod/gas/cache)
 - **Contributing:** [CONTRIBUTING.md](../CONTRIBUTING.md)
 

@@ -31,10 +31,10 @@ Each backend is a `gas.Service`, needs `gas.ConfigProvider` and `gas.Logger`, an
 
 ## Documentation
 
-The full guide, with configuration, testing, and worked examples, is on the docs site.
+The full documentation is on the docs site.
 This README is deliberately a signpost: keeping a second copy here is how the docs drifted before.
 
-- **Guide:** [Storage](https://gasmod.github.io/gas/modules/storage/)
+- **Docs:** [storage](https://gasmod.github.io/gas/reference/storage/)
 - **API reference:** [pkg.go.dev/github.com/gasmod/gas/storage](https://pkg.go.dev/github.com/gasmod/gas/storage)
 - **Contributing:** [CONTRIBUTING.md](../CONTRIBUTING.md)
 

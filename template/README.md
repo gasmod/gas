@@ -33,10 +33,10 @@ Stored templates are code: never let users write them.
 
 ## Documentation
 
-The full guide, with configuration, testing, and worked examples, is on the docs site.
+The full documentation is on the docs site.
 This README is deliberately a signpost: keeping a second copy here is how the docs drifted before.
 
-- **Guide:** [Templates](https://gasmod.github.io/gas/modules/templates/)
+- **Docs:** [template](https://gasmod.github.io/gas/reference/template/)
 - **API reference:** [pkg.go.dev/github.com/gasmod/gas/template](https://pkg.go.dev/github.com/gasmod/gas/template)
 - **Contributing:** [CONTRIBUTING.md](../CONTRIBUTING.md)
 

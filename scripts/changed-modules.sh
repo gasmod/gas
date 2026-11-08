@@ -14,7 +14,7 @@
 # a file that affects every build changed: go.work, go.work.sum,
 # .golangci.yml, the Makefile, scripts/, or .github/workflows/.
 #
-# Markdown files and the docs site sources (docs/src/) build no Go code and
+# Markdown files and the docs site (docs/), which holds no workspace module,
 # select nothing.
 #
 # Run by test.yml to pick which modules to lint, vet and test. release.yml
@@ -48,7 +48,7 @@ while IFS= read -r file; do
       all_modules
       exit 0
       ;;
-    *.md | *.mdx | docs/src/*)
+    *.md | *.mdx | docs/*)
       continue
       ;;
   esac

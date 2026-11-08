@@ -7,11 +7,8 @@ import SiteTitle from './SiteTitle.astro';
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const path = Astro.url.pathname;
 const onDocs = path === `${base}/` || path === base;
-const onGuides = path.startsWith(`${base}/start/`);
-const onModules = path.startsWith(`${base}/modules/`);
-const onExamples = path === `${base}/project/examples/`;
-const isGuidesPage = path === `${base}/start/introduction/`;
-const isModulesPage = path === `${base}/modules/overview/`;
+const onCore = path.startsWith(`${base}/reference/gas/`);
+const onRef = path.startsWith(`${base}/reference/`) && !onCore;
 ---
 
 <div class="gas-header">
@@ -19,9 +16,8 @@ const isModulesPage = path === `${base}/modules/overview/`;
 		<SiteTitle />
 		<nav class="gas-header-nav" aria-label="Primary navigation">
 			<a href={`${base}/`} aria-current={onDocs ? 'page' : undefined}>Docs</a>
-			<a class:active={onGuides} href={`${base}/start/introduction/`} aria-current={isGuidesPage ? 'page' : undefined}>Guides</a>
-			<a class:active={onModules} href={`${base}/modules/overview/`} aria-current={isModulesPage ? 'page' : undefined}>Modules</a>
-			<a href={`${base}/project/examples/`} aria-current={onExamples ? 'page' : undefined}>Examples</a>
+			<a class:active={onCore} href={`${base}/reference/gas/`}>Core</a>
+			<a class:active={onRef} href={`${base}/#modules`}>Modules</a>
 		</nav>
 	</div>
 	<div class="gas-header-actions">

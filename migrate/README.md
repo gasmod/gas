@@ -33,10 +33,10 @@ gas.WithSingletonService[gas.MigrationManager](migrate.New()),
 
 ## Documentation
 
-The full guide, with configuration, testing, and worked examples, is on the docs site.
+The full documentation is on the docs site.
 This README is deliberately a signpost: keeping a second copy here is how the docs drifted before.
 
-- **Guide:** [Migrations](https://gasmod.github.io/gas/modules/migrations/)
+- **Docs:** [migrate](https://gasmod.github.io/gas/reference/migrate/)
 - **API reference:** [pkg.go.dev/github.com/gasmod/gas/migrate](https://pkg.go.dev/github.com/gasmod/gas/migrate)
 - **Contributing:** [CONTRIBUTING.md](../CONTRIBUTING.md)
 
