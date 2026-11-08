@@ -50,27 +50,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
   restart replaces a service's middleware rather than adding to it; or
   reject a `Use` from a service's Init and point to named middleware.
 
-## KI-084: the config environment provider without a prefix loads every variable
-
-- **Status**: decision needed
-- **Area**: `config`, `provider_env.go`, `config.go`.
-- **Found**: 2026-10-30, v0.6.0 rewrite of the config module.
-- **Detail**: without `WithEnvPrefix`, `EnvProvider` loads every variable
-  of the process environment it keeps (`config/provider_env.go:65-77`),
-  and `config.New` with no provider adds one with no prefix
-  (`config/config.go:79-81`). Other tools' API keys and tokens, a
-  `DATABASE_URL` and the like become config keys. Printing is redacted:
-  `String`, `Format` and `LogValue` give counts only
-  (`config/config.go:346-371`). But `Values()` (`config/config.go:336`)
-  and `Get` (`config/config.go:291`) return them. Probe: with a fake
-  `KIPROBE_OTHER_TOOL_API_KEY` set in code, `config.New()` then `Load`
-  makes `Get("kiprobe_other_tool_api_key")` return the value and
-  `Values()` hold the key. The `EnvProvider` and `Values` godocs warn
-  against it. During the v0.6.0 rewrite a real token was exposed this
-  way.
-- **Next step**: decide whether the env provider requires a prefix by
-  default, which is a breaking change, or keeps the warning only.
-
 ## KI-086: the transfer manager logs a failed completion outside the store's logger
 
 - **Status**: open
