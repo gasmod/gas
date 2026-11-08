@@ -250,6 +250,13 @@ func (s *Store) List(ctx context.Context) ([]string, error) {
 
 	names, err := s.list(ctx, s.root)
 	if err != nil {
+		// On Linux a removed directory fails the walk rather than reading
+		// as empty, so the walk's error yields to the one present gives.
+		pErr := s.present(s.root)
+		if pErr != nil {
+			return nil, pErr
+		}
+
 		return nil, err
 	}
 
@@ -343,9 +350,14 @@ func (s *Store) RegisterFS(ctx context.Context, fsys fs.FS) error {
 // present returns nil when the directory the store opened is still at
 // its path, and otherwise an error wrapping template.ErrList, which names
 // no path: an open directory that was removed reads as empty, and a
-// directory moved away is not the one the store was given.
+// directory moved away is not the one the store was given. On Linux the
+// open directory of a removed one does not stat at all.
 func (s *Store) present(root *os.Root) error {
 	opened, err := root.Stat(".")
+	if files.Absent(err) {
+		return fmt.Errorf("%w: directory removed or moved", template.ErrList)
+	}
+
 	if err != nil {
 		return fmt.Errorf("%w: %q: %w", template.ErrList, ".", files.Cause(err))
 	}
