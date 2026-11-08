@@ -15,5 +15,9 @@ func IsMissing(err error) bool {
 	return errors.Is(err, os.ErrNotExist)
 }
 
+// renameMayHide is false: a rename replaces a file atomically, so a read of
+// its name finds the old file or the new one, never neither.
+const renameMayHide = false
+
 // isDeletePending is always false: removing a file frees its name at once.
 func isDeletePending(error) bool { return false }

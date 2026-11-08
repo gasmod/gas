@@ -41,3 +41,8 @@ func isDeletePending(err error) bool {
 	return errors.Is(err, windows.ERROR_ACCESS_DENIED) ||
 		errors.Is(err, windows.ERROR_DELETE_PENDING)
 }
+
+// renameMayHide is true: while a rename replaces a file, a read of its name
+// that does not hold the writer's lock can find it missing, as Stat of a
+// key being overwritten does.
+const renameMayHide = true

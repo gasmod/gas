@@ -59,12 +59,18 @@ func (b *Bucket) ListKeys(
 // before either names a data file that is gone, and a metadata file can be
 // renamed over while it is opened. Neither alone is proof of damage, so a
 // missing data file or a replaced metadata file is looked at again under
-// the key's lock, waiting for it until ctx ends.
+// the key's lock, waiting for it until ctx ends. Where a rename over a
+// file can briefly hide it (see renameMayHide), so is a missing metadata
+// file: a write renames under the key's lock, so the second read sees the
+// object or its absence whole.
 func (b *Bucket) Stat(ctx context.Context, key string) (ObjectStat, error) {
 	name := hash(key)
 
 	st, err := b.statUnlocked(name)
-	if !errors.Is(err, errDataFileGone) && !errors.Is(err, errReplaced) {
+
+	recheck := errors.Is(err, errDataFileGone) || errors.Is(err, errReplaced) ||
+		(renameMayHide && errors.Is(err, ErrObjectNotFound))
+	if !recheck {
 		return st, err
 	}
 
