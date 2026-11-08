@@ -1,6 +1,7 @@
 // Package sqs is a queue store on Amazon SQS, as a gas.JobQueueProvider.
 // It sends its requests with the AWS SDK for Go v2, so it also reaches an
 // emulator that speaks the SQS API, such as ElasticMQ or LocalStack.
+//
 // [Service] implements gas.Service, gas.JobQueueProvider and
 // gas.ReadyReporter, and keeps the contract of the queue package.
 //
@@ -36,7 +37,7 @@
 //     host and nothing after it but `/` (no user information, path, query
 //     or fragment), such as an emulator's. Default: none, the region's
 //     SQS endpoint. An `http` endpoint sends every request in clear text,
-//     the access key ID, the session token and the payloads included; use
+//     the access key ID, the session token and the payloads included. Use
 //     it only for an emulator on a network of its own, such as
 //     `http://elasticmq:9324` in a compose file.
 //   - `queue.accesskeyid`, `queue.secretaccesskey`, `queue.sessiontoken`:
@@ -54,13 +55,18 @@
 //     to [MaxRetries] (10), with the AWS SDK's standard retryer and its
 //     backoff. Default: [DefaultMaxRetries], 2, so 3 attempts.
 //
-// [Service.Init] resolves the configuration each time it runs. Without
-// [WithConfig], it binds [DefaultConfig] from the gas.ConfigProvider,
-// which checks the `validate` tags; a nil ConfigProvider is the error
-// queue.ErrNoConfigProvider. With WithConfig, it takes a copy of the given
-// Config, never changing the caller's struct, and checks the same tags; a
-// nil Config is the error queue.ErrNilConfig. Either way, these rules
-// then run, in this order, and the first that fails is the error:
+// [Service.Init] resolves the configuration each time it runs, from one
+// of two sources:
+//
+//   - Without [WithConfig], it binds [DefaultConfig] from the
+//     gas.ConfigProvider, which checks the `validate` tags. A nil
+//     ConfigProvider is the error queue.ErrNoConfigProvider.
+//   - With WithConfig, it takes a copy of the given Config, never
+//     changing the caller's struct, and checks the same tags. A nil
+//     Config is the error queue.ErrNilConfig.
+//
+// Either way, these rules then run, in this order, and the first that
+// fails is the error:
 //
 //  1. `visibilitytimeout` is 0 or at least a second.
 //  2. `endpoint`, when set, is an `http` or `https` URL with a host and
@@ -69,28 +75,35 @@
 // A failure wraps queue.ErrInvalidConfig and names the setting, never its
 // value.
 //
-// [Service.Config] returns a copy of the configuration the last successful
-// Init resolved, defaults included, or the zero Config before one; a
-// failed Init and Close leave it as it was. Its `secretaccesskey` and
-// `sessiontoken` stay a [Secret], which prints as `[redacted]`.
+// [Service.Config] returns a copy of the configuration the last
+// successful Init resolved, defaults included, or the zero Config before
+// one. A failed Init and Close leave it as it was. Its `secretaccesskey`
+// and `sessiontoken` stay a [Secret], which prints as `[redacted]`.
 //
 // # Credentials
 //
 // Init builds the client with the AWS SDK's default configuration, which
-// comes from the environment, such as `AWS_REGION` and
-// `AWS_ACCESS_KEY_ID`, the shared configuration and credentials files and
-// their profile, and the container and instance roles. Its HTTP client is
-// the store's own, on the AWS SDK's default transport, and follows no
-// redirect, as the SDK's does not. A `region` setting takes precedence over
-// the chain's region; without one, a region the chain does not find
-// fails Init with [ErrNoRegion]. Static credentials are used when both
-// `accesskeyid` and `secretaccesskey` are set, with `sessiontoken` when
-// it is set too; with either key empty, the chain's credentials apply, as
+// comes from:
+//
+//   - the environment, such as `AWS_REGION` and `AWS_ACCESS_KEY_ID`;
+//   - the shared configuration and credentials files, and their profile;
+//   - the container and instance roles.
+//
+// Its HTTP client is the store's own, on the AWS SDK's default transport.
+// It follows no redirect, as the SDK's does not.
+//
+// A `region` setting takes precedence over the chain's region. Without
+// one, a region the chain does not find fails Init with [ErrNoRegion].
+//
+// Static credentials are used when both `accesskeyid` and
+// `secretaccesskey` are set, with `sessiontoken` when it is set too. With
+// either key empty, the chain's credentials apply, as
 // config/secretsmanager does it, and the other static values are not
 // used. When some of them are set, but not both keys, Init logs
-// `static credentials incomplete, using the default chain` at warn level,
-// with `missing` naming the keys that are not set, never a value. AWS
-// configuration that fails to load, such as a profile that does not
+// `static credentials incomplete, using the default chain` at warn
+// level, with `missing` naming the keys that are not set, never a value.
+//
+// AWS configuration that fails to load, such as a profile that does not
 // exist, fails Init with queue.ErrInvalidConfig.
 //
 // Init retrieves the credentials within its context and `optimeout`, so
@@ -99,72 +112,101 @@
 // Init sends no request to SQS.
 //
 // [WithClient] gives the store a client to use instead, such as an
-// *sqs.Client built elsewhere or a fake of [API]; `region`, `endpoint`,
+// *sqs.Client built elsewhere or a fake of [API]. `region`, `endpoint`,
 // the credentials and `maxretries` then have no effect, and Init neither
 // checks a region nor retrieves credentials.
 //
 // # Queues
 //
 // A queue is named as the queue package describes. A queue URL is sent
-// as it is. A queue name is resolved with GetQueueUrl, which needs the
-// `sqs:GetQueueUrl` permission, on the first call that uses it; the URL
-// is kept until Close, and dropped when a request finds the queue does
-// not exist, so a queue deleted and created again is resolved anew. A
-// reply that is not a queue URL, as queue.ParseQueue reads one, of the
-// name asked for, fails the call with an invalid reply, and is not kept.
+// as it is.
+//
+// A queue name is resolved with GetQueueUrl, which needs the
+// `sqs:GetQueueUrl` permission, on the first call that uses it:
+//
+//   - The URL is kept until Close.
+//   - It is dropped when a request finds the queue does not exist, so a
+//     queue deleted and created again is resolved anew.
+//   - A reply that is not a queue URL, as queue.ParseQueue reads one, of
+//     the name asked for, fails the call with an invalid reply, and is
+//     not kept.
+//
 // Requests go to `endpoint`, or to the region's endpoint, whatever the
 // host of a queue URL.
 //
-// # Requests
+// # Sending
 //
-// Enqueue is SendMessage. Every attribute is sent as a `String`. A delay
-// is sent in whole seconds, rounded up, and none when it is 0, so the
-// queue's own delay applies. The AWS SDK checks the MD5 digest SQS
-// returns against the payload, which the payload rules keep valid. On a
-// FIFO queue, a message without a dedupe ID that SQS refuses with
+// Enqueue is SendMessage:
+//
+//   - Every attribute is sent as a `String`.
+//   - A delay is sent in whole seconds, rounded up, and none when it is
+//     0, so the queue's own delay applies.
+//   - The AWS SDK checks the MD5 digest SQS returns against the payload,
+//     which the payload rules keep valid.
+//
+// On a FIFO queue, a message without a dedupe ID that SQS refuses with
 // InvalidParameterValue, as it does on a queue without content-based
 // deduplication, gets an error that wraps queue.ErrInvalidArgument too.
 //
-// Dequeue is ReceiveMessage. It sends maxMessages; its wait in whole
-// seconds, rounded up, and a wait of 0 as `"WaitTimeSeconds":0`, which
-// the AWS SDK otherwise leaves out, so a queue whose
-// ReceiveMessageWaitTimeSeconds attribute is set still answers a short
-// poll at once; `visibilitytimeout` unless it is 0; and asks for every
-// message attribute and the system attributes the queue package lists.
-// On a FIFO queue it sends a ReceiveRequestAttemptId of its own, so that
-// a retry by the AWS SDK gets the same messages instead of hiding them.
+// # Receiving
+//
+// Dequeue is ReceiveMessage. It sends:
+//
+//   - maxMessages;
+//   - its wait in whole seconds, rounded up, and a wait of 0 as
+//     `"WaitTimeSeconds":0`, which the AWS SDK otherwise leaves out, so a
+//     queue whose ReceiveMessageWaitTimeSeconds attribute is set still
+//     answers a short poll at once;
+//   - `visibilitytimeout`, unless it is 0;
+//   - a request for every message attribute, and for the system
+//     attributes the queue package lists;
+//   - on a FIFO queue, a ReceiveRequestAttemptId of its own, so that a
+//     retry by the AWS SDK gets the same messages instead of hiding them.
+//
 // A job holds each message attribute with a string value, Number ones
-// included, but not Binary ones, which a producer outside the module
-// may send, and not one with the name of a system attribute, whose
-// place the system attribute takes. A reply with more than maxMessages
-// messages, or with a message without an ID or a receipt handle, is an
-// invalid reply: Dequeue makes its messages that have both visible
-// again, as Close's release does, and returns the error, with no jobs.
+// included. It does not hold Binary ones, which a producer outside the
+// module may send, nor one with the name of a system attribute, whose
+// place the system attribute takes.
+//
+// A reply with more than maxMessages messages, or with a message without
+// an ID or a receipt handle, is an invalid reply. Dequeue makes its
+// messages that have both visible again, as Close's release does, and
+// returns the error, with no jobs.
+//
+// # Acknowledging
 //
 // Ack is DeleteMessage. Nack, NackAfter and Extend are
 // ChangeMessageVisibility, with the visibility timeout in whole seconds,
-// rounded up, 0 for Nack; the AWS SDK sends 0 too. A message no longer
-// leased under the job's receipt handle gets an error reply:
-// MessageNotInflight wraps queue.ErrNotInFlight, ReceiptHandleIsInvalid
-// queue.ErrInvalidReceipt, and InvalidParameterValue, which LocalStack
-// sends, ErrCommand alone. ElasticMQ and LocalStack accept a Nack of a
-// message whose lease has ended, which SQS documents as
-// MessageNotInflight.
+// rounded up, 0 for Nack; the AWS SDK sends 0 too.
+//
+// A message no longer leased under the job's receipt handle gets an error
+// reply:
+//
+//   - MessageNotInflight wraps queue.ErrNotInFlight.
+//   - ReceiptHandleIsInvalid wraps queue.ErrInvalidReceipt.
+//   - InvalidParameterValue, which LocalStack sends, wraps ErrCommand
+//     alone.
+//
+// ElasticMQ and LocalStack accept a Nack of a message whose lease has
+// ended, which SQS documents as MessageNotInflight.
 //
 // # Timeouts
 //
 // Every request runs within its context and `optimeout`, whichever ends
-// first, the AWS SDK's retries and their backoff included, so a server
+// first, the AWS SDK's retries and their backoff included. So a server
 // that stops answering cannot hold a call longer than `optimeout`, even
 // with a context that never ends. A Dequeue runs within its wait plus
-// `optimeout`. The SDK retries a request after a network error, a
-// throttle and a server error, up to `maxretries` times; a send whose
-// reply was lost can then be stored twice, as at-least-once delivery
-// allows.
+// `optimeout`.
+//
+// The SDK retries a request after a network error, a throttle and a
+// server error, up to `maxretries` times. A send whose reply was lost can
+// then be stored twice, as at-least-once delivery allows.
+//
+// # Connection errors
 //
 // A request that fails at the connection returns an error wrapping
 // [ErrConnect] and a reason, never the AWS SDK's error, which holds the
-// endpoint:
+// endpoint. The reasons:
 //
 //   - `timed out`: a deadline passed, in a context or on the network.
 //     The error then wraps context.DeadlineExceeded too.
@@ -173,17 +215,21 @@
 //     lookup.
 //
 // A call whose own context ended returns the context's error after
-// `<op> "<queue>": `, wrapped, without ErrConnect. Which of the two a
-// timeout is depends on which deadline was in force: a timeout of a call
-// whose context's deadline is no later than `optimeout`'s is the
-// context's error.
+// `<op> "<queue>": `, wrapped, without ErrConnect.
+//
+// Which of the two a timeout is depends on which deadline was in force. A
+// timeout of a call whose context's deadline is no later than
+// `optimeout`'s is the context's error.
+//
+// # Error replies
 //
 // An error reply of SQS returns an error wrapping [ErrCommand], with a
-// reason told by its AWS error code, and the code, in parentheses, when
-// it is one SQS or the AWS APIs document; the reply's message, which can
-// quote a receipt handle, an attribute name or a parameter's value, is
-// never kept, nor a code of any other text. The reasons, in the order
-// they are told:
+// reason told by its AWS error code. The code follows, in parentheses,
+// when it is one SQS or the AWS APIs document. The reply's message, which
+// can quote a receipt handle, an attribute name or a parameter's value,
+// is never kept, nor a code of any other text.
+//
+// The reasons, in the order they are told:
 //
 //   - `queue does not exist`: QueueDoesNotExist, also wrapping
 //     queue.ErrQueueNotFound.
@@ -199,54 +245,79 @@
 //   - `invalid reply`: a reply SQS does not send: a body larger than 64
 //     MiB, which the client Init builds stops reading at, a client of
 //     [WithClient] that returns neither an output nor an error, a
-//     ReceiveMessage or GetQueueUrl reply as under Requests and Queues.
+//     ReceiveMessage or GetQueueUrl reply as under Receiving and Queues.
 //   - `failed`: any other reply, or a request that failed for another
 //     reason, such as a reply that is not valid JSON.
 //
 // # Lifecycle
 //
-// A successful Init publishes the client, logs `service initialized` at
-// info level with `region`, whether an `endpoint` and a `client` were
-// given, `credentials`, where the client Init built takes them from,
-// `static` or `default chain`, left out with [WithClient], and
-// `op_timeout`, and only then do the methods use it. Init on an
-// initialized store returns queue.ErrAlreadyInitialized and changes
-// nothing. A failed Init leaves the store as it was.
+// A successful Init publishes the client and logs `service initialized`
+// at info level, with:
 //
-// [Service.Close] makes the store closed, so that every later call
-// returns queue.ErrClosed, waits for every call in flight to return,
-// closes the idle connections of the client Init built, and logs
-// `service closed` at info level. While its context lasts, it does not
-// cut a call short. A Dequeue that has not sent its receive when Close
-// begins sends none and returns queue.ErrClosed. A Dequeue in flight
-// finishes its receive, which ends when a message comes or its wait
-// ends, then makes what it received visible again, with one
-// ChangeMessageVisibilityBatch of 0, all within one `optimeout`, and
-// returns queue.ErrClosed, joined with the error of the request, or of
-// each entry SQS reports failed. So Close can take as long as the
-// longest wait in flight plus twice `optimeout`: one for the receive, one
-// for the release. Cutting the receive short instead could strand
-// messages: ElasticMQ and LocalStack both hand a message sent during a
-// receive to that receive after its client has gone, where it stays
-// hidden for its visibility timeout, and SQS documents nothing that
-// rules it out. A Dequeue whose own context ends while it waits cuts its
-// receive the same way, so give a worker's Dequeue a context that
-// outlives its wait.
+//   - `region`;
+//   - whether an `endpoint` and a `client` were given;
+//   - `credentials`, where the client Init built takes them from, `static`
+//     or `default chain`, left out with [WithClient];
+//   - `op_timeout`.
 //
-// When Close's context ends before the calls in flight return, Close
-// cancels their requests, which may strand what a receive was handed as
-// above, logs `service closed, calls in flight canceled` at warn level,
-// and returns an error wrapping the context's error; the store stays
-// closed, and the canceled calls return queue.ErrClosed. Close on a
-// store that is not initialized returns nil and logs nothing. Init after
-// Close builds a new client, with a configuration resolved afresh.
+// Only then do the methods use the client. Init on an initialized store
+// returns queue.ErrAlreadyInitialized and changes nothing. A failed Init
+// leaves the store as it was.
 //
-// Before the first successful Init, every method but Init, Close, Name,
-// Client and Config returns an error wrapping queue.ErrNotInitialized;
-// after Close, until Init succeeds, queue.ErrClosed. [New]'s constructor
-// fails with queue.ErrNilLogger for a nil logger; a nil ConfigProvider is
-// accepted, and Init then requires WithConfig. A nil client given to
-// WithClient fails Init with [ErrNilClient].
+// Out of the initialized state:
+//
+//   - Before the first successful Init, every method but Init, Close,
+//     Name, Client and Config returns an error wrapping
+//     queue.ErrNotInitialized.
+//   - After Close, until Init succeeds, they return queue.ErrClosed.
+//
+// [New]'s constructor fails with queue.ErrNilLogger for a nil logger. A
+// nil ConfigProvider is accepted, and Init then requires WithConfig. A
+// nil client given to WithClient fails Init with [ErrNilClient].
+//
+// # Closing
+//
+// [Service.Close] runs these steps, in order:
+//
+//  1. It makes the store closed, so that every later call returns
+//     queue.ErrClosed.
+//  2. It waits for every call in flight to return. While its context
+//     lasts, it does not cut a call short.
+//  3. It closes the idle connections of the client Init built.
+//  4. It logs `service closed` at info level.
+//
+// A Dequeue that has not sent its receive when Close begins sends none
+// and returns queue.ErrClosed. A Dequeue in flight:
+//
+//  1. finishes its receive, which ends when a message comes or its wait
+//     ends;
+//  2. makes what it received visible again, with one
+//     ChangeMessageVisibilityBatch of 0, all within one `optimeout`;
+//  3. returns queue.ErrClosed, joined with the error of the request, or
+//     of each entry SQS reports failed.
+//
+// So Close can take as long as the longest wait in flight plus twice
+// `optimeout`: one for the receive, one for the release.
+//
+// Cutting the receive short instead could strand messages. ElasticMQ and
+// LocalStack both hand a message sent during a receive to that receive
+// after its client has gone, where it stays hidden for its visibility
+// timeout, and SQS documents nothing that rules it out. A Dequeue whose
+// own context ends while it waits cuts its receive the same way, so give
+// a worker's Dequeue a context that outlives its wait.
+//
+// When Close's context ends before the calls in flight return, Close:
+//
+//  1. cancels their requests, which may strand what a receive was handed
+//     as above;
+//  2. logs `service closed, calls in flight canceled` at warn level;
+//  3. returns an error wrapping the context's error.
+//
+// The store stays closed, and the canceled calls return queue.ErrClosed.
+//
+// Close on a store that is not initialized returns nil and logs nothing.
+// Init after Close builds a new client, with a configuration resolved
+// afresh.
 //
 // # Readiness
 //
@@ -257,35 +328,47 @@
 // # Client
 //
 // [Service.Client] returns the *sqs.Client, for the operations the store
-// has no method for, such as CreateQueue and PurgeQueue, or nil when the
-// store is not initialized or was given another [API]. Requests sent on
-// it are bounded only by their own context, and return the AWS SDK's
-// errors as they are, which can hold the endpoint and the queue URL.
+// has no method for, such as CreateQueue and PurgeQueue. It returns nil
+// when the store is not initialized or was given another [API].
+//
+// Requests sent on it are bounded only by their own context, and return
+// the AWS SDK's errors as they are, which can hold the endpoint and the
+// queue URL.
 //
 // # Security
 //
 // No error the store makes and no log it writes holds a payload, an
 // attribute, a receipt handle, a queue URL, the endpoint, or a
-// credential, the access key ID included. The logs carry the region,
-// whether an endpoint and a client were given, where the credentials
-// come from, the names of the static keys missing, and the operation
-// timeout. fmt, encoding/json, YAML encoders that use
-// encoding.TextMarshaler, and log/slog write the secret key and the
-// session token of a [Settings] or a [Config] as `[redacted]`, and
-// encoding/gob fails on them rather than encode them. Static
-// credentials in configuration are a secret of the app's; prefer a role,
-// which the default chain finds. An `http` endpoint sends the access key
-// ID, the session token and the payloads in clear text, as under
-// Configuration; the secret key only signs requests and is never sent.
+// credential, the access key ID included. The logs carry:
+//
+//   - the region;
+//   - whether an endpoint and a client were given;
+//   - where the credentials come from;
+//   - the names of the static keys missing;
+//   - the operation timeout.
+//
+// fmt, encoding/json, YAML encoders that use encoding.TextMarshaler, and
+// log/slog write the secret key and the session token of a [Settings] or
+// a [Config] as `[redacted]`. encoding/gob fails on them rather than
+// encode them.
+//
+// Static credentials in configuration are a secret of the app's. Prefer a
+// role, which the default chain finds.
+//
+// An `http` endpoint sends the access key ID, the session token and the
+// payloads in clear text, as under Configuration. The secret key only
+// signs requests and is never sent.
+//
 // The client Init builds reads no reply past 64 MiB, so an endpoint
-// cannot make it read without bound, and logs nothing: the AWS SDK's
-// default logger, which writes raw transport errors holding the
-// endpoint, is replaced with one that discards them.
+// cannot make it read without bound. It logs nothing: the AWS SDK's
+// default logger, which writes raw transport errors holding the endpoint,
+// is replaced with one that discards them.
 //
 // # Concurrency
 //
 // A Service is safe for concurrent use. Init and Close run one at a time.
-// Init swaps in what it built at once, so the other methods, which take
+//
+// Init swaps in what it built at once. So the other methods, which take
 // no lock but to count themselves in flight, use one Init's client
 // throughout a call. The resolved queue URLs are kept under a lock.
 //
@@ -296,9 +379,11 @@
 //   - [ErrNoRegion]: Init found no region.
 //   - [ErrNoCredentials]: Init could not retrieve credentials.
 //   - [ErrNilClient]: WithClient was given a nil client.
-//   - [ErrConnect]: a request got no reply, as under Timeouts.
+//   - [ErrConnect]: a request got no reply, as under Connection
+//     errors.
 //   - [ErrCommand]: SQS replied with an error, or with an invalid reply,
-//     or a request failed for another reason, as under Timeouts.
+//     or a request failed for another reason, as under Error
+//     replies.
 //   - [ErrAccessDenied], [ErrThrottled]: kinds of ErrCommand.
 //
 // The other errors wrap a sentinel of the queue package, as the queue

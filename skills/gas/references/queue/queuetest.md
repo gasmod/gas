@@ -29,21 +29,33 @@ a server, use gas/queue/memory.
 ## Defaults
 
 With a field nil, its method behaves as an empty queue that accepts
-everything: Dequeue returns no jobs and nil; Enqueue, Ack and Nack
-return nil.
+everything:
+
+- Dequeue returns no jobs and nil.
+- Enqueue, Ack and Nack return nil.
 
 ## Calls
 
 Each method appends a `Call` with its name and its arguments after the
-context, before it calls its field: the queue, the payload and the
-options, resolved into an `Options`, for Enqueue; the queue,
-maxMessages and the wait for Dequeue; the queue and the job for Ack and
-Nack. The payload, the attributes, and the job's body and attributes
-are recorded as copies, nil for nil, so that a caller that reuses them
-does not change a recorded call. Calls returns a deep copy of the calls
-in the order they were made, so that changing what it returns does not
-change them either, CallCount counts those of one method, and Reset
-forgets them all.
+context, before it calls its field. The arguments:
+
+- Enqueue: the queue, the payload, and the options, resolved into an
+`Options`.
+- Dequeue: the queue, maxMessages and the wait.
+- Ack and Nack: the queue and the job.
+
+The payload, the attributes, and the job's body and attributes are
+recorded as copies, nil for nil, so that a caller that reuses them does
+not change a recorded call.
+
+To read the record:
+
+- Calls returns a deep copy of the calls in the order they were made,
+so that changing what it returns does not change them either.
+- CallCount counts those of one method.
+- Reset forgets them all.
+
+## Concurrency
 
 The methods may be called from several goroutines at once, as the calls
 are kept under a lock, which Calls, CallCount and Reset take too.
