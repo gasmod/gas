@@ -15,7 +15,7 @@ go get github.com/gasmod/gas/config
 ```
 
 ```go
-cfg := config.New(config.WithProvider(config.NewEnvProvider()))
+cfg := config.New(config.WithProvider(config.NewEnvProvider(config.WithEnvPrefix("APP_"))))
 if err := cfg.Load(); err != nil { log.Fatal(err) }
 
 gas.WithServiceInstance[gas.ConfigProvider](cfg),

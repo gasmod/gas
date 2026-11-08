@@ -218,6 +218,8 @@
 //   - A map field takes a map with string keys; a slice field takes a list,
 //     or a string split on `,` with each element trimmed. Either replaces
 //     the field's value as a whole.
+//   - An array field takes a list no longer than the array, which replaces
+//     it as a whole; elements past the end of the list are zero.
 //   - A bool, integer or float field takes a value of that kind, or a string
 //     that parses as one, such as `8080`. A number that does not fit the
 //     field's type is an error.

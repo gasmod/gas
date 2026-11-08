@@ -14,8 +14,8 @@
 //	logger.Info("order placed").Str("order", "A-1").Int("items", 3).Send()
 //
 // Here zerolog is github.com/rs/zerolog and gaszerolog this package. The
-// line written is the JSON object with `level` `info`, the time, `order`,
-// `items` and `message` `order placed`. In an app, register the
+// line written is the JSON object with `level` `info`, `order`, `items`,
+// the time and `message` `order placed`. In an app, register the
 // constructor with gas.WithSingletonService[gas.Logger].
 //
 // # Levels
