@@ -6,10 +6,11 @@ import "github.com/gasmod/gas/storage/memory"
 
 Package memory is an object store held in the process's memory, as a
 storage.Provider. It keeps the contract of the storage package, and so
-the rules of Amazon S3, without a server or a disk: it suits tests and
-local development, and is local to one process and lost when the
-process stops. `Provider` implements storage.Provider, gas.Service and
-gas.ReadyReporter.
+the rules of Amazon S3, without a server or a disk.
+
+It suits tests and local development. The store is local to one process
+and lost when the process stops. `Provider` implements storage.Provider,
+gas.Service and gas.ReadyReporter.
 
 ## Usage
 
@@ -37,8 +38,11 @@ info, err := store.HeadObject(ctx, &storage.HeadObjectInput{Key: "cats/tom.txt"}
 ```
 
 After this the bucket `photos`, which Init created, holds `cats/tom.txt`,
-and info.Size is 3, info.ContentType `application/octet-stream`, and
-info.ETag the hex MD5 of `Tom`.
+and:
+
+- info.Size is 3.
+- info.ContentType is `application/octet-stream`.
+- info.ETag is the hex MD5 of `Tom`.
 
 ## Configuration
 
@@ -57,13 +61,16 @@ buckets, at least 1. Default: `DefaultMaxObjects` (100000).
 The store holds at most `MaxBuckets` buckets (10000), which is not a
 setting.
 
-`Provider.Init` resolves the configuration each time it runs. Without
-`WithConfig`, it binds `DefaultConfig` from the gas.ConfigProvider,
-which checks the `validate` tags; a nil ConfigProvider is the error
-storage.ErrNoConfigProvider. With WithConfig, it takes a copy of the
-given Config, never changing the caller's struct, and checks the same
-tags. Then `bucket`, when set, must be a valid bucket name. A failure
-wraps storage.ErrInvalidConfig and names the setting, never its value.
+`Provider.Init` resolves the configuration each time it runs:
+
+- Without `WithConfig`, it binds `DefaultConfig` from the
+gas.ConfigProvider, which checks the `validate` tags. A nil
+ConfigProvider is the error storage.ErrNoConfigProvider.
+- With WithConfig, it takes a copy of the given Config, never changing
+the caller's struct, and checks the same tags.
+
+Then `bucket`, when set, must be a valid bucket name. A failure wraps
+storage.ErrInvalidConfig and names the setting, never its value.
 
 `Provider.Config` returns a copy of the configuration the last
 successful Init bound, defaults included: the zero Config before the
@@ -73,62 +80,88 @@ to call at any time, while Init or Close runs included.
 
 ## Store
 
-The buckets and their objects belong to the Provider, not to one Init:
-Close keeps them, and Init after Close finds them as Close left them. A
-write that would take the store past `maxobjects` objects or `maxbytes`
-bytes, a CreateBucket past MaxBuckets, and an Init whose configured
-bucket would be one past it, fail with `ErrStorageFull` and change
-nothing.
+The buckets and their objects belong to the Provider, not to one Init.
+Close keeps them, and Init after Close finds them as Close left them.
 
-PutObject reads the body whole, outside the store's lock, then stores
+These fail with `ErrStorageFull` and change nothing:
+
+- a write that would take the store past `maxobjects` objects or
+`maxbytes` bytes;
+- a CreateBucket past MaxBuckets;
+- an Init whose configured bucket would be one past MaxBuckets.
+
+The store keeps no versions and no parts: a Version or a PartNumber is
+storage.ErrNotSupported.
+
+## Writes
+
+PutObject reads the body whole, outside the store's lock. It then stores
 the object under the lock, where it evaluates the condition and the
-limits. As it reads, it reserves room for each chunk of the body under
-the lock, and fails with `ErrStorageFull` as soon as the objects stored
-and the bodies every PutObject in flight has read so far would hold
-more than `maxbytes` bytes, so that writes in flight cannot hold more
-memory than the limit between them. A write that replaces an object
-thus needs room for both until it is stored. The store keeps a copy of
-the body as long as the body, so it holds the bytes it counts. The
-ETag is the hex MD5 of the contents. The store keeps no versions and no
-parts: a Version or a PartNumber is storage.ErrNotSupported. HeadObject
-and GetObject of an object in a missing bucket are
+limits.
+
+As it reads, it reserves room for each chunk of the body under the lock.
+It fails with `ErrStorageFull` as soon as the objects stored and the
+bodies every PutObject in flight has read so far would hold more than
+`maxbytes` bytes, so that writes in flight cannot hold more memory than
+the limit between them. A write that replaces an object thus needs room
+for both until it is stored.
+
+The store keeps a copy of the body as long as the body, so it holds the
+bytes it counts. The ETag is the hex MD5 of the contents.
+
+CopyObject looks up the source, then the destination's bucket, and
+stores the copy, all under the store's lock. So it sees the source as
+one write stored it, and stores the copy whole. The copy shares the
+source's contents, which no write changes, but counts toward `maxbytes`
+and `maxobjects` as an object of its own. A copy past them fails with
+ErrStorageFull and writes nothing.
+
+## Reads
+
+HeadObject and GetObject of an object in a missing bucket are
 storage.ErrObjectNotFound and storage.ErrBucketNotFound. HeadBucket
 returns the name, and the region is always empty.
 
-CopyObject looks up the source, then the destination's bucket, and
-stores the copy, all under the store's lock, so that it sees the source
-as one write stored it and stores the copy whole. The copy shares the
-source's contents, which no write changes, but counts toward
-`maxbytes` and `maxobjects` as an object of its own, and one past them
-fails with ErrStorageFull and writes nothing.
+GetObject's Body is also an io.Seeker over the bytes selected. It shares
+the stored bytes, which no write changes, so it stays readable:
 
-GetObject's Body is also an io.Seeker over the bytes selected. It
-shares the stored bytes, which no write changes, so it stays readable
-after Close, after the object is replaced or deleted, and after Body
-is closed; Close does nothing. The metadata a call returns is a copy.
+- after Close;
+- after the object is replaced or deleted;
+- after Body is closed. Its Close does nothing.
+
+The metadata a call returns is a copy.
+
+## Listing
 
 A continuation token holds its listing's last entry sealed with a key
 that Init draws at random, so a token from before a restart is
-storage.ErrInvalidToken. A page of ListObjects sorts the keys of the
-bucket that start with Prefix, so it costs as much as the bucket holds
-under Prefix.
+storage.ErrInvalidToken.
+
+A page of ListObjects sorts the keys of the bucket that start with
+Prefix, so it costs as much as the bucket holds under Prefix.
 
 ## Lifecycle
 
 A successful Init logs `service initialized` at info level, with
 `bucket`, whether a bucket is configured, `max_bytes` and
-`max_objects`; it never logs the bucket's name. `Provider.Close` makes
-the store closed, waits for the calls in flight, such as a PutObject
-that reads its body, and logs `service closed` at info level. When its
-context ends first, it cancels them, logs
+`max_objects`. It never logs the bucket's name.
+
+`Provider.Close` makes the store closed, waits for the calls in flight,
+such as a PutObject that reads its body, and logs `service closed` at
+info level. When its context ends first, it cancels them, logs
 `service closed, calls in flight canceled` at warn level, and returns
 an error wrapping the context's error. Close on a store that is not
 initialized, or on a nil Provider, returns nil and logs nothing.
 
-`New`'s constructor fails with storage.ErrNilLogger for a nil logger,
-storage.ErrNilOption for a nil option, naming its position, and
-storage.ErrNilConfig for WithConfig(nil); a nil ConfigProvider is
-accepted, and Init then requires WithConfig.
+`New`'s constructor fails with:
+
+- storage.ErrNilLogger for a nil logger;
+- storage.ErrNilOption for a nil option, naming its position;
+- storage.ErrNilConfig for WithConfig(nil).
+
+A nil ConfigProvider is accepted, and Init then requires WithConfig.
+
+## Readiness
 
 `Provider.CheckReady` does no I/O: it fails only when the store is not
 initialized or its context has ended.
@@ -136,8 +169,8 @@ initialized or its context has ended.
 ## Concurrency
 
 A Provider is safe for concurrent use. Init and Close run one at a
-time. One mutex guards the buckets and objects; a call holds it while
-it works, which is short and does no I/O, and PutObject does not hold it
+time. One mutex guards the buckets and objects. A call holds it while it
+works, which is short and does no I/O, and PutObject does not hold it
 while it reads a body.
 
 ## Errors

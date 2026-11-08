@@ -30,26 +30,37 @@ server, use gas/storage/memory.
 ## Defaults
 
 With a field nil, its method succeeds with a zero output, never a nil
-one: CreateBucket, DeleteBucket and DeleteObject return nil; HeadBucket
-a Bucket with the name asked for; ListBuckets and ListObjects an empty
-page; PutObject a zero PutObjectOutput, without reading the body;
-CopyObject a zero CopyObjectOutput; PresignUploadURL and
-PresignDownloadURL a PresignURLResponse with only its Method, PUT or
-GET. HeadObject and GetObject return
-storage.ErrObjectNotFound, as a store that holds no object does, so that
-code under test never gets a nil object with a nil error.
+one:
+
+- CreateBucket, DeleteBucket and DeleteObject return nil.
+- HeadBucket returns a Bucket with the name asked for.
+- ListBuckets and ListObjects return an empty page.
+- PutObject returns a zero PutObjectOutput, without reading the body.
+- CopyObject returns a zero CopyObjectOutput.
+- PresignUploadURL and PresignDownloadURL return a PresignURLResponse
+with only its Method, PUT or GET.
+
+The exception: HeadObject and GetObject return storage.ErrObjectNotFound,
+as a store that holds no object does, so that code under test never gets
+a nil object with a nil error.
 
 ## Calls
 
 Each method appends a `Call` with its name and a copy of its input,
-before it calls its field. A copy shares no pointer or map with the
-caller's input, so a caller that reuses an input, as a listing loop
-does with its ContinuationToken, does not change a recorded call; the
-Body of a PutObjectInput is the same reader. A nil input is recorded as
-a nil pointer of its type. Calls returns a deep copy of the calls in the
-order they were made, so that changing what it returns does not change
-them either, CallCount counts those of one method, and Reset forgets
-them all and keeps the fields.
+before it calls its field. A nil input is recorded as a nil pointer of
+its type.
+
+A copy shares no pointer or map with the caller's input, so a caller
+that reuses an input, as a listing loop does with its ContinuationToken,
+does not change a recorded call. The Body of a PutObjectInput is the
+same reader.
+
+The recorded calls are read and cleared with:
+
+- Calls, which returns a deep copy of the calls in the order they were
+made, so that changing what it returns does not change them either.
+- CallCount, which counts those of one method.
+- Reset, which forgets them all and keeps the fields.
 
 The methods may be called from several goroutines at once, as the calls
 are kept under a lock, which Calls, CallCount and Reset take too.
