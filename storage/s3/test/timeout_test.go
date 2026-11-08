@@ -61,25 +61,27 @@ func TestTimeout_GetObjectBody(t *testing.T) {
 }
 
 // OpTimeout bounds each request of a PutObject, each part, not the whole
-// write.
+// write: three requests, each half the timeout, make a write that takes
+// longer than the timeout and succeeds. Each request keeps half the
+// timeout as slack for a slow runner.
 func TestTimeout_PutObjectPerPart(t *testing.T) {
 	t.Parallel()
 
 	f := newFake(t)
 	cfg := f.config("b-1")
 
-	cfg.Storage.OpTimeout = time.Second
+	cfg.Storage.OpTimeout = 2 * time.Second
 
 	f.withBucket(t, "b-1")
 
 	p := open(t, cfg)
 
 	// CreateMultipartUpload, the parts, which are sent at once, and
-	// CompleteMultipartUpload each take most of OpTimeout, one after the
+	// CompleteMultipartUpload each take half of OpTimeout, one after the
 	// other.
 	f.setHook(func(_ http.ResponseWriter, r *http.Request) bool {
 		if r.Method == http.MethodPost || r.URL.Query().Has("partNumber") {
-			time.Sleep(cfg.Storage.OpTimeout * 2 / 3)
+			time.Sleep(cfg.Storage.OpTimeout / 2)
 		}
 
 		return false
@@ -92,7 +94,7 @@ func TestTimeout_PutObjectPerPart(t *testing.T) {
 		Body:            bytes.NewReader(make([]byte, partBody)),
 	})
 	require.NoError(t, err)
-	assert.Greater(t, time.Since(start), 2*cfg.Storage.OpTimeout)
+	assert.Greater(t, time.Since(start), cfg.Storage.OpTimeout)
 }
 
 // A call whose own context ends returns the context's error, and a Close
