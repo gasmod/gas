@@ -25,15 +25,26 @@
 // # Calls
 //
 // Each method appends a [Call] with its name and its arguments after the
-// context, before it calls its field: a copy of the *gas.Email for Send,
-// a copy of the *gas.TemplatedEmail for SendFromTemplate, nil for a nil
-// message, and nothing for CheckReady. A copy shares no slice or map with
-// the caller's message, so a caller that reuses the message does not
-// change a recorded call; the Data of a TemplatedEmail is the same value,
-// not a copy. [MockEmail.Calls] returns a deep copy of the calls in the
-// order they were made, so that changing what it returns does not change
-// them either, [MockEmail.CallCount] counts those of one method, and
-// [MockEmail.Reset] forgets them all.
+// context, before it calls its field. The arguments:
+//
+//   - Send: a copy of the *gas.Email.
+//   - SendFromTemplate: a copy of the *gas.TemplatedEmail.
+//   - Either, for a nil message: nil.
+//   - CheckReady: nothing.
+//
+// A copy shares no slice or map with the caller's message, so a caller
+// that reuses the message does not change a recorded call. The Data of a
+// TemplatedEmail is the same value, not a copy.
+//
+// To read the record:
+//
+//   - [MockEmail.Calls] returns a deep copy of the calls in the order they
+//     were made, so that changing what it returns does not change them
+//     either.
+//   - [MockEmail.CallCount] counts those of one method.
+//   - [MockEmail.Reset] forgets them all.
+//
+// # Concurrency
 //
 // The methods may be called from several goroutines at once, as the calls
 // are kept under a lock, which Calls, CallCount and Reset take too.

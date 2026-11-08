@@ -7,9 +7,10 @@ import "github.com/gasmod/gas/email/ses"
 Package ses is an email sender on Amazon SES, as a gas.EmailProvider.
 It sends with the SendEmail operation of the SES API v2 and the AWS SDK
 for Go v2, so it also reaches an emulator that speaks the SES API v2,
-such as aws-ses-v2-local. `Service` implements gas.Service,
-gas.EmailProvider and gas.ReadyReporter, and keeps the contract of the
-email package.
+such as aws-ses-v2-local.
+
+`Service` implements gas.Service, gas.EmailProvider and
+gas.ReadyReporter, and keeps the contract of the email package.
 
 ## Usage
 
@@ -51,8 +52,8 @@ default chain decides, as under Credentials.
 fragment, or path but `/`, such as an emulator's. Default: none, the
 region's SES endpoint. An `http` endpoint sends every request in
 clear text, the access key ID, the session token and the messages
-included; the secret key signs the requests and is not sent. Use
-it only for an emulator on a network of its own.
+included. The secret key signs the requests and is not sent. Use it
+only for an emulator on a network of its own.
 - `email.fromemail`: the sender of a message whose From is empty, one
 email address as the email package reads one, which Init
 normalizes. Default: none, so every message needs a From.
@@ -70,13 +71,17 @@ the value. Default: none.
 backoff, whatever `AWS_MAX_ATTEMPTS` and `AWS_RETRY_MODE` say.
 Default: `DefaultMaxRetries`, 2, so 3 attempts.
 
-`Service.Init` resolves the configuration each time it runs. Without
-`WithConfig`, it binds `DefaultConfig` from the gas.ConfigProvider,
-which checks the `validate` tags; a nil ConfigProvider is the error
-email.ErrNoConfigProvider. With WithConfig, it takes a copy of the
-given Config, never changing the caller's struct, and checks the same
-tags. Either way, these rules then run, in this order, and the first
-that fails is the error:
+`Service.Init` resolves the configuration each time it runs, from one
+of two sources:
+
+- Without `WithConfig`, it binds `DefaultConfig` from the
+gas.ConfigProvider, which checks the `validate` tags. A nil
+ConfigProvider is the error email.ErrNoConfigProvider.
+- With WithConfig, it takes a copy of the given Config, never
+changing the caller's struct, and checks the same tags.
+
+Either way, these rules then run, in this order, and the first that
+fails is the error:
 
 1. `endpoint`, when set, is an absolute `http` or `https` URL with a
 host, and with no user information, query, fragment, or path but
@@ -86,74 +91,91 @@ host, and with no user information, query, fragment, or path but
 A failure wraps email.ErrInvalidConfig and names the setting, never its
 value.
 
-`Service.Config` returns a copy of the configuration the last successful
-Init resolved, defaults included, or the zero Config before one; a
-failed Init and Close leave it as it was. Its `fromemail` is the
-normalized address, and its `secretaccesskey` and `sessiontoken` stay
-a `Secret`, which prints as `[redacted]`.
+`Service.Config` returns a copy of the configuration the last
+successful Init resolved, defaults included, or the zero Config before
+one. A failed Init and Close leave it as it was. Its `fromemail` is the
+normalized address, and its `secretaccesskey` and `sessiontoken` stay a
+`Secret`, which prints as `[redacted]`.
 
 ## Credentials
 
 Init builds the client with the AWS SDK's default configuration, which
-comes from the environment, such as `AWS_REGION` and
-`AWS_ACCESS_KEY_ID`, the shared configuration and credentials files and
-their profile, and the container and instance roles. Its HTTP client is
-the sender's own, on the AWS SDK's default transport, and follows no
-redirect, as the SDK's does not. A `region` setting takes precedence
-over the chain's region; without one, a region the chain does not find
-fails Init with `ErrNoRegion`. Static credentials are used when both
-`accesskeyid` and `secretaccesskey` are set, with `sessiontoken` when it
-is set too; with either key empty, the chain's credentials apply, as
+comes from:
+
+- the environment, such as `AWS_REGION` and `AWS_ACCESS_KEY_ID`;
+- the shared configuration and credentials files, and their profile;
+- the container and instance roles.
+
+Its HTTP client is the sender's own, on the AWS SDK's default
+transport. It follows no redirect, as the SDK's does not.
+
+A `region` setting takes precedence over the chain's region. Without
+one, a region the chain does not find fails Init with `ErrNoRegion`.
+
+Static credentials are used when both `accesskeyid` and
+`secretaccesskey` are set, with `sessiontoken` when it is set too. With
+either key empty, the chain's credentials apply, as
 config/secretsmanager and gas/queue/sqs do it, and the other static
-values are not used. When some of them are set, but not both keys,
-Init logs `static credentials incomplete, using the default chain` at
-warn level, with `missing` naming the keys that are not set, never a
-value. AWS configuration that fails to load, such as a profile that
-does not exist, fails Init with email.ErrInvalidConfig.
+values are not used. When some of them are set, but not both keys, Init
+logs `static credentials incomplete, using the default chain` at warn
+level, with `missing` naming the keys that are not set, never a value.
+
+AWS configuration that fails to load, such as a profile that does not
+exist, fails Init with email.ErrInvalidConfig.
 
 Init retrieves the credentials within its context and `optimeout`, so
 that it fails, with `ErrNoCredentials`, when there are none, rather
 than the first send. The client then refreshes them as they expire.
-Init sends no request to SES. The credentials need the
-`ses:SendEmail` permission.
+Init sends no request to SES. The credentials need the `ses:SendEmail`
+permission.
 
 `WithClient` gives the sender a client to use instead, such as an
-*sesv2.Client built elsewhere or a fake of `API`; `region`, `endpoint`,
+*sesv2.Client built elsewhere or a fake of `API`. `region`, `endpoint`,
 the credentials and `maxretries` then have no effect, and Init neither
 checks a region nor retrieves credentials.
 
 ## Requests
 
 Send is one SendEmail request with Simple content, which SES assembles
-into a MIME message: `FromEmailAddress` is the normalized sender,
-`ReplyToAddresses` the reply-to address, when there is one, and
-`Destination` the To, Cc and Bcc lists, each left out when it is empty.
-The subject and each body that is not empty are sent with the `UTF-8`
-character set; an empty body is left out. A subject that is not ASCII
-is sent as RFC 2047 encoded words, base64 of its UTF-8, which the
-sender encodes itself, so that SES sends it as it is. The headers are
-sent in the sorted order of their names. No configuration set, tag,
-list management option or attachment is sent. The message ID SES
-returns is not kept: the interface returns only an error.
+into a MIME message:
+
+- `FromEmailAddress` is the normalized sender.
+- `ReplyToAddresses` is the reply-to address, when there is one.
+- `Destination` holds the To, Cc and Bcc lists, each left out when it
+is empty.
+- The subject and each body that is not empty are sent with the
+`UTF-8` character set. An empty body is left out.
+- A subject that is not ASCII is sent as RFC 2047 encoded words,
+base64 of its UTF-8, which the sender encodes itself, so that SES
+sends it as it is.
+- The headers are sent in the sorted order of their names.
+
+No configuration set, tag, list management option or attachment is
+sent. The message ID SES returns is not kept: the interface returns
+only an error.
 
 ## Timeouts
 
 Every send runs within its context and `optimeout`, whichever ends
-first, the AWS SDK's retries and their backoff included, so a server
+first, the AWS SDK's retries and their backoff included. So a server
 that stops answering cannot hold a send longer than `optimeout`, even
 with a context that never ends. A SendFromTemplate fetches its
 templates within its context alone, then sends as Send does.
 
 The SDK retries a send after a network error, a throttle, such as
-TooManyRequestsException or LimitExceededException, and a server
-error, up to `maxretries` times. SES has no idempotency key, so a send
-whose reply was lost and that is retried can deliver the message
-twice. Set `maxretries` to 0 where a duplicate is worse than a lost
-message, and retry in the app with what it knows.
+TooManyRequestsException or LimitExceededException, and a server error,
+up to `maxretries` times.
+
+SES has no idempotency key, so a send whose reply was lost and that is
+retried can deliver the message twice. Set `maxretries` to 0 where a
+duplicate is worse than a lost message, and retry in the app with what
+it knows.
+
+## Connection errors
 
 A send that fails at the connection returns an error wrapping
 `ErrConnect` and a reason, never the AWS SDK's error, which holds the
-endpoint:
+endpoint. The reasons:
 
 - `timed out`: a deadline passed, in a context or on the network.
 The error then wraps context.DeadlineExceeded too.
@@ -161,22 +183,27 @@ The error then wraps context.DeadlineExceeded too.
 - `unreachable`: any other network error, such as a failed name
 lookup.
 
-A send that got an error reply of SES, as below, and whose retries a
-deadline then cut short is told by the reply's code, not as `timed
-out`, and wraps context.DeadlineExceeded too: a throttled send that
-`optimeout` ends is `throttled`.
+A send that got an error reply of SES, as under Error replies, and
+whose retries a deadline then cut short is told by the reply's code,
+not as `timed out`, and wraps context.DeadlineExceeded too. A throttled
+send that `optimeout` ends is `throttled`.
 
 A send whose own context ended returns the context's error after the
-operation, wrapped, without ErrConnect. Which of the two a timeout is
-depends on which deadline was in force: a timeout of a send whose
-context's deadline is no later than `optimeout`'s is the context's
-error.
+operation, wrapped, without ErrConnect.
+
+Which of the two a timeout is depends on which deadline was in force. A
+timeout of a send whose context's deadline is no later than
+`optimeout`'s is the context's error.
+
+## Error replies
 
 An error reply of SES returns an error wrapping `ErrCommand`, with a
-reason told by its AWS error code, and the code, in parentheses, when
-it is one SES or the AWS APIs document; the reply's message, which can
-quote an address, is never kept, nor a code of any other text, nor the
-AWS SDK's error. The reasons, in the order they are told:
+reason told by its AWS error code. The code follows, in parentheses,
+when it is one SES or the AWS APIs document. The reply's message, which
+can quote an address, is never kept, nor a code of any other text, nor
+the AWS SDK's error.
+
+The reasons, in the order they are told:
 
 - `not verified`: MessageRejected whose message says an address is
 not verified, such as the sender, or a recipient of an account in
@@ -201,32 +228,50 @@ JSON.
 
 ## Lifecycle
 
-A successful Init publishes the client, logs `service initialized` at
-info level with `region`, whether an `endpoint`, a `client` and a
-default sender, `from`, were given, `credentials`, where the client
-Init built takes them from, `static` or `default chain`, left out with
-`WithClient`, `op_timeout` and `max_retries`, and only then do the
-methods use it. Init on an initialized sender returns
-email.ErrAlreadyInitialized and changes nothing. A failed Init leaves
-the sender as it was.
+A successful Init publishes the client and logs `service initialized`
+at info level, with:
 
-`Service.Close` makes the sender closed, so that every later call
-returns email.ErrClosed, waits for every send in flight to return,
-closes the idle connections of the client Init built, and logs
-`service closed` at info level. While its context lasts, it does not
-cut a send short. When its context ends first, Close cancels the sends
-in flight, which return email.ErrClosed, though SES may have accepted
-their messages, logs `service closed, sends in flight canceled` at warn
-level, and returns an error wrapping the context's error; the sender
-stays closed. Close on a sender that is not initialized returns nil and
-logs nothing. Init after Close builds a new client, with a
-configuration resolved afresh.
+- `region`;
+- whether an `endpoint`, a `client` and a default sender, `from`, were
+given;
+- `credentials`, where the client Init built takes them from, `static`
+or `default chain`, left out with `WithClient`;
+- `op_timeout` and `max_retries`.
 
-`New`'s constructor fails with email.ErrNilTemplates for a nil
-gas.TemplateProvider, email.ErrNilLogger for a nil logger, and
-email.ErrNilConfig for WithConfig(nil); a nil ConfigProvider is
-accepted, and Init then requires WithConfig. A nil client given to
-WithClient fails Init with `ErrNilClient`.
+Only then do the methods use the client. Init on an initialized sender
+returns email.ErrAlreadyInitialized and changes nothing. A failed Init
+leaves the sender as it was.
+
+`New`'s constructor fails with:
+
+- email.ErrNilTemplates for a nil gas.TemplateProvider;
+- email.ErrNilLogger for a nil logger;
+- email.ErrNilConfig for WithConfig(nil).
+
+A nil ConfigProvider is accepted, and Init then requires WithConfig. A
+nil client given to WithClient fails Init with `ErrNilClient`.
+
+## Closing
+
+`Service.Close` runs these steps, in order:
+
+1. It makes the sender closed, so that every later call returns
+email.ErrClosed.
+2. It waits for every send in flight to return. While its context
+lasts, it does not cut a send short.
+3. It closes the idle connections of the client Init built.
+4. It logs `service closed` at info level.
+
+When its context ends first, Close:
+
+1. cancels the sends in flight, which return email.ErrClosed, though
+SES may have accepted their messages;
+2. logs `service closed, sends in flight canceled` at warn level;
+3. returns an error wrapping the context's error.
+
+The sender stays closed. Close on a sender that is not initialized
+returns nil and logs nothing. Init after Close builds a new client,
+with a configuration resolved afresh.
 
 ## Readiness
 
@@ -237,35 +282,47 @@ account may send.
 ## Client
 
 `Service.Client` returns the *sesv2.Client, for the operations the
-sender has no method for, such as GetAccount, or nil when the sender is
-not initialized or was given another `API`. Requests sent on it are
-bounded only by their own context, and return the AWS SDK's errors as
-they are, which can hold the endpoint and addresses.
+sender has no method for, such as GetAccount. It returns nil when the
+sender is not initialized or was given another `API`.
+
+Requests sent on it are bounded only by their own context, and return
+the AWS SDK's errors as they are, which can hold the endpoint and
+addresses.
 
 ## Security
 
 No error the sender makes and no log it writes holds an address, a
 subject, a body, a header value, template data, the endpoint, or a
-credential, the access key ID included. The logs carry the region,
-whether an endpoint, a client and a default sender were given, where
-the credentials come from, the names of the static keys missing, the
-operation timeout and the retries. fmt, encoding/json, YAML encoders
-that use encoding.TextMarshaler, and log/slog write the secret key and
-the session token of a `Settings` or a `Config` as `[redacted]`, and
-encoding/gob fails on them rather than encode them. Static
-credentials in configuration are a secret of the app's; prefer a role,
-which the default chain finds. An `http` endpoint sends the access key
-ID, the session token and the messages in clear text, as under
-Configuration. The client Init builds reads no reply past 1 MiB, so an
-endpoint cannot make it read without bound, and logs nothing: the AWS
-SDK's default logger, which writes raw transport errors holding the
-endpoint, is replaced with one that discards them.
+credential, the access key ID included. The logs carry:
+
+- the region;
+- whether an endpoint, a client and a default sender were given;
+- where the credentials come from;
+- the names of the static keys missing;
+- the operation timeout and the retries.
+
+fmt, encoding/json, YAML encoders that use encoding.TextMarshaler, and
+log/slog write the secret key and the session token of a `Settings` or
+a `Config` as `[redacted]`. encoding/gob fails on them rather than
+encode them.
+
+Static credentials in configuration are a secret of the app's. Prefer a
+role, which the default chain finds.
+
+An `http` endpoint sends the access key ID, the session token and the
+messages in clear text, as under Configuration.
+
+The client Init builds reads no reply past 1 MiB, so an endpoint cannot
+make it read without bound. It logs nothing: the AWS SDK's default
+logger, which writes raw transport errors holding the endpoint, is
+replaced with one that discards them.
 
 ## Concurrency
 
 A Service is safe for concurrent use. Init and Close run one at a time.
-Init swaps in what it built at once, so a send, which takes no lock
-but to count itself in flight, uses one Init's client throughout.
+
+Init swaps in what it built at once. So a send, which takes no lock but
+to count itself in flight, uses one Init's client throughout.
 
 ## Errors
 
@@ -274,9 +331,11 @@ The sentinel errors of this package, to be tested with `errors.Is`:
 - `ErrNoRegion`: Init found no region.
 - `ErrNoCredentials`: Init could not retrieve credentials.
 - `ErrNilClient`: WithClient was given a nil client.
-- `ErrConnect`: a send got no reply, as under Timeouts.
+- `ErrConnect`: a send got no reply, as under Connection
+errors.
 - `ErrCommand`: SES replied with an error, or with an invalid reply,
-or a send failed for another reason, as under Timeouts.
+or a send failed for another reason, as under Error
+replies.
 - `ErrRejected`, `ErrNotVerified`, `ErrThrottled`,
 `ErrSendingPaused`, `ErrAccessDenied`: kinds of ErrCommand.
 

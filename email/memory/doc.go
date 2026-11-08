@@ -1,10 +1,11 @@
 // Package memory is an email sender that sends nothing: it keeps each
 // message in an outbox in the process's memory, for tests and local
-// development, as a gas.EmailProvider. [Service] implements gas.Service,
-// gas.EmailProvider and gas.ReadyReporter, and keeps the contract of the
-// email package, with the same rules and the same template rendering as
-// gas/email/ses, so a message the memory sender accepts is one the SES
-// sender would send.
+// development, as a gas.EmailProvider.
+//
+// [Service] implements gas.Service, gas.EmailProvider and
+// gas.ReadyReporter, and keeps the contract of the email package. It has
+// the same rules and the same template rendering as gas/email/ses, so a
+// message the memory sender accepts is one the SES sender would send.
 //
 // # Usage
 //
@@ -46,52 +47,77 @@
 //     each counted as email.MessageSize estimates it, at least
 //     [MinMaxBytes] (1 MiB). Default: [DefaultMaxBytes] (256 MiB).
 //
-// [Service.Init] resolves the configuration each time it runs. Without
-// [WithConfig], it binds [DefaultConfig] from the gas.ConfigProvider,
-// which checks the `validate` tags; a nil ConfigProvider is the error
-// email.ErrNoConfigProvider. With WithConfig, it takes a copy of the
-// given Config, never changing the caller's struct, and checks the same
-// tags. Then `fromemail`, when set, must be one email address. A failure
-// wraps email.ErrInvalidConfig and names the setting, never its value.
+// [Service.Init] resolves the configuration each time it runs, from one
+// of two sources:
 //
-// [Service.Config] returns a copy of the configuration the last successful
-// Init resolved, defaults included, or the zero Config before one; a
-// failed Init and Close leave it as it was. Its `fromemail` is the
+//   - Without [WithConfig], it binds [DefaultConfig] from the
+//     gas.ConfigProvider, which checks the `validate` tags. A nil
+//     ConfigProvider is the error email.ErrNoConfigProvider.
+//   - With WithConfig, it takes a copy of the given Config, never
+//     changing the caller's struct, and checks the same tags.
+//
+// Then `fromemail`, when set, must be one email address. A failure wraps
+// email.ErrInvalidConfig and names the setting, never its value.
+//
+// [Service.Config] returns a copy of the configuration the last
+// successful Init resolved, defaults included, or the zero Config before
+// one. A failed Init and Close leave it as it was. Its `fromemail` is the
 // normalized address.
 //
 // # Outbox
 //
 // A send that keeps every rule stores a copy of the normalized message
-// CheckEmail returns, which shares nothing with the caller's: From and
-// the other addresses as the email package normalizes them, an empty
-// list as nil, and the headers. [Service.Messages] returns copies of the
-// messages in the order they were sent, and [Service.Reset] empties the
-// outbox; both work in any state of the sender, and the outbox outlives
-// Close and a restart. A send that finds the outbox holding
-// `maxmessages` messages, or whose message would take it past
-// `maxbytes`, fails with [ErrOutboxFull] and stores nothing. A send that
-// a Close canceled stores nothing, even when its gas.TemplateProvider
-// ignored the cancellation and rendered. The subject is kept as given,
-// not encoded as the SES sender sends one that is not ASCII.
-// The sender logs no message, and no part of one.
+// CheckEmail returns, which shares nothing with the caller's. It holds
+// From and the other addresses as the email package normalizes them, an
+// empty list as nil, and the headers.
+//
+// The subject is kept as given, not encoded as the SES sender sends one
+// that is not ASCII. The sender logs no message, and no part of one.
+//
+// To read and empty the outbox:
+//
+//   - [Service.Messages] returns copies of the messages in the order they
+//     were sent.
+//   - [Service.Reset] empties the outbox.
+//
+// Both work in any state of the sender, and the outbox outlives Close and
+// a restart.
+//
+// A send stores nothing when:
+//
+//   - it finds the outbox holding `maxmessages` messages, or its message
+//     would take it past `maxbytes`. It then fails with [ErrOutboxFull].
+//   - a Close canceled it, even when its gas.TemplateProvider ignored the
+//     cancellation and rendered.
 //
 // # Lifecycle
 //
 // A successful Init logs `service initialized` at info level with `from`,
 // whether a default sender is set, `max_messages` and `max_bytes`. Init
 // on an initialized sender returns email.ErrAlreadyInitialized and
-// changes nothing; a failed Init leaves the sender as it was.
-// [Service.Close] makes the sender closed, waits for the sends in flight,
-// such as a SendFromTemplate that waits on its gas.TemplateProvider, and
-// logs `service closed` at info level. When its context ends first, it
-// cancels them, logs `service closed, sends in flight canceled` at warn
-// level, and returns an error wrapping the context's error. Close on a
-// sender that is not initialized returns nil and logs nothing.
+// changes nothing. A failed Init leaves the sender as it was.
 //
-// [New]'s constructor fails with email.ErrNilTemplates for a nil
-// gas.TemplateProvider, email.ErrNilLogger for a nil logger, and
-// email.ErrNilConfig for WithConfig(nil); a nil ConfigProvider is
-// accepted, and Init then requires WithConfig.
+// [Service.Close] runs these steps, in order:
+//
+//  1. It makes the sender closed.
+//  2. It waits for the sends in flight, such as a SendFromTemplate that
+//     waits on its gas.TemplateProvider.
+//  3. It logs `service closed` at info level.
+//
+// When its context ends first, Close cancels the sends in flight, logs
+// `service closed, sends in flight canceled` at warn level, and returns
+// an error wrapping the context's error. Close on a sender that is not
+// initialized returns nil and logs nothing.
+//
+// [New]'s constructor fails with:
+//
+//   - email.ErrNilTemplates for a nil gas.TemplateProvider;
+//   - email.ErrNilLogger for a nil logger;
+//   - email.ErrNilConfig for WithConfig(nil).
+//
+// A nil ConfigProvider is accepted, and Init then requires WithConfig.
+//
+// # Readiness
 //
 // [Service.CheckReady] does no I/O: it fails only when the sender is not
 // initialized or its context has ended.
