@@ -26,19 +26,32 @@ b, err := m.Get(ctx, "greeting")
 ## Defaults
 
 With a field nil, its method behaves as an empty cache that accepts
-everything: Get returns an error wrapping cache.ErrKeyNotFound,
-`cachetest: get: key not found`; Exists returns false and nil; Set,
-Delete, CheckHealth and CheckReady return nil.
+everything:
+
+- Get returns an error wrapping cache.ErrKeyNotFound,
+`cachetest: get: key not found`.
+- Exists returns false and nil.
+- Set, Delete, CheckHealth and CheckReady return nil.
 
 ## Calls
 
 Each method appends a `Call` with its name and its arguments after the
-context, before it calls its field: the key for Get, Delete and Exists;
-the key, the value and the TTL for Set; none for CheckHealth and
-CheckReady. The value is recorded as a copy, nil for nil, so that a
-caller that reuses its slice does not change a recorded call. Calls
-returns a copy of the calls in the order they were made, CallCount
-counts those of one method, and Reset forgets them all.
+context, before it calls its field. The arguments recorded are:
+
+- Get, Delete and Exists: the key.
+- Set: the key, the value and the TTL.
+- CheckHealth and CheckReady: none.
+
+The value is recorded as a copy, nil for nil, so that a caller that
+reuses its slice does not change a recorded call.
+
+To read the calls:
+
+- Calls returns a copy of the calls in the order they were made.
+- CallCount counts those of one method.
+- Reset forgets them all.
+
+## Concurrency
 
 The methods may be called from several goroutines at once, as the calls
 are kept under a lock, which Calls, CallCount and Reset take too.
