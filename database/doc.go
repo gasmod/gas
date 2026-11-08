@@ -90,7 +90,10 @@
 // [Service.Config] returns a copy of the configuration the last
 // successful Init resolved, defaults included, with DSN still a
 // gas.Secret, or the zero Config before one. A failed Init and Close
-// leave it as it was.
+// leave it as it was. It holds the settings as resolved: the DSN without
+// the busy timeout the dialect sqlite may add, and with a connector the
+// Dialect setting as given, which may be empty; Driver reports the
+// dialect in use.
 //
 // # Modes
 //
@@ -198,9 +201,8 @@
 // dialect postgres or mysql or with a connector (in pgx, a
 // *pgconn.ConnectError); a sqlite driver's errors are not told apart
 // that way. It is also connection-level, unless a context ended the
-// call, when it is
-// a network error (a net.Error), driver.ErrBadConn, MySQL's
-// mysql.ErrInvalidConn or pgx's pgconn.ErrConnClosed. Calls made on
+// call, when it is a network error (a net.Error), driver.ErrBadConn,
+// MySQL's mysql.ErrInvalidConn or pgx's pgconn.ErrConnClosed. Calls made on
 // [Service.DB] or [Service.Pool] directly get the driver's errors as
 // they are.
 //

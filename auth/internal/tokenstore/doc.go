@@ -38,12 +38,11 @@
 //     is gone already; its down migration makes the index again.
 //
 // SQLite keeps times as text, to the second, in UTC, dropping the
-// fraction; see package sqlutil.
-// MySQL and SQLite keep times in whole seconds, and the auth stores
-// truncate every time to the second before writing it, so a stored time
-// is up to a second earlier than the one written and an expiry can come
-// up to a second early, never late.
-// Postgres keeps microseconds.
+// fraction; see package sqlutil. The MySQL store truncates every time to
+// the second before writing it, as SQLite's format does, so on both a
+// stored time is up to a second earlier than the one written, and an
+// expiry can come up to a second early, never late. Postgres keeps
+// microseconds.
 //
 // # Consuming
 //

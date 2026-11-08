@@ -56,11 +56,10 @@
 // is not an object makes the read fail with [ErrInvalidMetadata]. SQLite
 // keeps times as text, to the second, in UTC; see package sqlutil. A
 // stored time in any other form makes the read fail, naming the column.
-// MySQL and SQLite keep times in whole seconds, and the auth stores
-// truncate every time to the second before writing it, so a stored time
-// is up to a second earlier than the one written and an expiry can come
-// up to a second early, never late.
-// Postgres keeps microseconds.
+// The MySQL store truncates every time to the second before writing it,
+// as SQLite's format does, so on both a stored time is up to a second
+// earlier than the one written, and an expiry can come up to a second
+// early, never late. Postgres keeps microseconds.
 //
 // ListKeysBySubject returns keys newest first, by creation time, and keys
 // with the same stored creation time, as two keys made within one second
@@ -81,8 +80,8 @@
 // # Errors
 //
 // GetKeyByHash returns [ErrNotFound], unwrapped, when no key has the
-// hash. Any other failure is an error that starts
-// with `gas/auth/apikey-store:` and the operation, and wraps the driver's
+// hash. Any other failure is an error that starts with
+// `gas/auth/apikey-store:` and the operation, and wraps the driver's
 // error, sqlutil.ErrInvalidTime, or [ErrInvalidMetadata]. A read error
 // never quotes a stored value:
 //

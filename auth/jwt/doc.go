@@ -174,15 +174,16 @@
 //
 // Until Init succeeds, every method other than Name, Init, Close and
 // Config returns an error wrapping ErrNotInitialized, which
-// auth.Middleware answers with a 500, not a 401. A successful Init logs `service
-// initialized` at info level with `service` set to [ServiceName], the
-// signing method and whether the service only verifies. It is the only
-// event the service logs. Init may run again, after Close or not, and
-// takes up the configuration and key files as they are then; a failed
-// Init leaves the service uninitialized, not on the previous keys. Close
-// makes the service uninitialized and always returns nil. [New]'s
-// constructor fails with [ErrNilLogger] for a nil logger; a nil
-// ConfigProvider is accepted, and Init then requires WithConfig.
+// auth.Middleware answers with a 500, not a 401. A successful Init logs
+// `service initialized` at info level with `service` set to
+// [ServiceName], the signing method and whether the service only
+// verifies. It is the only event the service logs. Init may run again,
+// after Close or not, and takes up the configuration and key files as
+// they are then; a failed Init leaves the service uninitialized, not on
+// the previous keys. Close makes the service uninitialized and always
+// returns nil. [New]'s constructor fails with [ErrNilLogger] for a nil
+// logger; a nil ConfigProvider is accepted, and Init then requires
+// WithConfig.
 //
 // # Concurrency
 //

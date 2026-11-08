@@ -17,10 +17,10 @@
 //
 // [ForEachBackend] runs its function in one subtest per [Backend], named
 // after it: `sqlite`, then `postgres`, then `mysql` when [MySQLEnv] is
-// set. [SetupSQLite] opens an in-memory
-// SQLite database with one connection, since each connection to
-// `:memory:` has a database of its own. [PostgresBackend] starts a
-// `postgres:16-alpine` container for the test, and skips under -short.
+// set. [SetupSQLite] opens an in-memory SQLite database with one
+// connection, since each connection to `:memory:` has a database of its
+// own. [PostgresBackend] starts a `postgres:16-alpine` container for the
+// test, and skips under -short.
 // Each backend's database and migration services are real, from the
 // database and migrate modules, and are closed when the test ends.
 // SetupSQLite, PostgresBackend, [SetupPostgres], [MySQLBackend] and
@@ -52,10 +52,10 @@
 //
 // # Docker
 //
-// The PostgreSQL and MySQL backends need Docker. When Docker is not available the
-// test is skipped, unless `GAS_TEST_REQUIRE_DOCKER` is set to any
-// non-empty value, as CI sets it: then the test fails, so that a missing
-// Docker cannot pass as a run of skipped tests.
+// The PostgreSQL and MySQL backends need Docker. When Docker is not
+// available the test is skipped, unless `GAS_TEST_REQUIRE_DOCKER` is set
+// to any non-empty value, as CI sets it: then the test fails, so that a
+// missing Docker cannot pass as a run of skipped tests.
 //
 // # Fakes
 //

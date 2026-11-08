@@ -180,8 +180,9 @@
 //
 // [Service.Config] returns a copy of the configuration the last
 // successful Init resolved, defaults included, or the zero Config before
-// one. A failed Init and Close leave it as it was. On a Provider WithTx
-// returned, it is the configuration of the service it came from.
+// one. A failed Init and Close leave it as it was. The Provider WithTx
+// returns is a *Service, whose Config is that of the service it came
+// from.
 //
 // # Lifecycle
 //
@@ -204,8 +205,9 @@
 // Every method other than Name, Init, Close, Config and WithTx checks
 // first that the service is initialized, and fails with
 // [ErrNotInitialized] before Init has succeeded, after a failed Init, and
-// after Close, until Init succeeds again. The methods of a Provider WithTx returned check the
-// service they came from at each call, and fail the same way.
+// after Close, until Init succeeds again. The methods of a Provider
+// WithTx returned check the service they came from at each call, and
+// fail the same way.
 //
 // # Storage
 //
@@ -214,16 +216,14 @@
 // and `sqlite` or `sqlite3`. Postgres keeps scopes in a TEXT[] column;
 // MySQL and SQLite keep them in one TEXT column, joined with commas, such
 // as `read,write`, which is why a scope may not hold a comma. Metadata
-// is a JSON object. SQLite keeps times as text, in UTC.
-// MySQL and SQLite keep times in whole seconds, and the auth stores
-// truncate every time to the second before writing it, so a stored time
-// is up to a second earlier than the one written and an expiry can come
-// up to a second early, never late.
-// So on MySQL and SQLite a key may expire up to a second before its
-// ExpiresAt. Postgres keeps microseconds. On MySQL the DSN needs
-// `parseTime=true`, which gas/database turns on itself; `multiStatements`
-// is not needed, since gas/migrate sends a migration file's statements one
-// at a time.
+// is a JSON object. SQLite keeps times as text, in UTC. MySQL and SQLite
+// keep times in whole seconds, and the auth stores truncate every time to
+// the second before writing it, so a stored time is up to a second
+// earlier than the one written. On those databases a key may so expire up
+// to a second before its ExpiresAt, never after. Postgres keeps
+// microseconds. On MySQL the DSN needs `parseTime=true`, which
+// gas/database turns on itself; `multiStatements` is not needed, since
+// gas/migrate sends a migration file's statements one at a time.
 //
 // # Concurrency
 //

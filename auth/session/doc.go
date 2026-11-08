@@ -63,13 +63,11 @@
 // MaxLifetime.
 //
 // The expiries are compared with the time in Go, as the database returns
-// them.
-// MySQL and SQLite keep times in whole seconds, and the auth stores
+// them. MySQL and SQLite keep times in whole seconds, and the auth stores
 // truncate every time to the second before writing it, so a stored time
-// is up to a second earlier than the one written and an expiry can come
-// up to a second early, never late.
-// So on MySQL and SQLite a session may expire up to a second before its
-// ExpiresAt. Postgres keeps microseconds.
+// is up to a second earlier than the one written. On those databases a
+// session may so expire up to a second before its ExpiresAt, never
+// after. Postgres keeps microseconds.
 //
 // With ExtendOnAccess on, Authenticate moves the idle expiry of a session
 // it accepts to SessionTTL from now, but never past the absolute expiry,
@@ -89,9 +87,9 @@
 // `count`, zero included. A run that fails is logged at warn level with
 // the message `background task failed`, `gas/auth/session` under
 // `service`, `session cleanup` under `task` and the error under `error`,
-// and the cleanup goes on. A zero
-// CleanupInterval turns the cleanup off, and expired sessions then stay
-// in the table, still rejected; a negative one is a configuration error.
+// and the cleanup goes on. A zero CleanupInterval turns the cleanup off,
+// and expired sessions then stay in the table, still rejected; a negative
+// one is a configuration error.
 //
 // # Cookies
 //

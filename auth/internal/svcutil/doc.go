@@ -76,14 +76,14 @@
 // Loop stops. Runs never overlap. When a run takes longer than the
 // interval, the ticks that come due meanwhile collapse into at most one,
 // so the next run may start as soon as it returns, and no backlog builds
-// up. A run that returns an error is logged with
-// Task.Logger at warn level, with the message `background task failed`,
-// the task's name under `task` and the error under `error`, and the loop
-// goes on. A run that fails because the Loop is stopping is not logged.
-// A non-positive Interval starts nothing, which is how a service turns its
-// cleanup off. Start checks the Interval first, so such a task may have a
-// nil Run and Logger; any other task with either nil makes Start panic,
-// before it stops a running task.
+// up. A run that returns an error is logged with Task.Logger at warn
+// level, with the message `background task failed`, the task's name under
+// `task` and the error under `error`, and the loop goes on. A run that
+// fails because the Loop is stopping is not logged. A non-positive
+// Interval starts nothing, and stops a running task as Stop does, which
+// is how a service turns its cleanup off. Start checks the Interval
+// first, so such a task may have a nil Run and Logger; any other task
+// with either nil makes Start panic, before it stops a running task.
 //
 // [Loop.Stop] cancels the running task's context and waits for its
 // goroutine to return, a run in progress included, so once Stop returns

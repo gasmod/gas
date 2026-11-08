@@ -69,20 +69,19 @@
 //
 // SQLite keeps times as text, to the second, in UTC, dropping the
 // fraction; see package sqlutil. A stored time in any other form makes
-// GetSession fail rather than read as a zero time.
-// MySQL and SQLite keep times in whole seconds, and the auth stores
-// truncate every time to the second before writing it, so a stored time
-// is up to a second earlier than the one written and an expiry can come
-// up to a second early, never late.
-// Postgres keeps microseconds.
+// GetSession fail rather than read as a zero time. The MySQL store
+// truncates every time to the second before writing it, as SQLite's
+// format does, so on both a stored time is up to a second earlier than
+// the one written, and an expiry can come up to a second early, never
+// late. Postgres keeps microseconds.
 //
 // # Errors
 //
 // GetSession returns [ErrNotFound], unwrapped, when no session has the ID
 // hash; RotateSession returns it, unwrapped, when the session to rotate
-// is missing. Any other failure is an error
-// that starts with `gas/auth/session-store:` and the operation, and wraps
-// the driver's error. Metadata that cannot be encoded or decoded as JSON
+// is missing. Any other failure is an error that starts with
+// `gas/auth/session-store:` and the operation, and wraps the driver's
+// error. Metadata that cannot be encoded or decoded as JSON
 // is an error that does not quote it:
 //
 //	gas/auth/session-store: get session: expires_at: invalid stored time: want the layout 2006-01-02 15:04:05

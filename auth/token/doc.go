@@ -138,17 +138,15 @@
 // that fails is logged at warn level with the message
 // `background task failed`, `gas/auth/token` under `service`,
 // `token cleanup` under `task` and the error under `error`, and the
-// cleanup goes on. Nothing is logged for a run that
-// Close interrupts. Init logs `service initialized` at info level, with
-// `gas/auth/token` under `service`.
+// cleanup goes on. Nothing is logged for a run that Close interrupts.
+// Init logs `service initialized` at info level, with `gas/auth/token`
+// under `service`.
 //
-// The databases keep times at different precisions.
 // MySQL and SQLite keep times in whole seconds, and the auth stores
 // truncate every time to the second before writing it, so a stored time
-// is up to a second earlier than the one written and an expiry can come
-// up to a second early, never late.
-// So on MySQL and SQLite a token may expire up to a second before its ttl
-// has passed. Postgres keeps microseconds.
+// is up to a second earlier than the one written. On those databases a
+// token may so expire up to a second before its ttl has passed, never
+// after. Postgres keeps microseconds.
 //
 // # Storage
 //
@@ -157,12 +155,12 @@
 // reports: `postgres` or `pgx`, `mysql`, `sqlite` or `sqlite3`. MySQL
 // needs `parseTime=true` in the DSN, which gas/database turns on itself;
 // `multiStatements` is not needed, since gas/migrate sends a MySQL
-// migration's statements one at a time. The store's migrations create the table and then drop a redundant index on
-// the token hash that its first version made; lookups use the hash's
-// unique index. Postgres and SQLite consume a token with one
-// `DELETE ... RETURNING`; MySQL selects and deletes in one transaction,
-// and treats a delete that removed no row as a token another caller
-// consumed.
+// migration's statements one at a time. The store's migrations create
+// the table and then drop a redundant index on the token hash that its
+// first version made; lookups use the hash's unique index. Postgres and
+// SQLite consume a token with one `DELETE ... RETURNING`; MySQL selects
+// and deletes in one transaction, and treats a delete that removed no row
+// as a token another caller consumed.
 //
 // # Concurrency
 //
