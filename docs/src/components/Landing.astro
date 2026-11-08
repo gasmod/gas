@@ -1,0 +1,95 @@
+---
+// The home page: the headline, a complete app as the hero, and the module
+// map, drawn as a manifold: a line from the core with a branch to each
+// module, labelled with the interface the module plugs in through.
+import { Code } from '@astrojs/starlight/components';
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+
+const app = `package main
+
+import (
+	"context"
+	"log"
+	"net/http"
+
+	"github.com/gasmod/gas"
+)
+
+func main() {
+	app := gas.NewApp()
+
+	app.Router().Handle(nil, http.MethodGet, "/", func(ctx gas.Context) error {
+		return ctx.Text(http.StatusOK, "Hello, World!")
+	})
+
+	if err := app.Run(context.Background()); err != nil {
+		log.Fatal(err)
+	}
+}`;
+
+// Each module, what it does, and the interface it plugs in through: a core
+// interface where the module implements one, else the module's own.
+const modules = [
+	{ name: 'config', iface: 'gas.ConfigProvider', text: 'Environment variables, .env, JSON and AWS Secrets Manager, bound to structs.' },
+	{ name: 'log', iface: 'gas.Logger', text: 'Structured logging over slog or zerolog, with log shipping.' },
+	{ name: 'database', iface: 'gas.DatabaseProvider', text: 'PostgreSQL, MySQL and SQLite, with transaction helpers.' },
+	{ name: 'migrate', iface: 'gas.MigrationManager', text: 'Database migrations owned by the services that need them.' },
+	{ name: 'auth', iface: 'gas.Principal', text: 'JWTs, sessions, API keys and single-use tokens.' },
+	{ name: 'cache', iface: 'gas.CacheProvider', text: 'Key-value caching in memory or on Valkey.' },
+	{ name: 'storage', iface: 'storage.Provider', text: 'Object storage on S3, a local directory or memory.' },
+	{ name: 'queue', iface: 'gas.JobQueueProvider', text: 'Job queues on Amazon SQS or in memory.' },
+	{ name: 'email', iface: 'gas.EmailProvider', text: 'Transactional email over Amazon SES or an in-memory outbox.' },
+	{ name: 'template', iface: 'gas.TemplateProvider', text: 'Template storage in memory, a directory, an embedded FS or a database.' },
+	{ name: 'ui', iface: 'ui.Provider', text: 'HTML pages with layouts, partials, static files and HTMX fragments.' },
+];
+---
+
+<div class="gas-landing not-content">
+	<section class="gas-intro" aria-labelledby="_top">
+		<h1 id="_top">The modular Go framework for SaaS backends</h1>
+		<p class="gas-lede">
+			The core gives you dependency injection, routing, middleware, events and a service lifecycle.
+			Everything else is a module you add when you need it, so your app only pulls in what it uses.
+		</p>
+		<div class="gas-actions">
+			<a class="gas-button gas-button-primary" href={`${base}/start/installation/`}>Get started</a>
+			<a class="gas-button" href={`${base}/reference/gas/`}>Read the core reference</a>
+		</div>
+	</section>
+
+	<section class="gas-app" aria-label="A complete app">
+		<Code code={app} lang="go" title="main.go" />
+		<p class="gas-caption">
+			<code>go run .</code> starts a server on port 8080. Ctrl+C shuts it down gracefully.
+		</p>
+	</section>
+
+	<section class="gas-modules" id="modules" aria-labelledby="modules-title">
+		<h2 id="modules-title">One core, eleven modules</h2>
+		<p class="gas-section-lede">
+			Each module is its own Go module and registers as a service, like your own code.
+			Most implement an interface the core defines, so your services depend on the interface, not the module.
+		</p>
+
+		<div class="gas-manifold">
+			<a class="gas-manifold-core" href={`${base}/reference/gas/`}>
+				<span class="gas-manifold-name">gas</span>
+				<span class="gas-manifold-text">The core: services, routing, handlers and middleware.</span>
+			</a>
+			<ul class="gas-manifold-branches">
+				{
+					modules.map((m) => (
+						<li>
+							<a href={`${base}/reference/${m.name}/`}>
+								<span class="gas-manifold-name">{m.name}</span>
+								<span class="gas-manifold-text">{m.text}</span>
+								<code class="gas-manifold-iface">{m.iface}</code>
+							</a>
+						</li>
+					))
+				}
+			</ul>
+		</div>
+	</section>
+</div>

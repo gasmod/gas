@@ -1,4 +1,13 @@
-/* Gas docs: a neutral, high-contrast palette inspired by modern framework docs. */
+/*
+ * Gas docs theme.
+ *
+ * Monochrome, from the greys of the Gas icon, with one accent: flame, the
+ * blue of a gas flame. Flame marks what you can act on (links, the active
+ * page, focus) and the module manifold on the home page, nothing else.
+ * Geist Mono marks Go identifiers: code, interface names, and the API
+ * declarations of the reference pages.
+ */
+
 @font-face {
 	font-family: 'Geist';
 	src: url('/gas/fonts/geist-sans-variable.woff2') format('woff2');
@@ -15,127 +24,106 @@
 	font-display: swap;
 }
 
+/* ---- Tokens ---------------------------------------------------------- */
+
+/* Dark is Starlight's base theme. */
 :root {
 	color-scheme: dark;
+
+	--gas-paper: #0f1115;
+	--gas-surface: #161920;
+	--gas-ink: #eef0f3;
+	--gas-body: #c6cad2;
+	--gas-muted: #959ca8;
+	--gas-faint: #6a717d;
+	--gas-line: #262a33;
+	--gas-line-strong: #353a45;
+	--gas-flame: #8ea2ff;
+	--gas-flame-ink: #b9c6ff;
+	--gas-flame-wash: #1a2142;
+
+	--sl-color-white: var(--gas-ink);
+	--sl-color-gray-1: #e2e5ea;
+	--sl-color-gray-2: var(--gas-body);
+	--sl-color-gray-3: var(--gas-muted);
+	--sl-color-gray-4: var(--gas-faint);
+	--sl-color-gray-5: var(--gas-line);
+	--sl-color-gray-6: var(--gas-surface);
+	--sl-color-black: var(--gas-paper);
+	--sl-color-accent-low: var(--gas-flame-wash);
+	--sl-color-accent: var(--gas-flame);
+	--sl-color-accent-high: var(--gas-flame-ink);
+	--sl-color-text-accent: var(--gas-flame-ink);
+	--sl-color-bg: var(--gas-paper);
+	--sl-color-bg-nav: var(--gas-paper);
+	--sl-color-bg-sidebar: var(--gas-paper);
+	--sl-color-bg-inline-code: var(--gas-surface);
+	--sl-color-hairline: var(--gas-line);
+	--sl-color-hairline-light: var(--gas-line);
+	--sl-color-hairline-shade: var(--gas-paper);
+
 	--sl-font: 'Geist', var(--sl-font-system);
 	--sl-font-mono: 'Geist Mono', var(--sl-font-system-mono);
-	--sl-color-white: #fafafa;
-	--sl-color-gray-1: #f4f4f5;
-	--sl-color-gray-2: #d4d4d8;
-	--sl-color-gray-3: #a1a1aa;
-	--sl-color-gray-4: #71717a;
-	--sl-color-gray-5: #3f3f46;
-	--sl-color-gray-6: #27272a;
-	--sl-color-black: #070708;
-	--sl-color-accent-low: #27272a;
-	--sl-color-accent: #fafafa;
-	--sl-color-accent-high: #f4f4f5;
-	--sl-color-bg: #070708;
-	--sl-color-bg-nav: #0a0a0c;
-	--sl-color-bg-sidebar: #0a0a0c;
-	--sl-color-bg-inline-code: #27272a;
-	--sl-color-hairline: #27272a;
-	--sl-color-hairline-light: #333338;
-	--sl-color-hairline-shade: #070708;
-	--gas-shadow: rgb(0 0 0 / 0.32);
-	--sl-sidebar-width: 18rem;
-	--sl-content-width: 48rem;
-	--sl-content-pad-x: clamp(1rem, 2.5vw, 1.75rem);
-	--sl-line-height: 1.78;
+	--sl-sidebar-width: 17rem;
+	--sl-content-width: 46rem;
+	--sl-content-pad-x: clamp(1rem, 3vw, 2.5rem);
+	--sl-line-height: 1.7;
+	--sl-text-h1: 2.25rem;
 	--sl-text-h2: 1.5rem;
-	--sl-text-h3: 1.25rem;
-	--gas-radius: 0.75rem;
+	--sl-text-h3: 1.1875rem;
+	--sl-text-h4: 1.0625rem;
 }
 
 :root[data-theme='light'] {
 	color-scheme: light;
-	--sl-color-white: #09090b;
-	--sl-color-gray-1: #18181b;
-	--sl-color-gray-2: #3f3f46;
-	--sl-color-gray-3: #71717a;
-	--sl-color-gray-4: #a1a1aa;
-	--sl-color-gray-5: #d4d4d8;
-	--sl-color-gray-6: #f4f4f5;
-	--sl-color-gray-7: #fafafa;
-	--sl-color-black: #ffffff;
-	--sl-color-accent-low: #e4e4e7;
-	--sl-color-accent: #18181b;
-	--sl-color-accent-high: #09090b;
-	--sl-color-bg: #ffffff;
-	--sl-color-bg-nav: #ffffff;
-	--sl-color-bg-sidebar: #fafafa;
-	--sl-color-bg-inline-code: #f4f4f5;
-	--sl-color-hairline: #e4e4e7;
-	--sl-color-hairline-light: #e4e4e7;
-	--sl-color-hairline-shade: #ededee;
-	--gas-shadow: rgb(0 0 0 / 0.08);
+
+	--gas-paper: #ffffff;
+	--gas-surface: #f4f5f7;
+	--gas-ink: #15171c;
+	--gas-body: #3a3f48;
+	--gas-muted: #5b6270;
+	--gas-faint: #8a909b;
+	--gas-line: #e4e6eb;
+	--gas-line-strong: #d3d6dd;
+	--gas-flame: #2b4dff;
+	--gas-flame-ink: #1e3ad6;
+	--gas-flame-wash: #eef1ff;
+
+	--sl-color-gray-1: #23262d;
+	--sl-color-gray-7: #f9fafb;
+	--sl-color-bg-sidebar: #fbfbfc;
 }
 
-html {
-	background: var(--sl-color-bg);
-	scroll-behavior: smooth;
-}
-
+html,
 body {
-	background: var(--sl-color-bg);
+	background: var(--gas-paper);
 }
 
 ::selection {
-	color: var(--sl-color-text-invert);
-	background: var(--sl-color-accent);
+	color: var(--gas-paper);
+	background: var(--gas-flame);
 }
 
-/* A quiet glass header keeps search and navigation anchored while scrolling. */
+:focus-visible {
+	outline: 2px solid var(--gas-flame);
+	outline-offset: 3px;
+}
+
+/* ---- Header ---------------------------------------------------------- */
+
 header.header {
-	background-color: color-mix(in srgb, var(--sl-color-bg-nav) 94%, transparent);
-	backdrop-filter: blur(14px);
-	border-bottom-color: var(--sl-color-hairline);
-}
-
-header.header site-search button {
-	min-height: 2.4rem;
-	border: 1px solid var(--sl-color-gray-5);
-	border-radius: 0.7rem;
-	background: color-mix(in srgb, var(--sl-color-bg) 68%, transparent);
-	color: var(--sl-color-gray-3);
-	transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
-}
-
-header.header site-search button:hover {
-	border-color: var(--sl-color-accent);
-	background: var(--sl-color-bg);
-	color: var(--sl-color-white);
-}
-
-header.header site-search button > kbd {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.2rem;
-	padding: 0;
-	border: 0;
-	background: transparent;
-	color: var(--sl-color-gray-3);
-}
-
-header.header site-search button > kbd > kbd {
-	min-width: 1.25rem;
-	padding: 0.1rem 0.25rem;
-	border: 1px solid var(--sl-color-gray-5);
-	border-radius: 0.25rem;
-	background: var(--sl-color-gray-6);
-	color: var(--sl-color-gray-2);
-	font-size: 0.75rem;
-	line-height: 1.2;
-	text-align: center;
+	border-bottom: 1px solid var(--gas-line);
+	background: color-mix(in srgb, var(--gas-paper) 90%, transparent);
+	backdrop-filter: saturate(1.4) blur(12px);
 }
 
 .gas-header {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
+	gap: 2rem;
 	width: 100%;
 	height: 100%;
-	gap: 2rem;
 }
 
 .gas-header-start,
@@ -148,8 +136,8 @@ header.header site-search button > kbd > kbd {
 }
 
 .gas-header-start {
+	gap: clamp(1.25rem, 3vw, 2.5rem);
 	min-width: 0;
-	gap: clamp(1.25rem, 2.5vw, 2.75rem);
 }
 
 .gas-header-nav {
@@ -157,97 +145,187 @@ header.header site-search button > kbd > kbd {
 	gap: 0.25rem;
 }
 
+/* The active section is marked by a flame rule on the header's edge. */
 .gas-header-nav a {
 	display: flex;
 	align-items: center;
-	padding-inline: 0.7rem;
-	color: var(--sl-color-gray-3);
+	padding-inline: 0.65rem;
+	border-bottom: 2px solid transparent;
+	margin-bottom: -1px;
+	color: var(--gas-muted);
 	font-size: var(--sl-text-sm);
+	font-weight: 500;
 	text-decoration: none;
-	transition: color 140ms ease;
 }
 
-.gas-header-nav a:hover,
+.gas-header-nav a:hover {
+	color: var(--gas-ink);
+}
+
 .gas-header-nav a.active,
 .gas-header-nav a[aria-current='page'] {
-	color: var(--sl-color-white);
+	border-bottom-color: var(--gas-flame);
+	color: var(--gas-ink);
 }
 
 .gas-header-actions {
 	flex-shrink: 0;
-	gap: 1.15rem;
+	gap: 1rem;
 }
 
-.gas-header-actions site-search button {
-	width: 13rem;
-	max-width: 13rem;
+header.header site-search button {
+	width: 15rem;
+	max-width: 15rem;
+	min-height: 2.25rem;
+	border: 1px solid var(--gas-line);
+	border-radius: 0.5rem;
+	background: var(--gas-surface);
+	color: var(--gas-muted);
+}
+
+header.header site-search button:hover {
+	border-color: var(--gas-line-strong);
+	color: var(--gas-ink);
+}
+
+header.header site-search button > kbd {
+	display: inline-flex;
+	gap: 0.2rem;
+	padding: 0;
+	border: 0;
+	background: transparent;
+}
+
+header.header site-search button > kbd > kbd {
+	min-width: 1.25rem;
+	padding: 0.05rem 0.3rem;
+	border: 1px solid var(--gas-line-strong);
+	border-radius: 0.25rem;
+	background: var(--gas-paper);
+	color: var(--gas-muted);
+	font-size: 0.75rem;
+	line-height: 1.3;
+	text-align: center;
 }
 
 .gas-header-social {
-	border-inline-start: 1px solid var(--sl-color-gray-5);
 	padding-inline-start: 0.85rem;
+	border-inline-start: 1px solid var(--gas-line);
 }
 
 .gas-header-social a {
-	color: var(--sl-color-gray-2);
+	color: var(--gas-muted);
 }
 
 .gas-header-social a:hover {
-	color: var(--sl-color-white);
+	color: var(--gas-ink);
 }
 
 .site-title {
-	letter-spacing: -0.025em;
+	color: var(--gas-ink) !important;
+	letter-spacing: -0.02em;
 }
 
-.version {
-	border-color: color-mix(in srgb, var(--sl-color-accent) 35%, var(--sl-color-gray-5)) !important;
-	background: color-mix(in srgb, var(--sl-color-accent-low) 65%, transparent);
-	color: var(--sl-color-accent-high) !important;
+/* ---- Sidebar --------------------------------------------------------- */
+
+.sidebar-pane {
+	border-inline-end: 1px solid var(--gas-line);
+	background: var(--sl-color-bg-sidebar);
 }
+
+.sidebar-content {
+	padding-block: 1.5rem 2.5rem;
+}
+
+.sidebar-content summary {
+	border-radius: 0.375rem;
+	color: var(--gas-ink);
+}
+
+.sidebar-content .group-label .large {
+	font-size: var(--sl-text-sm);
+	font-weight: 600;
+	color: var(--gas-ink);
+}
+
+.sidebar-content ul ul li {
+	border-inline-start-color: var(--gas-line);
+}
+
+.sidebar-content a {
+	border-radius: 0.375rem;
+	color: var(--gas-muted);
+}
+
+.sidebar-content a:hover {
+	color: var(--gas-ink);
+}
+
+/* The current page carries the flame mark on its rail. */
+.sidebar-content a[aria-current='page'],
+.sidebar-content a[aria-current='page']:hover {
+	border-inline-start: 0;
+	background: var(--gas-flame-wash);
+	color: var(--gas-flame-ink);
+	font-weight: 500;
+}
+
+.sidebar-content ul ul a[aria-current='page'] {
+	box-shadow: inset 2px 0 0 var(--gas-flame);
+	border-radius: 0 0.375rem 0.375rem 0;
+}
+
+/* ---- Page heading ---------------------------------------------------- */
 
 .content-panel + .content-panel {
 	border-top: 0;
-	padding-top: 0.5rem;
 }
 
 .gas-page-heading {
 	display: flex;
-	align-items: center;
+	align-items: flex-start;
 	justify-content: space-between;
 	gap: 1rem;
+	padding-top: 1rem;
 }
 
 .gas-page-heading h1 {
 	margin: 0;
-	font-size: clamp(2rem, 3.5vw, 2.5rem);
-	font-weight: 600;
+	color: var(--gas-ink);
+	font-size: clamp(1.875rem, 3.2vw, var(--sl-text-h1));
+	font-weight: 640;
+	letter-spacing: -0.035em;
+	line-height: 1.15;
+}
+
+/* A reference page is titled by its package path, which is code. */
+.gas-page-heading[data-reference] h1 {
+	font-family: var(--sl-font-mono);
+	font-weight: 560;
 	letter-spacing: -0.04em;
-	line-height: 1.2;
 }
 
 .gas-copy-page {
 	display: inline-flex;
+	flex-shrink: 0;
 	align-items: center;
-	justify-content: center;
 	gap: 0.45rem;
-	min-height: 2.2rem;
-	padding: 0.35rem 0.65rem;
-	border: 1px solid var(--sl-color-gray-5);
-	border-radius: 0.45rem;
+	min-height: 2rem;
+	margin-top: 0.35rem;
+	padding: 0.3rem 0.65rem;
+	border: 1px solid var(--gas-line);
+	border-radius: 0.5rem;
 	background: transparent;
-	color: var(--sl-color-gray-2);
+	color: var(--gas-muted);
 	font: inherit;
-	font-size: 0.9rem;
+	font-size: 0.85rem;
 	white-space: nowrap;
 	cursor: pointer;
-	transition: border-color 140ms ease, color 140ms ease, background-color 140ms ease;
 }
 
 .gas-copy-page:hover {
-	border-color: var(--sl-color-gray-3);
-	background: var(--sl-color-gray-6);
-	color: var(--sl-color-white);
+	border-color: var(--gas-line-strong);
+	color: var(--gas-ink);
 }
 
 .gas-copy-page svg {
@@ -257,299 +335,398 @@ header.header site-search button > kbd > kbd {
 	stroke-width: 1.5;
 }
 
-/* Give the navigation a little more rhythm and a clear, persistent selection. */
-.sidebar-pane {
-	background-color: var(--sl-color-bg-sidebar);
-}
-
-.sidebar-content {
-	padding-block: 1.25rem 2rem;
-}
-
-.sidebar-content ul ul {
-	margin-block-start: 0.35rem;
-}
-
-.sidebar-content ul ul li {
-	border-inline-start-color: color-mix(in srgb, var(--sl-color-gray-5) 78%, transparent);
-}
-
-.sidebar-content summary {
-	border-radius: 0.55rem;
-	color: var(--sl-color-white);
-}
-
-.sidebar-content summary:hover {
-	background: color-mix(in srgb, var(--sl-color-gray-5) 35%, transparent);
-}
-
-.sidebar-content a {
-	transition: color 140ms ease, background-color 140ms ease;
-}
-
-.sidebar-content a:hover,
-.sidebar-content a:focus-visible {
-	background: color-mix(in srgb, var(--sl-color-gray-5) 38%, transparent);
-}
-
-.sidebar-content a[aria-current='page'],
-.sidebar-content a[aria-current='page']:hover {
-	border-inline-start: 0;
-	border-radius: 0.35rem;
-	background: color-mix(in srgb, var(--sl-color-gray-5) 34%, transparent);
-	color: var(--sl-color-white);
-	font-weight: 600;
-}
-
-/* A restrained glow gives article pages some depth without competing with text. */
-.main-pane {
-	background:
-		linear-gradient(180deg, color-mix(in srgb, var(--sl-color-gray-6) 14%, transparent), transparent 28rem),
-		var(--sl-color-bg);
-}
+/* ---- Article --------------------------------------------------------- */
 
 .sl-markdown-content {
+	color: var(--gas-body);
 	font-size: 1rem;
-	letter-spacing: -0.006em;
-}
-
-.sl-markdown-content h1,
-main .hero h1 {
-	letter-spacing: -0.045em;
-	font-weight: 650;
-}
-
-.sl-markdown-content h1 {
-	margin-bottom: 0.75rem;
-}
-
-.sl-markdown-content h2 {
-	margin-block: 2.5rem 0.85rem;
-	letter-spacing: -0.028em;
-}
-
-.sl-markdown-content h3 {
-	margin-block: 2rem 0.65rem;
-	letter-spacing: -0.018em;
 }
 
 .sl-markdown-content p,
 .sl-markdown-content li {
-	/* max-width: 60ch; */
-	line-height: 1.82;
-	color: var(--sl-color-gray-2);
+	line-height: 1.75;
 }
 
 .sl-markdown-content li + li {
-	margin-block-start: 0.35em;
+	margin-top: 0.4em;
 }
 
-.sl-markdown-content a:not(.sl-link-button, .sl-link-card a) {
-	text-decoration-color: color-mix(in srgb, var(--sl-color-accent) 48%, transparent);
-	text-underline-offset: 0.2em;
+.sl-markdown-content :is(h2, h3, h4, h5) {
+	color: var(--gas-ink);
+	font-weight: 620;
+}
+
+/*
+ * A section starts on a hairline, so a long page reads as its parts. The
+ * rule goes on Starlight's heading wrapper, which spans the column; the
+ * heading itself is only as wide as its text.
+ */
+.sl-markdown-content h2 {
+	font-size: var(--sl-text-h2);
+	letter-spacing: -0.025em;
+	line-height: 1.25;
+}
+
+.sl-markdown-content .sl-heading-wrapper.level-h2 {
+	margin-top: 3rem;
+	padding-top: 2rem;
+	border-top: 1px solid var(--gas-line);
+}
+
+.sl-markdown-content > .sl-heading-wrapper.level-h2:first-child {
+	margin-top: 0.5rem;
+	padding-top: 0;
+	border-top: 0;
+}
+
+.sl-markdown-content h3 {
+	margin-top: 2.25rem;
+	font-size: var(--sl-text-h3);
+	letter-spacing: -0.015em;
+}
+
+.sl-markdown-content h4 {
+	margin-top: 1.75rem;
+	font-size: var(--sl-text-h4);
+}
+
+.sl-markdown-content a:not(.not-content a) {
+	color: var(--gas-flame-ink);
+	text-decoration: underline;
+	text-decoration-color: color-mix(in srgb, var(--gas-flame) 40%, transparent);
 	text-decoration-thickness: 1px;
+	text-underline-offset: 0.22em;
 }
 
-.sl-markdown-content a:not(.sl-link-button, .sl-link-card a):hover {
+.sl-markdown-content a:not(.not-content a):hover {
 	text-decoration-color: currentColor;
 }
 
 .sl-markdown-content :not(pre) > code {
-	border: 1px solid color-mix(in srgb, var(--sl-color-gray-5) 65%, transparent);
-	border-radius: 0.35rem;
-	color: var(--sl-color-accent-high);
+	padding: 0.1em 0.35em;
+	border: 1px solid var(--gas-line);
+	border-radius: 0.3rem;
+	background: var(--gas-surface);
+	color: var(--gas-ink);
+	font-size: 0.875em;
 }
 
-/* Keep code frames compact, neutral, and focused on the snippet itself. */
-.expressive-code {
-	--ec-brdRad: 0.55rem;
-	--ec-brdCol: var(--sl-color-gray-5);
-	--ec-codeBg: color-mix(in srgb, var(--sl-color-bg-sidebar) 78%, var(--sl-color-gray-6));
-	--ec-codeFg: var(--sl-color-gray-1);
-	--ec-frm-edBg: var(--sl-color-bg-sidebar);
-	--ec-frm-trmBg: color-mix(in srgb, var(--sl-color-bg-sidebar) 78%, var(--sl-color-gray-6));
-	--ec-frm-trmTtbBg: var(--sl-color-bg-sidebar);
-	--ec-frm-frameBoxShdCssVal: none;
+.sl-markdown-content a > code {
+	color: inherit;
 }
 
-.expressive-code .frame {
-	border: 1px solid var(--sl-color-gray-5);
-	border-radius: 0.55rem;
-	box-shadow: none;
-	overflow: hidden;
+/* API declarations of the reference pages are set as the code they name. */
+.main-pane:has([data-reference]) .sl-markdown-content :is(h3, h4) {
+	font-family: var(--sl-font-mono);
+	font-weight: 540;
+	letter-spacing: -0.02em;
 }
 
-.expressive-code .frame pre {
-	padding-block: 0.75rem;
-	border: 0;
-	border-radius: 0;
-	background: var(--ec-codeBg);
+.main-pane:has([data-reference]) .sl-markdown-content h3 {
+	margin-top: 3rem;
+	font-size: 1.125rem;
 }
 
-.expressive-code .frame.has-title:not(.is-terminal) .header {
-	display: flex;
-	min-height: 2.25rem;
-	padding: 0.45rem 0.85rem;
-	border: 0;
-	border-radius: 0;
-	border-bottom: 1px solid var(--sl-color-hairline);
-	background: var(--sl-color-bg-sidebar);
-	color: var(--sl-color-gray-3);
-}
-
-.expressive-code .frame.has-title:not(.is-terminal) .header::before,
-.expressive-code .frame.has-title:not(.is-terminal) .header::after,
-.expressive-code .frame.has-title:not(.is-terminal) .title::after {
-	display: none;
-}
-
-.expressive-code .frame.has-title:not(.is-terminal) .title {
-	margin: 0;
-	padding: 0;
-	border: 0;
-	border-radius: 0;
-	background: transparent;
-	color: var(--sl-color-gray-3);
-}
-
-.expressive-code .frame.is-terminal .header {
-	display: none;
+.main-pane:has([data-reference]) .sl-markdown-content h4 {
+	margin-top: 2rem;
+	color: var(--gas-body);
+	font-size: 0.975rem;
 }
 
 .sl-markdown-content table {
+	display: table;
 	width: 100%;
-	border: 0;
-	border-radius: 0;
-	background: transparent;
+	border-collapse: collapse;
+	font-size: 0.925rem;
 }
 
 .sl-markdown-content :is(th, td) {
-	padding: 0.65rem 0.8rem;
-	font-size: 0.95rem;
-	line-height: 1.55;
+	padding: 0.6rem 0.75rem;
+	border-bottom: 1px solid var(--gas-line);
 	text-align: start;
 	vertical-align: top;
 }
 
 .sl-markdown-content th {
-	background: transparent;
-	color: var(--sl-color-white);
-	white-space: nowrap;
+	color: var(--gas-ink);
+	font-weight: 600;
 }
 
-.sl-markdown-content tr > :first-child {
-	padding-inline-start: 0.8rem;
+/* ---- Code ------------------------------------------------------------ */
+
+.expressive-code {
+	--ec-brdRad: 0.625rem;
+	--ec-brdCol: var(--gas-line);
+	--ec-codeBg: var(--gas-surface);
+	--ec-frm-edBg: var(--gas-surface);
+	--ec-frm-edTabBarBg: var(--gas-paper);
+	--ec-frm-edTabBarBrdBtmCol: var(--gas-line);
+	--ec-frm-edActTabBg: var(--gas-surface);
+	--ec-frm-edActTabIndTopCol: var(--gas-flame);
+	--ec-frm-trmBg: var(--gas-surface);
+	--ec-frm-trmTtbBg: var(--gas-paper);
+	--ec-frm-frameBoxShdCssVal: none;
 }
 
-.sl-markdown-content tr > :last-child {
-	padding-inline-end: 0.8rem;
-}
-
-.sl-markdown-content tbody tr:last-child > * {
-	border-bottom: 0;
-}
-
-/* Cards feel like small surfaces and respond clearly to pointer and keyboard. */
-.sl-markdown-content .card,
-.sl-markdown-content .sl-link-card {
-	--sl-card-border: var(--sl-color-gray-5);
-	--sl-card-bg: color-mix(in srgb, var(--sl-color-gray-6) 44%, var(--sl-color-bg-sidebar));
-	border-radius: var(--gas-radius);
-	box-shadow: none;
-	transition: transform 150ms ease, border-color 150ms ease, background-color 150ms ease;
-}
-
-.sl-markdown-content .card:hover,
-.sl-markdown-content .sl-link-card:hover {
-	--sl-card-border: var(--sl-color-gray-3);
-	--sl-card-bg: color-mix(in srgb, var(--sl-color-gray-6) 72%, var(--sl-color-bg-sidebar));
-	transform: translateY(-1px);
-}
-
-.sl-markdown-content .card-grid {
-	margin-block: 1.25rem 2.5rem;
-}
-
-.sl-markdown-content .path-cards {
-	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
-	gap: 1rem;
-	margin-block: 1.25rem 2.5rem;
-}
-
-/* The home hero shares the same rounded surfaces as code and navigation. */
-main .hero {
-	position: relative;
-	isolation: isolate;
-	overflow: hidden;
-	margin-block: 0.5rem 1.5rem;
-	padding: clamp(1.75rem, 4vw, 3.5rem);
-	border: 1px solid var(--sl-color-gray-5);
-	border-radius: 1rem;
-	background:
-		radial-gradient(75% 115% at 100% 0%, color-mix(in srgb, var(--sl-color-gray-4) 12%, transparent), transparent 72%),
-		linear-gradient(135deg, color-mix(in srgb, var(--sl-color-gray-6) 44%, transparent), transparent 72%);
+.expressive-code .frame {
 	box-shadow: none;
 }
 
-main .hero .tagline {
-	max-width: 44ch;
-	line-height: 1.65;
+.expressive-code pre {
+	font-size: 0.875rem;
 }
 
-main .hero > img,
-main .hero > .hero-html img {
-	filter: drop-shadow(0 1rem 2rem var(--gas-shadow));
-}
+/* ---- Outline (table of contents) ------------------------------------- */
 
-main .hero .sl-link-button.primary {
-	box-shadow: none;
-	transition: transform 150ms ease, opacity 150ms ease;
-}
-
-main .hero .sl-link-button.primary:hover {
-	transform: translateY(-1px);
-	opacity: 0.88;
-}
-
-/* Keep the page outline quiet, legible, and aligned with the navigation. */
 .right-sidebar {
-	background: color-mix(in srgb, var(--sl-color-bg) 94%, transparent);
 	border-inline-start: 0;
+	background: var(--gas-paper);
 }
 
-.right-sidebar-panel a[aria-current='true'] {
-	color: var(--sl-color-accent-high);
+.right-sidebar-panel h2 {
+	color: var(--gas-ink);
+	font-size: var(--sl-text-sm);
+	font-weight: 600;
 }
 
-.right-sidebar-panel starlight-toc > nav > ul {
-	border-inline-start: 1px solid var(--sl-color-gray-5);
-	padding-inline-start: 0.5rem;
+.right-sidebar-panel starlight-toc a {
+	color: var(--gas-muted);
+}
+
+.right-sidebar-panel starlight-toc a:hover {
+	color: var(--gas-ink);
 }
 
 .right-sidebar-panel starlight-toc a[aria-current='true'] {
-	position: relative;
-	color: var(--sl-color-white);
-}
-
-.right-sidebar-panel starlight-toc a[aria-current='true']::before {
-	position: absolute;
-	inset-block: 0.1rem;
-	inset-inline-start: -0.55rem;
-	width: 2px;
-	background: var(--sl-color-white);
-	content: '';
+	color: var(--gas-flame-ink);
+	box-shadow: inset 2px 0 0 var(--gas-flame);
 }
 
 footer .meta {
 	padding-top: 1.25rem;
-	border-top: 1px solid var(--sl-color-hairline);
+	border-top: 1px solid var(--gas-line);
 }
 
-:focus-visible {
-	outline-color: var(--sl-color-accent);
-	outline-offset: 3px;
+/* ---- Home ------------------------------------------------------------ */
+
+/* The splash page takes the full width and keeps a reading column. */
+[data-has-sidebar] .gas-landing {
+	max-width: none;
 }
+
+.gas-landing {
+	max-width: 64rem;
+	margin-inline: auto;
+	padding-block: clamp(2.5rem, 7vw, 5.5rem) 4rem;
+}
+
+.gas-intro {
+	max-width: 46rem;
+}
+
+.gas-intro h1 {
+	margin: 0;
+	color: var(--gas-ink);
+	font-size: clamp(2.25rem, 5.5vw, 3.75rem);
+	font-weight: 680;
+	letter-spacing: -0.045em;
+	line-height: 1.04;
+	text-wrap: balance;
+}
+
+.gas-lede {
+	max-width: 40rem;
+	margin: 1.5rem 0 0;
+	color: var(--gas-body);
+	font-size: clamp(1.0625rem, 1.6vw, 1.1875rem);
+	line-height: 1.65;
+}
+
+.gas-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.75rem;
+	margin-top: 2rem;
+}
+
+.gas-button {
+	display: inline-flex;
+	align-items: center;
+	min-height: 2.75rem;
+	padding: 0 1.15rem;
+	border: 1px solid var(--gas-line-strong);
+	border-radius: 0.5rem;
+	color: var(--gas-ink);
+	font-size: 0.95rem;
+	font-weight: 560;
+	text-decoration: none;
+}
+
+.gas-button:hover {
+	border-color: var(--gas-muted);
+}
+
+.gas-button-primary {
+	border-color: var(--gas-ink);
+	background: var(--gas-ink);
+	color: var(--gas-paper);
+}
+
+.gas-button-primary:hover {
+	border-color: var(--gas-flame);
+	background: var(--gas-flame);
+	color: #fff;
+}
+
+:root:not([data-theme='light']) .gas-button-primary:hover {
+	color: var(--gas-paper);
+}
+
+.gas-app {
+	max-width: 46rem;
+	margin-top: clamp(2.5rem, 5vw, 3.5rem);
+}
+
+.gas-app .expressive-code pre {
+	font-size: 0.9rem;
+}
+
+.gas-caption {
+	margin: 0.85rem 0 0;
+	color: var(--gas-muted);
+	font-size: 0.925rem;
+}
+
+.gas-caption code {
+	font-family: var(--sl-font-mono);
+	font-size: 0.9em;
+	color: var(--gas-ink);
+}
+
+.gas-modules {
+	margin-top: clamp(4rem, 9vw, 6.5rem);
+	scroll-margin-top: calc(var(--sl-nav-height) + 1.5rem);
+}
+
+.gas-modules h2 {
+	margin: 0;
+	color: var(--gas-ink);
+	font-size: clamp(1.625rem, 3vw, 2.125rem);
+	font-weight: 660;
+	letter-spacing: -0.035em;
+	line-height: 1.15;
+}
+
+.gas-section-lede {
+	max-width: 42rem;
+	margin: 1rem 0 0;
+	color: var(--gas-body);
+	line-height: 1.7;
+}
+
+/*
+ * The manifold: the core on top, a flame line running down from it, and a
+ * branch off the line to each module. Name, what it does, and the interface
+ * it plugs in through share one grid, so the columns line up.
+ */
+.gas-manifold {
+	--branch: 2.25rem;
+	--line-x: 0.6rem;
+	margin-top: 2.5rem;
+}
+
+.gas-manifold a {
+	display: grid;
+	grid-template-columns: 7rem minmax(0, 1fr) auto;
+	align-items: baseline;
+	gap: 0.5rem 1.5rem;
+	padding: 0.95rem 1rem;
+	border-radius: 0.5rem;
+	color: inherit;
+	text-decoration: none;
+}
+
+.gas-manifold a:hover {
+	background: var(--gas-surface);
+}
+
+.gas-manifold a:hover .gas-manifold-name {
+	color: var(--gas-flame-ink);
+}
+
+.gas-manifold-core {
+	position: relative;
+	border: 1px solid var(--gas-line-strong);
+	background: var(--gas-paper);
+}
+
+.gas-manifold-branches {
+	position: relative;
+	margin: 0;
+	padding: 0 0 0 var(--branch);
+	list-style: none;
+}
+
+/* The trunk: from the core down to the last branch. */
+.gas-manifold-branches::before {
+	position: absolute;
+	top: 0;
+	bottom: 1.6rem;
+	left: var(--line-x);
+	width: 2px;
+	background: var(--gas-flame);
+	content: '';
+}
+
+.gas-manifold-branches li {
+	position: relative;
+	margin: 0;
+	border-bottom: 1px solid var(--gas-line);
+}
+
+.gas-manifold-branches li:last-child {
+	border-bottom: 0;
+}
+
+/* A branch: from the trunk to the module's name. */
+.gas-manifold-branches li::before {
+	position: absolute;
+	top: 1.6rem;
+	left: calc(var(--line-x) - var(--branch));
+	width: calc(var(--branch) - var(--line-x));
+	height: 2px;
+	background: var(--gas-flame);
+	content: '';
+}
+
+.gas-manifold-name {
+	color: var(--gas-ink);
+	font-family: var(--sl-font-mono);
+	font-size: 1rem;
+	font-weight: 560;
+}
+
+.gas-manifold-text {
+	color: var(--gas-body);
+	font-size: 0.95rem;
+	line-height: 1.55;
+}
+
+.gas-landing .gas-manifold-iface {
+	padding: 0;
+	border: 0;
+	background: none;
+	color: var(--gas-muted);
+	font-family: var(--sl-font-mono);
+	font-size: 0.85rem;
+	white-space: nowrap;
+}
+
+.gas-manifold-core .gas-manifold-text {
+	grid-column: 2 / -1;
+}
+
+/* ---- Small screens --------------------------------------------------- */
 
 @media (max-width: 50rem) {
 	.gas-header {
@@ -562,11 +739,7 @@ footer .meta {
 		display: none;
 	}
 
-	.gas-header-actions {
-		gap: 0;
-	}
-
-	.gas-header-actions site-search button {
+	header.header site-search button {
 		justify-content: center;
 		width: 2.5rem;
 		max-width: 2.5rem;
@@ -575,62 +748,37 @@ footer .meta {
 		background: transparent;
 	}
 
-	main .hero {
-		margin-block: 0 1.25rem;
-		padding: 1.5rem 1.15rem 1.75rem;
-		border-radius: 0.85rem;
-	}
-
-	.sl-markdown-content h2 {
-		margin-block-start: 2.25rem;
-	}
-
-	.sl-markdown-content .card-grid {
-		margin-block: 1rem 2rem;
-	}
-
-	.sl-markdown-content .path-cards {
-		grid-template-columns: 1fr;
-		margin-block: 1rem 2rem;
-	}
-
-	.gas-page-heading {
-		align-items: flex-start;
-	}
-
-	.gas-copy-page {
-		min-height: 2rem;
-		padding-inline: 0.5rem;
-	}
-
 	.gas-copy-page span {
 		position: absolute;
 		width: 1px;
 		height: 1px;
 		overflow: hidden;
-		clip: rect(0, 0, 0, 0);
-		white-space: nowrap;
 		clip-path: inset(50%);
+		white-space: nowrap;
+	}
+
+	.gas-manifold {
+		--branch: 1.5rem;
+		--line-x: 0.4rem;
+	}
+
+	.gas-manifold a {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 0.3rem;
+		padding: 0.85rem 0.75rem;
+	}
+
+	.gas-manifold-core .gas-manifold-text {
+		grid-column: auto;
+	}
+
+	.gas-manifold-iface {
+		white-space: normal;
 	}
 }
 
 @media (prefers-reduced-motion: reduce) {
 	html {
 		scroll-behavior: auto;
-	}
-
-	.sidebar-content a,
-	main .hero .sl-link-button.primary,
-	.gas-header-nav a,
-	.gas-copy-page,
-	.sl-markdown-content .card,
-	.sl-markdown-content .sl-link-card {
-		transition: none;
-	}
-
-	main .hero .sl-link-button.primary:hover,
-	.sl-markdown-content .card:hover,
-	.sl-markdown-content .sl-link-card:hover {
-		transform: none;
 	}
 }

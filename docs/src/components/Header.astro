@@ -7,6 +7,7 @@ import SiteTitle from './SiteTitle.astro';
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const path = Astro.url.pathname;
 const onDocs = path === `${base}/` || path === base;
+const onStart = path.startsWith(`${base}/start/`);
 const onCore = path.startsWith(`${base}/reference/gas/`);
 const onRef = path.startsWith(`${base}/reference/`) && !onCore;
 ---
@@ -15,9 +16,9 @@ const onRef = path.startsWith(`${base}/reference/`) && !onCore;
 	<div class="gas-header-start">
 		<SiteTitle />
 		<nav class="gas-header-nav" aria-label="Primary navigation">
-			<a href={`${base}/`} aria-current={onDocs ? 'page' : undefined}>Docs</a>
-			<a class:active={onCore} href={`${base}/reference/gas/`}>Core</a>
-			<a class:active={onRef} href={`${base}/#modules`}>Modules</a>
+			<a class={onStart ? 'active' : undefined} href={`${base}/`} aria-current={onDocs ? 'page' : undefined}>Docs</a>
+			<a class={onCore ? 'active' : undefined} href={`${base}/reference/gas/`}>Core</a>
+			<a class={onRef ? 'active' : undefined} href={`${base}/#modules`}>Modules</a>
 		</nav>
 	</div>
 	<div class="gas-header-actions">

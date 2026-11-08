@@ -1,70 +1,13 @@
 ---
 title: Gas
 description: A modular Go framework for building SaaS backends.
+template: splash
+tableOfContents: false
+editUrl: false
+prev: false
+next: false
 ---
 
-import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+import Landing from '../../components/Landing.astro';
 
-Gas is a modular Go framework for SaaS backends. The core gives you
-dependency injection, routing, middleware, events and a service lifecycle.
-Everything else is an optional module, each its own Go module, so your app
-only pulls in what it uses.
-
-## A complete app
-
-```go
-package main
-
-import (
-	"context"
-	"log"
-	"net/http"
-
-	"github.com/gasmod/gas"
-)
-
-func main() {
-	app := gas.NewApp()
-
-	app.Router().Handle(nil, http.MethodGet, "/", func(ctx gas.Context) error {
-		return ctx.Text(http.StatusOK, "Hello, World!")
-	})
-
-	if err := app.Run(context.Background()); err != nil {
-		log.Fatal(err)
-	}
-}
-```
-
-`go run .` starts a server on port 8080. Ctrl+C shuts it down gracefully.
-
-## Get started
-
-<CardGrid>
-	<LinkCard
-		title="Installation"
-		description="Add Gas to your project, register modules and run your first app."
-		href="/gas/start/installation/"
-	/>
-	<LinkCard
-		title="Core"
-		description="The App, services and dependency injection, routing, handlers and middleware."
-		href="/gas/reference/gas/"
-	/>
-</CardGrid>
-
-## Modules
-
-<CardGrid>
-	<LinkCard title="config" description="Environment variables, .env, JSON and AWS Secrets Manager, bound to structs." href="/gas/reference/config/" />
-	<LinkCard title="log" description="Structured logging over slog or zerolog, with log shipping." href="/gas/reference/log/" />
-	<LinkCard title="database" description="PostgreSQL, MySQL and SQLite, with transaction helpers." href="/gas/reference/database/" />
-	<LinkCard title="migrate" description="Database migrations owned by the services that need them." href="/gas/reference/migrate/" />
-	<LinkCard title="auth" description="JWTs, sessions, API keys and single-use tokens." href="/gas/reference/auth/" />
-	<LinkCard title="cache" description="Key-value caching in memory or on Valkey." href="/gas/reference/cache/" />
-	<LinkCard title="storage" description="Object storage on S3, a local directory or memory." href="/gas/reference/storage/" />
-	<LinkCard title="queue" description="Job queues on Amazon SQS or in memory." href="/gas/reference/queue/" />
-	<LinkCard title="email" description="Transactional email over Amazon SES or an in-memory outbox." href="/gas/reference/email/" />
-	<LinkCard title="template" description="Template storage in memory, a directory, an embedded FS or a database." href="/gas/reference/template/" />
-	<LinkCard title="ui" description="HTML pages with layouts, partials, static files and HTMX fragments." href="/gas/reference/ui/" />
-</CardGrid>
+<Landing />
