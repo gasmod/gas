@@ -201,7 +201,34 @@ func (v *VFS) sweepBucket(ctx context.Context, h string, s *sweeper) error {
 		}
 	}
 
+	if errors.Is(err, fs.ErrNotExist) {
+		// Deleted while it was swept: on Linux the open directories of a
+		// removed bucket fail to read rather than reading as empty.
+		gone, gErr := v.bucketGone(h)
+		switch {
+		case gErr != nil:
+			err = joinErrs(err, gErr)
+		case gone:
+			err = nil
+		}
+	}
+
 	return closeAll(err, b)
+}
+
+// bucketGone reports whether the bucket whose metadata directory is h no
+// longer opens.
+func (v *VFS) bucketGone(h string) (bool, error) {
+	b, err := v.openBucketByHash(h)
+	if errors.Is(err, ErrBucketNotFound) {
+		return true, nil
+	}
+
+	if err != nil {
+		return false, err
+	}
+
+	return false, b.Close()
 }
 
 // openBucketByHash opens the bucket whose metadata directory is h, as
