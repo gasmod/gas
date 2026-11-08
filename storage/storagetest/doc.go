@@ -1,26 +1,61 @@
-// Package storagetest provides recording mocks of storage.Provider and
-// storage.Presigner for testing code that depends on object storage without
-// a backend.
+// Package storagetest holds mocks of storage.Provider, [MockProvider], and
+// of storage.Presigner, [MockPresigner], for tests of code that stores
+// objects.
 //
-// Each mock method records the call in Calls and then delegates to the
-// matching Fn field when it is set, or returns nil values (nil, nil, or nil
-// for DeleteBucket) when it is not:
+// # Usage
 //
-//	mock := &storagetest.MockProvider{
-//		GetObjectFn: func(ctx context.Context, in *storage.GetObjectInput) (*storage.Object, error) {
-//			return nil, storage.ErrKeyNotFound
+// A mock records each call, and returns what the function in the field
+// named after the method returns:
+//
+//	m := &storagetest.MockProvider{
+//		GetObjectFn: func(context.Context, *storage.GetObjectInput) (*storage.Object, error) {
+//			return nil, errOffline
 //		},
 //	}
-//	gas.WithServiceInstance[storage.Provider](mock)
+//	_, err := m.GetObject(ctx, &storage.GetObjectInput{})
+//	// err is errOffline, and m.CallCount("GetObject") is 1
 //
-// A mock shows that the caller is wired correctly and handles what the
-// backend returns; it does not show that a backend behaves that way. The
-// storage sentinels a real backend returns are documented in package storage.
+// A mock keeps none of the storage package's rules: it checks no key,
+// stores nothing and reads no body. To test against those rules without a
+// server, use gas/storage/memory.
 //
-// Recording is safe for concurrent calls. Calls is read directly, so read it
-// only after the calls under test have finished, or use CallCount, which
-// locks. Reset clears the recorded calls but keeps the Fn fields. The mocks
-// register nothing themselves and have no lifecycle.
+// # Defaults
 //
-// SPDX-License-Identifier: MIT
+// With a field nil, its method succeeds with a zero output, never a nil
+// one:
+//
+//   - CreateBucket, DeleteBucket and DeleteObject return nil.
+//   - HeadBucket returns a Bucket with the name asked for.
+//   - ListBuckets and ListObjects return an empty page.
+//   - PutObject returns a zero PutObjectOutput, without reading the body.
+//   - CopyObject returns a zero CopyObjectOutput.
+//   - PresignUploadURL and PresignDownloadURL return a PresignURLResponse
+//     with only its Method, PUT or GET.
+//
+// The exception: HeadObject and GetObject return storage.ErrObjectNotFound,
+// as a store that holds no object does, so that code under test never gets
+// a nil object with a nil error.
+//
+// # Calls
+//
+// Each method appends a [Call] with its name and a copy of its input,
+// before it calls its field. A nil input is recorded as a nil pointer of
+// its type.
+//
+// A copy shares no pointer or map with the caller's input, so a caller
+// that reuses an input, as a listing loop does with its ContinuationToken,
+// does not change a recorded call. The Body of a PutObjectInput is the
+// same reader.
+//
+// The recorded calls are read and cleared with:
+//
+//   - Calls, which returns a deep copy of the calls in the order they were
+//     made, so that changing what it returns does not change them either.
+//   - CallCount, which counts those of one method.
+//   - Reset, which forgets them all and keeps the fields.
+//
+// The methods may be called from several goroutines at once, as the calls
+// are kept under a lock, which Calls, CallCount and Reset take too.
+// Setting a field while a method runs is a data race, and a nil mock
+// panics.
 package storagetest

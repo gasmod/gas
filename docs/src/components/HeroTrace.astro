@@ -1,0 +1,180 @@
+---
+// The home page hero's visual: a request traced through a Gas app, as a
+// tracing tool would draw it. Spans grow on a timeline as the request
+// passes the router, the middleware, the request scope and the handler's
+// own calls; then the status lands and the RequestLogger line appears. It
+// cycles through three requests of an illustrative notes app.
+---
+
+<figure class="gas-trace" aria-label="A request traced through a Gas app: routing, middleware, the request scope, the handler's calls and the response" data-gas-trace>
+	<div class="gas-trace-head">
+		<span class="gas-trace-method" data-method></span>
+		<span class="gas-trace-path" data-path></span>
+		<span class="gas-trace-status" data-status></span>
+		<span class="gas-trace-total" data-total></span>
+	</div>
+	<ol class="gas-trace-spans" data-spans></ol>
+	<p class="gas-trace-log" data-log></p>
+</figure>
+
+<script>
+	type Span = { name: string; note?: string; depth: number; start: number; dur: number; kind: 'gas' | 'app' | 'err' };
+	type Scenario = { method: string; path: string; status: string; ok: boolean; total: string; log: string; spans: Span[] };
+
+	// Times are milliseconds of the illustrative request.
+	const scenarios: Scenario[] = [
+		{
+			method: 'GET',
+			path: '/notes/42',
+			status: '200 OK',
+			ok: true,
+			total: '4.1ms',
+			log: 'INFO request method=GET path=/notes/42 status=200 bytes=118 duration=4.1ms',
+			spans: [
+				{ name: 'router', note: 'GET /notes/{id}', depth: 0, start: 0, dur: 0.15, kind: 'gas' },
+				{ name: 'SecurityHeaders', depth: 0, start: 0.15, dur: 3.95, kind: 'gas' },
+				{ name: 'RequestLogger', depth: 1, start: 0.2, dur: 3.85, kind: 'gas' },
+				{ name: 'scope', note: '*notes.Service', depth: 2, start: 0.3, dur: 0.25, kind: 'gas' },
+				{ name: 'handler', note: 'GetNote', depth: 2, start: 0.55, dur: 3.35, kind: 'app' },
+				{ name: 'cache.Get', note: 'miss', depth: 3, start: 0.7, dur: 0.45, kind: 'app' },
+				{ name: 'database.QueryRow', depth: 3, start: 1.25, dur: 2.05, kind: 'app' },
+				{ name: 'cache.Set', depth: 3, start: 3.35, dur: 0.4, kind: 'app' },
+			],
+		},
+		{
+			method: 'POST',
+			path: '/notes',
+			status: '201 Created',
+			ok: true,
+			total: '6.8ms',
+			log: 'INFO request method=POST path=/notes status=201 bytes=126 duration=6.8ms',
+			spans: [
+				{ name: 'router', note: 'POST /notes', depth: 0, start: 0, dur: 0.2, kind: 'gas' },
+				{ name: 'SecurityHeaders', depth: 0, start: 0.2, dur: 6.6, kind: 'gas' },
+				{ name: 'RequestLogger', depth: 1, start: 0.25, dur: 6.5, kind: 'gas' },
+				{ name: 'auth.Middleware', note: 'session', depth: 2, start: 0.35, dur: 1.1, kind: 'gas' },
+				{ name: 'handler', note: 'CreateNote', depth: 2, start: 1.5, dur: 5.1, kind: 'app' },
+				{ name: 'BindJSON', note: 'validate', depth: 3, start: 1.6, dur: 0.5, kind: 'gas' },
+				{ name: 'database.Exec', note: 'INSERT', depth: 3, start: 2.2, dur: 3.3, kind: 'app' },
+				{ name: 'events.Emit', note: 'NoteCreated', depth: 3, start: 5.6, dur: 0.6, kind: 'app' },
+			],
+		},
+		{
+			method: 'GET',
+			path: '/notes/99',
+			status: '404 Not Found',
+			ok: false,
+			total: '3.2ms',
+			log: '{"title":"Not Found","status":404,"detail":"note not found","code":"not_found"}',
+			spans: [
+				{ name: 'router', note: 'GET /notes/{id}', depth: 0, start: 0, dur: 0.15, kind: 'gas' },
+				{ name: 'SecurityHeaders', depth: 0, start: 0.15, dur: 3.05, kind: 'gas' },
+				{ name: 'RequestLogger', depth: 1, start: 0.2, dur: 2.95, kind: 'gas' },
+				{ name: 'scope', note: '*notes.Service', depth: 2, start: 0.3, dur: 0.25, kind: 'gas' },
+				{ name: 'handler', note: 'GetNote', depth: 2, start: 0.55, dur: 2.2, kind: 'app' },
+				{ name: 'database.QueryRow', note: 'no rows', depth: 3, start: 0.75, dur: 1.85, kind: 'app' },
+				{ name: 'ErrorHandler', note: 'problem+json', depth: 2, start: 2.75, dur: 0.4, kind: 'err' },
+			],
+		},
+	];
+
+	const root = document.querySelector<HTMLElement>('[data-gas-trace]');
+	const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+	if (root) {
+		const $ = <T extends HTMLElement>(sel: string) => root.querySelector<T>(sel)!;
+		const method = $('[data-method]');
+		const path = $('[data-path]');
+		const status = $('[data-status]');
+		const total = $('[data-total]');
+		const list = $('[data-spans]');
+		const log = $('[data-log]');
+
+		// Real milliseconds per traced millisecond.
+		const scale = 420;
+		let timers: number[] = [];
+		let index = 0;
+		let visible = true;
+		let running = false;
+
+		const later = (fn: () => void, ms: number) => timers.push(window.setTimeout(fn, ms));
+		const clear = () => {
+			timers.forEach((t) => window.clearTimeout(t));
+			timers = [];
+		};
+
+		const render = (s: Scenario) => {
+			const end = Math.max(...s.spans.map((x) => x.start + x.dur));
+			method.textContent = s.method;
+			path.textContent = s.path;
+			status.textContent = s.status;
+			total.textContent = s.total;
+			root.dataset.ok = String(s.ok);
+			root.classList.remove('is-done');
+			log.textContent = s.log;
+			list.innerHTML = '';
+			const bars: HTMLElement[] = [];
+			for (const span of s.spans) {
+				const li = document.createElement('li');
+				li.className = `gas-span gas-span-${span.kind}`;
+				li.style.setProperty('--depth', String(span.depth));
+				const label = document.createElement('span');
+				label.className = 'gas-span-label';
+				label.textContent = span.name;
+				if (span.note) {
+					const note = document.createElement('span');
+					note.className = 'gas-span-note';
+					note.textContent = span.note;
+					label.append(' ', note);
+				}
+				const track = document.createElement('span');
+				track.className = 'gas-span-track';
+				const bar = document.createElement('span');
+				bar.className = 'gas-span-bar';
+				bar.style.left = `${(span.start / end) * 100}%`;
+				bar.dataset.width = `${Math.max((span.dur / end) * 100, 1.5)}%`;
+				bar.style.setProperty('--dur', `${span.dur * scale}ms`);
+				track.append(bar);
+				li.append(label, track);
+				list.append(li);
+				bars.push(bar);
+			}
+			return { bars, end };
+		};
+
+		const finish = () => root.classList.add('is-done');
+
+		const play = () => {
+			clear();
+			running = true;
+			const s = scenarios[index];
+			const { bars, end } = render(s);
+			if (reduce) {
+				bars.forEach((b) => (b.style.width = b.dataset.width!));
+				finish();
+				return;
+			}
+			root.classList.add('is-in');
+			s.spans.forEach((span, i) => later(() => (bars[i].style.width = bars[i].dataset.width!), 250 + span.start * scale));
+			later(finish, 250 + end * scale + 150);
+			later(() => root.classList.remove('is-in'), 250 + end * scale + 3600);
+			later(() => {
+				index = (index + 1) % scenarios.length;
+				if (visible && !document.hidden) play();
+				else running = false;
+			}, 250 + end * scale + 4000);
+		};
+
+		// Pause while off screen or in a background tab; resume on return.
+		const resume = () => {
+			if (!running && visible && !document.hidden) play();
+		};
+		new IntersectionObserver(([entry]) => {
+			visible = entry.isIntersecting;
+			resume();
+		}).observe(root);
+		document.addEventListener('visibilitychange', resume);
+
+		play();
+	}
+</script>

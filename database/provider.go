@@ -2,42 +2,58 @@ package database
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/gasmod/gas"
 )
 
-// Compile-time check: Service implements gas.DatabaseProvider.
-var _ gas.DatabaseProvider = (*Service)(nil)
-
-// Query executes a query that returns rows. The returned gas.Rows is
-// backed by *sql.Rows which natively satisfies the interface.
+// Query runs a query that returns rows, on DB. The gas.Rows is the
+// *sql.Rows, which the caller must close. A statement's error comes back
+// wrapped, after `query: `; a connection-level failure wraps ErrConnect,
+// as described in the package documentation.
 func (s *Service) Query(ctx context.Context, query string, args ...any) (gas.Rows, error) {
-	if s.closed.Load() {
-		return nil, fmt.Errorf("%s: service is closed", s.Name())
-	}
-	if s.db == nil {
-		return nil, fmt.Errorf("%s: not initialized", s.Name())
-	}
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	st, err := s.loaded()
 	if err != nil {
-		return nil, fmt.Errorf("%s: query: %w", s.Name(), err)
+		return nil, err
 	}
+
+	//nolint:rowserrcheck // the caller owns rows and checks Err.
+	rows, err := st.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, runtimeError(ctx, "query", err)
+	}
+
 	return rows, nil
 }
 
-// Exec executes a query that doesn't return rows. The returned
-// gas.Result is backed by sql.Result which natively satisfies the interface.
+// Exec runs a statement that returns no rows, on DB. The gas.Result is
+// the sql.Result. Its errors are as Query's, after `exec: `.
 func (s *Service) Exec(ctx context.Context, query string, args ...any) (gas.Result, error) {
-	if s.closed.Load() {
-		return nil, fmt.Errorf("%s: service is closed", s.Name())
-	}
-	if s.db == nil {
-		return nil, fmt.Errorf("%s: not initialized", s.Name())
-	}
-	result, err := s.db.ExecContext(ctx, query, args...)
+	st, err := s.loaded()
 	if err != nil {
-		return nil, fmt.Errorf("%s: exec: %w", s.Name(), err)
+		return nil, err
 	}
+
+	result, err := st.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return nil, runtimeError(ctx, "exec", err)
+	}
+
 	return result, nil
+}
+
+// opConnection is the operation SafeError names.
+const opConnection = "connection"
+
+// SafeError returns err unchanged when it describes a statement, and, in
+// place of a connection-level failure, the error the service's own
+// methods return for one: `connection: ` and a fixed reason, wrapping
+// ErrConnect and not err, as described in the package documentation. A
+// nil err is nil. It is for code that runs statements on DB itself, such
+// as migrate, and works on a service in any state.
+func (*Service) SafeError(err error) error {
+	if err == nil || !connectionLevel(err) {
+		return err
+	}
+
+	return connectError(context.Background(), opConnection, err)
 }

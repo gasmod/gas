@@ -7,11 +7,141 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No change to this module's code. The internal modules it requires are
-pinned at 0.6.0.
+v0.6.0 rewrites the module around one contract that both stores keep,
+written in the `cache` package's `doc.go` and checked by a shared
+conformance suite. Each package's `doc.go` is its behavioral contract
+and lists its errors verbatim; read it before upgrading.
+
+### Added
+
+- **One store contract.** The `cache` package documents what every
+  store promises, and `memory` and `valkey` run the same conformance
+  suite: an empty key is `ErrInvalidKey`; values are copied in and out;
+  a nil value is stored as empty and read back as an empty, non-nil
+  slice; a TTL above zero is rounded up to a whole millisecond; a zero
+  TTL takes the store's `DefaultTTL` setting; an expired value is a
+  miss for `Get` and `Exists`.
+- `cache.CheckKey`, `cache.CheckTTL` and `cache.EffectiveTTL`, the
+  checks and the TTL rounding the stores share.
+- Sentinel errors `ErrInvalidKey`, `ErrInvalidTTL`, `ErrNotInitialized`,
+  `ErrAlreadyInitialized`, `ErrNilLogger`, `ErrNilConfig`,
+  `ErrNoConfigProvider` and `ErrInvalidConfig` in `cache`.
+- `memory.ServiceName` and `valkey.ServiceName`, which start every error
+  the store returns.
+- Exported defaults: `memory.DefaultMaxEntries`,
+  `DefaultCleanupInterval`, `DefaultTTL` and `MinCleanupInterval`;
+  `valkey.DefaultDB`, `DefaultTTL`, `DefaultDialTimeout`,
+  `DefaultOpTimeout`, `DefaultConnRetries`, `DefaultConnRetryInterval`
+  and `MaxConnRetryInterval`.
+- `Service.Config` on both stores returns a copy of the configuration
+  the last successful `Init` resolved, defaults included, or the zero
+  `Config` before one; `Close` and a failed `Init` keep it. The valkey
+  password stays a `Secret` in the copy.
+- `memory.Service.Len` returns the number of entries the store holds.
+- `valkey` settings: `Username` (ACL user), `KeyPrefix` (prepended to
+  every key the store's methods send), `DefaultTTL`, `OpTimeout` (the
+  bound of each command, default 3s), `TLS` and `TLSServerName`; the
+  `WithTLSConfig` option for a private CA or a client certificate.
+- `valkey.ErrConnect` and `valkey.ErrCommand`: a failed connect or
+  command carries a fixed reason (`authentication failed`, `timed out`,
+  `connection refused`, `unreachable`, `failed`) instead of valkey-go's
+  error, and a server reply keeps its text only for codes that never
+  echo the command.
+
+### Changed
+
+- **BREAKING: the sentinel texts change.** `cache.ErrKeyNotFound` is
+  `key not found` (was `cache: key not found`) and `cache.ErrClosed` is
+  `service closed` (was `cache: service is closed`). Every error a store
+  returns starts with its service name and the operation, such as
+  `gas/cache/memory: get: key not found`, and wraps a sentinel.
+- **BREAKING: lifecycle sentinels.** Before the first successful `Init`
+  every method returns `cache.ErrNotInitialized` (it was
+  `cache.ErrClosed`); `Init` on an initialized store returns
+  `cache.ErrAlreadyInitialized` and changes nothing; after `Close`,
+  until `Init` succeeds again, `cache.ErrClosed`. `Close` then `Init`
+  restarts a store.
+- **BREAKING: a negative TTL is `cache.ErrInvalidTTL`** and stores
+  nothing, and the empty key is `cache.ErrInvalidKey`, from every method.
+- **BREAKING: every method honors its context.** It returns the
+  context's error, wrapped, when the context has ended before it starts.
+- **BREAKING: the constructors check the logger.** A nil logger fails
+  with `cache.ErrNilLogger`. A nil `ConfigProvider` is accepted, and
+  `Init` then requires `WithConfig` (`cache.ErrNoConfigProvider`).
+- **BREAKING: a configuration given to `WithConfig` is validated.** `Init`
+  checks a copy of it against the `validate` tags, as a bound one is, and
+  never changes the caller's struct; a nil one is `cache.ErrNilConfig`.
+  `Init` resolves the configuration afresh each time it runs. A failure
+  wraps `cache.ErrInvalidConfig`.
+- **BREAKING: `memory` evicts instead of refusing.** When `MaxEntries` is
+  set and a `Set` adds a key to a full store, the store removes the entry
+  that expired first, or else the least recently used one. It used to
+  evict only an expired entry and else refuse the `Set` with
+  `max entries reached`. `Get` and `Set` make an entry the most recently
+  used.
+- **BREAKING: `memory.Settings.CleanupInterval` is at least 1s**
+  (`validate:"min=1s"`); 0 no longer turns the janitor off. `MaxEntries`
+  and `DefaultTTL` must not be negative.
+- `memory` counts a TTL on the monotonic clock, `Close` drops every entry
+  and waits for the janitor to return, and `Init` after `Close` starts
+  with an empty store.
+- **BREAKING: `valkey.Settings.Addr` has no default** and is required;
+  `DefaultConfig` no longer sets `localhost:6379`.
+- **BREAKING: `valkey.Settings.WriteTimeout` is replaced by
+  `OpTimeout`**, which bounds every command, the connect handshake and
+  `PING` included, so a server that stops answering cannot hold a call
+  past it, and is also valkey-go's `ConnWriteTimeout`.
+- **BREAKING: `valkey.Settings.Password` is a `valkey.Secret`**, an alias
+  of `gas.Secret`. Configuration binds into it as into a string, and
+  `string(s)` is the value.
+- `valkey` validates `DialTimeout` and `OpTimeout` (above 0), `DefaultTTL`
+  (0 or more), `ConnRetries` (0 to 10) and, when retries are on,
+  `ConnRetryInterval` (100ms to 30s); `TLSServerName` requires `TLS`
+  unless `WithTLSConfig` is given. The wait between connect retries
+  doubles up to 30s.
+- `valkey.Service.Close` cancels an `Init` still connecting or waiting to
+  retry, and waits for it; that `Init` fails with `cache.ErrClosed`. A
+  command that `Close` interrupts returns `cache.ErrClosed`.
+- `valkey.Service.CheckHealth` does no I/O and fails only when the store
+  is not initialized or its context has ended; `CheckReady` sends `PING`
+  within its context and `OpTimeout`.
+- `valkey.Service.Client` returns nil when the store is not initialized;
+  after `Close` it returned the closed client.
+- The logs change: `service initialized` (with `max_entries`,
+  `cleanup_interval` and `default_ttl` for `memory`, `db` and `tls` for
+  `valkey`) and `service closed`, at info level. The valkey log no
+  longer carries the address, and the retry warning carries `attempt`,
+  `retries`, `wait` and `reason` instead of `error`, `max_retries` and
+  `next_retry_in`.
+- **BREAKING: `cachetest.MockCache.Calls` is a method.** The exported
+  `Calls` field is gone; `Calls()` returns a copy. A `Get` with no
+  `GetFn` returns an error wrapping `cache.ErrKeyNotFound` (it returned
+  nil, nil), and `Set` records a copy of its value.
+
+### Removed
+
+- **BREAKING:** `memory.Config` and `valkey.Config` no longer embed
+  `gas.WithGasEnv`, which core removes.
+- The `claude-skill/gas-cache` directory.
+
+### Fixed
+
+- `valkey.Service.Init`'s context bounds every connect attempt, the dial
+  included; an attempt never outlives it (KI-052).
+- `memory` no longer races on a restart, and `Close` no longer returns
+  before its janitor stops.
+- `memory.Service.Get` returns a copy of the value; it returned the slice
+  the store kept, which a caller could change.
 
 ### Security
 
+- No error the stores make holds a key or a value, and no error or log
+  holds the server's address, a user name or the password. The valkey
+  errors quoted the key and wrapped valkey-go's errors, which hold the
+  address.
+- The valkey password no longer prints through fmt, encoding/json, YAML
+  encoders or log/slog, which write it as `[redacted]`, and refuses gob
+  encoding.
 - **Requires Go 1.27.3.** The `go` directive moves from 1.27 to 1.27.3,
   the first 1.27 release with the fix for GO-2026-6809 (CVE-2026-111943):
   `crypto/x509` now rejects intermediate certificates known to be

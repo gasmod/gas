@@ -7,17 +7,28 @@ import (
 	"io"
 	"os"
 	"sync"
-	"sync/atomic"
 	"time"
-
-	"github.com/gasmod/gas/storage/dir/internal/util"
 )
 
 // slot serializes waiters for one name inside this process, so at most one
 // goroutine per name is ever parked in the blocking lock syscall.
 type slot struct {
 	ch   chan struct{} // cap 1; holding the token means owning the name in-process
-	refs int           // holder + waiters; guarded by ObjectsLock.mu
+	refs int           // holder + waiters; guarded by slotTable.mu
+}
+
+// slotTable holds the slots of the names of a set of ObjectsLocks. The
+// locks of every Bucket handle of a VFS share one, so a key that many
+// handles wait for still has at most one goroutine parked in the blocking
+// lock syscall.
+type slotTable struct {
+	slots map[string]*slot // guarded by mu
+	mu    sync.Mutex
+}
+
+// newSlotTable returns an empty slotTable.
+func newSlotTable() *slotTable {
+	return &slotTable{slots: make(map[string]*slot)}
 }
 
 // ObjectsLock is an exclusive lock per name, held as an OS file lock on a
@@ -26,22 +37,34 @@ type slot struct {
 type ObjectsLock struct {
 	locksRoot *os.Root
 	closed    chan struct{}
-
+	// table holds the slots, which other locks may share.
+	table *slotTable
 	held  map[string]*os.File // nil after Close; guarded by mu
-	slots map[string]*slot    // guarded by mu
+	// scope sets the names of this lock apart in table: the path of
+	// locksRoot below the VFS root.
+	scope string
 	mu    sync.Mutex
 }
 
 var _ io.Closer = (*ObjectsLock)(nil)
 
-// NewLock returns an ObjectsLock that keeps its lock files in root. Close
-// closes root.
+// NewLock returns an ObjectsLock that keeps its lock files in root, with
+// slots of its own: it waits for a name that another ObjectsLock holds in
+// the lock syscall, as a lock of another process does. Close closes root.
 func NewLock(root *os.Root) *ObjectsLock {
+	return newSharedLock(root, newSlotTable(), "")
+}
+
+// newSharedLock returns an ObjectsLock that keeps its lock files in root,
+// the locks directory scope, and waits for its names in table, which it
+// shares with the other locks of its VFS. Close closes root.
+func newSharedLock(root *os.Root, table *slotTable, scope string) *ObjectsLock {
 	return &ObjectsLock{
 		locksRoot: root,
 		closed:    make(chan struct{}),
+		table:     table,
 		held:      make(map[string]*os.File),
-		slots:     make(map[string]*slot),
+		scope:     scope,
 	}
 }
 
@@ -49,7 +72,8 @@ func NewLock(root *os.Root) *ObjectsLock {
 // canceled wait returns an error wrapping ctx.Err(); a closed lock, one
 // wrapping os.ErrClosed.
 func (l *ObjectsLock) Lock(ctx context.Context, name string) error {
-	if sErr := l.acquireSlot(ctx, name); sErr != nil {
+	sErr := l.acquireSlot(ctx, name)
+	if sErr != nil {
 		return fmt.Errorf("wait for lock: %w", sErr)
 	}
 
@@ -62,12 +86,86 @@ func (l *ObjectsLock) Lock(ctx context.Context, name string) error {
 	defer l.mu.Unlock()
 
 	if l.held == nil {
-		cErr := util.CloseWithErr(errors.Join(os.ErrClosed, unlock(f)), f)
-		l.dropSlotLocked(name, true)
+		cErr := closeAll(joinErrs(os.ErrClosed, unlock(f)), f)
+
+		l.dropSlot(name)
+
 		return fmt.Errorf("wait for lock: %w", cErr)
 	}
+
 	l.held[name] = f
+
 	return nil
+}
+
+// Unlock gives up name and keeps its lock file for the next holder. A name
+// this lock does not hold returns an error wrapping errNotLocked.
+func (l *ObjectsLock) Unlock(name string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	f, ok := l.held[name]
+	if !ok {
+		return errNotLocked
+	}
+
+	delete(l.held, name)
+
+	cErr := closeAll(unlock(f), f)
+	// Drop the slot even if close failed, or the name is stuck in-process.
+	l.dropSlot(name)
+
+	return cErr
+}
+
+// Close wakes every waiter with os.ErrClosed, gives up every held name and
+// closes the locks root. Close after Close returns nil.
+func (l *ObjectsLock) Close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	var err error
+
+	if l.held != nil {
+		close(l.closed) // wakes in-process waiters with os.ErrClosed
+
+		for name, f := range l.held {
+			err = joinErrs(err, unlock(f), closeOne(f))
+			// The slots are shared with the other locks of the VFS, so
+			// they are given back; a waiter of this lock that gets one
+			// still fails with os.ErrClosed (see acquireSlot).
+			l.dropSlot(name)
+		}
+
+		l.held = nil
+	}
+
+	// os.Root.Close is idempotent.
+	return joinErrs(err, closeOne(l.locksRoot))
+}
+
+// Release gives up name and removes its lock file. A name this lock does not
+// hold returns an error wrapping errNotLocked.
+func (l *ObjectsLock) Release(name string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	// Only the holder may remove the file, or it would unlink a file that
+	// another holder still has locked.
+	f, ok := l.held[name]
+	if !ok {
+		return errNotLocked
+	}
+
+	delete(l.held, name)
+
+	// Remove before unlocking: a waiter that then gets the old file sees it
+	// is gone and retries, instead of holding it next to a newcomer.
+	err := joinErrs(rmInRoot(l.locksRoot, name, "lock file"), closeAll(unlock(f), f))
+
+	l.dropSlot(name)
+
+	return err
 }
 
 // lockFile locks the file currently at name. The caller owns the slot; on
@@ -82,27 +180,34 @@ func (l *ObjectsLock) lockFile(ctx context.Context, name string) (*os.File, erro
 		// Release unlinks the file while holding it, so a file that is no
 		// longer at name was released while we waited, and a newcomer may
 		// already hold the one that replaced it.
-		current, sErr := l.isCurrent(f, name)
+		current, sErr := isCurrent(l.locksRoot, f, name)
 		if sErr != nil {
 			l.dropSlot(name)
-			cErr := util.CloseWithErr(errors.Join(sErr, unlock(f)), f)
+
+			cErr := closeAll(joinErrs(sErr, unlock(f)), f)
+
 			return nil, fmt.Errorf("check lock file: %w", cErr)
 		}
+
 		if current {
 			return f, nil
 		}
 
-		if cErr := util.CloseWithErr(unlock(f), f); cErr != nil {
+		cErr := closeAll(unlock(f), f)
+		if cErr != nil {
 			l.dropSlot(name)
+
 			return nil, fmt.Errorf("unlock stale lock file: %w", cErr)
 		}
 
 		select {
 		case <-ctx.Done():
 			l.dropSlot(name)
+
 			return nil, fmt.Errorf("wait for lock: %w", ctx.Err())
 		case <-l.closed:
 			l.dropSlot(name)
+
 			return nil, fmt.Errorf("wait for lock: %w", os.ErrClosed)
 		default:
 		}
@@ -115,6 +220,7 @@ func (l *ObjectsLock) acquireFile(ctx context.Context, name string) (*os.File, e
 	f, fErr := l.openFile(ctx, name)
 	if fErr != nil {
 		l.dropSlot(name)
+
 		return nil, fErr
 	}
 
@@ -122,13 +228,11 @@ func (l *ObjectsLock) acquireFile(ctx context.Context, name string) (*os.File, e
 	ok, lErr := tryLock(f)
 	if lErr != nil {
 		l.dropSlot(name)
-		return nil, fmt.Errorf("acquire lock file: %w", util.CloseWithErr(lErr, f))
+
+		return nil, fmt.Errorf("acquire lock file: %w", closeAll(lErr, f))
 	}
 
 	if !ok {
-		if hook := lockWaitHook.Load(); hook != nil {
-			(*hook)(name)
-		}
 		done := make(chan error, 1)
 		go func() { done <- lockBlocking(f) }()
 
@@ -136,7 +240,8 @@ func (l *ObjectsLock) acquireFile(ctx context.Context, name string) (*os.File, e
 		case lErr = <-done:
 			if lErr != nil {
 				l.dropSlot(name)
-				return nil, fmt.Errorf("acquire lock file: %w", util.CloseWithErr(lErr, f))
+
+				return nil, fmt.Errorf("acquire lock file: %w", closeAll(lErr, f))
 			}
 		case <-ctx.Done():
 			return nil, l.abandon(name, f, done, ctx.Err())
@@ -152,11 +257,13 @@ func (l *ObjectsLock) acquireFile(ctx context.Context, name string) (*os.File, e
 // like retryPending but giving up when ctx is done or the lock is closed.
 func (l *ObjectsLock) openFile(ctx context.Context, name string) (*os.File, error) {
 	deadline := time.Now().Add(deletePendingTimeout)
+
 	for {
 		f, err := openInRoot(l.locksRoot, name, "lock file")
 		if err == nil || !isDeletePending(err) || !time.Now().Before(deadline) {
 			return f, err
 		}
+
 		select {
 		case <-ctx.Done():
 			return nil, fmt.Errorf("wait for lock: %w", ctx.Err())
@@ -167,30 +274,14 @@ func (l *ObjectsLock) openFile(ctx context.Context, name string) (*os.File, erro
 	}
 }
 
-// lockWaitHook, when set, is called with the name of every lock an
-// ObjectsLock finds held by another holder, just before it waits for it.
-// Only tests set it, to know that a caller has reached that wait.
-var lockWaitHook atomic.Pointer[func(name string)]
-
-// SetLockWaitHook sets the function called when a lock has to wait for
-// another holder, or clears it when hook is nil. It is for tests of the
-// packages that use this one, which cannot see when a call they started
-// blocks on a lock.
-func SetLockWaitHook(hook func(name string)) {
-	if hook == nil {
-		lockWaitHook.Store(nil)
-		return
-	}
-	lockWaitHook.Store(&hook)
-}
-
-// isCurrent reports whether f is still the file at name.
-func (l *ObjectsLock) isCurrent(f *os.File, name string) (bool, error) {
-	held, err := f.Stat()
+// isCurrent reports whether f is still the file at name in locksRoot.
+func isCurrent(locksRoot *os.Root, f *os.File, name string) (bool, error) {
+	held, err := statFile(f)
 	if err != nil {
-		return false, fmt.Errorf("stat held lock file: %w", err)
+		return false, ioErr("stat held lock file", err)
 	}
-	current, err := l.locksRoot.Lstat(name)
+
+	current, err := lstatIn(locksRoot, name)
 	// A name being removed is not f's to keep: only a holder removes, so it
 	// is f, which its last holder released, or a newer file. Do not wait for
 	// the removal to end: where it ends only once every handle is closed (see
@@ -198,142 +289,113 @@ func (l *ObjectsLock) isCurrent(f *os.File, name string) (bool, error) {
 	if errors.Is(err, os.ErrNotExist) || isDeletePending(err) {
 		return false, nil
 	}
+
 	if err != nil {
-		return false, fmt.Errorf("stat lock file: %w", err)
+		return false, ioErr("stat lock file", err)
 	}
+
 	return os.SameFile(held, current), nil
-}
-
-// Unlock gives up name and keeps its lock file for the next holder. A name
-// this lock does not hold returns an error wrapping errNotLocked.
-func (l *ObjectsLock) Unlock(name string) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	f, ok := l.held[name]
-	if !ok {
-		return fmt.Errorf("%s: %w", name, errNotLocked)
-	}
-	delete(l.held, name)
-
-	cErr := util.CloseWithErr(unlock(f), f)
-	// Drop the slot even if close failed, or the name is stuck in-process.
-	l.dropSlotLocked(name, true)
-
-	if cErr != nil {
-		return fmt.Errorf("%s: %w", name, cErr)
-	}
-	return nil
-}
-
-// Close wakes every waiter with os.ErrClosed, gives up every held name and
-// closes the locks root. Close after Close returns nil.
-func (l *ObjectsLock) Close() error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	var err error
-	if l.held != nil {
-		close(l.closed) // wakes in-process waiters with os.ErrClosed
-		for _, f := range l.held {
-			err = errors.Join(err, unlock(f), f.Close())
-		}
-		l.held = nil
-		// Slots of held names are left owned on purpose, so waiters fail
-		// with os.ErrClosed instead of racing for a freed slot.
-	}
-
-	// os.Root.Close is idempotent.
-	return errors.Join(err, l.locksRoot.Close())
-}
-
-// Release gives up name and removes its lock file. A name this lock does not
-// hold returns an error wrapping errNotLocked.
-func (l *ObjectsLock) Release(name string) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	// Only the holder may remove the file, or it would unlink a file that
-	// another holder still has locked.
-	f, ok := l.held[name]
-	if !ok {
-		return fmt.Errorf("%s: %w", name, errNotLocked)
-	}
-	delete(l.held, name)
-
-	// Remove before unlocking: a waiter that then gets the old file sees it
-	// is gone and retries, instead of holding it next to a newcomer.
-	err := rmInRoot(l.locksRoot, name, "lock file")
-	if cErr := util.CloseWithErr(unlock(f), f); cErr != nil {
-		err = errors.Join(err, fmt.Errorf("%s: %w", name, cErr))
-	}
-	l.dropSlotLocked(name, true)
-
-	return err
 }
 
 // acquireSlot takes the in-process slot of name, waiting for the current
 // owner to drop it. It fails when ctx is done or the lock is closed.
 func (l *ObjectsLock) acquireSlot(ctx context.Context, name string) error {
 	l.mu.Lock()
+
 	if l.held == nil {
 		l.mu.Unlock()
+
 		return os.ErrClosed
 	}
-	s := l.slots[name]
-	if s == nil {
-		s = &slot{ch: make(chan struct{}, 1)}
-		l.slots[name] = s
-	}
-	s.refs++
+
 	l.mu.Unlock()
 
+	key := l.slotKey(name)
+	s := l.table.ref(key)
+
 	var err error
+
 	select {
 	case s.ch <- struct{}{}:
-		return nil
+		select {
+		case <-l.closed:
+			// Close gave the slot back to the other locks of the VFS and
+			// this one took it; it is closed all the same.
+			l.table.drop(key, true)
+
+			return os.ErrClosed
+		default:
+			return nil
+		}
 	case <-ctx.Done():
 		err = ctx.Err()
 	case <-l.closed:
 		err = os.ErrClosed
 	}
 
-	l.mu.Lock()
-	l.dropSlotLocked(name, false)
-	l.mu.Unlock()
+	l.table.drop(key, false)
+
 	return err
+}
+
+// slotKey returns the key of name in the slot table.
+func (l *ObjectsLock) slotKey(name string) string {
+	return join(l.scope, name)
 }
 
 // dropSlot gives back the slot of name, which the caller owns.
 func (l *ObjectsLock) dropSlot(name string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.dropSlotLocked(name, true)
+	l.table.drop(l.slotKey(name), true)
 }
 
-// dropSlotLocked removes one reference to name's slot. owned means the caller
+// ref adds one reference to the slot of key, making it when there is none,
+// and returns it.
+func (t *slotTable) ref(key string) *slot {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	s := t.slots[key]
+	if s == nil {
+		s = &slot{ch: make(chan struct{}, 1)}
+		t.slots[key] = s
+	}
+
+	s.refs++
+
+	return s
+}
+
+// drop removes one reference to the slot of key. owned means the caller
 // holds the slot token and gives it back.
-func (l *ObjectsLock) dropSlotLocked(name string, owned bool) {
-	s := l.slots[name]
+func (t *slotTable) drop(key string, owned bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	s := t.slots[key]
 	if owned {
 		<-s.ch
 	}
+
 	if s.refs--; s.refs == 0 {
-		delete(l.slots, name)
+		delete(t.slots, key)
 	}
 }
 
 // abandon stops waiting for the blocking lock of f and returns an error
-// wrapping cause. The blocking syscall cannot be canceled, so the slot is
+// wrapping why. The blocking syscall cannot be canceled, so the slot is
 // kept until it returns and this name never has more than one parked thread.
-func (l *ObjectsLock) abandon(name string, f *os.File, done chan error, cause error) error {
+func (l *ObjectsLock) abandon(name string, f *os.File, done chan error, why error) error {
 	go func() {
 		// No caller is left to report these errors to.
-		if bErr := <-done; bErr == nil {
+		bErr := <-done
+		if bErr == nil {
 			_ = unlock(f)
 		}
+
 		_ = f.Close()
+
 		l.dropSlot(name)
 	}()
-	return fmt.Errorf("wait for lock: %w", cause)
+
+	return fmt.Errorf("wait for lock: %w", why)
 }

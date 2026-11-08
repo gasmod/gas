@@ -7,11 +7,153 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No change to this module's code. The internal modules it requires are
-pinned at 0.6.0.
+v0.6.0 rewrites the module around one contract, Amazon SES's rules,
+that every sender keeps, written in the `email` package's `doc.go` and
+checked by a shared conformance suite that runs against the memory
+sender and an SES API v2 wire fake. Each package's `doc.go` is its
+behavioral contract and lists its errors verbatim; read it before
+upgrading.
+
+### Added
+
+- **`email/memory`, an in-process outbox** with the same rules and the
+  same template rendering as the SES sender, for tests and local
+  development: `Messages` returns copies of what was sent, normalized,
+  and `Reset` empties the outbox; `MaxMessages` and `MaxBytes` limits
+  (`ErrOutboxFull`). The outbox outlives `Close` and a restart.
+- **Messages are checked before anything is sent**, as `email.CheckEmail`
+  does: one address per entry, read with net/mail and normalized
+  (display names kept and encoded as RFC 2047 when not ASCII, IDN
+  domains converted to Punycode only when they convert back, ASCII
+  domains in lower case, local parts ASCII only); a sender and 1 to 50
+  recipients; a subject without control characters; at least one body;
+  valid UTF-8; SES's header rules; a 40 MB size estimate.
+- In `email`: `CheckEmail`, `NormalizeAddress`, `CheckHeader`,
+  `IsReservedHeader`, `MessageSize`, and the limits `MaxRecipients`,
+  `MaxHeaders`, `MaxHeaderNameLength`, `MaxHeaderValueLength`,
+  `MaxHeaderLength` and `MaxMessageSize`.
+- Sentinel errors in `email`: `ErrNilMessage`, `ErrInvalidAddress`,
+  `ErrNoRecipients`, `ErrTooManyRecipients`, `ErrInvalidSubject`,
+  `ErrEmptyBody`, `ErrInvalidBody`, `ErrInvalidHeader`,
+  `ErrMessageTooLarge`, `ErrTemplate`, `ErrNotInitialized`,
+  `ErrAlreadyInitialized`, `ErrNilLogger`, `ErrNilTemplates`,
+  `ErrNilConfig`, `ErrNoConfigProvider` and `ErrInvalidConfig`.
+- **`gas.Email.Headers` is sent** by the SES sender, checked against
+  SES's rules; a header that would set an address, the subject, the MIME
+  structure, or redirect replies, receipts or bounces is refused
+  (KI-034).
+- `ses` sentinels `ErrNoRegion`, `ErrNoCredentials`, `ErrNilClient`,
+  `ErrConnect`, `ErrCommand`, `ErrRejected`, `ErrNotVerified`,
+  `ErrThrottled`, `ErrSendingPaused` and `ErrAccessDenied`: a failed
+  send carries a fixed reason told by the network error or the SES error
+  code, never the AWS SDK's error.
+- `ses` settings: `SessionToken`, `OpTimeout` (the bound of each send,
+  retries included, default 10s) and `MaxRetries` (0 to 10, default 2),
+  which holds even when `AWS_MAX_ATTEMPTS` or `AWS_RETRY_MODE` is set.
+- `Service.Config` on both senders returns a copy of the configuration
+  the last successful `Init` resolved, defaults included, with
+  `FromEmail` normalized, or the zero `Config` before one; `Close` and a
+  failed `Init` keep it. The SES secret key and session token stay a
+  `Secret`.
+- `ses.ServiceName`, `ses.DefaultOpTimeout`, `DefaultMaxRetries` and
+  `MaxRetries`; `memory.ServiceName` and its defaults.
+
+### Changed
+
+- **BREAKING: `ses` sends with the SES API v2.** It uses
+  `github.com/aws/aws-sdk-go-v2/service/sesv2` and one `SendEmail`
+  request with Simple content. `Service.Client` returns an
+  `*sesv2.Client`, and `WithClient` takes the exported `ses.API`, whose
+  `SendEmail` is the SES API v2 one. The credentials need the
+  `ses:SendEmail` permission.
+- **BREAKING: what is sent is the normalized copy `CheckEmail`
+  returns.** An empty body is left out of the message instead of sent as
+  an empty part, and a subject that is not ASCII is sent as RFC 2047
+  encoded words.
+- **BREAKING: `SendFromTemplate` no longer changes the caller's
+  message.** It renders into a copy, in the order subject, text, HTML
+  (it was subject, HTML, text), into a buffer bounded by
+  `MaxMessageSize`, and cuts one trailing CRLF or LF of a rendered
+  subject. A failed template is `email.ErrTemplate`, and the error names
+  the field and the template, never the data or the engine's error.
+- **BREAKING: lifecycle sentinels.** Before the first successful `Init`
+  every method returns `email.ErrNotInitialized` (`Send` panicked and
+  `CheckReady` reported ready); `Init` on an initialized sender returns
+  `email.ErrAlreadyInitialized`; after `Close`, until `Init` succeeds
+  again, `email.ErrClosed`. `Close` then `Init` restarts a sender.
+- **BREAKING: `email.ErrClosed` is `service closed`** (was
+  `email: service is closed`). Every error a sender returns starts with
+  its service name and the operation, such as
+  `gas/email/ses: send: rejected (MessageRejected)`, and wraps a
+  sentinel.
+- **BREAKING: `Close` drains.** It refuses new sends at once and returns
+  once every send in flight has returned; when its context ends first,
+  it cancels them, which return `email.ErrClosed`, and returns an error
+  wrapping the context's error. `Close` used to only set a flag.
+- **BREAKING: every method honors its context**, and returns the
+  context's error, wrapped, when it has ended before the call.
+- **BREAKING: `ses.Settings.Region` and `FromEmail` are no longer
+  required.** Without a region the AWS SDK's default chain decides, and
+  a region it does not find fails `Init` with `ses.ErrNoRegion`. Without
+  `FromEmail`, every message needs a `From`. `FromEmail`, when set, must
+  be one email address, and `Init` normalizes it.
+- **BREAKING: `ses.Settings.SecretAccessKey` is a `ses.Secret`**, an
+  alias of `gas.Secret`. Configuration binds into it as into a string.
+- **BREAKING: `ses.Settings.Endpoint` must be an `http` or `https` URL
+  with a host and nothing after it but `/`.**
+- **BREAKING: the constructor checks its dependencies.** It fails with
+  `email.ErrNilTemplates` for a nil `gas.TemplateProvider`,
+  `email.ErrNilLogger` for a nil logger, and `email.ErrNilConfig` for
+  `WithConfig(nil)`; a nil `ConfigProvider` is accepted, and `Init` then
+  requires `WithConfig`. A nil client given to `WithClient` fails `Init`
+  with `ses.ErrNilClient`.
+- **BREAKING: a configuration given to `WithConfig` is validated** as a
+  bound one is, copied, and never changed. `Init` resolves the
+  configuration afresh each time it runs.
+- With only one of the static keys set, `ses` uses the default chain
+  and logs `static credentials incomplete, using the default chain` at
+  warn level. A failure to retrieve credentials is `ses.ErrNoCredentials`.
+- `ses.Service.Client` returns nil when the sender is not initialized,
+  after `Close` included.
+- The logs change: `service initialized` and `service closed`, at info
+  level (they were `ses email service initialized` and
+  `ses email service closed`). The `ses` initialized log carries whether
+  an endpoint, a client and a default sender were given, the credential
+  source, `op_timeout` and `max_retries` besides the region.
+- **BREAKING: `emailtest.MockEmail.Calls` is a method.** The exported
+  `Calls` field is gone; `Calls()` returns a deep copy. Each call records
+  a copy of the message, which shares no slice or map with the caller's.
+
+### Removed
+
+- **BREAKING:** `ses.NewWithCustomProvider`. `ses.New` takes any
+  `gas.TemplateProvider`.
+- **BREAKING:** `email.IsErrClosed`; use `errors.Is(err, email.ErrClosed)`.
+- **BREAKING:** `ses.Config` no longer embeds `gas.WithGasEnv`, which
+  core removes.
+- The `claude-skill/gas-email` directory.
+
+### Fixed
+
+- `ses.Service` methods no longer panic with a nil pointer dereference
+  before `Init`; they return `email.ErrNotInitialized` (KI-036).
+- Custom headers are no longer dropped without an error (KI-034).
+- A restart no longer races sends in flight.
 
 ### Security
 
+- No error a sender makes and no log it writes holds an address, a
+  subject, a body, a header value, template data, an endpoint or a
+  credential. The AWS SDK's default logger, which writes raw transport
+  errors holding the endpoint, is silenced.
+- Addresses, display names, the subject and header values are checked
+  so that a CR or an LF cannot reach a header of the message.
+- The secret key and the session token no longer print through fmt,
+  encoding/json, YAML encoders or log/slog, which write them as
+  `[redacted]`, and refuse gob encoding. The access key ID is never
+  logged.
+- The client `Init` builds reads no reply past 1 MiB, so an endpoint
+  cannot make it read without bound.
 - **Requires Go 1.27.3.** The `go` directive moves from 1.27 to 1.27.3,
   the first 1.27 release with the fix for GO-2026-6809 (CVE-2026-111943):
   `crypto/x509` now rejects intermediate certificates known to be

@@ -3,9 +3,7 @@ package gas
 import (
 	"context"
 	"database/sql"
-	"html/template"
 	"io/fs"
-	"net/http"
 	"time"
 )
 
@@ -68,6 +66,7 @@ type Job struct {
 // EnqueueOption configures an Enqueue call.
 type EnqueueOption func(*enqueueOptions)
 
+// enqueueOptions holds what the EnqueueOption values of one call set.
 type enqueueOptions struct {
 	Attributes map[string]string
 	GroupID    string // FIFO ordering (SQS: MessageGroupId)
@@ -95,8 +94,9 @@ func WithJobAttributes(attrs map[string]string) EnqueueOption {
 	return func(o *enqueueOptions) { o.Attributes = attrs }
 }
 
-// ApplyEnqueueOptions resolves variadic EnqueueOption values into a concrete
-// enqueueOptions struct. Implementations call this inside their Enqueue method.
+// ApplyEnqueueOptions returns what opts set, applied in order: the delay,
+// the group ID, the dedupe ID and the attributes, each the zero value when
+// no option sets it. A JobQueueProvider calls it inside Enqueue.
 func ApplyEnqueueOptions(
 	opts []EnqueueOption,
 ) (delay time.Duration, groupID, dedupeID string, attrs map[string]string) {
@@ -104,6 +104,7 @@ func ApplyEnqueueOptions(
 	for _, fn := range opts {
 		fn(o)
 	}
+
 	return o.Delay, o.GroupID, o.DedupeID, o.Attributes
 }
 
@@ -128,19 +129,20 @@ type Email struct {
 	Bcc []string
 }
 
-// TemplatedEmail represents an email message where templates and data define subject, text, and HTML bodies.
+// TemplatedEmail is an email message whose subject, text and HTML bodies
+// are rendered from templates with Data.
 type TemplatedEmail struct {
+	Data            any
 	SubjectTemplate string
 	TextTemplate    string
 	HTMLTemplate    string
-	Data            any
-	Email
+	Email           //nolint:embeddedstructfieldcheck // last, as govet's fieldalignment orders it
 }
 
 // TemplateProvider abstracts template storage and retrieval. Implementations
 // may be backed by a filesystem, database, memory, or any combination.
-// Consumers such as UIProvider (HTML rendering) and EmailProvider (email
-// templating) resolve raw template content through this interface.
+// Consumers such as the ui module (HTML rendering) and EmailProvider
+// (email templating) resolve raw template content through this interface.
 type TemplateProvider interface {
 	// Get returns the raw template content by name.
 	Get(ctx context.Context, name string) ([]byte, error)
@@ -155,22 +157,8 @@ type TemplateProvider interface {
 	RegisterFS(ctx context.Context, fsys fs.FS) error
 }
 
-// UIProvider abstracts template rendering. Implemented by gas/ui or any
-// other UI service. Template storage and retrieval is handled by
-// TemplateProvider; UIProvider focuses on compilation and rendering.
-type UIProvider interface {
-	Render(w http.ResponseWriter, name string, data any) error
-	RenderFragment(
-		w http.ResponseWriter,
-		name string,
-		data any,
-	) error // renders without layout wrapper, useful for HTMX
-	RenderWithStatus(w http.ResponseWriter, status int, name string, data any) error
-	RegisterFuncs(funcs template.FuncMap)
-}
-
 // HealthReporter is implemented by services that can report their own health.
-// Answers the question "am I alive?" — a failure here signals that the process
+// Answers the question "am I alive?": a failure here signals that the process
 // is in a broken state that a restart would resolve (lost connection that
 // won't recover, corrupt internal state, deadlock). Maps to a Kubernetes
 // livenessProbe. A nil return means healthy; a non-nil error describes the
@@ -181,7 +169,7 @@ type HealthReporter interface {
 
 // ReadyReporter is implemented by services that can report whether they are
 // ready to accept traffic. Answers the question "should traffic be routed to
-// me?" — distinct from health, since a service can be alive but not yet ready
+// me?", distinct from health, since a service can be alive but not yet ready
 // (warming caches, pending migrations, dependency briefly unavailable,
 // draining during shutdown). Maps to a Kubernetes readinessProbe. A nil
 // return means ready; a non-nil error describes why the service is not ready.
@@ -203,27 +191,25 @@ type ReadyProvider interface {
 	CheckReady(ctx context.Context) map[string]error
 }
 
-// ConfigProvider is the configuration API services depend on: reading values,
-// setting defaults, and binding into a struct. The config module's *Config
-// implements it. Loading sources is setup work the app does on the concrete
-// config before registering it, so it is not part of this interface.
+// ConfigProvider is how services, and App.Start, read configuration, as
+// described under Configuration in the package documentation. The config
+// module's *config.Config implements it; core defines it so the root
+// module depends on no other gas module.
 type ConfigProvider interface {
-	SetDefault(key string, value any)
+	// SetDefault sets the value at key unless the configuration holds one.
+	SetDefault(key string, value any) error
+	// SetDefaults sets defaults from a struct or map, as SetDefault does
+	// for each of its keys.
 	SetDefaults(values any) error
-	Set(key string, value any)
-	// Bind fills dest from the configuration and then validates it against
-	// its validate struct tags, unless an option turns validation off.
-	Bind(dest any, options ...BindOption) error
+	// Set sets the value at key.
+	Set(key string, value any) error
+	// Bind fills dest, a pointer to a struct, from the configuration and
+	// validates it.
+	Bind(dest any) error
+	// Get returns the value at key, or nil.
 	Get(key string) any
+	// Find returns the value at key and reports whether it exists.
 	Find(key string) (value any, exist bool)
+	// Values returns a copy of every value.
 	Values() map[string]any
 }
-
-// BindOptions holds the settings for one ConfigProvider.Bind call.
-type BindOptions struct {
-	// Validate runs struct-tag validation after binding. It defaults to true.
-	Validate bool
-}
-
-// BindOption changes the BindOptions of one Bind call.
-type BindOption func(*BindOptions)

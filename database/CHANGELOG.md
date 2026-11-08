@@ -7,8 +7,110 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No change to this module's code. The internal modules it requires are
-pinned at 0.6.0.
+v0.6.0 rewrites the module around a documented contract. The package's
+`doc.go` is its behavioral contract and lists its errors verbatim; read it
+before upgrading. Most changes are breaking.
+
+### Added
+
+- **MySQL.** The dialect `mysql` opens `github.com/go-sql-driver/mysql`,
+  which the module imports. `ParseTime` is always on, so DATETIME and
+  TIMESTAMP columns scan into `time.Time` (KI-048); `MultiStatements`
+  stays off unless the DSN turns it on. The driver's own log goes to the
+  service's logger as one warn event per message, without the driver's
+  text, instead of to stderr.
+- **`ConnectTimeout`** (`database.connecttimeout`, 1s to 1m, default
+  `DefaultConnectTimeout`, 5s) bounds each connect attempt, open and ping
+  together, each later ping, and a pgx rollback. It replaces a fixed 5s
+  ping timeout.
+- **`Service.SafeError`** replaces a connection-level driver error with
+  `gas/database: connection: <reason>`, wrapping `ErrConnect`, for code
+  that runs statements on `DB()` itself, such as migrate. Other errors
+  pass through unchanged.
+- **A default SQLite busy timeout.** A SQLite DSN that sets none gets
+  `DefaultSQLiteBusyTimeout` (5s), appended as
+  `_pragma=busy_timeout(5000)`, so concurrent connections wait for the
+  write lock instead of failing at once with `SQLITE_BUSY`.
+- **`Service.Config() Config`** returns a copy of the configuration the
+  last successful `Init` resolved, defaults included, or the zero
+  `Config` before one; a failed `Init` and `Close` keep it.
+- **Exported names**: `ServiceName`, the `Default*` constants,
+  `MaxConnRetryInterval` (30s), and the sentinel errors `ErrNilLogger`,
+  `ErrNilConfig`, `ErrNoConfigProvider`, `ErrInvalidConfig`,
+  `ErrNotInitialized`, `ErrAlreadyInitialized`, `ErrDriverNotRegistered`,
+  `ErrInvalidDSN`, `ErrConnect`, `ErrModeNotPgx`, `ErrNilFunc` and
+  `ErrCloseTimeout`.
+
+### Changed
+
+- **BREAKING: `Settings.Driver` becomes `Settings.Dialect`**, of the new
+  type `Dialect`: `DialectPostgres`, `DialectMySQL` or `DialectSQLite`. It
+  has no default (it was `postgres`) and is required unless a connector is
+  given. `DriverPostgres`, `DriverPgx` and `DriverSQLite` are removed; use
+  `postgres` where `pgx` was set. `Settings.Mode` is of the new type
+  `Mode`.
+- **BREAKING: `Driver()` reports the dialect.** In `ModePgx` it returns
+  `postgres`, not `pgx`, and it returns an empty string while the service
+  is not initialized.
+- **BREAKING: the dialect `postgres` uses pgx's database/sql adapter**,
+  which the module imports, instead of whatever driver the app registered
+  as `postgres`.
+- **BREAKING: `WithConnector(d, c)` takes the connector's dialect**, which
+  `Driver` returns. With a connector, the mode must be `sql`, the dialect
+  setting empty or the connector's, and the DSN empty.
+- **BREAKING: `Config` no longer embeds `gas.WithGasEnv`**, which core
+  removed.
+- **BREAKING: the configuration is checked the same way on both paths.**
+  `WithConfig` takes a copy, which `Init` checks against the `validate`
+  tags, as it checks a bound one. `WithConfig(nil)` fails `Init` with
+  `ErrNilConfig`, and neither a `WithConfig` nor a `ConfigProvider` with
+  `ErrNoConfigProvider`, where the defaults used to apply. `ModePgx`
+  requires the dialect `postgres`. `MaxIdleConns` may be 0 and must not
+  exceed `MaxOpenConns` in both modes; it used to be 1 to 1000 in
+  `ModeSQL` and unchecked in `ModePgx`. `ConnRetries` is 0 to 10, and
+  `ConnRetryInterval` 100ms to 30s when `ConnRetries` is positive. A
+  failure wraps `ErrInvalidConfig` and names the setting, never its value.
+- **BREAKING: the lifecycle has one state.** `Init` on an initialized
+  service returns `ErrAlreadyInitialized` and keeps the running handle; a
+  failed `Init` closes what it opened; `Close` then `Init` restarts the
+  service. Until `Init` succeeds and after `Close`, the methods return
+  `ErrNotInitialized`, and `DB` and `Pool` return nil. The constructor
+  fails with `ErrNilLogger` for a nil logger, where it used to panic.
+- **BREAKING: `Close` honors its context.** When the context ends first,
+  it returns an error wrapping `ErrCloseTimeout` and the context's error,
+  and the closing goes on in the background.
+- **BREAKING: connection errors carry a fixed reason, never the driver's
+  error.** A failed connect is `gas/database: connect: <reason>`, wrapping
+  `ErrConnect`, the reason one of `authentication failed`,
+  `access denied`, `database does not exist`, `timed out`,
+  `connection refused`, `unreachable` and `failed`. Query, Exec, the
+  transaction methods, Ping and Close replace a connection-level failure
+  the same way after their own prefix. A DSN the driver cannot parse is
+  `ErrInvalidDSN`, and a missing `sqlite` driver `ErrDriverNotRegistered`;
+  neither is retried. Statement errors still pass the driver's error
+  through.
+- **Only connection attempts are retried**, and the wait doubles up to
+  `MaxConnRetryInterval` (30s). The retry log carries `attempt`,
+  `retries`, `wait` and `reason`, not the driver's error.
+- **`WithTx` and `WithPgxTx` roll back when the function calls
+  `runtime.Goexit`**, as `t.FailNow` does, as well as on an error or a
+  panic. A nil function is `ErrNilFunc`. A failed rollback after a panic
+  or Goexit is logged at warn level as `transaction rollback failed`, with
+  a reason. `WithPgxTx` commits with its context, and rolls back with that
+  context without its cancellation, bounded by `ConnectTimeout`.
+- **`CheckHealth` does no I/O**; it fails only while the service is not
+  initialized. `CheckReady` and `Ping` ping within `ConnectTimeout`.
+- **The logs change.** `Init` logs `service initialized` with `mode` and
+  `dialect`, and `Close` logs `service closed`, or `service close failed`
+  at warn level when a timed-out close fails later.
+- **Every error starts with `gas/database`** and wraps its sentinel
+  (KI-043).
+
+### Fixed
+
+- `Close` closes the pgx pool even when closing the database/sql handle
+  fails, and returns that failure (KI-038).
+- A second `Init` no longer opens a second connection over the first.
 
 ### Security
 
@@ -17,6 +119,13 @@ pinned at 0.6.0.
   `crypto/x509` now rejects intermediate certificates known to be
   compromised. A build with an older toolchain switches to 1.27.3 under
   `GOTOOLCHAIN=auto` and fails under `GOTOOLCHAIN=local`.
+- **The DSN is a `gas.Secret`**, which fmt, encoding/json, YAML encoders
+  and log/slog write as `[redacted]`, so printing the configuration no
+  longer shows the password.
+- **No error the package makes and no log the service writes includes the
+  DSN, the password, the database user, the host, the port, the database
+  name or TLS material.** pgx's and MySQL's connect errors can hold all of
+  them.
 
 ## [0.5.6] - 2026-10-19
 

@@ -1,455 +1,494 @@
 package s3
 
 import (
-	"bytes"
 	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/storage"
-	"github.com/gasmod/gas/storage/internal"
+	"github.com/gasmod/gas/storage/internal/configsrc"
+	"github.com/gasmod/gas/storage/internal/lifecycle"
+	"github.com/gasmod/gas/storage/internal/listing"
 )
 
-// Provider implements storage.Provider on S3. Build it with NewProvider; a
-// Provider that was not, including a nil pointer, returns
-// storage.ErrNotInitialized from every method.
+// ServiceName is the name of the S3 store, returned by Provider.Name and
+// prefixed to every error the store returns.
+const ServiceName = "gas/storage/s3"
+
+// The operations errors name.
+const (
+	opInit         = "init"
+	opReady        = "ready"
+	opClose        = "close"
+	opCreateBucket = "create bucket"
+	opHeadBucket   = "head bucket"
+	opDeleteBucket = "delete bucket"
+	opListBuckets  = "list buckets"
+	opHeadObject   = "head object"
+	opPutObject    = "put object"
+	opGetObject    = "get object"
+	opDeleteObject = "delete object"
+	opListObjects  = "list objects"
+	opCopyObject   = "copy object"
+)
+
+var (
+	// ErrNoRegion indicates that Init found no AWS region, in the Region
+	// setting or the AWS SDK's default chain.
+	ErrNoRegion = errors.New("no region")
+	// ErrNoCredentials indicates that Init could not retrieve AWS
+	// credentials.
+	ErrNoCredentials = errors.New("no credentials")
+	// ErrNilClient indicates that WithClient or WithPresignClient was
+	// given a nil client.
+	ErrNilClient = errors.New("client is nil")
+	// ErrConnect indicates that a request got no reply from S3: it timed
+	// out, its connection was refused, or the endpoint was unreachable, as
+	// described in the package documentation. It comes with
+	// storage.ErrBackend.
+	ErrConnect = errors.New("no reply")
+	// ErrThrottled indicates that S3 throttled a request, past the
+	// retries. It comes with storage.ErrBackend.
+	ErrThrottled = errors.New("throttled")
+	// ErrWrongRegion indicates that S3 refused a request sent to another
+	// region than the bucket's. It comes with storage.ErrBackend.
+	ErrWrongRegion = errors.New("wrong region")
+	// ErrConflict indicates that S3 refused a request that conflicted with
+	// another in flight, such as two conditional writes of one key. It
+	// comes with storage.ErrBackend.
+	ErrConflict = errors.New("conflict")
+	// ErrUploadNotAborted indicates that a PutObject that failed after it
+	// began an upload in parts could not abort the upload, whose parts S3
+	// then keeps, as described in the package documentation.
+	ErrUploadNotAborted = errors.New("upload not aborted")
+)
+
+// API is the part of the S3 client the store uses. *s3.Client implements
+// it.
+//
+//nolint:interfacebloat // the requests of the store and of the transfer manager.
+type API interface {
+	// CreateBucket creates a bucket.
+	CreateBucket(
+		ctx context.Context,
+		params *s3.CreateBucketInput,
+		optFns ...func(*s3.Options),
+	) (*s3.CreateBucketOutput, error)
+	// HeadBucket describes a bucket.
+	HeadBucket(
+		ctx context.Context,
+		params *s3.HeadBucketInput,
+		optFns ...func(*s3.Options),
+	) (*s3.HeadBucketOutput, error)
+	// DeleteBucket deletes a bucket.
+	DeleteBucket(
+		ctx context.Context,
+		params *s3.DeleteBucketInput,
+		optFns ...func(*s3.Options),
+	) (*s3.DeleteBucketOutput, error)
+	// ListBuckets lists buckets.
+	ListBuckets(
+		ctx context.Context,
+		params *s3.ListBucketsInput,
+		optFns ...func(*s3.Options),
+	) (*s3.ListBucketsOutput, error)
+	// HeadObject describes an object.
+	HeadObject(
+		ctx context.Context,
+		params *s3.HeadObjectInput,
+		optFns ...func(*s3.Options),
+	) (*s3.HeadObjectOutput, error)
+	// GetObject reads an object.
+	GetObject(
+		ctx context.Context,
+		params *s3.GetObjectInput,
+		optFns ...func(*s3.Options),
+	) (*s3.GetObjectOutput, error)
+	// PutObject writes an object in one request.
+	PutObject(
+		ctx context.Context,
+		params *s3.PutObjectInput,
+		optFns ...func(*s3.Options),
+	) (*s3.PutObjectOutput, error)
+	// DeleteObject deletes an object.
+	DeleteObject(
+		ctx context.Context,
+		params *s3.DeleteObjectInput,
+		optFns ...func(*s3.Options),
+	) (*s3.DeleteObjectOutput, error)
+	// ListObjectsV2 lists the objects of a bucket.
+	ListObjectsV2(
+		ctx context.Context,
+		params *s3.ListObjectsV2Input,
+		optFns ...func(*s3.Options),
+	) (*s3.ListObjectsV2Output, error)
+	// CreateMultipartUpload begins an upload in parts.
+	CreateMultipartUpload(
+		ctx context.Context,
+		params *s3.CreateMultipartUploadInput,
+		optFns ...func(*s3.Options),
+	) (*s3.CreateMultipartUploadOutput, error)
+	// UploadPart uploads a part.
+	UploadPart(
+		ctx context.Context,
+		params *s3.UploadPartInput,
+		optFns ...func(*s3.Options),
+	) (*s3.UploadPartOutput, error)
+	// CompleteMultipartUpload completes an upload in parts.
+	CompleteMultipartUpload(
+		ctx context.Context,
+		params *s3.CompleteMultipartUploadInput,
+		optFns ...func(*s3.Options),
+	) (*s3.CompleteMultipartUploadOutput, error)
+	// CopyObject copies an object.
+	CopyObject(
+		ctx context.Context,
+		params *s3.CopyObjectInput,
+		optFns ...func(*s3.Options),
+	) (*s3.CopyObjectOutput, error)
+	// AbortMultipartUpload aborts an upload in parts.
+	AbortMultipartUpload(
+		ctx context.Context,
+		params *s3.AbortMultipartUploadInput,
+		optFns ...func(*s3.Options),
+	) (*s3.AbortMultipartUploadOutput, error)
+}
+
+var (
+	_ API                         = (*s3.Client)(nil)
+	_ transfermanager.S3APIClient = API(nil)
+)
+
+// Provider is an object store on Amazon S3, or a server that speaks its
+// API, as described in the package documentation. It is safe for
+// concurrent use.
 type Provider struct {
-	client   *s3.Client
+	// cfgProvider is the ConfigProvider Init binds from, unless a
+	// configuration was given to WithConfig.
+	cfgProvider gas.ConfigProvider
+	// logger receives the store's events, with `service` set.
+	logger gas.Logger
+	// client is the client given to WithClient.
+	client API
+	// cfg is the configuration the last successful Init bound, or nil
+	// before the first. It outlives Close, and nothing changes it.
+	cfg atomic.Pointer[Config]
+	// cfgSource records the configuration given to WithConfig.
+	cfgSource configsrc.Source[Config]
+	// lc is the lifecycle, whose sessions hold what one Init opened.
+	lc lifecycle.Lifecycle[*state]
+	// clientSet reports whether WithClient was given, so that a nil
+	// client is told apart from none.
+	clientSet bool
+}
+
+var (
+	_ storage.Provider  = (*Provider)(nil)
+	_ gas.Service       = (*Provider)(nil)
+	_ gas.ReadyReporter = (*Provider)(nil)
+)
+
+// state is what one Init opened, with the settings the calls use.
+type state struct {
+	// api sends the requests.
+	api API
+	// uploader writes the objects PutObject writes, through api.
 	uploader *transfermanager.Client
-	config   *Config
+	// transport is the HTTP transport of a client Init built, or nil.
+	transport *http.Transport
+	// codec seals and opens the continuation tokens of this Init.
+	codec *listing.Codec
+	// bucket is the configured bucket, or empty.
+	bucket string
+	// region is the region CreateBucket creates buckets in, or empty.
+	region string
+	// opTimeout is Settings.OpTimeout.
+	opTimeout time.Duration
 }
 
-var _ storage.Provider = (*Provider)(nil)
-
-// ProviderOption configures a Provider built by NewProvider.
-type ProviderOption func(*Provider)
-
-// WithClient makes the Provider use client for every operation except the
-// upload in PutObject (see WithUploaderClient), instead of a client built from
-// configuration. A nil client is ignored.
-func WithClient(client *s3.Client) ProviderOption {
-	return func(s *Provider) { s.client = client }
-}
-
-// WithUploaderClient makes PutObject upload through uploader instead of a
-// transfer manager built on the Provider's client. A nil uploader is ignored.
-func WithUploaderClient(uploader *transfermanager.Client) ProviderOption {
-	return func(s *Provider) { s.uploader = uploader }
-}
-
-// NewProvider returns a constructor for the DI container that builds a
-// Provider. The constructor takes the gas.ConfigProvider as its dependency
-// (a nil one returns an error) and binds Config from it,
-// fails with storage.ErrInvalidBucket when the configured bucket is set but
-// invalid, applies opts, and builds any client an option did not supply.
-func NewProvider(opts ...ProviderOption) func(cfgProvider gas.ConfigProvider) (*Provider, error) {
-	return func(cfgProvider gas.ConfigProvider) (*Provider, error) {
-		p := &Provider{}
-
-		cfg, err := internal.BindConfig[Config](cfgProvider)
-		if err != nil {
-			return nil, internal.Errorf("s3/provider", "%w", err)
-		}
-		p.config = cfg
-
-		if bk := p.config.Storage.Bucket; bk != "" && !internal.IsValidBucketName(bk) {
-			return nil, internal.Errorf(
-				"s3/provider",
-				"%w: %s",
-				storage.ErrInvalidBucket,
-				bk,
-			)
+// New returns the constructor of a Provider with opts applied, in the
+// shape the gas container expects. The constructor returns an error
+// wrapping storage.ErrNilLogger for a nil logger, storage.ErrNilOption for
+// a nil option, and storage.ErrNilConfig for WithConfig(nil); a nil
+// ConfigProvider is accepted, and Init then requires WithConfig.
+func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) (*Provider, error) {
+	return func(cfgProvider gas.ConfigProvider, logger gas.Logger) (*Provider, error) {
+		if logger == nil {
+			return nil, fmt.Errorf("%s: %w", ServiceName, storage.ErrNilLogger)
 		}
 
-		for i, o := range opts {
-			if o == nil {
-				return nil, internal.Errorf(
-					"s3/provider",
-					"%w: option %d is nil",
-					storage.ErrInvalidOption,
+		p := &Provider{
+			cfgProvider: cfgProvider,
+			logger:      logger.With().Str("service", ServiceName).Logger(),
+		}
+
+		for i, opt := range opts {
+			if opt == nil {
+				return nil, fmt.Errorf(
+					"%s: %w: at position %d",
+					ServiceName,
+					storage.ErrNilOption,
 					i,
 				)
 			}
-			o(p)
+
+			opt(p)
 		}
 
-		if p.client == nil {
-			client, clientErr := newClient(p.config)
-			if clientErr != nil {
-				return nil, internal.Errorf("s3/provider", "create S3 client: %w", clientErr)
-			}
-			p.client = client
-		}
-
-		if p.uploader == nil {
-			// The transfer manager handles arbitrary readers, including unseekable
-			// streams of unknown length (multipart under the hood; no overall
-			// Content-Length required).
-			p.uploader = transfermanager.New(p.client, func(o *transfermanager.Options) {
-				o.RequestChecksumCalculation = p.client.Options().RequestChecksumCalculation
-			})
+		if p.cfgSource.IsNil() {
+			return nil, fmt.Errorf("%s: %w", ServiceName, storage.ErrNilConfig)
 		}
 
 		return p, nil
 	}
 }
 
-// CreateBucket creates the bucket named in input and returns its name and
-// the ARN S3 reports; CreationDate and Region are empty, since S3 reports
-// neither. The configured bucket is not a fallback. The
-// bucket is created in the client's region: outside us-east-1 (and the
-// aws-global pseudo-region, which maps to it) the request carries that region
-// as its location constraint, and the region the SDK resolved is used when
-// none is configured. A bucket the caller already owns is success, and its
-// Bucket may hold only the name: in us-east-1 S3 is said to answer 200 and
-// report the ARN as for a new bucket, while elsewhere it answers
-// BucketAlreadyOwnedByYou with none (not verified against AWS). A name another account owns is
-// storage.ErrBucketExists.
-func (p *Provider) CreateBucket(
-	ctx context.Context,
-	input *storage.CreateBucketInput,
-) (*storage.Bucket, error) {
-	if err := p.checkReady(); err != nil {
-		return nil, err
+// Name returns ServiceName.
+func (*Provider) Name() string { return ServiceName }
+
+// Init resolves and checks the configuration, builds the client and
+// retrieves the credentials, as described in the package documentation.
+// It sends no request to S3. On an initialized store it returns
+// storage.ErrAlreadyInitialized and changes nothing. A failed Init leaves
+// the store as it was.
+func (p *Provider) Init(ctx context.Context) error {
+	if p == nil {
+		return opError(opInit, storage.ErrNotInitialized)
 	}
 
-	if input == nil {
-		return nil, internal.Errorf("s3/provider", "create bucket: %w", storage.ErrInputRequired)
-	}
+	var (
+		set            *Settings
+		region, source string
+	)
 
-	if !internal.IsValidBucketName(input.Bucket) {
-		return nil, internal.Errorf("s3/provider", "create bucket: %w", storage.ErrInvalidBucket)
-	}
+	err := p.lc.Init(ctx, func() (*state, error) {
+		cfg, err := p.cfgSource.Resolve(p.cfgProvider, DefaultConfig, rules)
+		if err != nil {
+			return nil, err //nolint:wrapcheck // Init adds the name and the operation.
+		}
 
-	res, err := p.client.CreateBucket(ctx, &s3.CreateBucketInput{
-		Bucket:                    new(input.Bucket),
-		CreateBucketConfiguration: createBucketConfiguration(p.client.Options().Region),
+		set = &cfg.Storage
+
+		st, err := p.open(ctx, set)
+		if err != nil {
+			return nil, err
+		}
+
+		if !p.clientSet {
+			source, _ = credentialSource(set)
+		}
+
+		region = st.region
+
+		// Nothing fails once this function returns, so the Init succeeds.
+		p.cfg.Store(cfg.clone())
+
+		return st, nil
 	})
-	if isBucketOwnedByCaller(err) {
-		return &storage.Bucket{Name: input.Bucket}, nil
-	}
 	if err != nil {
-		return nil, internal.Errorf("s3/provider", "create bucket: %w", wrapS3Error(err))
+		return opError(opInit, err)
 	}
 
-	return &storage.Bucket{Name: input.Bucket, ID: valueOf(res.BucketArn)}, nil
-}
+	p.logInitialized(set, region, source)
 
-// HeadBucket reports whether the bucket input.Bucket exists and returns its
-// Name, with the ARN as ID and the region S3 reports. CreationDate is empty:
-// S3's HeadBucket does not report it. A missing bucket is
-// storage.ErrBucketNotFound, and a 403 is storage.ErrAccessDenied, which S3
-// answers both for a bucket another account owns and for one the caller
-// owns without permission to it (not verified against AWS). The configured
-// bucket is not a fallback.
-func (p *Provider) HeadBucket(
-	ctx context.Context,
-	input *storage.HeadBucketInput,
-) (*storage.Bucket, error) {
-	if err := p.checkReady(); err != nil {
-		return nil, err
-	}
-
-	if input == nil {
-		return nil, internal.Errorf("s3/provider", "head bucket: %w", storage.ErrInputRequired)
-	}
-
-	if !internal.IsValidBucketName(input.Bucket) {
-		return nil, internal.Errorf("s3/provider", "head bucket: %w", storage.ErrInvalidBucket)
-	}
-
-	res, err := p.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: new(input.Bucket)})
-	if err != nil {
-		return nil, internal.Errorf("s3/provider", "head bucket: %w", wrapBucketError(err))
-	}
-
-	return &storage.Bucket{
-		Name:   input.Bucket,
-		ID:     valueOf(res.BucketArn),
-		Region: valueOf(res.BucketRegion),
-	}, nil
-}
-
-// DeleteBucket deletes the empty bucket input.Bucket. A bucket that holds
-// objects is storage.ErrBucketNotEmpty (S3's BucketNotEmpty), a missing one
-// storage.ErrBucketNotFound, and a 403 storage.ErrAccessDenied. The
-// configured bucket is not a fallback.
-func (p *Provider) DeleteBucket(ctx context.Context, input *storage.DeleteBucketInput) error {
-	if err := p.checkReady(); err != nil {
-		return err
-	}
-
-	if input == nil {
-		return internal.Errorf("s3/provider", "delete bucket: %w", storage.ErrInputRequired)
-	}
-
-	if !internal.IsValidBucketName(input.Bucket) {
-		return internal.Errorf("s3/provider", "delete bucket: %w", storage.ErrInvalidBucket)
-	}
-
-	if _, err := p.client.DeleteBucket(
-		ctx,
-		&s3.DeleteBucketInput{Bucket: new(input.Bucket)},
-	); err != nil {
-		return internal.Errorf("s3/provider", "delete bucket: %w", wrapBucketError(err))
-	}
 	return nil
 }
 
-// HeadObject returns an object's size, content type, last-modified time,
-// version, ETag, metadata and stored headers. Expires is the header's text as
-// S3 returned it. A missing key or bucket is storage.ErrNotFound.
-func (p *Provider) HeadObject(
-	ctx context.Context,
-	input *storage.HeadObjectInput,
-) (*storage.ObjectInfo, error) {
-	if err := p.checkReady(); err != nil {
-		return nil, err
+// Config returns a deep copy of the configuration the last successful
+// Init bound, defaults included, as described in the package
+// documentation: the zero Config before the first successful Init, and
+// on a nil Provider, and the last one bound after Close. UsePathStyle,
+// when set, points to a bool of its own, so changing the copy changes
+// nothing in the store. The secrets keep their type, Secret. It is safe
+// to call at any time, while Init or Close runs included.
+func (p *Provider) Config() Config {
+	if p == nil {
+		return Config{}
 	}
 
-	if input == nil {
-		return nil, internal.Errorf("s3/provider", "head: %w", storage.ErrInputRequired)
+	cfg := p.cfg.Load()
+	if cfg == nil {
+		return Config{}
 	}
 
-	bucket, bucketErr := internal.ValidateInput(&input.BaseObjectInput, p.config.Storage.Bucket)
-	if bucketErr != nil {
-		return nil, internal.Errorf("s3/provider", "head: %w", bucketErr)
-	}
-
-	in := &s3.HeadObjectInput{
-		Bucket:                     new(bucket),
-		Key:                        new(input.Key),
-		PartNumber:                 input.PartNumber,
-		Range:                      input.Range,
-		ResponseCacheControl:       input.ResponseCacheControl,
-		ResponseContentDisposition: input.ResponseContentDisposition,
-		ResponseContentEncoding:    input.ResponseContentEncoding,
-		ResponseContentLanguage:    input.ResponseContentLanguage,
-		ResponseContentType:        input.ResponseContentType,
-		ResponseExpires:            input.ResponseExpires,
-		VersionId:                  input.Version,
-	}
-
-	res, err := p.client.HeadObject(ctx, in)
-	if err != nil {
-		return nil, internal.Errorf("s3/provider", "head: %w", wrapS3Error(err))
-	}
-
-	return &storage.ObjectInfo{
-		Size:               valueOf(res.ContentLength),
-		ContentType:        valueOf(res.ContentType),
-		LastModified:       valueOf(res.LastModified),
-		Version:            valueOf(res.VersionId),
-		Metadata:           res.Metadata,
-		CacheControl:       valueOf(res.CacheControl),
-		ContentDisposition: valueOf(res.ContentDisposition),
-		ContentEncoding:    valueOf(res.ContentEncoding),
-		ContentLanguage:    valueOf(res.ContentLanguage),
-		Expires:            valueOf(res.ExpiresString),
-		ETag:               unquoteETag(res.ETag),
-	}, nil
+	return *cfg.clone()
 }
 
-// PutObject uploads an object through the transfer manager and returns the
-// ETag and the version S3 assigned, if any; the other ObjectInfo fields are
-// empty. A body large enough for the transfer manager to upload in parts
-// gets a multipart ETag, ending in "-" and the part count. Expires must be an
-// IMF-fixdate ("Wed, 21 Oct 2026 07:28:00 GMT", with the right weekday),
-// since the SDK sends it only as a time and writes it back in that form;
-// anything else returns an error wrapping storage.ErrInvalidHeader and sends
-// nothing. A WriteCondition is sent as If-Match (quoted) or If-None-Match:
-// S3's 412 PreconditionFailed is storage.ErrPreconditionFailed, and its
-// NoSuchKey for an If-Match of a missing key storage.ErrKeyNotFound; S3 may
-// also answer 409 ConditionalRequestConflict to a concurrent write, which
-// carries no sentinel (none of these verified against AWS). For a body the
-// transfer manager uploads in parts, it sends the condition with the
-// request that completes the upload. A nil Body uploads an empty object. A set ContentLength must match
-// the body: a shorter or longer body, or a
-// negative length, returns an error wrapping storage.ErrContentLengthMismatch
-// and the object is not stored. A multipart upload in progress is aborted;
-// if the abort itself fails, the incomplete upload remains (its parts are
-// stored and billed until a lifecycle rule removes them) and the abort's
-// error is not reported. Body is read to EOF, so a body that blocks after
-// exactly ContentLength bytes without ending blocks PutObject. With
-// ContentLength set, a seekable Body is sized from ContentLength, not by
-// seeking, and buffered in parts like any other reader.
-func (p *Provider) PutObject(
-	ctx context.Context,
-	input *storage.PutObjectInput,
-) (*storage.ObjectInfo, error) {
-	if err := p.checkReady(); err != nil {
-		return nil, err
-	}
-
-	if input == nil {
-		return nil, internal.Errorf("s3/provider", "put: %w", storage.ErrInputRequired)
-	}
-
-	bucket, bucketErr := internal.ValidateInput(&input.BaseObjectInput, p.config.Storage.Bucket)
-	if bucketErr != nil {
-		return nil, internal.Errorf("s3/provider", "put: %w", bucketErr)
-	}
-
-	expires, expErr := parseExpires(input.Expires)
-	if expErr != nil {
-		return nil, internal.Errorf("s3/provider", "put: %w", expErr)
-	}
-
-	ifMatch, ifNoneMatch, condErr := conditionHeaders(&input.WriteCondition)
-	if condErr != nil {
-		return nil, internal.Errorf("s3/provider", "put: %w", condErr)
-	}
-
-	// The transfer manager buffers the body and sends what it read, so it
-	// accepts a body that does not match ContentLength; the check is ours.
-	body, lenErr := internal.CheckLength(input.Body, input.ContentLength)
-	if lenErr != nil {
-		return nil, internal.Errorf("s3/provider", "put: %w", lenErr)
-	}
-
-	in := &transfermanager.UploadObjectInput{
-		Bucket:             new(bucket),
-		Key:                new(input.Key),
-		Body:               body,
-		ContentLength:      input.ContentLength,
-		ContentType:        input.ContentType,
-		CacheControl:       input.CacheControl,
-		ContentDisposition: input.ContentDisposition,
-		ContentEncoding:    input.ContentEncoding,
-		ContentLanguage:    input.ContentLanguage,
-		Expires:            expires,
-		Metadata:           input.Metadata,
-		IfMatch:            ifMatch,
-		IfNoneMatch:        ifNoneMatch,
-	}
-
-	if in.Body == nil {
-		in.Body = bytes.NewReader(nil)
-	}
-
-	// Use the transfer manager rather than a single PutObject so that unseekable
-	// and unknown-length bodies (e.g. a streaming io.Pipe) upload without an
-	// overall Content-Length. This also lifts PutObject's 5GB limit.
-	res, err := p.uploader.UploadObject(ctx, in)
-	if err != nil {
-		return nil, internal.Errorf("s3/provider", "put: %w", wrapS3Error(err))
-	}
-
-	return &storage.ObjectInfo{
-		ETag:    unquoteETag(res.ETag),
-		Version: valueOf(res.VersionID),
-	}, nil
-}
-
-// GetObject returns an object and its body, which the caller must close. A
-// missing key is storage.ErrKeyNotFound and a missing bucket
-// storage.ErrBucketNotFound.
-func (p *Provider) GetObject(
-	ctx context.Context,
-	input *storage.GetObjectInput,
-) (*storage.Object, error) {
-	if err := p.checkReady(); err != nil {
-		return nil, err
-	}
-
-	if input == nil {
-		return nil, internal.Errorf("s3/provider", "get: %w", storage.ErrInputRequired)
-	}
-
-	bucket, bucketErr := internal.ValidateInput(&input.BaseObjectInput, p.config.Storage.Bucket)
-	if bucketErr != nil {
-		return nil, internal.Errorf("s3/provider", "get: %w", bucketErr)
-	}
-
-	in := &s3.GetObjectInput{
-		Bucket:                     new(bucket),
-		Key:                        new(input.Key),
-		PartNumber:                 input.PartNumber,
-		Range:                      input.Range,
-		ResponseCacheControl:       input.ResponseCacheControl,
-		ResponseContentDisposition: input.ResponseContentDisposition,
-		ResponseContentEncoding:    input.ResponseContentEncoding,
-		ResponseContentLanguage:    input.ResponseContentLanguage,
-		ResponseContentType:        input.ResponseContentType,
-		ResponseExpires:            input.ResponseExpires,
-		VersionId:                  input.Version,
-	}
-
-	res, err := p.client.GetObject(ctx, in)
-	if err != nil {
-		return nil, internal.Errorf("s3/provider", "get: %w", wrapS3Error(err))
-	}
-
-	return &storage.Object{
-		Body: res.Body,
-		ObjectInfo: storage.ObjectInfo{
-			Size:               valueOf(res.ContentLength),
-			ContentType:        valueOf(res.ContentType),
-			LastModified:       valueOf(res.LastModified),
-			Version:            valueOf(res.VersionId),
-			Metadata:           res.Metadata,
-			CacheControl:       valueOf(res.CacheControl),
-			ContentDisposition: valueOf(res.ContentDisposition),
-			ContentEncoding:    valueOf(res.ContentEncoding),
-			ContentLanguage:    valueOf(res.ContentLanguage),
-			Expires:            valueOf(res.ExpiresString),
-			ETag:               unquoteETag(res.ETag),
-		},
-	}, nil
-}
-
-// DeleteObject deletes an object, or one version of it when Version is set,
-// and returns the version S3 reports, such as a delete marker's. Deleting a
-// missing key succeeds; a missing bucket is storage.ErrBucketNotFound.
-func (p *Provider) DeleteObject(
-	ctx context.Context,
-	input *storage.DeleteObjectInput,
-) (*storage.ObjectInfo, error) {
-	if err := p.checkReady(); err != nil {
-		return nil, err
-	}
-
-	if input == nil {
-		return nil, internal.Errorf("s3/provider", "delete: %w", storage.ErrInputRequired)
-	}
-
-	bucket, bucketErr := internal.ValidateInput(&input.BaseObjectInput, p.config.Storage.Bucket)
-	if bucketErr != nil {
-		return nil, internal.Errorf("s3/provider", "delete: %w", bucketErr)
-	}
-
-	in := &s3.DeleteObjectInput{
-		Bucket:    new(bucket),
-		Key:       new(input.Key),
-		VersionId: input.Version,
-	}
-
-	res, err := p.client.DeleteObject(ctx, in)
-	if err != nil {
-		return nil, internal.Errorf("s3/provider", "delete: %w", wrapS3Error(err))
-	}
-
-	return &storage.ObjectInfo{
-		Version: valueOf(res.VersionId),
-	}, nil
-}
-
-// Client returns the S3 client the Provider uses, for operations the Provider
-// does not wrap. It returns nil for a nil or unconstructed Provider.
-func (p *Provider) Client() *s3.Client {
+// Close makes every later call but Init return an error wrapping
+// storage.ErrClosed, and waits for every call in flight to return, as
+// described in the package documentation. When ctx ends first, it
+// cancels the calls in flight, which return storage.ErrClosed, and
+// returns an error wrapping ctx's error; the store stays closed. Close
+// then closes the idle connections of a client Init built. Close on a
+// store that is not initialized returns nil and logs nothing.
+func (p *Provider) Close(ctx context.Context) error {
 	if p == nil {
 		return nil
 	}
-	return p.client
+
+	sess, err := p.lc.Close(ctx)
+	if sess == nil {
+		return nil
+	}
+
+	if t := sess.Value.transport; t != nil {
+		t.CloseIdleConnections()
+	}
+
+	if err != nil {
+		err = opError(opClose, err)
+		p.logger.Warn("service closed, calls in flight canceled").Err("error", err).Send()
+
+		return err
+	}
+
+	p.logger.Info("service closed").Send()
+
+	return nil
 }
 
-// checkReady returns storage.ErrNotInitialized unless p was built by
-// NewProvider. It is safe to call on a nil pointer.
-func (p *Provider) checkReady() error {
-	if p == nil || p.client == nil || p.uploader == nil || p.config == nil {
-		return internal.Errorf("s3/provider", "%w", storage.ErrNotInitialized)
+// CheckReady reports readiness: an error wrapping
+// storage.ErrNotInitialized or storage.ErrClosed when the store is not
+// initialized, the context's error when ctx has ended, and else, with a
+// configured bucket, the error of a HeadBucket of it, or nil. Without a
+// configured bucket it does no I/O.
+func (p *Provider) CheckReady(ctx context.Context) error {
+	sess, err := p.begin(ctx)
+	if err != nil {
+		return opError(opReady, err)
 	}
-	return nil
+	defer sess.End()
+
+	st := sess.Value
+	if st.bucket == "" {
+		return nil
+	}
+
+	return run(ctx, sess, opReady, func(ctx context.Context) error {
+		_, err := st.api.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: new(st.bucket)})
+
+		return err //nolint:wrapcheck // run classifies it.
+	})
+}
+
+// Client returns the *s3.Client the store sends its requests with, or nil
+// when the store is not initialized or was given another API with
+// WithClient, as described in the package documentation.
+func (p *Provider) Client() *s3.Client {
+	sess, err := p.begin(context.Background())
+	if err != nil {
+		return nil
+	}
+	defer sess.End()
+
+	c, _ := sess.Value.api.(*s3.Client)
+
+	return c
+}
+
+// open returns the state of an Init with the settings set: the client
+// given to WithClient, or one buildClient builds, after a warning naming
+// the keys missing from a partial set of static credentials.
+func (p *Provider) open(ctx context.Context, set *Settings) (*state, error) {
+	codec, err := listing.NewCodec()
+	if err != nil {
+		return nil, err //nolint:wrapcheck // Init adds the name and the operation.
+	}
+
+	st := &state{
+		api:       p.client,
+		codec:     codec,
+		bucket:    set.Bucket,
+		region:    set.Region,
+		opTimeout: set.OpTimeout,
+	}
+
+	switch {
+	case p.clientSet && isNil(p.client):
+		return nil, ErrNilClient
+	case p.clientSet:
+		if c, ok := p.client.(*s3.Client); ok {
+			st.region = c.Options().Region
+		}
+	default:
+		warnPartial(p.logger, set)
+
+		b, err := buildClient(ctx, set)
+		if err != nil {
+			return nil, err
+		}
+
+		st.api, st.transport, st.region = b.client, b.transport, b.region
+	}
+
+	st.uploader = transfermanager.New(st.api, func(o *transfermanager.Options) {
+		// A failed upload in parts is aborted on a context of its own,
+		// bounded by OpTimeout, so that a canceled PutObject aborts it.
+		o.FailTimeout = set.OpTimeout
+	})
+
+	return st, nil
+}
+
+// warnPartial logs a warning naming the keys missing from a partial set
+// of static credentials, as described in the package documentation.
+func warnPartial(logger gas.Logger, set *Settings) {
+	_, missing := credentialSource(set)
+	if len(missing) > 0 {
+		logger.Warn("static credentials incomplete, using the default chain").
+			Str("missing", strings.Join(missing, ", ")).
+			Send()
+	}
+}
+
+// logInitialized logs `service initialized`, as described in the package
+// documentation, with the credential source unless a client was given.
+func (p *Provider) logInitialized(set *Settings, region, source string) {
+	event := p.logger.Info("service initialized").
+		Str("region", region).
+		Bool("endpoint", set.Endpoint != "").
+		Bool("path_style", set.pathStyle()).
+		Bool("bucket", set.Bucket != "").
+		Bool("client", p.clientSet)
+	if !p.clientSet {
+		event = event.Str("credentials", source)
+	}
+
+	event.Duration("op_timeout", set.OpTimeout).Int("max_retries", set.MaxRetries).Send()
+}
+
+// begin starts a call, as lifecycle.Lifecycle.Begin does, on a Provider
+// that may be nil.
+func (p *Provider) begin(ctx context.Context) (*lifecycle.Session[*state], error) {
+	if p == nil {
+		return nil, storage.ErrNotInitialized
+	}
+
+	return p.lc.Begin(ctx) //nolint:wrapcheck // the method adds the name and the operation.
+}
+
+// isNil reports whether client is nil, or a nil *s3.Client.
+func isNil(client API) bool {
+	c, ok := client.(*s3.Client)
+
+	return client == nil || ok && c == nil
+}
+
+// opError returns err as the failure of op, after ServiceName.
+func opError(op string, err error) error {
+	return fmt.Errorf("%s: %w", opPrefix(op), err)
+}
+
+// opPrefix returns the start of the errors of op: ServiceName and the
+// operation.
+func opPrefix(op string) string {
+	return ServiceName + ": " + op
 }

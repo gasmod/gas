@@ -1,55 +1,68 @@
-package token //nolint:revive // intentional: "token" is the natural name for this domain package
+package token
 
 import (
-	"errors"
 	"time"
 
-	"github.com/gasmod/gas"
+	"github.com/gasmod/gas/auth/internal/svcutil"
 )
 
 const (
-	defaultTTL             = 15 * time.Minute
-	defaultTokenLength     = 32
-	defaultCleanupInterval = 1 * time.Hour
-	defaultCleanupTimeout  = 30 * time.Second
+	// DefaultTTL is the default of Settings.DefaultTTL.
+	DefaultTTL = 15 * time.Minute
+	// DefaultTokenLength is the default of Settings.TokenLength.
+	DefaultTokenLength = 32
+	// DefaultCleanupInterval is the default of Settings.CleanupInterval.
+	DefaultCleanupInterval = time.Hour
+	// DefaultCleanupTimeout is the default of Settings.CleanupTimeout.
+	DefaultCleanupTimeout = 30 * time.Second
 )
 
-// Config holds token service settings.
+// Config is the token service's configuration, bound from the `token`
+// section, as described in the package documentation.
 type Config struct {
-	gas.WithGasEnv
-
+	// Token holds the settings.
 	Token Settings
 }
 
-// Settings represents the token configuration values.
+// Settings are the token service's settings.
 type Settings struct {
-	// DefaultTTL is the default token lifetime when Issue is called with ttl == 0.
+	// DefaultTTL is how long a token lives when Issue is given a ttl of 0.
+	// It must be positive.
+	//
+	// Default: DefaultTTL.
 	DefaultTTL time.Duration `validate:"gt=0s"`
-	// TokenLength is the number of random bytes used for token generation.
+	// TokenLength is the number of random bytes in a token, at least 16.
+	//
+	// Default: DefaultTokenLength.
 	TokenLength int `validate:"min=16"`
-	// CleanupInterval is the interval for the expired token cleanup goroutine.
+	// CleanupInterval is the time between deletions of expired tokens. An
+	// interval of 0 turns the cleanup off; a negative one is an error.
+	//
+	// Default: DefaultCleanupInterval.
 	CleanupInterval time.Duration
-	// CleanupTimeout is the timeout for the expired token cleanup goroutine.
+	// CleanupTimeout bounds each deletion of expired tokens. It must be
+	// positive when CleanupInterval is.
+	//
+	// Default: DefaultCleanupTimeout.
 	CleanupTimeout time.Duration
 }
 
-// DefaultConfig returns a Config with sensible defaults.
+// DefaultConfig returns a new Config holding the defaults.
 func DefaultConfig() *Config {
 	return &Config{
 		Token: Settings{
-			DefaultTTL:      defaultTTL,
-			TokenLength:     defaultTokenLength,
-			CleanupInterval: defaultCleanupInterval,
-			CleanupTimeout:  defaultCleanupTimeout,
+			DefaultTTL:      DefaultTTL,
+			TokenLength:     DefaultTokenLength,
+			CleanupInterval: DefaultCleanupInterval,
+			CleanupTimeout:  DefaultCleanupTimeout,
 		},
 	}
 }
 
-// checkRules checks that background cleanup, when enabled, has a positive
-// timeout, which a validate tag cannot express.
+// checkRules checks what a validate tag cannot express: the cleanup
+// interval is not negative, and the cleanup, when it is on, has a
+// positive timeout.
 func checkRules(cfg *Config) error {
-	if cfg.Token.CleanupInterval > 0 && cfg.Token.CleanupTimeout <= 0 {
-		return errors.New("token: cleanup timeout must be positive when cleanup is enabled")
-	}
-	return nil
+	//nolint:wrapcheck // svcutil.ConfigSource.Resolve wraps it with ErrInvalidConfig.
+	return svcutil.CheckCleanup(cfg.Token.CleanupInterval, cfg.Token.CleanupTimeout)
 }

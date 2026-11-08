@@ -4,35 +4,35 @@
 
 Part of the [Gas](../README.md) monorepo · [Documentation](https://gasmod.github.io/gas) · [All modules](../README.md#modules)
 
-HTML rendering for the [Gas](../README.md) framework: layouts, partials, static file serving,
-and HTMX fragments, over a pluggable [gas/template](../template/README.md) backend.
+HTML rendering for the [Gas](../README.md) framework with `html/template`: layouts, partials,
+fragments for HTMX swaps, and static files served from inside an `os.Root`, over any
+[gas/template](../template/README.md) store.
 
-Implements `gas.UIProvider`.
+Implements `ui.Provider`, the contract this module owns.
 
 ```bash
 go get github.com/gasmod/gas/ui
 ```
 
 ```go
-gas.WithSingletonService[gas.UIProvider](ui.New[gas.TemplateProvider]()),
+gas.WithSingletonService[ui.Provider](ui.New[gas.TemplateProvider]()),
 ```
 
 `ui.New[T]()` needs `T` (a `gas.TemplateProvider`), `*gas.Router`, `gas.ConfigProvider` and
-`gas.Logger`.
+`gas.Logger`, and reads the `ui` section. With a static directory or file system configured, it
+registers the static routes, `/static/*` by default; there is none by default.
 
-| Method | Renders |
+| Package | Provides |
 |---|---|
-| `Render` | Page wrapped in its layout |
-| `RenderFragment` | Page without the layout, for HTMX swaps |
-| `RenderWithStatus` | Render at an explicit status code |
-| `RegisterFuncs` | Contribute template helpers from any service |
+| `ui` | `Provider`, the service, render options, `StaticHandler` and sentinel errors |
+| `ui/uitest` | Recording mock of `ui.Provider` |
 
 ## Documentation
 
-The full guide, with configuration, testing, and worked examples, is on the docs site.
+The full documentation is on the docs site.
 This README is deliberately a signpost: keeping a second copy here is how the docs drifted before.
 
-- **Guide:** [UI](https://gasmod.github.io/gas/modules/ui/)
+- **Docs:** [ui](https://gasmod.github.io/gas/reference/ui/)
 - **API reference:** [pkg.go.dev/github.com/gasmod/gas/ui](https://pkg.go.dev/github.com/gasmod/gas/ui)
 - **Contributing:** [CONTRIBUTING.md](../CONTRIBUTING.md)
 

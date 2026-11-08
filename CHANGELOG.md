@@ -7,8 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+v0.6.0 rewrites the core and every module around documented contracts.
+Each package's `doc.go` is its behavioral contract and lists its errors
+verbatim; read it before upgrading. Breaking changes are marked
+**BREAKING**. This file covers the core package, `github.com/gasmod/gas`,
+in full, and each module in brief; each module's own `CHANGELOG.md` has
+the details.
+
 ### Added
 
+- **`WithBaseConfig(Config)`**, an `AppOption` that sets the `Config`
+  Start binds the `ConfigProvider`'s values over and validates, in place
+  of `DefaultConfig()`. Start validates it even when no `ConfigProvider`
+  is registered.
+- **`WithAllowedEnvironments(envs...)`** sets the environments Start
+  accepts in `Config.Env`, for a config module that allows others.
+  `DefaultEnvironment` (`EnvDevelopment`) is always allowed. The default
+  is development, testing, staging and production.
 - **Service aliases.** `RegisterServiceAlias[Target, Alias]()` on the
   `ServiceContainer` and the `Worker`, and the `WithServiceAlias[Target,
   Alias]()` option, make one registration resolvable under an interface it
@@ -17,49 +32,128 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its target can be registered in either order; a target still missing at
   startup fails `BuildAll` with an error wrapping `ErrNotRegistered`, and a
   singleton that depends on an alias of a scoped or transient service fails
-  with `ErrCaptiveDependency`. `CanResolve` reports true for an alias whose
-  target is registered. Registration panics if the alias is not an
-  interface, the target does not implement it, the alias is already a
-  registration or instance, or the target is itself an alias, and
-  registering a service under an existing alias panics too.
+  with `ErrCaptiveDependency`. Registration panics with an error wrapping
+  `ErrInvalidAlias` if the alias is not an interface, the target does not
+  implement it, the two are the same type, the alias is already registered
+  as a service or instance, the target is itself an alias, or the alias is
+  the target of another alias.
 - **`ServerSettings.ReadHeaderTimeout`**, which `App.Server` sets on the
   `*http.Server`. It bounds how long a client may take to send its request
-  headers. net/http falls back to `ReadTimeout` only when it is zero, so a
-  service that zeroed `ReadTimeout` to stream request bodies had no header
-  deadline at all. The default is 5s, the header deadline a default config
-  already got from `ReadTimeout`, so default behaviour is unchanged.
+  headers, so a service that zeroes `ReadTimeout` to stream request bodies
+  keeps a header deadline. The default is 5s, and it must be positive.
   Closes #144.
+- **`ServerSettings.MaxFormBodyBytes`**, 1 MiB by default, caps the body
+  `Context.BindForm` reads; a larger one is a 413 with code
+  `CodePayloadTooLarge`. `WithMaxFormBodyBytes` sets it on a `Context`
+  made with `NewContext`.
+- **`Timeout(d)` middleware** gives each request a deadline and answers
+  503 with code `CodeTimeout` when it passes. It buffers the response, up
+  to `DefaultTimeoutMaxBuffer` (8 MiB) or `WithTimeoutMaxBuffer`, and
+  answers 503 past that; a write past the cap returns
+  `ErrResponseTooLarge`.
+- **`BodyLimit(n)` middleware** caps request bodies, answering 413 in the
+  unified error shape.
+- **`gas.Secret`**, a string for configuration secrets that prints,
+  marshals and logs as `[redacted]` and refuses gob encoding.
 - **`Context.Blob(status, contentType, b)`** writes bytes the handler has
   already encoded, under the given content type. An empty `contentType`
   leaves `Content-Type` as it is, and when none is set net/http detects one
   from the body. A write error is returned wrapped, as `HTML` and `Text` do.
-
-### Fixed
-
-- **A server built before `Start` gets the bound config.** `App.Server`
-  copied the config into the `*http.Server` once, and `Start` binds the
-  config only after every service's `Init`, so a service whose `Init`
-  called `Server()` pinned the defaults for the life of the process: the
-  configured address and timeouts were silently discarded. `Start` now
-  applies the bound `Addr` and timeouts to every field the caller left as
-  `Server` set it, and keeps the fields the caller changed. A field set to
-  the value it already had counts as unchanged. `AppConfigUpdated`
-  subscribers run after that and have the last word. This happens once:
-  a later `Start`, or one after `Serve` has begun, leaves the server's
-  fields alone, since net/http is reading them.
-- **Startup is deterministic.** The container kept its registrations and
-  instances in maps and ranged over them, so the order independent
-  singletons were built in, and which error startup reported when several
-  registrations were broken, changed from run to run. Singletons are now
-  built in an order fixed by their dependencies and the order they were
-  registered in: those with no registered dependencies first, in
-  registration order, then each of the others once its dependencies are
-  built. Captive-dependency errors and shape-validation errors for
-  registered instances are reported in registration order, so the same
-  broken setup reports the same error every time.
+- **`WithShutdownTimeout`**, a `WorkerOption` that bounds the shutdown
+  `Worker.Run` starts after a signal; the default is
+  `DefaultShutdownTimeout`, 30s. An App uses the Config's
+  `ShutdownTimeout` instead.
+- **Sentinel errors** for the lifecycle (`ErrAlreadyStarted`,
+  `ErrNotStarted`, `ErrShutDown`), options (`ErrInvalidOption`),
+  configuration (`ErrInvalidConfig`), the kill switch
+  (`ErrNoBuiltInstance`, `ErrServiceNotActive`, `ErrServiceAlreadyActive`,
+  `ErrDuplicateServiceName`), the container (`ErrScopeClosed`,
+  `ErrInvalidConstructor`, `ErrNilInstance`, `ErrInvalidAlias`), routing
+  (`ErrInvalidHandler`, `ErrUnknownMiddleware`, `ErrNotFoundHandlerSet`),
+  recovered panics (`ErrPanic`) and responses (`ErrResponseCommitted`,
+  `ErrResponseTooLarge`), to be tested with `errors.Is`. The package
+  documentation lists sample error texts verbatim.
+- **`CodeMethodNotAllowed`**: a path routed for other methods only answers
+  405 in the unified error shape, with an `Allow` header.
+- **Exported defaults**: `DefaultHost`, `DefaultPort`, the
+  `Default...Timeout` and `DefaultMax...BodyBytes` constants that
+  `DefaultConfig` sets, `DefaultEnvironment`, `DefaultServiceInitTimeout`
+  and `ShutdownGracePeriod`.
 
 ### Changed
 
+- **BREAKING: `App.Config` returns a `Config` by value.** It returned the
+  App's `*Config`, so a caller could change the App's settings through it.
+  It now returns a copy: the base config before Start, the bound one
+  after. It is safe to call concurrently with Start. Set the base config
+  with `WithBaseConfig`.
+- **BREAKING: the App no longer registers `*gas.Config` in the
+  container.** A service or handler that takes a `*gas.Config` now fails
+  Start with an error wrapping `ErrNotRegistered`; a service binds the
+  settings it needs through its own `ConfigProvider` dependency. Start
+  binds and validates the Config once every service is built and
+  initialized, keeps it only once it is valid, and closes the services
+  when it is not. The errors read `gas: invalid config: ...` and wrap
+  `ErrInvalidConfig`.
+- **BREAKING: `Config.Env` binds from the key `gasenv`** and replaces the
+  embedded `WithGasEnv`, which is removed. The config module's
+  `EnvExtension` stores the environment it resolves from `GAS_ENV` there.
+- **BREAKING: Start validates the bound Config.** `Env` must be an
+  allowed environment; `Host` an IP address or an RFC 1123 hostname;
+  `Port` 0 to 65535; `ReadTimeout`, `WriteTimeout` and `IdleTimeout` not
+  negative, with `IdleTimeout` positive when `ReadTimeout` is 0;
+  `ReadHeaderTimeout`, `ShutdownTimeout` and both body limits positive.
+  An error names the key and the rule, never the value.
+- **BREAKING: `ConfigProvider`**: `Set` and `SetDefault` return an error,
+  and `Bind` takes no options; `BindOption` and `BindOptions` are removed.
+- **BREAKING: `MigrationManager`** takes a context:
+  `RunPendingContext(ctx)` and `DownContext(ctx, n)` replace `RunPending`
+  and `Down`. Start runs the pending migrations with its ctx.
+- **BREAKING: an App or a Worker runs once.** A second Start returns
+  `ErrAlreadyStarted`, and a Start once Shutdown has begun `ErrShutDown`.
+  A Start that fails closes, newest first, every service it initialized,
+  and every later Start returns its error again. Shutdown runs once; a
+  second call waits for the first and returns nil.
+- **BREAKING: `App.Stop` has one deadline.** It returns within the
+  Config's `ShutdownTimeout` plus up to three `ShutdownGracePeriod`s,
+  which also bounds every service's `Close`. At the deadline it cancels
+  the context of the requests still running, then closes their
+  connections. A server shutdown error, which `Stop` used to log only, is
+  returned as `gas: server shutdown: ...`, joined with the other shutdown
+  errors; a clean `Stop` returns nil.
+- **BREAKING: `Worker.Run` and `App.Run` take a `context.Context`.** They
+  stop on SIGINT, SIGTERM or the end of ctx, which is a normal stop: Run
+  returns the shutdown's error. Start runs under ctx, so each Init gets
+  its values, and the shutdown keeps its values but not its cancellation.
+  `Run(context.Background())` behaves as `Run()` did.
+- **BREAKING: error responses are RFC 9457 problem details.** A JSON
+  error is now `application/problem+json`:
+  `{"type","title","status","detail","code","errors","details"}` in place
+  of `{"error":{"status","code","message","fields","details"}}`. `title`
+  is the HTTP status phrase and `detail` the message. Field errors are
+  `errors` items of `detail`, an RFC 6901 `pointer` such as
+  `#/items/0/name`, and `rule`. `type` is the error's code under the base
+  that the new `WithProblemTypeBase` option or `Router.SetProblemTypeBase`
+  sets, and is left out (`about:blank`) without one. `Problem` replaces
+  `ErrorResponse` for decoding; `FieldError` has `Pointer` in place of
+  `Field`; `WantsJSON` also accepts `application/problem+json`.
+- **BREAKING: `Router.Use`, `Group` and `Route` take an owner.** `Use`,
+  `UseMiddlewareFunc` and `UseMiddlewareByName` take the owning service
+  first, as `Handle` and `Register` do, nil for the router. `Group` and
+  `Route` take the owner once and pass a new `*RouteGroup`, whose `Use`,
+  `Handle`, `Get` and the other verbs, `NotFound`, `Group` and `Route`
+  take none: the whole group belongs to that service. When the kill
+  switch removes the owner of a `Use` call, its middleware answers 503 on
+  every route until the owner calls `Use` again, which takes the old
+  call's place.
+- **BREAKING: the kill switch tracks services by instance**, so two
+  services with one name are both closed. `CloseService` and
+  `RestartService` return `ErrNoBuiltInstance`,
+  `ErrDuplicateServiceName`, `ErrServiceNotActive`,
+  `ErrServiceAlreadyActive`, `ErrNotStarted` or `ErrShutDown`. A service
+  that is not active is not handed out: resolving it fails with an error
+  wrapping `ErrServiceNotActive`, and a handler that depends on it answers
+  503.
 - **BREAKING: a scoped service's `Init` runs under the init deadline.** It
   got the scope's context with no deadline added, and `InitTimeout` was
   ignored. It now runs like a singleton's: under the container's init
@@ -69,34 +163,132 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resolution with `init <T>: timed out after ...`, wrapping
   `context.DeadlineExceeded`, and one that returns nil after its deadline is
   closed again. Implement `InitTimeout` (0 for no deadline) to change it.
-- **BREAKING: `App.Stop`, and so `App.Run`, return the server's shutdown
-  error.** When `http.Server.Shutdown` failed, for example because in-flight
-  requests outlived `Server.ShutdownTimeout`, `Stop` only logged
-  `server shutdown error` and returned whatever the Worker shutdown
-  returned, usually nil. It still logs it and still closes the services,
-  and now returns it, as `gas: shutdown error: server shutdown error: ...`,
-  joined with any Worker shutdown error. A Worker shutdown error on its own
-  is now wrapped the same way, as
-  `gas: shutdown error: worker shutdown error: ...`; `errors.Is` and
-  `errors.As` still reach the underlying errors. A clean `Stop` returns nil.
+- **BREAKING: options that get a value they cannot take fail Start**
+  with an error wrapping `ErrInvalidOption`, before anything is
+  initialized. A negative `WithServiceInitTimeout` and a
+  `WithTrustedOrigin` that is not an absolute URL used to panic; a
+  non-positive `WithShutdownTimeout` and an empty
+  `WithAllowedEnvironments` fail the same way. A negative
+  `WithServiceContainerServiceTimeout`, which used to panic, fails
+  `BuildAll`.
+- **BREAKING: `Context` loses its error constructor methods**
+  (`BadRequest`, `BadRequestErr` and the others); use the package
+  functions, such as `gas.BadRequest(msg)` and
+  `gas.BadRequest(msg).WithCause(err)`.
 - **`App.Handler` no longer builds the server.** It used to return
   `Server().Handler`, so calling it before `Start`, as tests and embedders
   do, built the `*http.Server` from the config as it stood then. It now
   builds only the handler, once; a handler assigned to `Server().Handler`
   is no longer what it returns.
+- **config**: rewritten. `Set`, `SetDefault` and `SetDefaults` return
+  errors, keys are validated, and printing a `*Config` shows counts only.
+  **BREAKING**: the environment provider requires a prefix. An
+  `EnvProvider` with none fails to load with `ErrEnvPrefixRequired`
+  unless given `WithoutEnvPrefix`, and so does `config.New` with no
+  provider, whose default `EnvProvider` has no prefix.
+- **auth**: rewritten; the JWT signing key is a `gas.Secret`. The jwt,
+  token, apikey and session services gain `Config()`, a copy of the
+  Config their last successful Init bound.
+- **database**: rewritten; `Dialect` replaces `Driver`, MySQL is
+  supported, `SafeError`, a default SQLite busy timeout, and the DSN is a
+  `gas.Secret`. `Service.Config()` returns the bound Config.
+- **migrate**: rewritten; all-digit versions order numerically, new
+  directives, `ClearDirty` and `Applied`. The tracking table records a
+  SHA-256 checksum of each migration's up SQL (`AppliedMigration.Checksum`),
+  and `RunPending` fails with `ErrChecksumMismatch` when an applied
+  migration was edited; `Init` adds the `checksum` column to an existing
+  table.
+- **log**: the root package is stdlib only; zerolog moves to
+  `log/zerolog`; `NewShippingHandler`; endpoints in errors show the host
+  only.
+- **template**: one store contract; `dir` is a `gas.Service`;
+  `WithExtensions`, `WithMaxSize`; `db` drops sqlc and adds a migration.
+- **cache**: one contract for `memory` (LRU) and `valkey` (`OpTimeout`,
+  `KeyPrefix`, `Username`, TLS); `cache.addr` is required; a negative TTL
+  is an error. Both services gain `Config()`.
+- **queue**: a new `memory` store; `sqs` takes queue URLs or names,
+  validates messages before sending, has no region default, bounds every
+  call with `OpTimeout`, and adds `NackAfter` and `Extend`. Both services
+  gain `Config()`.
+- **email**: `ses` moves to SESv2 and sends custom headers; a new
+  `memory` outbox; messages are validated before sending;
+  `SendFromTemplate` no longer mutates the message. Both senders gain
+  `Config()`.
+- **ui**: `Render` and `RenderFragment` take ctx; `ui.reload` replaces
+  environment-driven recompiling; `Reload`; a configurable fragment
+  block; static files through `os.Root`, off unless configured; the
+  public `Engine` is removed. `Service.Config()` returns the bound
+  Config.
+- **storage**: a new `memory` backend and a conformance suite; `dir`,
+  `s3` and the presigner are services; one `ErrObjectNotFound`; metadata
+  follows S3's rules on every backend; presigned uploads need a content
+  length; `dir` syncs writes to disk. **BREAKING**: `Provider` gains
+  `CopyObject`, which copies an object within a bucket or across buckets,
+  and the s3 backend's `API` interface gains `CopyObject`. Each backend
+  gains `Config()`. Bucket names are no longer refused for S3's reserved
+  starts and ends, such as `xn--` and `-s3alias`; S3 refuses them itself.
+- **The agent skills are one `gas` skill, generated from the Go doc.**
+  `skills/gas` replaces the twelve hand-written skills (`gas`,
+  `gas-auth`, `gas-cache` and the others): a `SKILL.md` with the
+  installation guide and a package index, and a reference per package
+  holding its doc overview, with `go doc` for the API. `make skill`
+  regenerates it, and the docs workflow fails when it is stale.
 
 ### Removed
 
+- **BREAKING: `Worker.InitServices`**, **`Router.Mux`** and
+  **`ErrNoConstructor`**.
+- **BREAKING: `WithGasEnv`**; `Config.Env` binds from `gasenv`.
+- **BREAKING: `UIProvider`**; the ui module defines its own `Provider`.
+- **BREAKING: `NewNopLogger`, `NopLogEvent` and `NopLoggerContext`.** The
+  zero `NopLogger` is ready to use; register it as an instance, such as
+  `gas.WithServiceInstance[gas.Logger](&gas.NopLogger{})`.
+- **BREAKING: the exported option structs** `CacheControlOptions`,
+  `RequestLoggerOptions`, `SecurityHeadersOptions` and
+  `ServiceContainerOptions`; their option functions are unchanged.
 - **BREAKING: `Worker.ActiveServicesMap`.** It was a test helper compiled
-  into the library. Tests now get it from `export_test.go`; use
-  `ActiveServices` for the names of the active services.
+  into the library. Use `ActiveServices` for the names of the active
+  services.
 - **BREAKING: `Context.RSS`.** Encode the feed and write it with `Blob`:
   `body, err := xml.Marshal(feed)`, then `ctx.Blob(status,
   "application/rss+xml; charset=utf-8", append([]byte(xml.Header), body...))`.
-  A type that implements `gas.Context` itself must drop `RSS` and add `Blob`.
+  A type that implements `gas.Context` itself must drop `RSS` and add
+  `Blob`.
+
+### Fixed
+
+- **A server built before `Start` gets the bound config.** `App.Server`
+  copied the config into the `*http.Server` once, so a service whose
+  `Init` called `Server()` pinned the defaults for the life of the
+  process. `Start` now applies the bound `Addr` and timeouts to every
+  field the caller left as `Server` set it, and keeps the fields the
+  caller changed. `AppConfigUpdated` subscribers run after that and have
+  the last word. A server `Serve` has begun with is left alone.
+- **Startup is deterministic.** Singletons are built in an order fixed by
+  their dependencies and the order they were registered in, and
+  captive-dependency and shape errors are reported in registration order,
+  so the same broken setup reports the same error every time.
+- **A restarted service no longer applies its `Router.Use` middleware
+  twice.** A service that called `Use` in `Init` added the middleware
+  again on every restart, and the kill switch could not remove it.
+- **template**: on Linux, `dir`'s `List` of a directory that was removed
+  or moved reports it as such, not as the walk's error.
+- **storage**: on Linux, `dir`'s `Init` no longer fails when another
+  process deletes a bucket while Init sweeps it.
+- Known issues KI-010, KI-032 to KI-036, KI-038 to KI-058, KI-062,
+  KI-063, KI-071, KI-080, KI-081 and KI-083.
 
 ### Security
 
+- Configuration secrets (JWT signing key, database DSN, AWS secret keys
+  and session tokens, the Valkey password) no longer print through fmt,
+  JSON, YAML or log/slog, and refuse gob encoding.
+- Errors and logs no longer carry keys, bucket or queue names, URLs,
+  account IDs, addresses or credentials; the AWS SDK's default logger is
+  silenced.
+- Request handling: no error body after a committed response
+  (`ErrResponseCommitted`), `Cache-Control: no-store` on every error
+  response, bounded shutdown, and no use of closed services.
 - **Requires Go 1.27.3.** The `go` directive moves from 1.27 to 1.27.3,
   the first 1.27 release with the fix for GO-2026-6809 (CVE-2026-111943):
   `crypto/x509` now rejects intermediate certificates known to be

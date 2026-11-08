@@ -1,67 +1,13 @@
 ---
-title: Gas Docs
-description: Documentation for the modular Go framework for SaaS backends.
+title: Gas
+description: A modular Go framework for building SaaS backends.
+template: splash
+tableOfContents: false
+editUrl: false
+prev: false
+next: false
 ---
 
-import { CardGrid, Code, LinkCard } from '@astrojs/starlight/components';
-import landing from '../../../snippets/landing/main.go?raw';
-import { region } from '../../lib/snippet';
+import Landing from '../../components/Landing.astro';
 
-## What is Gas?
-
-Gas is a modular Go framework for building SaaS backends. It provides
-dependency injection, routing, middleware, events, and service lifecycle so
-each application starts with working infrastructure and a clear structure.
-
-The framework has a small core package, `github.com/gasmod/gas`, and optional
-modules for databases, configuration, authentication, storage, email, queues,
-and more. Each module is its own Go module, so applications only add the
-dependencies they use.
-
-## How to use these docs
-
-The docs are organized by the parts of an application:
-
-- **[Getting started](/gas/start/introduction/)**: install Gas, learn the
-  project structure, and build a notes API.
-- **[Core](/gas/core/lifecycle/)**: services, routing, middleware, events, and
-  application lifecycle.
-- **[Modules](/gas/modules/overview/)**: optional integrations and their
-  provider interfaces.
-- **[Production](/gas/production/deployment/)**: testing and deployment.
-
-Use the sidebar to browse topics, or search with `Ctrl+K` / `⌘K` to find a
-specific API or behavior.
-
-## Start a new app
-
-Add the core package to your Go module:
-
-```sh
-go get github.com/gasmod/gas
-```
-
-This small program is a complete Gas app. `Run` starts the server, waits for a
-shutdown signal, and closes the app's services.
-
-<Code code={region(landing, 'app')} lang="go" title="main.go" />
-
-## Next steps
-
-<CardGrid>
-	<LinkCard
-		title="Build a JSON API"
-		href="/gas/start/tutorial/"
-		description="Follow the notes API tutorial with SQLite, migrations, API keys, and tests."
-	/>
-	<LinkCard
-		title="Build an HTML app"
-		href="/gas/project/examples/#templates-basic"
-		description="See layouts, partials, static files, and server-rendered pages."
-	/>
-	<LinkCard
-		title="Run a background worker"
-		href="/gas/core/workers/"
-		description="Use the same service lifecycle without starting an HTTP server."
-	/>
-</CardGrid>
+<Landing />

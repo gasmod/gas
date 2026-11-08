@@ -7,34 +7,140 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-The internal modules this module requires are pinned at 0.6.0.
+v0.6.0 rewrites the module around the contract in its package
+documentation (`doc.go`), which lists every error verbatim. Read it before
+upgrading: most of the API moved or changed.
+
+### Added
+
+- **`EnvExtension`, `Environment` and the `Env*` constants in `config`.**
+  The environment extension and its type live in the root package;
+  `Environment` is the module's own string type with `IsDevelopment`,
+  `IsProductionLike` and the other helpers, and `EnvExtension` is safe for
+  concurrent use.
+- **`ConfigProvider`**, the interface services read configuration through,
+  which `*Config` implements.
+- **`Validator`**, the interface `Bind` validates with. `WithValidator`
+  takes any value with `StructCtx(ctx, any) error`, so a
+  `*validator.Validate` still fits; a nil one keeps the default.
+- **`WithoutEnvPrefix`**, which lets an `EnvProvider` load every variable
+  it keeps, without a prefix.
+- **New sentinel errors:** `ErrEnvPrefixRequired`,
+  `ErrEnvironmentNotAllowed`, `ErrInvalidKey`, `ErrKeyPathBlocked` and
+  `ErrKeyConflict`; and `secretsmanager.ErrInvalidKey`.
+- **`.env` references.** `${NAME}` in an unquoted or double-quoted value is
+  the value of `NAME` defined in the same file; a single-quoted value is
+  not expanded. A reference to a name the file does not define, or a
+  cycle, is an error.
+- **Array fields.** `Bind` fills an array from a list no longer than the
+  array; a longer list is an error.
 
 ### Changed
 
+- **BREAKING: one package.** `providers` and `extensions/gasenv` are merged
+  into `config`: `providers.NewEnvProvider` is `config.NewEnvProvider`,
+  `providers.Provider` is `config.Provider`, `gasenv.NewExtension` is
+  `config.NewExtension`, `gasenv.Extension` is `config.EnvExtension`,
+  `gasenv.Development` and the rest are `config.EnvDevelopment` and the
+  rest, and so on. The environment provider's option type is
+  `EnvProviderOption`; `EnvOption` now configures the `EnvExtension`.
+  `providers/secretsmanager` moves to `config/secretsmanager`.
+- **BREAKING: config no longer depends on core.** `BindOption`,
+  `BindOptions`, `WithValidate`, `gasenv.WithGasEnv` and the aliases of
+  core types are removed. `Bind` takes only the destination and always
+  validates; to skip validation, pass `WithValidator` a `Validator` that
+  returns nil. An app reads the environment by binding a field of type
+  `Environment` (or `gas.Environment`) from the key `gasenv`.
+- **BREAKING: an `EnvProvider` needs a prefix.** Without `WithEnvPrefix`
+  or `WithoutEnvPrefix`, `Load` fails with `ErrEnvPrefixRequired`, wrapped
+  with `ErrProviderLoadFailed`, and reads nothing, so the process
+  environment, other tools' tokens included, no longer becomes
+  configuration by default. `New` without a provider still adds an
+  `EnvProvider` with no prefix, which therefore fails to load: give `New`
+  the providers to load from.
+- **BREAKING: `Set` and `SetDefault` return an error.** A key that is
+  empty or has an empty level, such as `a..b`, is `ErrInvalidKey`; a level
+  on the path that holds a value that is not a map makes `Set` fail with
+  `ErrKeyPathBlocked` instead of doing nothing; a map value with two keys
+  that differ only in case is `ErrKeyConflict`. Both store a copy of the
+  value with its map keys trimmed and lowercased, so every key in it can
+  be reached; they stored it as given.
+- **BREAKING: conflicting keys are errors.** Two keys of one provider, one
+  secret, or one value given to `Set`, `SetDefault` or `SetDefaults` that
+  become the same once trimmed and lowercased, such as `Host` and `host`,
+  fail with `ErrKeyConflict`. Two environment variable names that become
+  the same key, such as `Foo` and `FOO`, or where one needs the other's
+  key as a map, such as `A` and `A__B`, fail the load. A variable name
+  with an empty level, such as `A____B`, is left out.
+- **BREAKING: `Bind` matches fields as `encoding/json` names them.** A key
+  matches a field with exactly its name (the `json` tag, or else the Go
+  name), or else without regard to case, at every depth. Two keys that
+  match one field, such as `Host` and `host`, are an error; the tag key
+  used to win.
 - **BREAKING: a duration needs a unit.** `Bind` parses every string for a
   `time.Duration` field with `time.ParseDuration`. A string without a unit
   was read as nanoseconds, so `SERVER__READTIMEOUT=30` set 30ns; it is now
-  an error that names the field and shows the fix, such as `field Server:
-  struct field ReadTimeout: duration has no unit: "30"; write it like
-  "30s"`. A number for a duration field, a JSON number or an int, uint or
-  float set with `Set` or `SetDefault`, is the same error unless it is 0,
-  which binds as zero; a JSON number used to fail with `cannot convert to
-  int64 float64`, and an `int64` was read as nanoseconds. `"0"` and a
-  `time.Duration` value bind as before.
+  an error that names the key and shows the fix:
+  `server.readtimeout: duration has no unit; add one such as "s" or "ms"`.
+  A number for a duration field, a JSON number or an int, uint or float
+  set with `Set` or `SetDefault`, is the same error unless it is 0, which
+  binds as zero. `"0"` and a `time.Duration` value bind as before.
+- **BREAKING: JSON numbers keep their digits.** The JSON provider and the
+  Secrets Manager provider decode an integer to an `int64`, or a `uint64`
+  when it is too large for one, and any other number to a `float64`; every
+  number was a `float64`, so an integer past 2^53 lost digits. A number
+  too large for a `float64`, such as `1e400`, is an error. A float bound
+  to a string field is written without an exponent, so 1234567.0 is
+  `1234567`.
+- **BREAKING: an environment that is not allowed fails the load.** A
+  `GAS_ENV` value, or a value a provider sets at the extension's key, that
+  is not one of the allowed environments fails `Load` with an error
+  wrapping `ErrEnvironmentNotAllowed`, which names the variable or key and
+  the allowed values but not the value. It used to be replaced with the
+  fallback without a word, so `prod` ran as development. The fallback is
+  always allowed.
+- **BREAKING: the `.env` format is strict.** A name is
+  `[A-Za-z_][A-Za-z0-9_]*`, defined once and not differing from another
+  only in case; there is no `export`; nothing is escaped; an unquoted
+  value ends at a space, tab or `#`; the file must be valid UTF-8.
+  Anything outside the format fails with `ErrDotEnvParseFailed`, giving a
+  line and column and the name, never a character of a value.
+- **BREAKING: symlinks in file paths.** The default file system opens the
+  JSON and `.env` files through an `os.Root` on the working directory. A
+  symlink, in the directory part or as the last element, is followed when
+  its target is relative and stays inside the working directory; an
+  absolute target is refused even when it lies inside. The file must be a
+  regular file: a directory, FIFO, socket or device is refused.
+- **Loads are serialized.** `Load`, `LoadWithContext`, `LoadProvider` and
+  `LoadProviderContext` load and merge their providers one at a time, so a
+  provider added during a load is merged after the providers it follows.
+- **`secretsmanager.Provider.LoadContext` applies the timeout.** It
+  derives its context from the caller's and ends at the caller's deadline
+  or the provider's timeout, whichever comes first; it used to use the
+  caller's context as is.
+- **`configtest.MockConfig`** follows the new signatures: `SetDefaultFn`
+  and `SetFn` return an error, `BindFn` takes only the destination, and
+  the provider fields take a `config.Provider`.
 
-### Fixed
+### Removed
 
-- **`Bind` no longer picks a field's value at random.** When the source
-  held both a key matching a field's `json` tag and one matching its
-  lowercased Go name, which value the field got depended on map iteration
-  order and could change from one run to the next. The tag key now always
-  wins, in nested structs too. In a nested struct, where keys also match
-  case-insensitively, an exact key beats a case-folded one of the same
-  kind, and among keys that still tie the lexicographically smallest wins,
-  so the result is the same on every run.
+- **BREAKING:** the `providers` and `extensions/gasenv` packages,
+  `BindOption`, `BindOptions`, `WithValidate`, `WithGasEnv` and the
+  `examples` directory.
 
 ### Security
 
+- **Printing a `*Config` shows counts only.** With fmt, any verb, and
+  log/slog, a `*Config` prints how many providers, extensions and
+  top-level keys it has, such as
+  `config.Config{providers: 1, extensions: 0, keys: 3}`. It printed every
+  value, by default the whole process environment.
+- **A `secretsmanager.Provider` never prints its secrets.** It prints its
+  region, secret count, timeout, and whether it has an endpoint and static
+  credentials, never the credentials, the endpoint or the secrets' names.
+- **Errors carry no configuration values.** `.env` syntax errors no longer
+  quote a character of the file, and `Bind` and decode errors name the
+  key, type or position instead of the value.
 - **Requires Go 1.27.3.** The `go` directive moves from 1.27 to 1.27.3,
   the first 1.27 release with the fix for GO-2026-6809 (CVE-2026-111943):
   `crypto/x509` now rejects intermediate certificates known to be

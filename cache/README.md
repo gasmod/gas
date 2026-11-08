@@ -4,8 +4,9 @@
 
 Part of the [Gas](../README.md) monorepo · [Documentation](https://gasmod.github.io/gas) · [All modules](../README.md#modules)
 
-Key-value caching for the [Gas](../README.md) framework, with two interchangeable backends:
-in-memory for development, Valkey (Redis-compatible) for production.
+Key-value caching for the [Gas](../README.md) framework, with two interchangeable stores that
+keep one contract: in-memory with LRU eviction, and Valkey (Redis-compatible) with key prefixes,
+per-command timeouts, TLS and ACL users.
 
 Implements `gas.CacheProvider`.
 
@@ -17,20 +18,23 @@ go get github.com/gasmod/gas/cache
 gas.WithSingletonService[gas.CacheProvider](cachemem.New()),
 ```
 
-Both backends need `gas.ConfigProvider` and `gas.Logger`.
+Both stores take `gas.ConfigProvider` and `gas.Logger` from the container and read the `cache`
+section, or take their configuration from `WithConfig`; the Valkey store requires `cache.addr`.
+Each store's `Config()` returns the configuration its last successful `Init` resolved.
 
-| Package | Use case |
+| Package | Provides |
 |---|---|
-| `cache/memory` | Development, testing, single-instance deployments |
-| `cache/valkey` | Production, multi-instance deployments |
+| `cache` | The shared contract and sentinel errors |
+| `cache/memory` | In-process store, for development, tests and single-instance apps |
+| `cache/valkey` | Valkey store, for apps that share a cache across instances |
 | `cache/cachetest` | Recording mock of `gas.CacheProvider` |
 
 ## Documentation
 
-The full guide, with configuration, testing, and worked examples, is on the docs site.
+The full documentation is on the docs site.
 This README is deliberately a signpost: keeping a second copy here is how the docs drifted before.
 
-- **Guide:** [Cache](https://gasmod.github.io/gas/modules/cache/)
+- **Docs:** [cache](https://gasmod.github.io/gas/reference/cache/)
 - **API reference:** [pkg.go.dev/github.com/gasmod/gas/cache](https://pkg.go.dev/github.com/gasmod/gas/cache)
 - **Contributing:** [CONTRIBUTING.md](../CONTRIBUTING.md)
 

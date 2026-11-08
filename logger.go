@@ -15,6 +15,7 @@ func WithLogger(ctx context.Context, logger Logger) context.Context {
 // LoggerFromContext returns the Logger stored in ctx, or nil if none is present.
 func LoggerFromContext(ctx context.Context) Logger {
 	l, _ := ctx.Value(loggerKey{}).(Logger)
+
 	return l
 }
 
@@ -25,7 +26,9 @@ func LoggerFromContext(ctx context.Context) Logger {
 // Use With to derive a sub-logger that carries persistent fields across all
 // subsequent log events.
 //
-// Call Flush to ensure all buffered log entries are written (e.g. before shutdown).
+// Call Flush to ensure all buffered log entries are written, such as
+// before shutdown. A Worker flushes its Logger at the end of Shutdown, as
+// described under Shutting down in the package documentation.
 type Logger interface {
 	// Trace starts a log event at the TRACE level.
 	Trace(msg string) LogEvent
@@ -62,7 +65,9 @@ type LoggerContext interface {
 }
 
 // LogEvent is a single structured log entry. Field methods return the same
-// LogEvent for chaining. Call Send to finalize and emit the event.
+// LogEvent for chaining. Call Send to finalize and emit the event. Send may
+// be called once; an event must not be used after Send, and an event is
+// not safe for concurrent use.
 type LogEvent interface {
 	Str(key, val string) LogEvent
 	Int(key string, val int) LogEvent

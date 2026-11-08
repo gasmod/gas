@@ -2,134 +2,89 @@ package storage
 
 import "errors"
 
-// Sentinel errors returned by every storage backend. Backends wrap them with
-// the backend and operation that failed, so match them with errors.Is, never
-// by comparing messages. Each sentinel is distinct: none matches another.
+// The sentinel errors every backend of the module shares, as described in
+// the package documentation. A backend's errors start with its own
+// service name and the operation, and wrap one of these.
 var (
-	// ErrNotInitialized is returned by every Provider and Presigner method
-	// called on a backend that was not built by its constructor, such as a
-	// zero value.
-	ErrNotInitialized = errors.New("storage: not initialized")
-
-	// ErrInputRequired is returned when a method is called with a nil input.
-	ErrInputRequired = errors.New("storage: input required")
-
-	// ErrInvalidKey is returned when an object key is empty, longer than 1024
-	// bytes, not valid UTF-8, "." after cleaning, or has "." as its last path
-	// element, or is otherwise not accepted by the backend. Only "/"
-	// separates path elements, on every platform, so a backslash is an
-	// ordinary key byte. It is checked before the bucket and nothing is sent
-	// to the backend.
-	ErrInvalidKey = errors.New("storage: invalid key")
-
-	// ErrKeyNotFound is returned by GetObject when the bucket exists but the
-	// key does not. HeadObject reports a missing key as ErrNotFound instead,
-	// and DeleteObject of a missing key succeeds.
-	ErrKeyNotFound = errors.New("storage: key not found")
-
-	// ErrVersionNotFound is returned by GetObject when the object exists but
-	// the requested Version does not (S3's NoSuchVersion). It is s3 only: the
-	// dir backend rejects any Version with ErrNotSupported. A HEAD response
-	// carries no error code, so
-	// on S3 HeadObject reports an unknown version as ErrNotFound instead. It
-	// does not match ErrKeyNotFound or ErrNotFound. A malformed version ID is
-	// not guaranteed to produce it: AWS may reject one with a 400 that maps
-	// to no sentinel.
-	ErrVersionNotFound = errors.New("storage: version not found")
-
-	// ErrNotFound is returned by HeadObject when the object does not exist.
-	// On S3 a HEAD response cannot tell a missing key from a missing bucket,
-	// so the s3 backend also returns it for a missing bucket. It does not
-	// match ErrKeyNotFound or ErrBucketNotFound.
-	ErrNotFound = errors.New("storage: not found")
-
-	// ErrInvalidBucket is returned when a bucket name is not a valid S3
-	// bucket name: the explicit Bucket of an input, the bucket named in
-	// CreateBucketInput, or the configured bucket when an input leaves
-	// Bucket nil (including when no bucket is configured). The s3
-	// constructors also return it for an invalid configured bucket. Nothing
-	// is sent to the backend.
-	ErrInvalidBucket = errors.New("storage: invalid bucket")
-
-	// ErrBucketNotFound is returned by object operations, HeadBucket and
-	// DeleteBucket when the bucket does not exist (except by the s3
-	// backend's HeadObject; see ErrNotFound).
-	ErrBucketNotFound = errors.New("storage: bucket not found")
-
-	// ErrBucketNotEmpty is returned by DeleteBucket when the bucket still
-	// holds objects. No object is deleted.
-	ErrBucketNotEmpty = errors.New("storage: bucket not empty")
-
-	// ErrAccessDenied is returned by HeadBucket and DeleteBucket when the
-	// backend refuses the caller access to the bucket. On S3 that is a 403,
-	// which S3 gives for a bucket another account owns and for one the
-	// caller owns but lacks permission on, so it does not say who owns the
-	// bucket. The dir backend never returns it.
-	ErrAccessDenied = errors.New("storage: access denied")
-
-	// ErrBucketExists is returned by CreateBucket when the bucket name is
-	// taken by someone else (S3's BucketAlreadyExists). Creating a bucket the
-	// caller already owns is not an error. Only the s3 backend returns it:
-	// every dir bucket belongs to the caller.
-	ErrBucketExists = errors.New("storage: bucket already exists")
-
-	// ErrInvalidRange is returned by GetObject and HeadObject when the Range
-	// cannot be satisfied: its first byte is at or past the end of the
-	// object, or it is the zero-length suffix "bytes=-0". S3 answers 416
-	// InvalidRange. A Range header that is not a single valid byte range is
-	// ignored instead, and the whole object is returned.
-	ErrInvalidRange = errors.New("storage: invalid range")
-
-	// ErrContentLengthMismatch is returned by PutObject when ContentLength is
-	// set and Body yields a different number of bytes, fewer or more, or when
-	// ContentLength is negative. Nothing is stored: an object already under
-	// the key is left as it was.
-	ErrContentLengthMismatch = errors.New("storage: content length mismatch")
-
-	// ErrNotSupported is returned when an input asks for a feature the
-	// backend does not implement. The dir backend returns it from HeadObject,
-	// GetObject and DeleteObject when Version is set, because it does not
-	// version objects, and from HeadObject and GetObject when PartNumber is
-	// set, because it does not store objects in parts. Nothing is read or
-	// changed.
-	ErrNotSupported = errors.New("storage: not supported")
-
-	// ErrInvalidHeader is returned by PutObject, and by Presigner's
-	// PresignUploadURL, for a header value the backend cannot store as given,
-	// such as an Expires that the s3 backend cannot send unchanged because it
-	// is not an IMF-fixdate.
-	// Nothing is stored or signed.
-	ErrInvalidHeader = errors.New("storage: invalid header")
-
-	// ErrPreconditionFailed is returned by PutObject when its WriteCondition
-	// does not hold: IfNoneMatch "*" and an object exists, or IfMatch and the
-	// object's ETag differs. Nothing is written.
-	ErrPreconditionFailed = errors.New("storage: precondition failed")
-
-	// ErrInvalidCondition is returned by PutObject, and by Presigner's
-	// PresignUploadURL, for a WriteCondition that cannot be evaluated: an
-	// IfNoneMatch other than "*", an empty IfMatch or one of "*", or both
-	// set. Nothing is sent, written or signed.
-	ErrInvalidCondition = errors.New("storage: invalid condition")
-
-	// ErrInvalidOption is returned by a backend constructor given a nil
-	// option. The message names the option's zero-based position in the
-	// constructor's argument list.
-	ErrInvalidOption = errors.New("storage: invalid option")
-
-	// ErrInvalidLimit is returned by ListObjects for a MaxKeys under 1 and
-	// by ListBuckets for a MaxBuckets outside 1 to 10000. Nothing is sent to
-	// the backend.
-	ErrInvalidLimit = errors.New("storage: invalid limit")
-
-	// ErrInvalidContinuationToken is returned by ListObjects and ListBuckets
-	// for a ContinuationToken that is set but empty, and by the dir backend
-	// for one that is not unpadded base64url or that decodes to an empty
-	// name. S3 may reject a token it did not issue with
-	// an error that carries no sentinel.
-	ErrInvalidContinuationToken = errors.New("storage: invalid continuation token")
-
-	// ErrInvalidTTL is returned by Presigner methods for a TTL that is
-	// negative, under one second, or over seven days. Nothing is signed.
-	ErrInvalidTTL = errors.New("storage: invalid TTL")
+	// ErrNilInput indicates that a method was given a nil input.
+	ErrNilInput = errors.New("input is nil")
+	// ErrInvalidKey indicates that an object key breaks the key rules.
+	ErrInvalidKey = errors.New("invalid key")
+	// ErrInvalidBucket indicates that a bucket name breaks the bucket
+	// rules, or that an input names no bucket and none is configured.
+	ErrInvalidBucket = errors.New("invalid bucket")
+	// ErrInvalidMetadata indicates that the user metadata of a write breaks
+	// the metadata rules.
+	ErrInvalidMetadata = errors.New("invalid metadata")
+	// ErrInvalidHeader indicates that a header field of a write, or a
+	// response header of a presigned download, breaks the header rules.
+	ErrInvalidHeader = errors.New("invalid header")
+	// ErrInvalidCondition indicates that a WriteCondition cannot be
+	// evaluated.
+	ErrInvalidCondition = errors.New("invalid condition")
+	// ErrInvalidRange indicates that a Range is not one byte range.
+	ErrInvalidRange = errors.New("invalid range")
+	// ErrInvalidArgument indicates that a limit, a length, a part number, a
+	// version, a listing argument or a presign TTL is out of its bounds.
+	ErrInvalidArgument = errors.New("invalid argument")
+	// ErrInvalidToken indicates that a continuation token is empty, or is
+	// not one the backend issued for the same listing.
+	ErrInvalidToken = errors.New("invalid continuation token")
+	// ErrContentLengthMismatch indicates that a body yielded more or fewer
+	// bytes than its ContentLength.
+	ErrContentLengthMismatch = errors.New("content length mismatch")
+	// ErrNotSupported indicates that an input asks for a feature the
+	// backend does not have, such as a Version on a backend that does not
+	// version objects.
+	ErrNotSupported = errors.New("not supported")
+	// ErrObjectNotFound indicates that no object is stored under the key,
+	// or that its bucket does not exist.
+	ErrObjectNotFound = errors.New("object not found")
+	// ErrVersionNotFound indicates that the object exists but not the
+	// version asked for. It comes with ErrObjectNotFound.
+	ErrVersionNotFound = errors.New("version not found")
+	// ErrBucketNotFound indicates that the bucket does not exist.
+	ErrBucketNotFound = errors.New("bucket not found")
+	// ErrBucketNotEmpty indicates that DeleteBucket found the bucket
+	// holding objects.
+	ErrBucketNotEmpty = errors.New("bucket not empty")
+	// ErrBucketExists indicates that CreateBucket found the name taken by
+	// another owner.
+	ErrBucketExists = errors.New("bucket exists")
+	// ErrAccessDenied indicates that the backend refused the credentials,
+	// or their permission for the request.
+	ErrAccessDenied = errors.New("access denied")
+	// ErrPreconditionFailed indicates that a WriteCondition did not hold
+	// when the write would have committed.
+	ErrPreconditionFailed = errors.New("precondition failed")
+	// ErrRangeNotSatisfiable indicates that a Range selects no byte of the
+	// object.
+	ErrRangeNotSatisfiable = errors.New("range not satisfiable")
+	// ErrBackend indicates that the backend failed for a reason no other
+	// sentinel names, such as an I/O error or a request that got no reply.
+	ErrBackend = errors.New("backend failed")
+	// ErrNotInitialized indicates that a method was called before the
+	// backend's first successful Init.
+	ErrNotInitialized = errors.New("service not initialized")
+	// ErrAlreadyInitialized indicates that Init was called on a backend
+	// that is initialized.
+	ErrAlreadyInitialized = errors.New("service already initialized")
+	// ErrClosed indicates that a method was called after Close, before
+	// Init succeeded again, or that Close ended the call.
+	ErrClosed = errors.New("service closed")
+	// ErrNilLogger indicates that a backend's constructor was given a nil
+	// logger.
+	ErrNilLogger = errors.New("logger is nil")
+	// ErrNilOption indicates that a backend's constructor was given a nil
+	// option.
+	ErrNilOption = errors.New("option is nil")
+	// ErrNilConfig indicates that WithConfig was given a nil
+	// configuration.
+	ErrNilConfig = errors.New("config is nil")
+	// ErrNoConfigProvider indicates that there is neither a configuration
+	// given to WithConfig nor a ConfigProvider to bind one from.
+	ErrNoConfigProvider = errors.New("no config provider")
+	// ErrInvalidConfig indicates that the configuration failed to bind,
+	// failed its validate tags, or broke one of the backend's rules.
+	ErrInvalidConfig = errors.New("invalid config")
 )

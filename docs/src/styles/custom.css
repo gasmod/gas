@@ -1,4 +1,11 @@
-/* Gas docs: a neutral, high-contrast palette inspired by modern framework docs. */
+/*
+ * Gas docs theme: white-first greyscale with tight, medium-weight
+ * headings, margins textured with the chevrons of the Gas mark, labels
+ * that read as Go package paths, and code in dark frames in both themes.
+ * One accent, the indigo of a gas flame, marks what you can act on and
+ * the Go identifiers of the home page.
+ */
+
 @font-face {
 	font-family: 'Geist';
 	src: url('/gas/fonts/geist-sans-variable.woff2') format('woff2');
@@ -15,131 +22,116 @@
 	font-display: swap;
 }
 
+/* ---- Tokens ---------------------------------------------------------- */
+
+/* Dark is Starlight's base theme. */
 :root {
 	color-scheme: dark;
+
+	--gas-paper: #030712;
+	--gas-surface: #111827;
+	--gas-ink: #ffffff;
+	--gas-body: #9ca3af;
+	--gas-muted: #6b7280;
+	--gas-line: rgb(255 255 255 / 0.1);
+	--gas-accent: #8b9cff;
+	--gas-accent-wash: rgb(139 156 255 / 0.12);
+	--gas-icon: rgb(255 255 255 / 0.32);
+	--gas-chevrons: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='14'%3E%3Cpath d='M4 10 10 4l6 6' fill='none' stroke='rgba(255,255,255,0.13)' stroke-width='1.1' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+	--gas-pill-bg: #ffffff;
+	--gas-pill-ink: #030712;
+
+	--sl-color-white: var(--gas-ink);
+	--sl-color-gray-1: #e5e7eb;
+	--sl-color-gray-2: #d1d5db;
+	--sl-color-gray-3: var(--gas-body);
+	--sl-color-gray-4: var(--gas-muted);
+	--sl-color-gray-5: #1f2937;
+	--sl-color-gray-6: var(--gas-surface);
+	--sl-color-black: var(--gas-paper);
+	--sl-color-accent-low: #1b2150;
+	--sl-color-accent: var(--gas-accent);
+	--sl-color-accent-high: #c7cfff;
+	--sl-color-text-accent: var(--gas-ink);
+	--sl-color-bg: var(--gas-paper);
+	--sl-color-bg-nav: var(--gas-paper);
+	--sl-color-bg-sidebar: var(--gas-paper);
+	--sl-color-bg-inline-code: transparent;
+	--sl-color-hairline: var(--gas-line);
+	--sl-color-hairline-light: var(--gas-line);
+	--sl-color-hairline-shade: var(--gas-paper);
+
 	--sl-font: 'Geist', var(--sl-font-system);
 	--sl-font-mono: 'Geist Mono', var(--sl-font-system-mono);
-	--sl-color-white: #fafafa;
-	--sl-color-gray-1: #f4f4f5;
-	--sl-color-gray-2: #d4d4d8;
-	--sl-color-gray-3: #a1a1aa;
-	--sl-color-gray-4: #71717a;
-	--sl-color-gray-5: #3f3f46;
-	--sl-color-gray-6: #27272a;
-	--sl-color-black: #070708;
-	--sl-color-accent-low: #27272a;
-	--sl-color-accent: #fafafa;
-	--sl-color-accent-high: #f4f4f5;
-	--sl-color-bg: #070708;
-	--sl-color-bg-nav: #0a0a0c;
-	--sl-color-bg-sidebar: #0a0a0c;
-	--sl-color-bg-inline-code: #27272a;
-	--sl-color-hairline: #27272a;
-	--sl-color-hairline-light: #333338;
-	--sl-color-hairline-shade: #070708;
-	--gas-shadow: rgb(0 0 0 / 0.32);
+	--sl-nav-height: 3.5rem;
 	--sl-sidebar-width: 18rem;
 	--sl-content-width: 48rem;
-	--sl-content-pad-x: clamp(1rem, 2.5vw, 1.75rem);
-	--sl-line-height: 1.78;
-	--sl-text-h2: 1.5rem;
-	--sl-text-h3: 1.25rem;
-	--gas-radius: 0.75rem;
+	--sl-content-pad-x: clamp(1rem, 3vw, 2.5rem);
+	--sl-line-height: 1.75;
+	--sl-text-h1: 1.875rem;
+	--sl-text-h2: 1.25rem;
+	--sl-text-h3: 1.0625rem;
+	--sl-text-h4: 1rem;
 }
 
 :root[data-theme='light'] {
 	color-scheme: light;
-	--sl-color-white: #09090b;
-	--sl-color-gray-1: #18181b;
-	--sl-color-gray-2: #3f3f46;
-	--sl-color-gray-3: #71717a;
-	--sl-color-gray-4: #a1a1aa;
-	--sl-color-gray-5: #d4d4d8;
-	--sl-color-gray-6: #f4f4f5;
-	--sl-color-gray-7: #fafafa;
-	--sl-color-black: #ffffff;
-	--sl-color-accent-low: #e4e4e7;
-	--sl-color-accent: #18181b;
-	--sl-color-accent-high: #09090b;
-	--sl-color-bg: #ffffff;
-	--sl-color-bg-nav: #ffffff;
-	--sl-color-bg-sidebar: #fafafa;
-	--sl-color-bg-inline-code: #f4f4f5;
-	--sl-color-hairline: #e4e4e7;
-	--sl-color-hairline-light: #e4e4e7;
-	--sl-color-hairline-shade: #ededee;
-	--gas-shadow: rgb(0 0 0 / 0.08);
+
+	--gas-paper: #ffffff;
+	--gas-surface: #f9fafb;
+	--gas-ink: #030712;
+	--gas-body: #4b5563;
+	--gas-muted: #6b7280;
+	--gas-line: rgb(3 7 18 / 0.08);
+	--gas-accent: #3d5afe;
+	--gas-accent-wash: rgb(61 90 254 / 0.08);
+	--gas-icon: rgb(3 7 18 / 0.28);
+	--gas-chevrons: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='14'%3E%3Cpath d='M4 10 10 4l6 6' fill='none' stroke='rgba(3,7,18,0.1)' stroke-width='1.1' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+	--gas-pill-bg: #030712;
+	--gas-pill-ink: #ffffff;
+
+	--sl-color-gray-1: #111827;
+	--sl-color-gray-2: #374151;
+	--sl-color-gray-5: #e5e7eb;
+	--sl-color-gray-7: #f9fafb;
+	--sl-color-accent-low: #eef0ff;
+	--sl-color-accent-high: #2a3fd1;
 }
 
-html {
-	background: var(--sl-color-bg);
-	scroll-behavior: smooth;
-}
-
+html,
 body {
-	background: var(--sl-color-bg);
+	background: var(--gas-paper);
+	-webkit-font-smoothing: antialiased;
 }
 
 ::selection {
-	color: var(--sl-color-text-invert);
-	background: var(--sl-color-accent);
+	color: var(--gas-paper);
+	background: var(--gas-ink);
 }
 
-/* A quiet glass header keeps search and navigation anchored while scrolling. */
+:focus-visible {
+	outline: 2px solid var(--gas-accent);
+	outline-offset: 2px;
+}
+
+/* ---- Header ---------------------------------------------------------- */
+
 header.header {
-	background-color: color-mix(in srgb, var(--sl-color-bg-nav) 94%, transparent);
-	backdrop-filter: blur(14px);
-	border-bottom-color: var(--sl-color-hairline);
-}
-
-header.header site-search button {
-	min-height: 2.4rem;
-	border: 1px solid var(--sl-color-gray-5);
-	border-radius: 0.7rem;
-	background: color-mix(in srgb, var(--sl-color-bg) 68%, transparent);
-	color: var(--sl-color-gray-3);
-	transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
-}
-
-header.header site-search button:hover {
-	border-color: var(--sl-color-accent);
-	background: var(--sl-color-bg);
-	color: var(--sl-color-white);
-}
-
-header.header site-search button > kbd {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.2rem;
-	padding: 0;
-	border: 0;
-	background: transparent;
-	color: var(--sl-color-gray-3);
-}
-
-header.header site-search button > kbd > kbd {
-	min-width: 1.25rem;
-	padding: 0.1rem 0.25rem;
-	border: 1px solid var(--sl-color-gray-5);
-	border-radius: 0.25rem;
-	background: var(--sl-color-gray-6);
-	color: var(--sl-color-gray-2);
-	font-size: 0.75rem;
-	line-height: 1.2;
-	text-align: center;
+	border-bottom: 1px solid var(--gas-line);
+	background: color-mix(in srgb, var(--gas-paper) 92%, transparent);
+	backdrop-filter: blur(12px);
 }
 
 .gas-header {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
+	gap: 1.5rem;
 	width: 100%;
 	height: 100%;
-	gap: 2rem;
 }
 
-.gas-header-start,
-.gas-header-actions,
+.gas-header-end,
 .gas-header-nav,
 .gas-header-social,
 .gas-header-theme {
@@ -147,460 +139,908 @@ header.header site-search button > kbd > kbd {
 	align-items: center;
 }
 
-.gas-header-start {
-	min-width: 0;
-	gap: clamp(1.25rem, 2.5vw, 2.75rem);
-}
-
+.gas-header-end,
 .gas-header-nav {
-	align-self: stretch;
-	gap: 0.25rem;
+	gap: 1.5rem;
 }
 
 .gas-header-nav a {
-	display: flex;
-	align-items: center;
-	padding-inline: 0.7rem;
-	color: var(--sl-color-gray-3);
-	font-size: var(--sl-text-sm);
+	color: var(--gas-body);
+	font-size: 0.875rem;
+	font-weight: 500;
 	text-decoration: none;
-	transition: color 140ms ease;
 }
 
 .gas-header-nav a:hover,
-.gas-header-nav a.active,
-.gas-header-nav a[aria-current='page'] {
-	color: var(--sl-color-white);
+.gas-header-nav a.active {
+	color: var(--gas-ink);
 }
 
-.gas-header-actions {
-	flex-shrink: 0;
-	gap: 1.15rem;
+/* Search is a small pill: the glass and the shortcut. */
+.gas-header-search site-search button {
+	width: auto;
+	max-width: none;
+	min-height: 1.75rem;
+	gap: 0.4rem;
+	padding: 0.15rem 0.6rem;
+	border: 0;
+	border-radius: 999px;
+	background: transparent;
+	box-shadow: inset 0 0 0 1px var(--gas-line);
+	color: var(--gas-body);
 }
 
-.gas-header-actions site-search button {
-	width: 13rem;
-	max-width: 13rem;
+.gas-header-search site-search button:hover {
+	box-shadow: inset 0 0 0 1px var(--gas-muted);
+	color: var(--gas-ink);
 }
 
-.gas-header-social {
-	border-inline-start: 1px solid var(--sl-color-gray-5);
-	padding-inline-start: 0.85rem;
+.gas-header-search site-search button > span {
+	display: none;
 }
 
-.gas-header-social a {
-	color: var(--sl-color-gray-2);
+.gas-header-search site-search button > kbd {
+	display: inline-flex;
+	gap: 0.1rem;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font-family: var(--sl-font);
+	font-size: 0.75rem;
+}
+
+.gas-header-search site-search button > kbd > kbd {
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+}
+
+.gas-header-social a,
+.gas-header-theme {
+	color: var(--gas-body);
 }
 
 .gas-header-social a:hover {
-	color: var(--sl-color-white);
+	color: var(--gas-ink);
 }
 
-.site-title {
-	letter-spacing: -0.025em;
+/* ---- Sidebar --------------------------------------------------------- */
+
+.sidebar-pane {
+	border-inline-end: 0;
+	background: var(--gas-paper);
 }
 
-.version {
-	border-color: color-mix(in srgb, var(--sl-color-accent) 35%, var(--sl-color-gray-5)) !important;
-	background: color-mix(in srgb, var(--sl-color-accent-low) 65%, transparent);
-	color: var(--sl-color-accent-high) !important;
+.sidebar-content {
+	padding: 1.5rem 1.5rem 2.5rem;
 }
 
-.content-panel + .content-panel {
-	border-top: 0;
-	padding-top: 0.5rem;
+.sidebar-content ul.top-level > li + li {
+	margin-top: 0.85rem;
+}
+
+/* A group is a label over a list; a module's opens with its chevron. */
+.sidebar-content details > summary {
+	padding: 0.15rem 0;
+	cursor: pointer;
+}
+
+.sidebar-content details > summary .caret {
+	width: 0.9rem;
+	height: 0.9rem;
+	color: var(--gas-muted);
+}
+
+.sidebar-content details > summary:hover .large,
+.sidebar-content details > summary:hover .caret {
+	color: var(--gas-accent);
+}
+
+/* Group labels read as the package paths they stand for. */
+.sidebar-content .group-label .large {
+	color: var(--gas-ink);
+	font-family: var(--sl-font-mono);
+	font-size: 0.8125rem;
+	font-weight: 600;
+	text-transform: lowercase;
+}
+
+/*
+ * Each group's label carries an icon, picked by the links the group holds,
+ * so it follows the group whatever its order or label. The group of the
+ * current page shows its icon in the accent.
+ */
+.sidebar-content .group-label .large::before {
+	display: inline-block;
+	width: 1rem;
+	height: 1rem;
+	margin-inline-end: 0.55rem;
+	background: var(--gas-icon);
+	content: '';
+	mask: var(--gas-group-icon) center / contain no-repeat;
+	vertical-align: -0.2em;
+}
+
+.sidebar-content ul.top-level > li:has([aria-current='page']) .group-label .large::before,
+.sidebar-content details > summary:hover .large::before {
+	background: var(--gas-accent);
+}
+
+.sidebar-content ul.top-level > li:has(a[href$="/start/installation/"]) {
+	--gas-group-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 21V4'/%3E%3Cpath d='M5 4h11l-2 3.5L16 11H5'/%3E%3C/svg%3E");
+}
+
+.sidebar-content ul.top-level > li:has(a[href$="/reference/gas/"]) {
+	--gas-group-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3 20 7.5v9L12 21 4 16.5v-9z'/%3E%3Cpath d='M4 7.5 12 12l8-4.5M12 12v9'/%3E%3C/svg%3E");
+}
+
+.sidebar-content ul.top-level > li:has(a[href*="/reference/config/"]) {
+	--gas-group-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 7h10M18 7h2M4 17h4M12 17h8'/%3E%3Ccircle cx='16' cy='7' r='2'/%3E%3Ccircle cx='10' cy='17' r='2'/%3E%3C/svg%3E");
+}
+
+.sidebar-content ul.top-level > li:has(a[href*="/reference/log/"]) {
+	--gas-group-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6h16M4 12h16M4 18h10'/%3E%3C/svg%3E");
+}
+
+.sidebar-content ul.top-level > li:has(a[href*="/reference/database/"]) {
+	--gas-group-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cellipse cx='12' cy='6' rx='7' ry='3'/%3E%3Cpath d='M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6'/%3E%3Cpath d='M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3'/%3E%3C/svg%3E");
+}
+
+.sidebar-content ul.top-level > li:has(a[href*="/reference/migrate/"]) {
+	--gas-group-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 4v13M3 13l4 4 4-4'/%3E%3Cpath d='M17 20V7M13 11l4-4 4 4'/%3E%3C/svg%3E");
+}
+
+.sidebar-content ul.top-level > li:has(a[href*="/reference/auth/"]) {
+	--gas-group-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='8' cy='15' r='4'/%3E%3Cpath d='m11 12 9-9M17 6l3 3M14 9l2 2'/%3E%3C/svg%3E");
+}
+
+.sidebar-content ul.top-level > li:has(a[href*="/reference/cache/"]) {
+	--gas-group-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M13 3 5 14h6l-1 7 8-11h-6z'/%3E%3C/svg%3E");
+}
+
+.sidebar-content ul.top-level > li:has(a[href*="/reference/storage/"]) {
+	--gas-group-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='5' rx='1'/%3E%3Cpath d='M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 13h4'/%3E%3C/svg%3E");
+}
+
+.sidebar-content ul.top-level > li:has(a[href*="/reference/queue/"]) {
+	--gas-group-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m12 3 9 5-9 5-9-5z'/%3E%3Cpath d='m3 13 9 5 9-5'/%3E%3C/svg%3E");
+}
+
+.sidebar-content ul.top-level > li:has(a[href*="/reference/email/"]) {
+	--gas-group-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='5' width='18' height='14' rx='2'/%3E%3Cpath d='m3 7 9 6 9-6'/%3E%3C/svg%3E");
+}
+
+.sidebar-content ul.top-level > li:has(a[href*="/reference/template/"]) {
+	--gas-group-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z'/%3E%3Cpath d='M14 3v5h5M10 13l-2 2 2 2M14 13l2 2-2 2'/%3E%3C/svg%3E");
+}
+
+.sidebar-content ul.top-level > li:has(a[href*="/reference/ui/"]) {
+	--gas-group-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='16' rx='2'/%3E%3Cpath d='M3 9h18M9 9v11'/%3E%3C/svg%3E");
+}
+
+/* Under the label, items hang off a rail; the current one marks it in ink. */
+.sidebar-content details > ul {
+	margin-top: 0.35rem;
+	padding: 0;
+	border-inline-start: 1px solid var(--gas-line);
+}
+
+.sidebar-content details > ul > li {
+	margin: 0;
+	padding: 0;
+	border: 0;
+}
+
+.sidebar-content details > ul a {
+	display: block;
+	margin-inline-start: -1px;
+	padding: 0.2rem 0 0.2rem 1rem;
+	border-inline-start: 1px solid transparent;
+	border-radius: 0;
+	background: none;
+	color: var(--gas-body);
+	font-size: 0.875rem;
+	line-height: 1.5;
+}
+
+.sidebar-content details > ul a:hover {
+	border-inline-start-color: var(--gas-muted);
+	background: none;
+	color: var(--gas-ink);
+}
+
+.sidebar-content details > ul a[aria-current='page'],
+.sidebar-content details > ul a[aria-current='page']:hover {
+	border-inline-start-color: var(--gas-accent);
+	background: none;
+	color: var(--gas-accent);
+	font-weight: 600;
+}
+
+/* ---- Chevron margin --------------------------------------------------- */
+
+/* Between the sidebar and the content, a strip of the Gas mark's chevrons. */
+@media (min-width: 50rem) {
+	[data-has-sidebar] .main-pane {
+		position: relative;
+		padding-inline-start: 2.5rem;
+	}
+
+	[data-has-sidebar] .main-pane::before {
+		position: absolute;
+		inset-block: 0;
+		inset-inline-start: 0;
+		width: 2.5rem;
+		border-inline: 1px solid var(--gas-line);
+		background-image: var(--gas-chevrons);
+		background-position: center top;
+		content: '';
+	}
+}
+
+/* ---- Page heading ---------------------------------------------------- */
+
+.content-panel {
+	border-top: 0 !important;
 }
 
 .gas-page-heading {
 	display: flex;
-	align-items: center;
+	align-items: flex-end;
 	justify-content: space-between;
 	gap: 1rem;
+	padding-top: 1.5rem;
+}
+
+/* Above the title, the page's place as a package path, its mark in the accent. */
+.gas-eyebrow {
+	margin: 0 0 0.5rem;
+	color: var(--gas-muted);
+	font-family: var(--sl-font-mono);
+	font-size: 0.8125rem;
+	font-weight: 500;
+}
+
+.gas-eyebrow::before {
+	margin-inline-end: 0.5rem;
+	color: var(--gas-accent);
+	content: '^';
 }
 
 .gas-page-heading h1 {
 	margin: 0;
-	font-size: clamp(2rem, 3.5vw, 2.5rem);
-	font-weight: 600;
-	letter-spacing: -0.04em;
+	color: var(--gas-ink);
+	font-size: var(--sl-text-h1);
+	font-weight: 500;
+	letter-spacing: -0.025em;
 	line-height: 1.2;
 }
 
 .gas-copy-page {
 	display: inline-flex;
+	flex-shrink: 0;
 	align-items: center;
-	justify-content: center;
-	gap: 0.45rem;
-	min-height: 2.2rem;
-	padding: 0.35rem 0.65rem;
-	border: 1px solid var(--sl-color-gray-5);
-	border-radius: 0.45rem;
+	gap: 0.4rem;
+	padding: 0.25rem 0.7rem;
+	border: 0;
+	border-radius: 999px;
 	background: transparent;
-	color: var(--sl-color-gray-2);
+	box-shadow: inset 0 0 0 1px var(--gas-line);
+	color: var(--gas-body);
 	font: inherit;
-	font-size: 0.9rem;
+	font-size: 0.8125rem;
 	white-space: nowrap;
 	cursor: pointer;
-	transition: border-color 140ms ease, color 140ms ease, background-color 140ms ease;
 }
 
 .gas-copy-page:hover {
-	border-color: var(--sl-color-gray-3);
-	background: var(--sl-color-gray-6);
-	color: var(--sl-color-white);
+	box-shadow: inset 0 0 0 1px var(--gas-muted);
+	color: var(--gas-ink);
 }
 
 .gas-copy-page svg {
-	width: 0.9rem;
-	height: 0.9rem;
+	width: 0.85rem;
+	height: 0.85rem;
 	stroke: currentColor;
 	stroke-width: 1.5;
 }
 
-/* Give the navigation a little more rhythm and a clear, persistent selection. */
-.sidebar-pane {
-	background-color: var(--sl-color-bg-sidebar);
-}
-
-.sidebar-content {
-	padding-block: 1.25rem 2rem;
-}
-
-.sidebar-content ul ul {
-	margin-block-start: 0.35rem;
-}
-
-.sidebar-content ul ul li {
-	border-inline-start-color: color-mix(in srgb, var(--sl-color-gray-5) 78%, transparent);
-}
-
-.sidebar-content summary {
-	border-radius: 0.55rem;
-	color: var(--sl-color-white);
-}
-
-.sidebar-content summary:hover {
-	background: color-mix(in srgb, var(--sl-color-gray-5) 35%, transparent);
-}
-
-.sidebar-content a {
-	transition: color 140ms ease, background-color 140ms ease;
-}
-
-.sidebar-content a:hover,
-.sidebar-content a:focus-visible {
-	background: color-mix(in srgb, var(--sl-color-gray-5) 38%, transparent);
-}
-
-.sidebar-content a[aria-current='page'],
-.sidebar-content a[aria-current='page']:hover {
-	border-inline-start: 0;
-	border-radius: 0.35rem;
-	background: color-mix(in srgb, var(--sl-color-gray-5) 34%, transparent);
-	color: var(--sl-color-white);
-	font-weight: 600;
-}
-
-/* A restrained glow gives article pages some depth without competing with text. */
-.main-pane {
-	background:
-		linear-gradient(180deg, color-mix(in srgb, var(--sl-color-gray-6) 14%, transparent), transparent 28rem),
-		var(--sl-color-bg);
-}
+/* ---- Article --------------------------------------------------------- */
 
 .sl-markdown-content {
+	color: var(--gas-body);
 	font-size: 1rem;
-	letter-spacing: -0.006em;
-}
-
-.sl-markdown-content h1,
-main .hero h1 {
-	letter-spacing: -0.045em;
-	font-weight: 650;
-}
-
-.sl-markdown-content h1 {
-	margin-bottom: 0.75rem;
-}
-
-.sl-markdown-content h2 {
-	margin-block: 2.5rem 0.85rem;
-	letter-spacing: -0.028em;
-}
-
-.sl-markdown-content h3 {
-	margin-block: 2rem 0.65rem;
-	letter-spacing: -0.018em;
 }
 
 .sl-markdown-content p,
 .sl-markdown-content li {
-	/* max-width: 60ch; */
-	line-height: 1.82;
-	color: var(--sl-color-gray-2);
+	line-height: 1.75;
 }
 
 .sl-markdown-content li + li {
-	margin-block-start: 0.35em;
+	margin-top: 0.5em;
 }
 
-.sl-markdown-content a:not(.sl-link-button, .sl-link-card a) {
-	text-decoration-color: color-mix(in srgb, var(--sl-color-accent) 48%, transparent);
-	text-underline-offset: 0.2em;
+.sl-markdown-content :is(h2, h3, h4, h5) {
+	color: var(--gas-ink);
+	font-weight: 600;
+	letter-spacing: -0.015em;
+}
+
+.sl-markdown-content .sl-heading-wrapper.level-h2 {
+	margin-top: 3.5rem;
+}
+
+.sl-markdown-content > .sl-heading-wrapper.level-h2:first-child {
+	margin-top: 0;
+}
+
+.sl-markdown-content .sl-heading-wrapper.level-h3 {
+	margin-top: 2.5rem;
+}
+
+.sl-markdown-content h2 {
+	font-size: var(--sl-text-h2);
+	line-height: 1.4;
+}
+
+.sl-markdown-content h3 {
+	font-size: var(--sl-text-h3);
+}
+
+.sl-markdown-content a:not(.not-content a) {
+	color: var(--gas-ink);
+	font-weight: 600;
+	text-decoration: underline;
+	text-decoration-color: color-mix(in srgb, var(--gas-ink) 30%, transparent);
 	text-decoration-thickness: 1px;
+	text-underline-offset: 0.25em;
 }
 
-.sl-markdown-content a:not(.sl-link-button, .sl-link-card a):hover {
+.sl-markdown-content a:not(.not-content a):hover {
 	text-decoration-color: currentColor;
+	text-decoration-thickness: 2px;
 }
 
+/* Inline code sits on a soft wash of the accent. */
 .sl-markdown-content :not(pre) > code {
-	border: 1px solid color-mix(in srgb, var(--sl-color-gray-5) 65%, transparent);
-	border-radius: 0.35rem;
-	color: var(--sl-color-accent-high);
-}
-
-/* Keep code frames compact, neutral, and focused on the snippet itself. */
-.expressive-code {
-	--ec-brdRad: 0.55rem;
-	--ec-brdCol: var(--sl-color-gray-5);
-	--ec-codeBg: color-mix(in srgb, var(--sl-color-bg-sidebar) 78%, var(--sl-color-gray-6));
-	--ec-codeFg: var(--sl-color-gray-1);
-	--ec-frm-edBg: var(--sl-color-bg-sidebar);
-	--ec-frm-trmBg: color-mix(in srgb, var(--sl-color-bg-sidebar) 78%, var(--sl-color-gray-6));
-	--ec-frm-trmTtbBg: var(--sl-color-bg-sidebar);
-	--ec-frm-frameBoxShdCssVal: none;
-}
-
-.expressive-code .frame {
-	border: 1px solid var(--sl-color-gray-5);
-	border-radius: 0.55rem;
-	box-shadow: none;
-	overflow: hidden;
-}
-
-.expressive-code .frame pre {
-	padding-block: 0.75rem;
+	padding: 0.1em 0.35em;
 	border: 0;
-	border-radius: 0;
-	background: var(--ec-codeBg);
+	border-radius: 0.3rem;
+	background: var(--gas-accent-wash);
+	color: var(--gas-ink);
+	font-size: 0.875em;
+	font-weight: 500;
 }
 
-.expressive-code .frame.has-title:not(.is-terminal) .header {
-	display: flex;
-	min-height: 2.25rem;
-	padding: 0.45rem 0.85rem;
-	border: 0;
-	border-radius: 0;
-	border-bottom: 1px solid var(--sl-color-hairline);
-	background: var(--sl-color-bg-sidebar);
-	color: var(--sl-color-gray-3);
-}
-
-.expressive-code .frame.has-title:not(.is-terminal) .header::before,
-.expressive-code .frame.has-title:not(.is-terminal) .header::after,
-.expressive-code .frame.has-title:not(.is-terminal) .title::after {
-	display: none;
-}
-
-.expressive-code .frame.has-title:not(.is-terminal) .title {
-	margin: 0;
+.sl-markdown-content a > code {
+	background: none;
 	padding: 0;
-	border: 0;
-	border-radius: 0;
-	background: transparent;
-	color: var(--sl-color-gray-3);
 }
 
-.expressive-code .frame.is-terminal .header {
-	display: none;
+/* API declarations of the reference pages are set as the code they name. */
+.main-pane:has([data-reference]) .sl-markdown-content :is(h3, h4) {
+	font-family: var(--sl-font-mono);
+	font-weight: 500;
+	letter-spacing: -0.02em;
+}
+
+.main-pane:has([data-reference]) .sl-markdown-content h4 {
+	color: var(--gas-body);
+	font-size: 0.9375rem;
 }
 
 .sl-markdown-content table {
+	display: table;
 	width: 100%;
-	border: 0;
-	border-radius: 0;
-	background: transparent;
+	border-collapse: collapse;
+	font-size: 0.875rem;
 }
 
 .sl-markdown-content :is(th, td) {
-	padding: 0.65rem 0.8rem;
-	font-size: 0.95rem;
-	line-height: 1.55;
+	padding: 0.6rem 0.75rem;
+	border-bottom: 1px solid var(--gas-line);
 	text-align: start;
 	vertical-align: top;
 }
 
 .sl-markdown-content th {
+	color: var(--gas-ink);
+	font-weight: 600;
+}
+
+/* ---- Code ------------------------------------------------------------ */
+
+/* A dark frame around a darker sheet, with its title in the frame. */
+.expressive-code .frame {
+	padding: 0.25rem;
+	border-radius: 0.75rem;
+	background: #030712;
+	box-shadow: 0 0 0 1px rgb(255 255 255 / 0.1);
+}
+
+:root[data-theme='light'] .expressive-code .frame {
+	box-shadow: none;
+}
+
+.expressive-code .frame pre {
+	border: 0;
+	border-radius: 0.5rem;
+	background: #0d1117;
+	box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.06);
+}
+
+.expressive-code .frame .header {
+	padding: 0.35rem 0.75rem 0.55rem;
+	border: 0;
 	background: transparent;
-	color: var(--sl-color-white);
-	white-space: nowrap;
 }
 
-.sl-markdown-content tr > :first-child {
-	padding-inline-start: 0.8rem;
+.expressive-code .frame .header::before,
+.expressive-code .frame .header::after,
+.expressive-code .frame .title::after {
+	display: none;
 }
 
-.sl-markdown-content tr > :last-child {
-	padding-inline-end: 0.8rem;
+.expressive-code .frame .title {
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: #9ca3af;
+	font-family: var(--sl-font);
+	font-size: 0.75rem;
+	font-weight: 500;
 }
 
-.sl-markdown-content tbody tr:last-child > * {
-	border-bottom: 0;
+.expressive-code .frame.is-terminal .header {
+	justify-content: flex-start;
 }
 
-/* Cards feel like small surfaces and respond clearly to pointer and keyboard. */
-.sl-markdown-content .card,
-.sl-markdown-content .sl-link-card {
-	--sl-card-border: var(--sl-color-gray-5);
-	--sl-card-bg: color-mix(in srgb, var(--sl-color-gray-6) 44%, var(--sl-color-bg-sidebar));
-	border-radius: var(--gas-radius);
-	box-shadow: none;
-	transition: transform 150ms ease, border-color 150ms ease, background-color 150ms ease;
+/* A frame without a title has no header strip. */
+.expressive-code .frame:not(.has-title) .header {
+	display: none;
 }
 
-.sl-markdown-content .card:hover,
-.sl-markdown-content .sl-link-card:hover {
-	--sl-card-border: var(--sl-color-gray-3);
-	--sl-card-bg: color-mix(in srgb, var(--sl-color-gray-6) 72%, var(--sl-color-bg-sidebar));
-	transform: translateY(-1px);
-}
+/* ---- Outline (table of contents) ------------------------------------- */
 
-.sl-markdown-content .card-grid {
-	margin-block: 1.25rem 2.5rem;
-}
-
-.sl-markdown-content .path-cards {
-	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
-	gap: 1rem;
-	margin-block: 1.25rem 2.5rem;
-}
-
-/* The home hero shares the same rounded surfaces as code and navigation. */
-main .hero {
-	position: relative;
-	isolation: isolate;
-	overflow: hidden;
-	margin-block: 0.5rem 1.5rem;
-	padding: clamp(1.75rem, 4vw, 3.5rem);
-	border: 1px solid var(--sl-color-gray-5);
-	border-radius: 1rem;
-	background:
-		radial-gradient(75% 115% at 100% 0%, color-mix(in srgb, var(--sl-color-gray-4) 12%, transparent), transparent 72%),
-		linear-gradient(135deg, color-mix(in srgb, var(--sl-color-gray-6) 44%, transparent), transparent 72%);
-	box-shadow: none;
-}
-
-main .hero .tagline {
-	max-width: 44ch;
-	line-height: 1.65;
-}
-
-main .hero > img,
-main .hero > .hero-html img {
-	filter: drop-shadow(0 1rem 2rem var(--gas-shadow));
-}
-
-main .hero .sl-link-button.primary {
-	box-shadow: none;
-	transition: transform 150ms ease, opacity 150ms ease;
-}
-
-main .hero .sl-link-button.primary:hover {
-	transform: translateY(-1px);
-	opacity: 0.88;
-}
-
-/* Keep the page outline quiet, legible, and aligned with the navigation. */
 .right-sidebar {
-	background: color-mix(in srgb, var(--sl-color-bg) 94%, transparent);
 	border-inline-start: 0;
+	background: var(--gas-paper);
 }
 
-.right-sidebar-panel a[aria-current='true'] {
-	color: var(--sl-color-accent-high);
+.right-sidebar-panel h2 {
+	color: var(--gas-ink);
+	font-size: 0.875rem;
+	font-weight: 600;
 }
 
-.right-sidebar-panel starlight-toc > nav > ul {
-	border-inline-start: 1px solid var(--sl-color-gray-5);
-	padding-inline-start: 0.5rem;
+.right-sidebar-panel starlight-toc a {
+	color: var(--gas-muted);
+	font-size: 0.8125rem;
 }
 
+.right-sidebar-panel starlight-toc a:hover,
 .right-sidebar-panel starlight-toc a[aria-current='true'] {
-	position: relative;
-	color: var(--sl-color-white);
-}
-
-.right-sidebar-panel starlight-toc a[aria-current='true']::before {
-	position: absolute;
-	inset-block: 0.1rem;
-	inset-inline-start: -0.55rem;
-	width: 2px;
-	background: var(--sl-color-white);
-	content: '';
+	color: var(--gas-ink);
 }
 
 footer .meta {
+	border-top: 1px solid var(--gas-line);
 	padding-top: 1.25rem;
-	border-top: 1px solid var(--sl-color-hairline);
 }
 
-:focus-visible {
-	outline-color: var(--sl-color-accent);
-	outline-offset: 3px;
+/* ---- Home ------------------------------------------------------------ */
+
+/*
+ * The home page spans the window: hatched margins, a frame in the middle,
+ * and hairlines that run the full width between its rows.
+ */
+html:has(.gas-home) body {
+	overflow-x: clip;
+}
+
+.gas-home {
+	--frame: 80rem;
+	width: 100vw;
+	margin-inline: calc(50% - 50vw);
+	background-image: var(--gas-chevrons);
+	background-position: center top;
+}
+
+.gas-row {
+	border-bottom: 1px solid var(--gas-line);
+}
+
+.gas-row:first-child {
+	border-top: 1px solid var(--gas-line);
+}
+
+.gas-frame {
+	max-width: var(--frame);
+	margin-inline: auto;
+	padding-inline: clamp(1rem, 3vw, 2rem);
+	border-inline: 1px solid var(--gas-line);
+	background: var(--gas-paper);
+}
+
+.gas-row-gap .gas-frame {
+	height: clamp(2.5rem, 6vw, 4.5rem);
+}
+
+/* The headline shares its row with the trace. */
+.gas-home-hero {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 30rem);
+	align-items: center;
+	gap: clamp(1.5rem, 3vw, 3rem);
+}
+
+/*
+ * The trace: a request through a Gas app, drawn as a tracing tool draws
+ * it, in a dark panel like the code frames. Framework spans are grey,
+ * the app's own calls take the accent, and an error is red.
+ */
+.gas-trace {
+	--trace-bg: #0d1117;
+	--trace-ink: #f3f4f6;
+	--trace-dim: #9ca3af;
+	--trace-faint: rgb(255 255 255 / 0.08);
+	--trace-gas: #4b5563;
+	--trace-app: #8b9cff;
+	--trace-err: #f87171;
+	--trace-ok: #8b9cff;
+	margin: 1.25rem 0;
+	padding: 0.25rem;
+	border-radius: 0.875rem;
+	background: #030712;
+	box-shadow: 0 0 0 1px rgb(255 255 255 / 0.1), 0 24px 60px -24px rgb(3 7 18 / 0.45);
+	font-family: var(--sl-font-mono);
+	font-size: 0.75rem;
+}
+
+.gas-trace-head {
+	display: flex;
+	align-items: center;
+	gap: 0.6rem;
+	padding: 0.6rem 0.75rem 0.7rem;
+	color: var(--trace-ink);
+}
+
+.gas-trace-method {
+	padding: 0.1rem 0.4rem;
+	border-radius: 0.3rem;
+	background: rgb(139 156 255 / 0.16);
+	color: var(--trace-app);
+	font-weight: 600;
+}
+
+.gas-trace-path {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.gas-trace-status,
+.gas-trace-total {
+	opacity: 0;
+	transition: opacity 300ms ease;
+}
+
+.gas-trace-status {
+	margin-inline-start: auto;
+	padding: 0.1rem 0.45rem;
+	border-radius: 999px;
+	background: rgb(139 156 255 / 0.16);
+	color: var(--trace-ok);
+	white-space: nowrap;
+}
+
+.gas-trace[data-ok='false'] .gas-trace-status {
+	background: rgb(248 113 113 / 0.14);
+	color: var(--trace-err);
+}
+
+.gas-trace-total {
+	color: var(--trace-dim);
+}
+
+.gas-trace.is-done :is(.gas-trace-status, .gas-trace-total, .gas-trace-log) {
+	opacity: 1;
+}
+
+/* A fixed height, so a shorter trace never moves the headline. */
+.gas-trace-spans {
+	display: grid;
+	align-content: start;
+	gap: 0.15rem;
+	height: 15.5rem;
+	margin: 0;
+	padding: 0.75rem 0.75rem 0.85rem;
+	border-radius: 0.6rem;
+	background: var(--trace-bg);
+	box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.06);
+	list-style: none;
+	opacity: 1;
+	transition: opacity 400ms ease;
+}
+
+.gas-trace:not(.is-in, .is-done) .gas-trace-spans {
+	opacity: 0;
+}
+
+/* The rows are list items inside the page's content; the article's list spacing is not theirs. */
+.gas-trace .gas-span + .gas-span {
+	margin-top: 0;
+}
+
+.gas-span {
+	display: grid;
+	grid-template-columns: 13.5rem minmax(0, 1fr);
+	align-items: center;
+	gap: 0.75rem;
+	margin: 0;
+	min-height: 1.6rem;
+}
+
+.gas-span-label {
+	overflow: hidden;
+	padding-inline-start: calc(var(--depth) * 0.75rem);
+	color: var(--trace-ink);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.gas-span-note {
+	color: var(--trace-dim);
+}
+
+.gas-span-track {
+	position: relative;
+	height: 0.55rem;
+	border-radius: 999px;
+	background: var(--trace-faint);
+}
+
+.gas-span-bar {
+	position: absolute;
+	inset-block: 0;
+	width: 0;
+	border-radius: 999px;
+	background: var(--trace-gas);
+	transition: width var(--dur) linear;
+}
+
+.gas-span-app .gas-span-bar {
+	background: var(--trace-app);
+}
+
+.gas-span-err .gas-span-bar {
+	background: var(--trace-err);
+}
+
+.gas-span-err .gas-span-label {
+	color: var(--trace-err);
+}
+
+/* The closing line: the log line, or the problem the client got. Two lines, always. */
+.gas-trace-log {
+	display: -webkit-box;
+	height: 3.6em;
+	margin: 0;
+	padding: 0.65rem 0.75rem 0.55rem;
+	overflow: hidden;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
+	color: var(--trace-dim);
+	line-height: 1.5;
+	overflow-wrap: anywhere;
+	box-sizing: content-box;
+	opacity: 0;
+	transition: opacity 300ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.gas-span-bar,
+	.gas-trace-spans,
+	:is(.gas-trace-status, .gas-trace-total, .gas-trace-log) {
+		transition: none;
+	}
+}
+
+.gas-home-title {
+	max-width: 18ch;
+	margin: 0;
+	padding-block: 0.25rem 0.75rem;
+	color: var(--gas-ink);
+	font-size: clamp(2.75rem, 5.6vw, 4.75rem);
+	font-weight: 500;
+	letter-spacing: -0.05em;
+	line-height: 1;
+	text-wrap: balance;
+}
+
+.gas-home-lede {
+	max-width: 44rem;
+	margin: 0;
+	padding-block: 0.75rem;
+	color: var(--gas-body);
+	font-size: clamp(1.0625rem, 1.6vw, 1.1875rem);
+	font-weight: 500;
+	line-height: 1.6;
+}
+
+.gas-home-lede a {
+	color: var(--gas-accent);
+	font-family: var(--sl-font-mono);
+	font-weight: 500;
+	text-decoration: none;
+}
+
+.gas-home-lede a:hover {
+	text-decoration: underline;
+}
+
+.gas-home-actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 1rem;
+	padding-block: 1rem;
+}
+
+.gas-pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.5rem;
+	min-height: 2.5rem;
+	padding: 0 1.1rem;
+	border: 0;
+	border-radius: 999px;
+	font: inherit;
+	font-size: 0.875rem;
+	font-weight: 600;
+	text-decoration: none;
+	cursor: pointer;
+}
+
+.gas-pill-dark {
+	background: var(--gas-pill-bg);
+	color: var(--gas-pill-ink);
+}
+
+.gas-pill-dark:hover {
+	opacity: 0.85;
+}
+
+.gas-pill-search {
+	width: min(20rem, 100%);
+	background: transparent;
+	box-shadow: inset 0 0 0 1px var(--gas-line);
+	color: var(--gas-muted);
+	font-weight: 400;
+}
+
+.gas-pill-search:hover {
+	box-shadow: inset 0 0 0 1px var(--gas-muted);
+}
+
+.gas-pill-search svg {
+	width: 1rem;
+	height: 1rem;
+	stroke: currentColor;
+	stroke-width: 1.6;
+}
+
+.gas-pill-search kbd {
+	margin-inline-start: auto;
+	border: 0;
+	background: none;
+	color: inherit;
+	font-family: var(--sl-font);
+	font-size: 0.75rem;
+}
+
+.gas-home-showcase {
+	display: grid;
+	grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+	gap: 1rem;
+	padding-block: 1rem;
+}
+
+.gas-home-showcase .expressive-code pre {
+	font-size: 0.85rem;
+}
+
+.gas-home .gas-home-heading {
+	margin: 0;
+	padding-top: 1.5rem;
+	color: var(--gas-ink);
+	font-size: clamp(1.75rem, 3.5vw, 2.5rem);
+	font-weight: 500;
+	letter-spacing: -0.035em;
+	line-height: 1.1;
+}
+
+.gas-home-text {
+	max-width: 44rem;
+	margin: 0;
+	padding-block: 0.75rem 1.5rem;
+	color: var(--gas-body);
+	line-height: 1.7;
+}
+
+/* The modules: cells drawn by the hairlines between them. */
+.gas-home-grid {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 1px;
+	padding: 0;
+	background: var(--gas-line);
+}
+
+.gas-cell {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+	padding: 1.5rem;
+	background: var(--gas-paper);
+	color: inherit;
+	text-decoration: none;
+}
+
+.gas-cell:hover {
+	background: var(--gas-surface);
+}
+
+.gas-cell-name {
+	color: var(--gas-ink);
+	font-family: var(--sl-font-mono);
+	font-size: 1rem;
+	font-weight: 600;
+}
+
+.gas-cell-text {
+	flex: 1;
+	color: var(--gas-body);
+	font-size: 0.9375rem;
+	line-height: 1.6;
+}
+
+.gas-cell-iface {
+	color: var(--gas-accent);
+	font-family: var(--sl-font-mono);
+	font-size: 0.8125rem;
+}
+
+/* ---- Small screens --------------------------------------------------- */
+
+@media (max-width: 64rem) {
+	.gas-home-hero {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.gas-trace {
+		margin-top: 0;
+	}
+
+	.gas-home-showcase {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.gas-home-grid {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
 }
 
 @media (max-width: 50rem) {
-	.gas-header {
-		gap: 0.5rem;
-	}
-
 	.gas-header-nav,
 	.gas-header-social,
 	.gas-header-theme {
 		display: none;
-	}
-
-	.gas-header-actions {
-		gap: 0;
-	}
-
-	.gas-header-actions site-search button {
-		justify-content: center;
-		width: 2.5rem;
-		max-width: 2.5rem;
-		padding-inline: 0;
-		border-color: transparent;
-		background: transparent;
-	}
-
-	main .hero {
-		margin-block: 0 1.25rem;
-		padding: 1.5rem 1.15rem 1.75rem;
-		border-radius: 0.85rem;
-	}
-
-	.sl-markdown-content h2 {
-		margin-block-start: 2.25rem;
-	}
-
-	.sl-markdown-content .card-grid {
-		margin-block: 1rem 2rem;
-	}
-
-	.sl-markdown-content .path-cards {
-		grid-template-columns: 1fr;
-		margin-block: 1rem 2rem;
-	}
-
-	.gas-page-heading {
-		align-items: flex-start;
-	}
-
-	.gas-copy-page {
-		min-height: 2rem;
-		padding-inline: 0.5rem;
 	}
 
 	.gas-copy-page span {
@@ -608,29 +1048,11 @@ footer .meta {
 		width: 1px;
 		height: 1px;
 		overflow: hidden;
-		clip: rect(0, 0, 0, 0);
-		white-space: nowrap;
 		clip-path: inset(50%);
-	}
-}
-
-@media (prefers-reduced-motion: reduce) {
-	html {
-		scroll-behavior: auto;
+		white-space: nowrap;
 	}
 
-	.sidebar-content a,
-	main .hero .sl-link-button.primary,
-	.gas-header-nav a,
-	.gas-copy-page,
-	.sl-markdown-content .card,
-	.sl-markdown-content .sl-link-card {
-		transition: none;
-	}
-
-	main .hero .sl-link-button.primary:hover,
-	.sl-markdown-content .card:hover,
-	.sl-markdown-content .sl-link-card:hover {
-		transform: none;
+	.gas-home-grid {
+		grid-template-columns: minmax(0, 1fr);
 	}
 }

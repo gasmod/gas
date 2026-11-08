@@ -2,92 +2,122 @@ package composite
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
-	"sort"
+	"slices"
 
 	"github.com/gasmod/gas"
-	template "github.com/gasmod/gas/template"
+	"github.com/gasmod/gas/template"
+	"github.com/gasmod/gas/template/internal/value"
 )
 
-// Store chains multiple TemplateProviders. Get checks the writable
-// provider first, then each reader in order. Register and RegisterFS
-// delegate to the writable provider.
+// ErrNilProvider indicates that the constructor was given a nil provider.
+var ErrNilProvider = errors.New(template.ErrorPrefix + "provider is nil")
+
+// Store chains a writable provider and read-only fallbacks, as described
+// in the package documentation. It is safe for concurrent use when its
+// providers are.
 type Store struct {
+	// writable receives the writes and is read first.
 	writable gas.TemplateProvider
-	readers  []gas.TemplateProvider
+	// readers are read in order after writable.
+	readers []gas.TemplateProvider
 }
 
-// NewStore creates a composite store. The writable provider receives
-// Register/RegisterFS calls and is checked first during Get. Readers
-// are checked in order as fallbacks.
-func NewStore(writable gas.TemplateProvider, readers ...gas.TemplateProvider) *Store {
-	return &Store{writable: writable, readers: readers}
+var _ gas.TemplateProvider = (*Store)(nil)
+
+// NewStore returns the constructor of a Store over writable and readers,
+// in the shape the gas container expects. The constructor returns an
+// error wrapping ErrNilProvider that names the position of a nil
+// provider.
+func NewStore(
+	writable gas.TemplateProvider,
+	readers ...gas.TemplateProvider,
+) func() (*Store, error) {
+	readers = slices.Clone(readers)
+
+	return func() (*Store, error) {
+		if value.IsNil(writable) {
+			return nil, fmt.Errorf("%w: the writable provider", ErrNilProvider)
+		}
+
+		for i, r := range readers {
+			if value.IsNil(r) {
+				return nil, fmt.Errorf("%w: reader %d", ErrNilProvider, i+1)
+			}
+		}
+
+		return &Store{writable: writable, readers: readers}, nil
+	}
 }
 
-// Get tries the writable provider first, then each reader in order.
-// Returns template.ErrTemplateNotFound if no provider has the template.
+// Get returns the template name from the first provider that has it: the
+// writable provider, then each reader in order. It goes on to the next
+// provider on an error wrapping template.ErrTemplateNotFound or
+// template.ErrInvalidName, and returns any other error unchanged. When no
+// provider has the name it returns the last not-found error, or, when
+// every provider refused the name, the first provider's error.
 func (s *Store) Get(ctx context.Context, name string) ([]byte, error) {
-	content, err := s.writable.Get(ctx, name)
-	if err == nil {
-		return content, nil
-	}
-	for _, r := range s.readers {
-		content, err = r.Get(ctx, name)
-		if err == nil {
-			return content, nil
+	var notFound, invalid error
+
+	for _, p := range s.providers() {
+		content, err := p.Get(ctx, name)
+
+		switch {
+		case errors.Is(err, template.ErrTemplateNotFound):
+			notFound = err
+		case errors.Is(err, template.ErrInvalidName):
+			if invalid == nil {
+				invalid = err
+			}
+		default:
+			return content, err //nolint:wrapcheck // a provider's error is returned unchanged.
 		}
 	}
-	return nil, template.ErrTemplateNotFound
+
+	if notFound != nil {
+		return nil, notFound
+	}
+
+	return nil, invalid
 }
 
-// List merges template names from all providers, deduplicated and sorted.
+// List returns the names of every provider's templates, once each, in
+// byte order. The first provider that fails stops it, and its error is
+// returned unchanged.
 func (s *Store) List(ctx context.Context) ([]string, error) {
-	seen := make(map[string]struct{})
-	var firstErr error
+	all := []string{}
 
-	names, err := s.writable.List(ctx)
-	if err != nil {
-		firstErr = err
-	}
-	for _, n := range names {
-		seen[n] = struct{}{}
-	}
-
-	for _, r := range s.readers {
-		names, err = r.List(ctx)
-		if err != nil && firstErr == nil {
-			firstErr = err
+	for _, p := range s.providers() {
+		names, err := p.List(ctx)
+		if err != nil {
+			return nil, err //nolint:wrapcheck // a provider's error is returned unchanged.
 		}
-		for _, n := range names {
-			seen[n] = struct{}{}
-		}
+
+		all = append(all, names...)
 	}
 
-	if len(seen) == 0 && firstErr != nil {
-		return nil, firstErr
-	}
+	slices.Sort(all)
 
-	result := make([]string, 0, len(seen))
-	for n := range seen {
-		result = append(result, n)
-	}
-	sort.Strings(result)
-	return result, nil
+	return slices.Compact(all), nil
 }
 
-// Register delegates to the writable provider.
+// Register registers the template with the writable provider and returns
+// its error unchanged.
 func (s *Store) Register(ctx context.Context, name string, content []byte) error {
-	if err := s.writable.Register(ctx, name, content); err != nil {
-		return fmt.Errorf("composite: register: %w", err)
-	}
-	return nil
+	//nolint:wrapcheck // the provider's error is returned unchanged.
+	return s.writable.Register(ctx, name, content)
 }
 
-// RegisterFS delegates to the writable provider.
+// RegisterFS registers the files of fsys with the writable provider and
+// returns its error unchanged.
 func (s *Store) RegisterFS(ctx context.Context, fsys fs.FS) error {
-	if err := s.writable.RegisterFS(ctx, fsys); err != nil {
-		return fmt.Errorf("composite: register fs: %w", err)
-	}
-	return nil
+	//nolint:wrapcheck // the provider's error is returned unchanged.
+	return s.writable.RegisterFS(ctx, fsys)
+}
+
+// providers returns the writable provider and then the readers.
+func (s *Store) providers() []gas.TemplateProvider {
+	return append([]gas.TemplateProvider{s.writable}, s.readers...)
 }

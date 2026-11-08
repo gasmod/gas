@@ -5,20 +5,8 @@ use (
 	./auth
 	./cache
 	./config
-	./config/examples/basic
-	./config/examples/dotenv
-	./config/examples/env
-	./config/examples/json
-	./config/examples/json_fs
-	./config/examples/secretsmanager
 	./database
-	./docs/snippets
 	./email
-	./example/api-server
-	./example/hello-world
-	./example/hello-world-2
-	./example/lambda-worker
-	./example/templates-basic
 	./log
 	./migrate
 	./queue

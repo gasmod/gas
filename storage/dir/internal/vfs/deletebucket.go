@@ -4,232 +4,227 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
-	"path/filepath"
 	"strings"
-	"uuid"
-
-	"github.com/gasmod/gas/storage/dir/internal/util"
+	"sync/atomic"
 )
 
-// HeadBucket returns the entry of the bucket name: its name, and its
-// creation time when its name record names it (zero otherwise, as for a
-// bucket ListBuckets leaves out). The bucket exists when its metadata
-// directory does; a missing one returns an error wrapping ErrBucketNotFound.
-// A name record that cannot be read fails the call, as in ListBuckets.
-func (vfs *VFS) HeadBucket(name string) (BucketEntry, error) {
-	metaDir, _, _ := bucketDirs(name)
-	fi, err := vfs.root.Lstat(metaDir)
-	if errors.Is(err, os.ErrNotExist) {
-		return BucketEntry{}, fmt.Errorf("%w: stat meta dir: %w", ErrBucketNotFound, err)
-	}
-	if err != nil {
-		return BucketEntry{}, fmt.Errorf("stat meta dir: %w", err)
-	}
-	if !fi.IsDir() {
-		return BucketEntry{}, errors.New("meta dir is not a directory")
-	}
-
-	entry, _, err := vfs.bucketEntry(hash(name))
-	if err != nil {
-		return BucketEntry{}, err
-	}
-	entry.Name = name
-	return entry, nil
-}
-
-// DeleteBucket deletes the bucket name, which must hold no object. A missing
-// bucket returns an error wrapping ErrBucketNotFound, and one that holds an
-// object an error wrapping ErrBucketNotEmpty; both delete nothing.
+// DeleteBucket deletes the bucket name, which must hold no object, as
+// described in the package documentation. A missing bucket is an error
+// wrapping ErrBucketNotFound, and one that holds an object an error
+// wrapping ErrBucketNotEmpty; both delete nothing.
 //
-// It first classifies every entry of the metadata directory, each under its
-// key's lock, so it never races a write in progress: a writer holds that
-// lock across its temp file and the rename that commits it, and a slow
-// write therefore holds DeleteBucket until it ends or ctx is done. An
-// object (metadata naming a data file that is there) stops the delete
-// before anything is removed. Anything no read can use is debris: metadata
-// that cannot be used, metadata whose data file is gone, and temp metadata
-// a crashed write left. Only once no object was found is the debris
-// removed, each piece again under its key's lock and only if it is still
-// debris. Debris must not block the delete, since no caller can read or
-// name it. A file in the metadata directory that this package did not
-// write stops the delete with an error and is left alone.
+// It first classifies every entry of the metadata directory, each under
+// its key's lock, so it never races a write in progress: a writer holds
+// that lock across its temp file and the rename that commits it, so a
+// slow write holds DeleteBucket until it ends or ctx ends. An object stops
+// the delete before anything is removed. Anything no read can use is
+// debris: metadata that cannot be used, metadata whose data file is gone,
+// and the temp files of crashed writes. Only once no object was found is
+// the debris removed, each piece again under its key's lock and only if it
+// is still debris. A file in the metadata directory that the package did
+// not write stops the delete, which leaves it.
 //
-// Removing the emptied metadata directory is the commit point: a write
-// that landed after the sweep makes it fail, which returns
-// ErrBucketNotEmpty, though the debris is already gone by then. The name
-// record goes next, so that a bucket created again gets a new
-// CreationDate; if that fails, the bucket is deleted and the error reports
-// the record left behind. A crash between the two leaves the record, and a
-// bucket created again then keeps the old CreationDate. Last, the objects
-// and locks directories are emptied and removed as far as possible.
-// Leftovers there are harmless (CreateBucket reuses the directories) and are
-// not reported as errors: a data file whose key's lock another holder has,
-// which belongs to a write of a new key still copying its body and is
-// never cut short, and a lock file another holder has locked. Such a write
-// then fails for want of the bucket.
+// Removing the emptied metadata directory is the commit, which a sync of
+// the root makes durable: a write that landed after the sweep makes it
+// fail with ErrBucketNotEmpty, though the debris is gone by then. The
+// name record goes next, so that a bucket created again gets a new
+// creation time; if that fails, the bucket is deleted and the error says
+// so. Last, the objects, locks and keys directories are emptied and
+// removed as far as they can be: a data file whose key's lock another
+// holder has belongs to a write of a new key still reading its body,
+// which is never cut short and then fails for want of the bucket, and a
+// lock file another holder has locked stays too.
 //
 // Each piece of debris removed, and each leftover or error of the last
-// step, is passed to report, which may be nil, after DeleteBucket has given
-// up every lock it took, so report may call back into the VFS.
-//
-// It holds the bucket's lifecycle lock throughout (see lockBucket), so no
-// CreateBucket of the same name can interleave with any of these steps;
-// such a CreateBucket waits for it, slow writes included.
-func (vfs *VFS) DeleteBucket(ctx context.Context, name string, report func(Skipped)) (err error) {
-	// The steps below run under the lifecycle lock, and some under a key's
-	// lock too, so they collect what they report, and report gets it only
-	// once every lock is given up: a report that calls back into the VFS
-	// for the same bucket or key would otherwise wait on a lock this call
-	// holds.
+// step, goes to report, once DeleteBucket has given up every lock it took,
+// so that report may call the VFS. It holds the bucket's lifecycle lock
+// throughout, so no CreateBucket of the same name interleaves with it.
+func (v *VFS) DeleteBucket(ctx context.Context, name string, report func(Skipped)) (err error) {
+	// The steps run under the lifecycle lock, some under a key's lock too,
+	// so they collect what they report, and report gets it once every lock
+	// is given up: a report that calls the VFS for the same bucket or key
+	// would otherwise wait on a lock this call holds.
 	var reports []Skipped
+
 	defer func() {
-		if report != nil {
-			for _, s := range reports {
-				report(s)
-			}
+		for _, s := range reports {
+			report(s)
 		}
 	}()
+
 	collect := func(s Skipped) { reports = append(reports, s) }
 
-	unlock, lErr := vfs.lockBucket(ctx, name)
-	if lErr != nil {
-		return lErr
-	}
-	defer func() { err = errors.Join(err, unlock()) }()
-
-	bk, err := vfs.OpenBucket(name)
+	unlock, err := v.lockBucket(ctx, name)
 	if err != nil {
 		return err
 	}
-	if sErr := bk.sweep(ctx, collect); sErr != nil {
-		return errors.Join(sErr, bk.Close())
-	}
-	if cErr := bk.Close(); cErr != nil {
-		return cErr
+
+	defer func() { err = joinErrs(err, unlock()) }()
+
+	bk, err := v.OpenBucket(name)
+	if err != nil {
+		return err
 	}
 
-	metaDir, objDir, locksDir := bucketDirs(name)
-	if rErr := vfs.root.Remove(metaDir); rErr != nil {
-		if isNotEmpty(rErr) {
-			return fmt.Errorf("%w: remove meta dir: %w", ErrBucketNotEmpty, rErr)
-		}
-		return fmt.Errorf("remove meta dir: %w", rErr)
+	err = bk.sweep(ctx, collect)
+	if err != nil {
+		return closeAll(err, bk)
 	}
 
-	if rErr := rmInRoot(vfs.root, bucketNameFile(name), "bucket name record"); rErr != nil {
-		return fmt.Errorf("bucket deleted, name record left: %w", rErr)
+	err = bk.Close()
+	if err != nil {
+		return err
 	}
 
-	vfs.removeLeftovers(objDir, locksDir, collect)
+	meta, objects, locks, keys := bucketDirs(name)
+
+	err = v.root.Remove(meta)
+
+	switch {
+	case err != nil && isNotEmpty(err):
+		return ErrBucketNotEmpty
+	case err != nil:
+		return ioErr("remove meta dir", err)
+	}
+
+	err = joinErrs(
+		syncDir(v.root, "."),
+		rmInRoot(v.root, bucketNameFile(name), "bucket name record"),
+	)
+	if err != nil {
+		return fmt.Errorf("bucket deleted: %w", err)
+	}
+
+	v.removeLeftovers(objects, locks, keys, collect)
+
 	return nil
 }
 
 // sweep readies the metadata directory for removal. It first classifies
-// every entry under its key's lock, and returns an error wrapping
-// ErrBucketNotEmpty at the first object, having removed nothing. Only when
-// it found no object does it remove the debris, each piece again under its
-// key's lock and only if it is still debris. See DeleteBucket.
+// every entry under its key's lock, and returns ErrBucketNotEmpty at the
+// first object, having removed nothing. Only when it found no object does
+// it remove the debris, each piece again under its key's lock and only if
+// it is still debris. See DeleteBucket.
 func (b *Bucket) sweep(ctx context.Context, report func(Skipped)) error {
-	entries, err := fs.ReadDir(b.metaRoot.FS(), ".")
+	entries, err := readDirIn(b.metaRoot, ".")
 	if err != nil {
-		return fmt.Errorf("read meta dir: %w", err)
+		return ioErr("read meta dir", err)
 	}
+
 	var debris []string
+
 	for _, e := range entries {
 		name, temp, ok := metaEntryKey(e.Name())
 		if !ok {
-			// Never quote the name: it is not ours, and may be anything.
-			return errors.New("meta dir holds a file this backend did not write")
+			return fmt.Errorf("meta dir: %w", ErrForeign)
 		}
-		state, cErr := b.lockedState(ctx, name, e.Name(), temp)
-		if cErr != nil {
-			return cErr
+
+		state, sErr := b.lockedState(ctx, name, e.Name(), temp)
+		if sErr != nil {
+			return sErr
 		}
+
 		switch state {
 		case stateObject:
-			return fmt.Errorf("%w: an object remains", ErrBucketNotEmpty)
+			return ErrBucketNotEmpty
 		case stateDebris:
 			debris = append(debris, e.Name())
+		case stateGone:
 		}
 	}
+
 	for _, file := range debris {
-		if rErr := b.removeDebris(ctx, file, report); rErr != nil {
-			return rErr
+		err = b.removeDebris(ctx, file, report)
+		if err != nil {
+			return err
 		}
 	}
+
 	return nil
 }
 
-// entryState is what a metadata directory entry holds for DeleteBucket.
+// entryState is what an entry of the metadata directory holds.
 type entryState int
 
 const (
 	// stateGone is an entry removed since the directory was read.
 	stateGone entryState = iota
-	// stateObject is an object: usable metadata naming a data file that is
-	// there.
+	// stateObject is an object: usable metadata naming a data file that
+	// is there.
 	stateObject
 	// stateDebris is what no read can use: metadata that cannot be used,
-	// metadata whose data file is gone, or a temp file a crashed write left.
+	// metadata whose data file is gone, or a temp file a crashed write
+	// left.
 	stateDebris
 )
 
-// entry is what entryState found for a metadata directory entry: its state,
-// the metadata of an object or of debris that names a data file, and why
-// debris is debris.
+// entry is what entryState found for an entry of the metadata directory:
+// its state, the metadata of an object or of debris that names a data
+// file, and why debris is debris.
 type entry struct {
-	meta   *ObjectMetadata
+	// meta is the metadata, if any.
+	meta *Metadata
+	// reason says why debris is debris.
 	reason error
-	state  entryState
+	// state is the entry's state.
+	state entryState
 }
 
-// lockedState returns the state of the entry file of name (one of its temp
-// files when temp is set), read under the key's lock, which it gives up
-// again keeping the lock file.
+// lockedState returns the state of the entry file of name, or of one of
+// its temp files when temp is set, read under the key's lock, which it
+// gives up again keeping the lock file.
 func (b *Bucket) lockedState(
 	ctx context.Context,
 	name, file string,
 	temp bool,
 ) (entryState, error) {
-	if err := b.lock.Lock(ctx, name); err != nil {
+	err := b.lock.Lock(ctx, name)
+	if err != nil {
 		return stateGone, fmt.Errorf("lock object: %w", err)
 	}
+
 	e, err := b.entryState(name, file, temp)
+
 	return e.state, b.unlockWith(name, err)
 }
 
 // entryState returns what the entry file of name holds. The caller holds
 // the key's lock, so a temp file is never one of a write in progress: a
 // writer holds the lock across its temp file and the rename that commits
-// it. A temp file the write renamed away while the caller waited for the
-// lock is gone, not debris.
+// it. A temp file that a write renamed away while the caller waited for
+// the lock is gone, not debris.
 func (b *Bucket) entryState(name, file string, temp bool) (entry, error) {
 	if temp {
 		return b.tempState(file)
 	}
+
 	meta, err := b.meta(name)
+
 	switch {
 	case errors.Is(err, ErrObjectNotFound):
 		return entry{state: stateGone}, nil
 	case errors.Is(err, ErrCorrupt):
-		// Its data file name cannot be trusted; the cleanup of the objects
-		// directory removes that data file, if there is one.
+		// Its data file name cannot be trusted; the cleanup of the
+		// objects directory removes that data file, if there is one.
 		return entry{state: stateDebris, reason: err}, nil
 	case err != nil:
 		return entry{}, err
 	}
 
-	fi, err := retryPending(func() (os.FileInfo, error) { return b.objRoot.Lstat(meta.DataFile) })
+	fi, err := retryPending(
+		func() (os.FileInfo, error) { return lstatIn(b.objRoot, meta.DataFile) },
+	)
+
 	switch {
 	case err == nil && fi.Mode().IsRegular():
 		return entry{state: stateObject, meta: meta}, nil
 	case err != nil && !errors.Is(err, os.ErrNotExist):
-		return entry{}, fmt.Errorf("stat data file: %w", err)
+		return entry{}, ioErr("stat data file", err)
 	}
-	// The data file is gone or is not a file: OpenObject reports the object
-	// as corrupt.
+
+	// The data file is gone or is not a file: OpenObject reports the
+	// object as corrupt.
 	return entry{
 		state:  stateDebris,
 		meta:   meta,
@@ -237,187 +232,237 @@ func (b *Bucket) entryState(name, file string, temp bool) (entry, error) {
 	}, nil
 }
 
-// tempState returns what the temp meta file file holds: debris a crashed
-// write left, or gone when the write renamed it away while the caller
-// waited for the key's lock.
+// errCrashedTemp is why a temp metadata file is debris.
+var errCrashedTemp = errors.New("temp file of a crashed write")
+
+// tempState returns what the temp metadata file holds: debris
+// crashed write left, or gone when the write renamed it away while the
+// caller waited for the key's lock.
 func (b *Bucket) tempState(file string) (entry, error) {
-	_, err := retryPending(func() (os.FileInfo, error) { return b.metaRoot.Lstat(file) })
+	_, err := retryPending(func() (os.FileInfo, error) { return lstatIn(b.metaRoot, file) })
+
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		return entry{state: stateGone}, nil
 	case err != nil:
-		return entry{}, fmt.Errorf("stat temp meta file: %w", err)
+		return entry{}, ioErr("stat temp meta file", err)
 	}
-	return entry{
-		state:  stateDebris,
-		reason: errors.New("temp meta file of a crashed write"),
-	}, nil
+
+	return entry{state: stateDebris, reason: errCrashedTemp}, nil
 }
 
-// removeDebris removes the metadata directory entry file, under its key's
-// lock and only if it is still debris: a write may have replaced it since
-// it was classified. The lock file goes with it, and report gets the entry.
+// removeDebris removes the entry file of the metadata directory, under
+// its key's lock and only if it is still debris: a write may have
+// replaced it since it was classified. The lock file goes with it, and
+// report gets the entry.
 func (b *Bucket) removeDebris(ctx context.Context, file string, report func(Skipped)) error {
 	name, temp, _ := metaEntryKey(file)
-	if err := b.lock.Lock(ctx, name); err != nil {
+
+	err := b.lock.Lock(ctx, name)
+	if err != nil {
 		return fmt.Errorf("lock object: %w", err)
 	}
+
 	e, err := b.entryState(name, file, temp)
 	if err != nil || e.state != stateDebris {
 		return b.unlockWith(name, err)
 	}
-	what := "meta file"
-	if temp {
-		what = "temp meta file"
+
+	err = rmInRoot(b.metaRoot, file, "meta file")
+	if err == nil && e.meta != nil {
+		err = rmInRoot(b.objRoot, e.meta.DataFile, "data file")
 	}
-	rmErr := rmInRoot(b.metaRoot, file, what)
-	if rmErr == nil && e.meta != nil {
-		rmErr = rmInRoot(b.objRoot, e.meta.DataFile, "data file")
-	}
-	if rmErr == nil {
+
+	if err == nil {
 		report(Skipped{
-			Path: filepath.Join(b.dir, file),
+			Path: join(b.dir, file),
 			Err:  fmt.Errorf("removed with the bucket: %w", e.reason),
 		})
 	}
-	return b.releaseWith(name, rmErr)
+
+	return b.releaseWith(name, err)
 }
 
-// metaEntryKey returns the key hash of a metadata directory entry: one of
-// its metadata files, or one of their temp files (temp set). ok is false for
-// any other name.
+// metaEntryKey returns the key hash of an entry of the metadata
+// directory: one of its metadata files, or one of their temp files (temp
+// set). ok is false for any other name.
 func metaEntryKey(file string) (name string, temp, ok bool) {
 	if h, isMeta := strings.CutSuffix(file, metaFileExt); isMeta && isHash(h) {
 		return h, false, true
 	}
+
 	name, id, ok := strings.Cut(file, metaFileExt)
 	if !ok || !isHash(name) {
 		return "", false, false
 	}
-	u, err := uuid.Parse(id)
-	return name, true, err == nil && u.String() == id
+
+	return name, true, isUUID(id)
 }
 
-// removeLeftovers empties and removes a deleted bucket's objects and locks
-// directories as far as it can. A data file whose key's lock another holder
-// has is left: it belongs to a write still in progress, which then fails
-// for want of the bucket. A lock file another holder has locked stays too,
-// and with them their directories. Each leftover, and each error, goes to
-// report rather than to the caller; see DeleteBucket.
-func (vfs *VFS) removeLeftovers(objDir, locksDir string, report func(Skipped)) {
-	locksRoot, err := vfs.root.OpenRoot(locksDir)
+// removeLeftovers empties and removes the objects, locks and keys
+// directories of a deleted bucket as far as it can. A data file whose
+// key's lock another holder has is left: it belongs to a write still in
+// progress, which then fails for want of the bucket. A lock file another
+// holder has locked stays too, and with them their directories. Each
+// leftover, and each error, goes to report rather than to the caller; see
+// DeleteBucket.
+func (v *VFS) removeLeftovers(objects, locks, keys string, report func(Skipped)) {
+	err := v.root.RemoveAll(keys)
 	if err != nil {
-		report(Skipped{Path: locksDir, Err: fmt.Errorf("open locks dir, left in place: %w", err)})
-		return
-	}
-	defer func() { _ = locksRoot.Close() }()
-
-	if oErr := vfs.removeDataFiles(objDir, locksRoot, report); oErr != nil {
-		report(Skipped{Path: objDir, Err: oErr})
-	} else if rErr := vfs.root.Remove(objDir); rErr != nil {
-		report(Skipped{Path: objDir, Err: fmt.Errorf("objects dir left in place: %w", rErr)})
+		report(Skipped{Path: keys, Err: ioErr("keys dir left in place", err)})
 	}
 
-	entries, err := fs.ReadDir(locksRoot.FS(), ".")
+	locksRoot, err := openRootIn(v.root, locks)
 	if err != nil {
-		report(Skipped{Path: locksDir, Err: fmt.Errorf("read locks dir: %w", err)})
+		report(Skipped{Path: locks, Err: ioErr("open locks dir, left in place", err)})
+
 		return
 	}
+
+	defer func() {
+		cErr := closeOne(locksRoot)
+		if cErr != nil {
+			report(Skipped{Path: locks, Err: ioErr("close locks dir", cErr)})
+		}
+	}()
+
+	err = v.removeDataFiles(objects, locksRoot, report)
+	if err != nil {
+		report(Skipped{Path: objects, Err: err})
+	} else {
+		err = v.root.Remove(objects)
+		if err != nil {
+			report(Skipped{Path: objects, Err: ioErr("objects dir left in place", err)})
+		}
+	}
+
+	if removeLocks(locksRoot, locks, report) {
+		err = v.root.Remove(locks)
+		if err != nil {
+			report(Skipped{Path: locks, Err: ioErr("locks dir left in place", err)})
+		}
+	}
+}
+
+// removeLocks removes the free lock files of locksRoot, the locks
+// directory locks of a deleted bucket, reports those it leaves, and
+// reports whether it could read the directory.
+func removeLocks(locksRoot *os.Root, locks string, report func(Skipped)) bool {
+	entries, err := readDirIn(locksRoot, ".")
+	if err != nil {
+		report(Skipped{Path: locks, Err: ioErr("read locks dir", err)})
+
+		return false
+	}
+
 	for _, e := range entries {
-		path := filepath.Join(locksDir, e.Name())
 		ran, lErr := withFreeLock(locksRoot, e.Name(), nil)
+
 		switch {
 		case lErr != nil:
-			report(Skipped{Path: path, Err: lErr})
+			report(Skipped{Path: join(locks, e.Name()), Err: lErr})
 		case !ran:
-			report(
-				Skipped{
-					Path: path,
-					Err:  errors.New("lock file another holder has locked, left in place"),
-				},
-			)
+			report(Skipped{Path: join(locks, e.Name()), Err: errLockHeld})
 		}
 	}
-	if rErr := vfs.root.Remove(locksDir); rErr != nil {
-		report(Skipped{Path: locksDir, Err: fmt.Errorf("locks dir left in place: %w", rErr)})
-	}
+
+	return true
 }
 
-// removeDataFiles removes the data files of a deleted bucket's objects
-// directory objDir, each while holding its key's lock (see withFreeLock),
-// and reports those it must leave. It returns an error only when it cannot
+// The reasons a leftover of DeleteBucket stays.
+var (
+	// errLockHeld is a lock file another holder has locked.
+	errLockHeld = errors.New("lock file another holder has locked, left in place")
+	// errWriteInProgress is a data file of a write in progress.
+	errWriteInProgress = errors.New("data file of a write in progress, left in place")
+)
+
+// removeDataFiles removes the data files of the objects directory of a
+// deleted bucket, each while holding its key's lock (see withFreeLock),
+// and reports those it leaves. It returns an error only when it cannot
 // read the directory at all.
-func (vfs *VFS) removeDataFiles(objDir string, locksRoot *os.Root, report func(Skipped)) error {
-	objRoot, err := vfs.root.OpenRoot(objDir)
+func (v *VFS) removeDataFiles(objects string, locksRoot *os.Root, report func(Skipped)) error {
+	objRoot, err := openRootIn(v.root, objects)
 	if err != nil {
-		return fmt.Errorf("open objects dir, left in place: %w", err)
+		return ioErr("open objects dir, left in place", err)
 	}
-	defer func() { _ = objRoot.Close() }()
-	entries, err := fs.ReadDir(objRoot.FS(), ".")
+
+	entries, err := readDirIn(objRoot, ".")
 	if err != nil {
-		return fmt.Errorf("read objects dir, left in place: %w", err)
+		return closeAll(ioErr("read objects dir, left in place", err), objRoot)
 	}
+
 	for _, e := range entries {
-		path := filepath.Join(objDir, e.Name())
+		file := join(objects, e.Name())
+
 		name, _, isData := strings.Cut(e.Name(), "_")
 		if !isData || !isHash(name) {
-			report(
-				Skipped{
-					Path: path,
-					Err:  errors.New("file this backend did not write, left in place"),
-				},
-			)
+			report(Skipped{Path: file, Err: ErrForeign})
+
 			continue
 		}
+
 		ran, lErr := withFreeLock(locksRoot, name, func() error {
 			return rmInRoot(objRoot, e.Name(), "data file")
 		})
+
 		switch {
 		case lErr != nil:
-			report(Skipped{Path: path, Err: lErr})
+			report(Skipped{Path: file, Err: lErr})
 		case !ran:
-			report(
-				Skipped{
-					Path: path,
-					Err:  errors.New("data file of a write in progress, left in place"),
-				},
-			)
+			report(Skipped{Path: file, Err: errWriteInProgress})
 		}
 	}
-	return nil
+
+	return closeAll(nil, objRoot)
 }
 
-// withFreeLock runs fn, when it is not nil, unless another holder, in this
-// process or another, has the lock file name in locksRoot locked; then it
-// does nothing and reports false. It holds that lock while fn runs and, like Release, removes
-// the lock file before giving it up, so a waiter that then gets it sees it
-// is no longer current and retries. A missing lock file is free: no holder
-// can be in the middle of a write without one.
+// withFreeLock runs fn, when it is not nil, unless another holder, in
+// this process or another, has the lock name in locksRoot; then it does
+// nothing and reports false. It takes the lock as an ObjectsLock does,
+// without waiting: it opens the file at name, creating it when it is
+// missing, locks it, and checks that it is still the file at name. A
+// file that is no longer current was released while it was being locked,
+// and a newcomer may hold the one that replaced it, so it counts as held.
+// It holds the lock while fn runs and, as Release does, removes the lock
+// file before it gives it up, so a waiter that then gets it sees that it
+// is no longer current and retries.
 func withFreeLock(locksRoot *os.Root, name string, fn func() error) (bool, error) {
 	// A holder removing the file is giving it up; wait for it to be gone.
 	f, err := retryPending(
-		func() (*os.File, error) { return locksRoot.OpenFile(name, os.O_RDWR, 0) },
+		func() (*os.File, error) { return openInRoot(locksRoot, name, "lock file") },
 	)
-	if errors.Is(err, os.ErrNotExist) {
-		if fn == nil {
-			return true, nil
-		}
-		return true, fn()
-	}
 	if err != nil {
-		return false, fmt.Errorf("open lock file: %w", err)
+		return false, err
 	}
+
+	if hook := FreeLockOpened.Load(); hook != nil {
+		(*hook)(name)
+	}
+
 	locked, err := tryLock(f)
 	if err != nil || !locked {
-		if cErr := util.CloseWithErr(err, f); cErr != nil {
-			return false, fmt.Errorf("try lock file: %w", cErr)
-		}
-		return false, nil
+		return false, closeAll(err, f)
 	}
+
+	current, err := isCurrent(locksRoot, f, name)
+	if err != nil || !current {
+		return false, closeAll(joinErrs(err, unlock(f)), f)
+	}
+
 	var fnErr error
+
 	if fn != nil {
 		fnErr = fn()
 	}
+
 	rmErr := rmInRoot(locksRoot, name, "lock file")
-	return true, errors.Join(fnErr, rmErr, util.CloseWithErr(unlock(f), f))
+
+	return true, joinErrs(fnErr, rmErr, closeAll(unlock(f), f))
 }
+
+// FreeLockOpened is a hook for tests: when set, it runs in withFreeLock
+// with the lock name between the open of the lock file and the attempt to
+// lock it, so that a test can hand the lock to another holder in that
+// window. Nothing else sets it.
+var FreeLockOpened atomic.Pointer[func(name string)]

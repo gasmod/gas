@@ -5,31 +5,28 @@ import (
 	"net/http"
 
 	"github.com/gasmod/gas"
+	"github.com/gasmod/gas/auth"
 )
 
-// Provider is an interface for managing session-based authentication and authorization.
+// Provider is what Service offers, for code that wants to depend on an
+// interface, such as to swap in a mock in its tests.
 type Provider interface {
-	// Authenticate reads a session ID from the configured cookie, looks it up
-	// in the database, validates expiry, and optionally extends the TTL.
-	Authenticate(ctx context.Context, r *http.Request) (gas.Principal, error)
-	// Revoke deletes a session by the principal's credential ID.
-	Revoke(ctx context.Context, principal gas.Principal) error
-	// RevokeAll deletes all sessions for the given subject.
-	RevokeAll(ctx context.Context, subject string) error
-	// RevokeAllByScheme delegates to RevokeAll if the scheme is "session",
-	// otherwise it is a no-op.
-	RevokeAllByScheme(ctx context.Context, subject, scheme string) error
-	// Create generates a cryptographically random session ID, stores the session
-	// in the database, and returns it. The caller is responsible for calling
-	// SetCookie afterward. The *http.Request is used to capture IP and user agent.
+	auth.Authenticator
+	auth.PrincipalRevoker
+
+	// Create issues a new session for subject, as Service.Create does.
 	Create(
 		ctx context.Context,
 		subject string,
 		meta gas.BasePrincipalMetadata,
 		r *http.Request,
 	) (*Session, error)
-	// SetCookie writes the session cookie to the response.
-	SetCookie(w http.ResponseWriter, session *Session)
-	// ClearCookie writes an expired cookie to the response, effectively removing it.
-	ClearCookie(w http.ResponseWriter)
+	// Rotate replaces the request's session with a new one, as
+	// Service.Rotate does.
+	Rotate(ctx context.Context, r *http.Request) (*Session, error)
+	// SetCookie writes the session's cookie, as Service.SetCookie does.
+	SetCookie(w http.ResponseWriter, sess *Session) error
+	// ClearCookie writes a cookie that removes the session cookie, as
+	// Service.ClearCookie does.
+	ClearCookie(w http.ResponseWriter) error
 }

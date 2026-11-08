@@ -7,18 +7,190 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-The internal modules this module requires are pinned at 0.6.0.
+v0.6.0 rewrites the module around the `ui.Provider` contract, which the
+package's `doc.go` documents and a conformance suite checks over the
+memory, fs and dir stores of gas/template. `doc.go` is the behavioral
+contract and lists the errors verbatim; read it before upgrading.
+
+### Changed
+
+- **BREAKING: `ui.Provider` replaces `gas.UIProvider`**, which core no
+  longer defines. Register the service as `ui.Provider`,
+  `gas.WithSingletonService[ui.Provider](ui.New[gas.TemplateProvider]())`,
+  and have the services that render pages take a `ui.Provider`.
+- **BREAKING: `Render` and `RenderFragment` take a context and options.**
+  They are `Render(ctx, w, name, data, opts...)` and
+  `RenderFragment(ctx, w, name, data, opts...)`; the context bounds what
+  they read from the store. `RenderWithStatus` is removed: pass
+  `ui.WithStatus(status)`. `ui.WithLayout` picks another layout for
+  `Render`, and `ui.WithBlock` another template for `RenderFragment`.
+- **BREAKING: a render writes nothing on error and sets only what it is
+  asked to.** It calls `WriteHeader` only with the status of
+  `WithStatus`, so a status the handler wrote stands, where it used to
+  write 200; it sets `Content-Type: text/html; charset=utf-8` only when
+  the handler set no Content-Type; and on any error it writes nothing.
+  On a closed service it returns an error wrapping `ui.ErrClosed`
+  instead of writing a 503 response itself.
+- **BREAKING: `RegisterFuncs` returns an error.** It checks every
+  function first and adds none when one fails, with an error wrapping
+  `ui.ErrInvalidFunc`: a name that is not a Go identifier, a nil value
+  or one that is not a function, a function without one result or a
+  result and an error, and the names `html`, `urlquery` and those
+  starting with `_html_template_`, through which html/template escapes.
+  Replacing a function is logged at warn level. The functions belong to
+  the service and outlive `Close` and every later `Init`. Before `Init`
+  it returns an error wrapping `ui.ErrNotInitialized`, where it used to
+  log a warning and drop the functions.
+- **BREAKING: `Config.FuncMap` is removed**; pass `ui.WithFuncs`, whose
+  functions `Init` checks as `RegisterFuncs` does.
+- **BREAKING: no environment in ui.** `Config` no longer embeds
+  `gas.WithGasEnv`. Rebuilding the templates on every render is the
+  `ui.reload` setting, off by default, where it used to follow a
+  development-like environment. The `env` template function is removed,
+  and `buildId` returns one ID per template build, where it returned a
+  new ID on every call in a development-like environment.
+- **BREAKING: default functions.** `title` is removed, as
+  `strings.ToTitle` upper-cased every letter; register a function built
+  on golang.org/x/text/cases instead. `truncate` counts runes, not
+  bytes, and fails for a negative length; `dict` fails for an odd count
+  or a key that is not a string, which it used to drop; `json` fails
+  when the value cannot be encoded, where it wrote nothing.
+- **BREAKING: `StaticHandler(prefix, fsys, opts...)`** returns
+  `(http.Handler, error)` and serves an `fs.FS`; it replaces
+  `StaticHandler(prefix, dir)` and `StaticHandlerFS`. To serve a
+  directory, pass the FS of an `os.Root`. A bad prefix is an error
+  wrapping `ui.ErrInvalidPrefix`, and a nil `fs.FS` `ui.ErrNilFS`. Its
+  options are `WithDotfiles`, `WithMaxAge` and `WithErrorFunc`.
+- **BREAKING: static files are off unless configured.**
+  `DefaultStaticDir` is empty, where it was `static/`. `Init` opens
+  `ui.staticdir` with `os.OpenRoot`, wherever it is: a directory that
+  is missing or is not one fails `Init`, where it used to have to sit
+  under the working directory, a check skipped under tests.
+  `WithStaticFS` with a nil file system fails `Init` with `ui.ErrNilFS`,
+  and static files with a nil router fail it with `ui.ErrNilRouter`,
+  where no route was registered.
+- **BREAKING: the static handler refuses more.** It answers 404 for a
+  path that is not clean, holds a NUL byte or a backslash, or is not
+  valid UTF-8, for a directory, a file that is not regular, a file
+  reached through a symlink out of the root or one it may not read, and,
+  unless dotfiles are on, a path with an element starting with `.`. It
+  answers 405 with `Allow: GET, HEAD` for another method and 503 once
+  the root is closed. Every response carries
+  `X-Content-Type-Options: nosniff`; files without a mod time get an
+  ETag, and `ui.staticmaxage` or `WithMaxAge` adds
+  `Cache-Control: public, max-age=N`.
+- **BREAKING: configuration.** `Init` resolves the configuration each
+  time it runs. With `WithConfig` it takes a copy, slices included, and
+  never changes the caller's struct, and checks its `validate` tags; a
+  nil Config is `ui.ErrNilConfig`. Without it, a nil ConfigProvider is
+  `ui.ErrNoConfigProvider`, where the defaults were used silently. New
+  settings: `ui.extensions` (`.html`), `ui.pagesprefix`,
+  `ui.fragmentblock` (`content`), `ui.reload`, `ui.staticdotfiles` and
+  `ui.staticmaxage`. `ui.staticpath` routes and `ui.staticpaths` must
+  start with `/`, hold `*` only last and pair `{` with `}`. A failure
+  wraps `ui.ErrInvalidConfig`, reads `gas/ui: init: invalid config:`
+  and the cause, where it read `gas/ui: invalid configuration:` or
+  `gas/ui: config binding:`, and names the setting, never its value.
+- **BREAKING: error texts.** Every error starts with `gas/ui: ` and the
+  operation, and, for a render of a valid name, the quoted page name,
+  such as `gas/ui: render "users": page not found`. The package exports
+  a sentinel for each failure, listed under Added.
+- **BREAKING: lifecycle.** `Init` on an initialized service returns
+  `ui.ErrAlreadyInitialized`; before the first successful `Init` every
+  method but `Init`, `Close`, `Name` and `Config` returns an error
+  wrapping `ui.ErrNotInitialized`, and after `Close`, until `Init`
+  succeeds again, `ui.ErrClosed`. `Init` after `Close` starts the
+  service again. `Init` and `Close` log `service initialized` and
+  `service closed` at info level. `New`'s constructor returns
+  `ui.ErrNilLogger` for a nil logger and `ui.ErrNilTemplateProvider` for
+  a nil store.
+- **Page names and templates.** Only templates whose names end in one of
+  `ui.extensions` are read, so a store shared with gas/email keeps its
+  `.txt` templates out. A page name must be a clean slash path, or the
+  render fails with `ui.ErrInvalidName`; a name that is no page is
+  `ui.ErrPageNotFound`. Two store names that make one page name, a
+  store name that makes none, and a template that defines a name ending
+  in an extension fail to compile with `ui.ErrCompile`.
+- **Fragments.** `RenderFragment` executes the page's `ui.fragmentblock`
+  block when the page defines it, else the page's top-level text, else
+  fails with `ui.ErrNoFragment`; a layout's or a partial's top-level
+  text is never a page's fragment (KI-032).
+- **Builds.** `Init` builds nothing; the first render does, and
+  `CheckReady` runs the first build when none has been tried. A page
+  that cannot be read or compiled fails its own renders only (KI-053);
+  outside reload mode a failed build keeps the set of the build before,
+  and a store change is seen on `Service.Reload`. Builds run one at a
+  time, and no lock is held while the store is read.
+- **Each template a render executes runs in a copy of the page's set of
+  its own**, so its escaping never depends on which templates ran
+  before it, and a template that fails to escape fails each time
+  without breaking the page. A panic while a page executes is returned
+  as an error wrapping `ui.ErrExecute`.
+- **`uitest.MockUI` follows `ui.Provider`.** **BREAKING:** `RenderFn`
+  and `RenderFragmentFn` take the context and the options,
+  `RegisterFuncsFn` returns an error, and `RenderWithStatusFn` is
+  removed. `Calls` is a method that returns copies of the recorded
+  calls, in place of an exported field, and a call records its options
+  resolved into a `ui.RenderOptions`. With a field nil, a method writes
+  nothing and returns nil.
+
+### Added
+
+- `Service.Config`, which returns a copy, slices included, of the
+  Config the last successful `Init` resolved, defaults included, or the
+  zero Config before one; a failed `Init` and `Close` leave it as it
+  was.
+- `Service.Reload`, which builds the templates anew from the store and
+  returns the build's error.
+- `ui.Provider`, `ui.WithFuncs`, `ui.WithStatus`, `ui.WithLayout`,
+  `ui.WithBlock`, `ui.RenderOptions`, `ui.RenderOption` and
+  `ui.ApplyRenderOptions`.
+- `ui.WithDotfiles`, `ui.WithMaxAge`, `ui.WithErrorFunc` and
+  `ui.StaticOption`.
+- `ui.ServiceName`, `ui.DefaultStaticDir`, `ui.DefaultStaticPath`,
+  `ui.DefaultLayoutName`, `ui.DefaultFragmentBlock`,
+  `ui.DefaultExtension`, `ui.LayoutsPrefix` and `ui.PartialsPrefix`.
+- The sentinels `ErrNotInitialized`, `ErrAlreadyInitialized`,
+  `ErrClosed`, `ErrNilLogger`, `ErrNilTemplateProvider`,
+  `ErrNilRouter`, `ErrNilFS`, `ErrNilConfig`, `ErrNoConfigProvider`,
+  `ErrInvalidConfig`, `ErrInvalidFunc`, `ErrInvalidName`,
+  `ErrPageNotFound`, `ErrLayoutNotFound`, `ErrBlockNotFound`,
+  `ErrNoFragment`, `ErrInvalidOption`, `ErrInvalidStatus`,
+  `ErrInvalidPrefix`, `ErrLoad`, `ErrCompile`, `ErrExecute` and
+  `ErrWrite`.
+
+### Removed
+
+- **BREAKING:** the public `Engine`, `NewEngine` and `Service.Engine`.
+- **BREAKING:** `DefaultFuncMap`, `Service.RenderWithStatus` and
+  `StaticHandlerFS`.
+- The `claude-skill/gas-ui` skill file.
+
+### Fixed
+
+- `RenderFragment` of a page that only defines `content` renders that
+  block instead of nothing, and stray text in a partial no longer
+  becomes a page's fragment (KI-032).
+- One page that fails to compile, or a failed rebuild, no longer makes
+  every render fail; the other pages, and the previous build, keep
+  serving (KI-053).
+- A template whose escaping failed once no longer makes later renders
+  of its page panic, and a template's output no longer depends on the
+  order of renders.
 
 ### Security
 
 - **The static handler no longer lists the static root.** A GET of the
-  strip prefix itself, such as `/static/`, or `/static` when
-  `StaticHandler` or `StaticHandlerFS` is given `/static` without the
-  trailing slash, reached `http.FileServer` and answered with a listing of
-  the static root's contents. It now gets 404, as any other directory
-  already did; this covers the static route `Service` registers. A root
-  that holds an `index.html` gets 404 too, as a subdirectory with one does.
-  Files under the root are served as before.
+  strip prefix itself, such as `/static/`, or `/static` when the prefix
+  was given as `/static`, reached `http.FileServer` and answered with a
+  listing of the static root's contents. It now gets 404, as any
+  directory does; a root that holds an `index.html` gets 404 too.
+- **Static files stay inside their root.** The service serves
+  `ui.staticdir` through an `os.Root`, so no path or symlink reaches a
+  file outside it, where `http.Dir` followed symlinks out of it; give
+  `StaticHandler` an `os.Root`'s FS for the same. Dotfiles such as `.env` and `.git/config` are not
+  served unless asked for, and `nosniff` keeps a browser from running a
+  file as another type.
 - **Requires Go 1.27.3.** The `go` directive moves from 1.27 to 1.27.3,
   the first 1.27 release with the fix for GO-2026-6809 (CVE-2026-111943):
   `crypto/x509` now rejects intermediate certificates known to be

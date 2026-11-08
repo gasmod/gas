@@ -1,40 +1,22 @@
 package gas
 
-// Environment is an application environment such as development or
-// production. Values are case-sensitive. The config module's gasenv
-// extension resolves it at load time and stores it under the GasEnv key, so
-// a configuration struct that embeds WithGasEnv gets it when bound:
-//
-//	type AppConfig struct {
-//		gas.WithGasEnv
-//		Database DatabaseConfig
-//	}
-//
-//	var c AppConfig
-//	if err := cfg.Bind(&c); err != nil {
-//		return err
-//	}
-//	if c.GasEnv.IsProduction() {
-//		// production-only setup
-//	}
+// Environment is the environment an App runs in, such as development or
+// production, as described under Configuration in the package
+// documentation. Values are compared with their case. It has the values
+// of the config module's Environment, which binds into it.
 type Environment string
 
-// The environments the gasenv extension allows by default.
+// The standard environments, which an App accepts by default.
 const (
-	// EnvDevelopment is local development, typically with debug logging and
-	// development tools. It is the gasenv extension's fallback.
 	EnvDevelopment Environment = "development"
-
-	// EnvTesting is automated and integration testing.
-	EnvTesting Environment = "testing"
-
-	// EnvStaging is a production-like environment for validation before a
-	// release.
-	EnvStaging Environment = "staging"
-
-	// EnvProduction serves real users.
-	EnvProduction Environment = "production"
+	EnvTesting     Environment = "testing"
+	EnvStaging     Environment = "staging"
+	EnvProduction  Environment = "production"
 )
+
+// DefaultEnvironment is the environment DefaultConfig sets, the one an App
+// runs in when no ConfigProvider sets another.
+const DefaultEnvironment = EnvDevelopment
 
 // IsDevelopment reports whether e is EnvDevelopment.
 func (e Environment) IsDevelopment() bool { return e == EnvDevelopment }
@@ -54,13 +36,5 @@ func (e Environment) IsDevelopmentLike() bool { return e.IsDevelopment() || e.Is
 // IsProductionLike reports whether e is EnvProduction or EnvStaging.
 func (e Environment) IsProductionLike() bool { return e.IsProduction() || e.IsStaging() }
 
-// String returns e as a plain string.
+// String returns e as a string.
 func (e Environment) String() string { return string(e) }
-
-// WithGasEnv is embedded in a configuration struct to carry the application
-// environment. Its GasEnv field binds from the configuration's GasEnv key,
-// which the gasenv extension sets during load; without the extension, nothing
-// sets it unless a provider does, and GasEnv stays empty.
-type WithGasEnv struct {
-	GasEnv Environment
-}

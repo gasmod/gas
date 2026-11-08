@@ -15,10 +15,11 @@ import (
 
 // Context is the first parameter of every DI-aware handler. It wraps the
 // HTTP response writer and request into a single value. The per-request
-// scope is accessible via RequestScope(c.Request()) — the adapter resolves
+// scope is accessible via RequestScope(c.Request()); the adapter resolves
 // dependencies automatically, so handlers rarely need to access the scope
 // directly.
-type Context interface {
+type Context interface { //nolint:interfacebloat // the whole request API of a handler
+
 	context.Context
 	// ResponseWriter returns the underlying http.ResponseWriter.
 	ResponseWriter() http.ResponseWriter
@@ -44,64 +45,10 @@ type Context interface {
 	// plain text the same way the default ErrorHandler does. Values that are
 	// not, and do not wrap, an *Error render as a canonical 500.
 	WriteError(err error) error
-	// WriteErrorJSON writes the JSON error envelope regardless of the Accept
-	// header. Use it for JSON API routes in an app whose ErrorHandler renders
-	// HTML.
+	// WriteErrorJSON writes err as a Problem regardless of the Accept
+	// header. Use it for JSON API routes in an app whose ErrorHandler
+	// renders HTML.
 	WriteErrorJSON(err error) error
-
-	// The constructors below build an *Error and return it. Unlike WriteError
-	// they write nothing, so calling one without returning the value from the
-	// handler sends no response at all. The ErrorHandler renders whatever a
-	// handler returns.
-	//
-	// They are declared to return error, so the *Error builder methods do not
-	// chain off them. Use the package-level constructors (BadRequest, NotFound
-	// and the rest) when a response needs Fields or Details.
-
-	// BadRequest returns a 400 *Error with code CodeBadRequest.
-	BadRequest(msg string) error
-	// Unauthorized returns a 401 *Error with code CodeUnauthorized.
-	Unauthorized(msg string) error
-	// Forbidden returns a 403 *Error with code CodeForbidden.
-	Forbidden(msg string) error
-	// NotFound returns a 404 *Error with code CodeNotFound.
-	NotFound(msg string) error
-	// Conflict returns a 409 *Error with code CodeConflict.
-	Conflict(msg string) error
-	// Unprocessable returns a 422 *Error with code CodeValidationFailed.
-	Unprocessable(msg string) error
-	// TooManyRequests returns a 429 *Error with code CodeRateLimited.
-	TooManyRequests(msg string) error
-	// Internal returns a 500 *Error with code CodeInternal.
-	Internal(msg string) error
-	// ServiceUnavailable returns a 503 *Error with code CodeUnavailable.
-	ServiceUnavailable(msg string) error
-
-	// The Err variants below are the same constructors with err attached as
-	// the underlying cause. The cause reaches logs and errors.Is / errors.As;
-	// it is never written to the response.
-
-	// BadRequestErr returns a 400 *Error with code CodeBadRequest, caused by err.
-	BadRequestErr(err error, msg string) error
-	// UnauthorizedErr returns a 401 *Error with code CodeUnauthorized, caused by err.
-	UnauthorizedErr(err error, msg string) error
-	// ForbiddenErr returns a 403 *Error with code CodeForbidden, caused by err.
-	ForbiddenErr(err error, msg string) error
-	// NotFoundErr returns a 404 *Error with code CodeNotFound, caused by err.
-	NotFoundErr(err error, msg string) error
-	// ConflictErr returns a 409 *Error with code CodeConflict, caused by err.
-	ConflictErr(err error, msg string) error
-	// UnprocessableErr returns a 422 *Error with code CodeValidationFailed,
-	// caused by err.
-	UnprocessableErr(err error, msg string) error
-	// TooManyRequestsErr returns a 429 *Error with code CodeRateLimited,
-	// caused by err.
-	TooManyRequestsErr(err error, msg string) error
-	// InternalErr returns a 500 *Error with code CodeInternal, caused by err.
-	InternalErr(err error, msg string) error
-	// ServiceUnavailableErr returns a 503 *Error with code CodeUnavailable,
-	// caused by err.
-	ServiceUnavailableErr(err error, msg string) error
 
 	// Redirect sends an HTTP redirect to the given URL with the given status code.
 	Redirect(status int, url string)
@@ -136,7 +83,7 @@ type Context interface {
 // The embedded context.Context is the parent passed to NewContext, so value
 // lookups, cancellation, and deadlines fall through to it.
 type reqContext struct {
-	context.Context
+	context.Context //nolint:containedctx // a Context is the request's context, by design
 
 	w           http.ResponseWriter
 	r           *http.Request
@@ -145,6 +92,8 @@ type reqContext struct {
 
 	// maxJSONBody caps the body BindJSON reads; zero or negative is no limit.
 	maxJSONBody int64
+	// maxFormBody caps the body BindForm reads; zero or negative is no limit.
+	maxFormBody int64
 }
 
 var _ Context = (*reqContext)(nil)
@@ -169,6 +118,14 @@ func WithMaxJSONBodyBytes(n int64) ContextOption {
 	return func(c *reqContext) { c.maxJSONBody = n }
 }
 
+// WithMaxFormBodyBytes sets how many bytes of the request body BindForm
+// reads before it fails with a 413 *Error. Zero or a negative n means no
+// limit of its own, which leaves net/http's 10 MB. Without this option
+// the limit is 1 MiB.
+func WithMaxFormBodyBytes(n int64) ContextOption {
+	return func(c *reqContext) { c.maxFormBody = n }
+}
+
 // NewContext creates a Context from the standard HTTP pair. It panics if
 // parent, w, or r is nil.
 //
@@ -181,16 +138,21 @@ func NewContext(
 	opts ...ContextOption,
 ) Context {
 	if parent == nil {
-		panic("cannot create context from nil parent")
-	}
-	if w == nil {
-		panic("cannot create context from nil http.ResponseWriter")
-	}
-	if r == nil {
-		panic("cannot create context from nil http.Request")
+		panic("gas: NewContext: nil parent")
 	}
 
-	ctx := &reqContext{Context: parent, w: w, r: r, maxJSONBody: defaultMaxJSONBodyBytes}
+	if w == nil {
+		panic("gas: NewContext: nil http.ResponseWriter")
+	}
+
+	if r == nil {
+		panic("gas: NewContext: nil *http.Request")
+	}
+
+	ctx := &reqContext{
+		Context: parent, w: w, r: r, maxJSONBody: DefaultMaxJSONBodyBytes,
+		maxFormBody: DefaultMaxFormBodyBytes,
+	}
 
 	for _, opt := range opts {
 		opt(ctx)
@@ -209,33 +171,10 @@ func (c *reqContext) Request() *http.Request { return c.r }
 func (c *reqContext) JSON(status int, v any) error {
 	c.w.Header().Set("Content-Type", "application/json")
 	c.w.WriteHeader(status)
-	if err := json.NewEncoder(c.w).Encode(v); err != nil {
+
+	err := json.NewEncoder(c.w).Encode(v)
+	if err != nil {
 		return fmt.Errorf("failed to encode JSON: %w", err)
-	}
-	return nil
-}
-
-// xmlWithContentType writes v as an XML document under the given content
-// type, emitting xml.Header ahead of the encoded value.
-func (c *reqContext) xmlWithContentType(status int, v any, contentType string) error {
-	c.w.Header().Set("Content-Type", contentType)
-	c.w.WriteHeader(status)
-
-	if _, err := c.w.Write([]byte(xml.Header)); err != nil {
-		return fmt.Errorf("failed to write XML header: %w", err)
-	}
-
-	enc := xml.NewEncoder(c.w)
-
-	if err := enc.Encode(v); err != nil {
-		if closeErr := enc.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
-		}
-		return fmt.Errorf("failed to encode XML: %w", err)
-	}
-
-	if closeErr := enc.Close(); closeErr != nil {
-		return fmt.Errorf("failed to close XML encoder: %w", closeErr)
 	}
 
 	return nil
@@ -248,20 +187,24 @@ func (c *reqContext) XML(status int, v any) error {
 func (c *reqContext) HTML(status int, s string) error {
 	c.w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	c.w.WriteHeader(status)
+
 	_, err := c.w.Write([]byte(s))
 	if err != nil {
 		return fmt.Errorf("failed to write response: %w", err)
 	}
+
 	return nil
 }
 
 func (c *reqContext) Text(status int, s string) error {
 	c.w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	c.w.WriteHeader(status)
+
 	_, err := c.w.Write([]byte(s))
 	if err != nil {
 		return fmt.Errorf("failed to write response: %w", err)
 	}
+
 	return nil
 }
 
@@ -269,16 +212,20 @@ func (c *reqContext) Blob(status int, contentType string, b []byte) error {
 	if contentType != "" {
 		c.w.Header().Set("Content-Type", contentType)
 	}
+
 	c.w.WriteHeader(status)
+
 	_, err := c.w.Write(b)
 	if err != nil {
 		return fmt.Errorf("failed to write response: %w", err)
 	}
+
 	return nil
 }
 
 func (c *reqContext) NoContent() error {
 	c.w.WriteHeader(http.StatusNoContent)
+
 	return nil
 }
 
@@ -289,83 +236,11 @@ func (c *reqContext) WriteError(err error) error {
 	return WriteError(c.w, c.r, err)
 }
 
-// WriteErrorJSON writes the JSON error envelope regardless of the Accept
-// header, so a route can serve JSON errors under an ErrorHandler that
-// otherwise renders HTML.
+// WriteErrorJSON writes err as a Problem regardless of the Accept header,
+// so a route can serve JSON errors under an ErrorHandler that otherwise
+// renders HTML.
 func (c *reqContext) WriteErrorJSON(err error) error {
-	return writeErrorResponse(c.w, coerceError(err), true)
-}
-
-func (c *reqContext) BadRequest(msg string) error {
-	return BadRequest(msg)
-}
-
-func (c *reqContext) Unauthorized(msg string) error {
-	return Unauthorized(msg)
-}
-
-func (c *reqContext) Forbidden(msg string) error {
-	return Forbidden(msg)
-}
-
-func (c *reqContext) NotFound(msg string) error {
-	return NotFound(msg)
-}
-
-func (c *reqContext) Conflict(msg string) error {
-	return Conflict(msg)
-}
-
-func (c *reqContext) Unprocessable(msg string) error {
-	return Unprocessable(msg)
-}
-
-func (c *reqContext) TooManyRequests(msg string) error {
-	return TooManyRequests(msg)
-}
-
-func (c *reqContext) Internal(msg string) error {
-	return Internal(msg)
-}
-
-func (c *reqContext) ServiceUnavailable(msg string) error {
-	return ServiceUnavailable(msg)
-}
-
-func (c *reqContext) BadRequestErr(err error, msg string) error {
-	return BadRequest(msg).WithCause(err)
-}
-
-func (c *reqContext) UnauthorizedErr(err error, msg string) error {
-	return Unauthorized(msg).WithCause(err)
-}
-
-func (c *reqContext) ForbiddenErr(err error, msg string) error {
-	return Forbidden(msg).WithCause(err)
-}
-
-func (c *reqContext) NotFoundErr(err error, msg string) error {
-	return NotFound(msg).WithCause(err)
-}
-
-func (c *reqContext) ConflictErr(err error, msg string) error {
-	return Conflict(msg).WithCause(err)
-}
-
-func (c *reqContext) UnprocessableErr(err error, msg string) error {
-	return Unprocessable(msg).WithCause(err)
-}
-
-func (c *reqContext) TooManyRequestsErr(err error, msg string) error {
-	return TooManyRequests(msg).WithCause(err)
-}
-
-func (c *reqContext) InternalErr(err error, msg string) error {
-	return Internal(msg).WithCause(err)
-}
-
-func (c *reqContext) ServiceUnavailableErr(err error, msg string) error {
-	return ServiceUnavailable(msg).WithCause(err)
+	return writeErrorResponse(c.w, coerceError(err), true, problemTypeBase(c.r.Context()))
 }
 
 func (c *reqContext) Redirect(status int, url string) {
@@ -398,11 +273,14 @@ func (c *reqContext) BindJSON(dest any) error {
 	if c.maxJSONBody > 0 {
 		body = http.MaxBytesReader(c.w, body, c.maxJSONBody)
 	}
-	if err := json.NewDecoder(body).Decode(dest); err != nil {
+
+	err := json.NewDecoder(body).Decode(dest)
+	if err != nil {
 		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			return NewError(http.StatusRequestEntityTooLarge, CodePayloadTooLarge,
 				"request body is too large").WithCause(maxErr)
 		}
+
 		return NewError(http.StatusBadRequest, CodeInvalidJSON,
 			"request body is not valid JSON").WithCause(err)
 	}
@@ -411,16 +289,28 @@ func (c *reqContext) BindJSON(dest any) error {
 }
 
 // BindForm binds form data from the request into dest and validates it.
-// A parse or decode failure yields a 400 *Error; a validation failure yields a
-// 422 *Error carrying one Field per violation the validator reported. The
-// underlying error remains reachable through errors.As.
+// A body over the configured limit (1 MiB by default) yields a 413 *Error;
+// a parse or decode failure yields a 400 *Error; a validation failure
+// yields a 422 *Error carrying one Field per violation the validator
+// reported. The underlying error remains reachable through errors.As.
 func (c *reqContext) BindForm(dest any) error {
-	if err := c.r.ParseForm(); err != nil {
+	if c.maxFormBody > 0 && c.r.Body != nil {
+		c.r.Body = http.MaxBytesReader(c.w, c.r.Body, c.maxFormBody)
+	}
+
+	err := c.r.ParseForm()
+	if err != nil {
+		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
+			return NewError(http.StatusRequestEntityTooLarge, CodePayloadTooLarge,
+				"request body is too large").WithCause(maxErr)
+		}
+
 		return NewError(http.StatusBadRequest, CodeInvalidForm,
 			"request form data could not be parsed").WithCause(err)
 	}
 
-	if err := c.FormDecoder().Decode(dest, c.r.PostForm); err != nil {
+	err = c.FormDecoder().Decode(dest, c.r.PostForm)
+	if err != nil {
 		return NewError(http.StatusBadRequest, CodeInvalidForm,
 			"request form data could not be decoded").WithCause(err)
 	}
@@ -434,16 +324,64 @@ func (c *reqContext) BindForm(dest any) error {
 func (c *reqContext) Principal() (Principal, error) {
 	p, ok := PrincipalFromContext(c)
 	if !ok {
-		return nil, c.Unauthorized(http.StatusText(http.StatusUnauthorized))
+		return nil, Unauthorized(http.StatusText(http.StatusUnauthorized))
 	}
+
 	return p, nil
+}
+
+func (c *reqContext) Validator() *validator.Validate {
+	if c.validate == nil {
+		c.validate = newValidator()
+	}
+
+	return c.validate
+}
+
+func (c *reqContext) FormDecoder() *schema.Decoder {
+	if c.formDecoder == nil {
+		c.formDecoder = schema.NewDecoder()
+	}
+
+	return c.formDecoder
+}
+
+// xmlWithContentType writes v as an XML document under the given content
+// type, emitting xml.Header ahead of the encoded value.
+func (c *reqContext) xmlWithContentType(status int, v any, contentType string) error {
+	c.w.Header().Set("Content-Type", contentType)
+	c.w.WriteHeader(status)
+
+	_, err := c.w.Write([]byte(xml.Header))
+	if err != nil {
+		return fmt.Errorf("failed to write XML header: %w", err)
+	}
+
+	enc := xml.NewEncoder(c.w)
+
+	err = enc.Encode(v)
+	if err != nil {
+		closeErr := enc.Close()
+		if closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+
+		return fmt.Errorf("failed to encode XML: %w", err)
+	}
+
+	closeErr := enc.Close()
+	if closeErr != nil {
+		return fmt.Errorf("failed to close XML encoder: %w", closeErr)
+	}
+
+	return nil
 }
 
 // validateStruct runs struct validation and shapes any failure into a 422
 // *Error. The method is not named validate because reqContext already has a
 // field by that name.
 func (c *reqContext) validateStruct(dest any) error {
-	err := c.Validator().Struct(dest)
+	err := c.Validator().StructCtx(c, dest)
 	if err == nil {
 		return nil
 	}
@@ -452,19 +390,6 @@ func (c *reqContext) validateStruct(dest any) error {
 	if fields, ok := validationFieldErrors(err); ok {
 		e.Fields = fields
 	}
+
 	return e
-}
-
-func (c *reqContext) Validator() *validator.Validate {
-	if c.validate == nil {
-		c.validate = newValidator()
-	}
-	return c.validate
-}
-
-func (c *reqContext) FormDecoder() *schema.Decoder {
-	if c.formDecoder == nil {
-		c.formDecoder = schema.NewDecoder()
-	}
-	return c.formDecoder
 }

@@ -4,46 +4,50 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gasmod/gas"
-	cache "github.com/gasmod/gas/cache"
+	"github.com/gasmod/gas/cache"
+	"github.com/gasmod/gas/cache/internal/configsrc"
 )
 
-const serviceName = "gas/cache/memory"
+// ServiceName is the name of the memory store, returned by Service.Name
+// and prefixed to every error the store returns.
+const ServiceName = "gas/cache/memory"
 
-type entry struct {
-	expiresAt time.Time // zero value means no expiration
-	value     []byte
-}
+// The operations errors name.
+const (
+	opInit   = "init"
+	opGet    = "get"
+	opSet    = "set"
+	opDelete = "delete"
+	opExists = "exists"
+)
 
-func (e entry) isExpired(now time.Time) bool {
-	return !e.expiresAt.IsZero() && now.After(e.expiresAt)
-}
-
-// Service is an in-memory cache implementing gas.Service and
-// gas.CacheProvider. It uses a simple map with optional background
-// cleanup of expired entries.
+// Service is a cache held in the process's memory, as described in the
+// package documentation. It is safe for concurrent use.
 type Service struct {
-	logger gas.Logger
-	items  map[string]entry
-	cfg    *Config
-
+	// cfgProvider is the ConfigProvider Init binds from, unless a
+	// configuration was given to WithConfig.
 	cfgProvider gas.ConfigProvider
-	cancel      context.CancelFunc
-
-	// testHookBeforeLock, when set by a test, runs in each cache
-	// operation before it takes mu, so a test can close the service in
-	// that window.
-	testHookBeforeLock func()
-
-	// mu guards items. A nil items map means the service is not open:
-	// it was never started, or it was closed. Every cache operation
-	// checks that under mu, so a Close cannot slip in between the check
-	// and the access.
-	mu sync.RWMutex
-
-	customConfigProvided bool
+	// logger receives the store's events, with `service` set.
+	logger gas.Logger
+	// es holds what Init opened, or nil before Init succeeds and after
+	// Close.
+	es *entries
+	// bound is the configuration the last successful Init resolved, or
+	// nil before one. Close keeps it. Config returns a copy of it.
+	bound atomic.Pointer[Config]
+	// cfgSource records the configuration given to WithConfig.
+	cfgSource configsrc.Source[Config]
+	// closed reports whether Close ran after a successful Init, and Init
+	// has not succeeded since.
+	closed bool
+	// mu guards es, closed and every entry. Each method holds it for its
+	// whole call, which does no I/O; Close releases it before it waits
+	// for the janitor, which takes it on each sweep.
+	mu sync.Mutex
 }
 
 var (
@@ -51,220 +55,266 @@ var (
 	_ gas.CacheProvider = (*Service)(nil)
 )
 
-// Option configures a Service.
-type Option func(*Service)
-
-// WithConfig sets a custom configuration.
-func WithConfig(cfg *Config) Option {
-	return func(s *Service) {
-		s.cfg = cfg
-		s.customConfigProvided = true
-	}
-}
-
-// New captures options and returns a DI-injectable constructor.
+// New returns the constructor of a Service with opts applied, in the shape
+// the gas container expects. The constructor returns an error wrapping
+// cache.ErrNilLogger for a nil logger; a nil ConfigProvider is accepted,
+// and Init then requires WithConfig.
 func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) (*Service, error) {
 	return func(cfgProvider gas.ConfigProvider, logger gas.Logger) (*Service, error) {
+		if logger == nil {
+			return nil, fmt.Errorf("%s: %w", ServiceName, cache.ErrNilLogger)
+		}
+
 		s := &Service{
-			cfg:         DefaultConfig(),
 			cfgProvider: cfgProvider,
-			logger:      logger.With().Str("service", serviceName).Logger(),
+			logger:      logger.With().Str("service", ServiceName).Logger(),
 		}
 		for _, opt := range opts {
 			opt(s)
 		}
+
 		return s, nil
 	}
 }
 
-// Name returns the service identifier.
-func (s *Service) Name() string { return serviceName }
+// Name returns ServiceName.
+func (*Service) Name() string { return ServiceName }
 
-// Init binds the configuration and starts the background cleanup goroutine.
-// The goroutine does not inherit ctx; it runs until Close.
-func (s *Service) Init(context.Context) error {
-	if !s.customConfigProvided && s.cfgProvider != nil {
-		if err := s.cfgProvider.Bind(s.cfg); err != nil {
-			return fmt.Errorf("%s: config binding: %w", s.Name(), err)
-		}
-	}
-
+// Init resolves the configuration, opens an empty cache and starts the
+// janitor, as described in the package documentation. On an initialized
+// store it returns cache.ErrAlreadyInitialized and changes nothing.
+func (s *Service) Init(ctx context.Context) error {
 	s.mu.Lock()
-	s.items = make(map[string]entry)
-	s.mu.Unlock()
+	defer s.mu.Unlock()
 
-	if s.cfg.Cache.CleanupInterval > 0 {
-		ctx, cancel := context.WithCancel(context.Background())
-		s.cancel = cancel
-		//nolint:contextcheck // the cleanup goroutine outlives Init, so it must not inherit the Init ctx; Close cancels it
-		go s.cleanup(ctx)
+	if s.es != nil {
+		return opError(opInit, cache.ErrAlreadyInitialized)
 	}
 
-	s.logger.Info("in-memory cache initialized").Send()
+	err := ctx.Err()
+	if err != nil {
+		return opError(opInit, err)
+	}
+
+	cfg, err := s.cfgSource.Resolve(s.cfgProvider, DefaultConfig, noRules)
+	if err != nil {
+		return opError(opInit, err)
+	}
+
+	es := newEntries(cfg.Cache)
+
+	s.es = es
+	s.closed = false
+	s.bound.Store(cfg)
+
+	go s.janitor(es)
+
+	s.logger.Info("service initialized").
+		Int("max_entries", es.settings.MaxEntries).
+		Duration("cleanup_interval", es.settings.CleanupInterval).
+		Duration("default_ttl", es.settings.DefaultTTL).
+		Send()
+
 	return nil
 }
 
-// Close stops the background cleanup goroutine and clears the cache.
+// Close drops every entry, stops the janitor and waits for it to return.
+// Every later call but Init returns an error wrapping cache.ErrClosed.
+// Close on a store that is not initialized returns nil and logs nothing.
+// It ignores its context.
 func (s *Service) Close(context.Context) error {
-	if s.cancel != nil {
-		s.cancel()
+	s.mu.Lock()
+
+	es := s.es
+	if es != nil {
+		s.es = nil
+		s.closed = true
 	}
 
-	s.mu.Lock()
-	s.items = nil
 	s.mu.Unlock()
 
-	s.logger.Info("in-memory cache closed").Send()
+	if es == nil {
+		return nil
+	}
+
+	close(es.stop)
+	<-es.done
+
+	s.logger.Info("service closed").Send()
+
 	return nil
 }
 
-// Get returns the value for the given key, or cache.ErrKeyNotFound if
-// the key does not exist or has expired. It returns cache.ErrClosed if
-// the service was never started or has been closed.
-func (s *Service) Get(_ context.Context, key string) ([]byte, error) {
-	s.runTestHookBeforeLock()
-
-	s.mu.RLock()
-	if s.items == nil {
-		s.mu.RUnlock()
-		return nil, cache.ErrClosed
-	}
-	e, ok := s.items[key]
-	s.mu.RUnlock()
-
-	if !ok || e.isExpired(time.Now()) {
-		if ok {
-			// lazy delete expired entry
-			s.mu.Lock()
-			if e2, exists := s.items[key]; exists && e2.isExpired(time.Now()) {
-				delete(s.items, key)
-			}
-			s.mu.Unlock()
-		}
-		return nil, cache.ErrKeyNotFound
-	}
-
-	return e.value, nil
-}
-
-// Set stores a value with the given TTL. If ttl is 0, the configured
-// DefaultTTL is used. If DefaultTTL is also 0, the entry never expires.
-// When MaxEntries is reached and a new key is inserted, one expired
-// entry, chosen in map iteration order rather than by age, is evicted
-// first; if none are expired, the set is rejected with an error. It
-// returns cache.ErrClosed if the service was never started or has been
-// closed.
-func (s *Service) Set(_ context.Context, key string, value []byte, ttl time.Duration) error {
-	s.runTestHookBeforeLock()
-
-	if ttl == 0 {
-		ttl = s.cfg.Cache.DefaultTTL
-	}
-
-	e := entry{value: value}
-	if ttl > 0 {
-		e.expiresAt = time.Now().Add(ttl)
+// Get returns a copy of the value of key, or an error wrapping
+// cache.ErrKeyNotFound when the store holds no live value under it. A hit
+// makes the entry the most recently used.
+func (s *Service) Get(ctx context.Context, key string) ([]byte, error) {
+	err := cache.CheckKey(key)
+	if err != nil {
+		return nil, opError(opGet, err)
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.items == nil {
-		return cache.ErrClosed
+	es, err := s.open(ctx, opGet)
+	if err != nil {
+		return nil, err
 	}
 
-	// enforce max entries for new keys
-	if s.cfg.Cache.MaxEntries > 0 {
-		if _, exists := s.items[key]; !exists && len(s.items) >= s.cfg.Cache.MaxEntries {
-			// try to evict one expired entry
-			if !s.evictOneExpired() {
-				return fmt.Errorf("%s: max entries (%d) reached", s.Name(), s.cfg.Cache.MaxEntries)
-			}
-		}
+	e, ok := es.get(key, time.Now(), true)
+	if !ok {
+		return nil, opError(opGet, cache.ErrKeyNotFound)
 	}
 
-	s.items[key] = e
-	return nil
+	return append([]byte{}, e.value...), nil
 }
 
-// Delete removes a key from the cache. It returns cache.ErrClosed if the
-// service was never started or has been closed.
-func (s *Service) Delete(_ context.Context, key string) error {
-	s.runTestHookBeforeLock()
+// Set stores a copy of value under key, as the most recently used entry,
+// expiring as ttl says, as described in the package documentation. A nil
+// value is stored as empty. A new key on a full store evicts one entry
+// first.
+func (s *Service) Set(ctx context.Context, key string, value []byte, ttl time.Duration) error {
+	err := cache.CheckKey(key)
+	if err != nil {
+		return opError(opSet, err)
+	}
+
+	err = cache.CheckTTL(ttl)
+	if err != nil {
+		return opError(opSet, err)
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.items == nil {
-		return cache.ErrClosed
+	es, err := s.open(ctx, opSet)
+	if err != nil {
+		return err
 	}
-	delete(s.items, key)
+
+	now := time.Now()
+
+	var expires time.Time
+
+	if d := cache.EffectiveTTL(ttl, es.settings.DefaultTTL); d > 0 {
+		expires = now.Add(d)
+	}
+
+	es.set(key, append([]byte{}, value...), expires, now)
+
 	return nil
 }
 
-// Exists checks whether a key exists and has not expired. It returns
-// cache.ErrClosed if the service was never started or has been closed.
-func (s *Service) Exists(_ context.Context, key string) (bool, error) {
-	s.runTestHookBeforeLock()
-
-	s.mu.RLock()
-	if s.items == nil {
-		s.mu.RUnlock()
-		return false, cache.ErrClosed
+// Delete removes the value of key. Deleting a key the store does not hold
+// is not an error.
+func (s *Service) Delete(ctx context.Context, key string) error {
+	err := cache.CheckKey(key)
+	if err != nil {
+		return opError(opDelete, err)
 	}
-	e, ok := s.items[key]
-	s.mu.RUnlock()
 
-	if !ok || e.isExpired(time.Now()) {
-		return false, nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	es, err := s.open(ctx, opDelete)
+	if err != nil {
+		return err
 	}
-	return true, nil
+
+	es.delete(key)
+
+	return nil
 }
 
-// runTestHookBeforeLock runs testHookBeforeLock if a test has set it.
-func (s *Service) runTestHookBeforeLock() {
-	if s.testHookBeforeLock != nil {
-		s.testHookBeforeLock()
+// Exists reports whether the store holds a live value under key. It does
+// not make the entry the most recently used.
+func (s *Service) Exists(ctx context.Context, key string) (bool, error) {
+	err := cache.CheckKey(key)
+	if err != nil {
+		return false, opError(opExists, err)
 	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	es, err := s.open(ctx, opExists)
+	if err != nil {
+		return false, err
+	}
+
+	_, ok := es.get(key, time.Now(), false)
+
+	return ok, nil
 }
 
-// cleanup periodically removes expired entries.
-func (s *Service) cleanup(ctx context.Context) {
-	ticker := time.NewTicker(s.cfg.Cache.CleanupInterval)
+// Config returns a copy of the configuration the last successful Init
+// resolved, defaults included, or the zero Config before one. A failed
+// Init and Close leave it as it was. Config holds no slice, map or
+// pointer, so the copy shares nothing with the store.
+func (s *Service) Config() Config {
+	cfg := s.bound.Load()
+	if cfg == nil {
+		return Config{}
+	}
+
+	return *cfg
+}
+
+// Len returns the number of entries the store holds, counting those that
+// have expired and that neither a call nor the janitor has removed yet.
+// It is 0 when the store is not initialized.
+func (s *Service) Len() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.es == nil {
+		return 0
+	}
+
+	return len(s.es.byKey)
+}
+
+// open returns the entries of an initialized store whose ctx has not
+// ended, or the error of op: cache.ErrNotInitialized, cache.ErrClosed or
+// the context's. The caller holds s.mu.
+func (s *Service) open(ctx context.Context, op string) (*entries, error) {
+	switch {
+	case s.es == nil && s.closed:
+		return nil, opError(op, cache.ErrClosed)
+	case s.es == nil:
+		return nil, opError(op, cache.ErrNotInitialized)
+	}
+
+	err := ctx.Err()
+	if err != nil {
+		return nil, opError(op, err)
+	}
+
+	return s.es, nil
+}
+
+// janitor removes the expired entries of es every CleanupInterval until
+// Close stops it, and then closes es.done.
+func (s *Service) janitor(es *entries) {
+	defer close(es.done)
+
+	ticker := time.NewTicker(es.settings.CleanupInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-ctx.Done():
+		case <-es.stop:
 			return
-		case <-ticker.C:
-			s.removeExpired()
+		case now := <-ticker.C:
+			s.mu.Lock()
+			es.sweep(now)
+			s.mu.Unlock()
 		}
 	}
 }
 
-func (s *Service) removeExpired() {
-	now := time.Now()
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	for k, e := range s.items {
-		if e.isExpired(now) {
-			delete(s.items, k)
-		}
-	}
-}
-
-// evictOneExpired removes a single expired entry. Must be called with
-// s.mu held. Returns true if an entry was evicted.
-func (s *Service) evictOneExpired() bool {
-	now := time.Now()
-	for k, e := range s.items {
-		if e.isExpired(now) {
-			delete(s.items, k)
-			return true
-		}
-	}
-	return false
+// opError returns err as the failure of op, after ServiceName.
+func opError(op string, err error) error {
+	return fmt.Errorf("%s: %s: %w", ServiceName, op, err)
 }

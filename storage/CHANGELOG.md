@@ -7,122 +7,250 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+v0.6.0 rewrites the module around one contract that every backend keeps,
+written in the `storage` package's `doc.go` and checked by a conformance
+suite that runs against memory, dir, an S3 fake and LocalStack. Each
+package's `doc.go` is its behavioral contract and lists its errors
+verbatim; read it before upgrading: most of the API changed.
+
 ### Breaking changes
 
-- **`storage.Provider` gains `HeadBucket` and `DeleteBucket`.** Every
-  implementation of the interface must add them.
+- **The backends are services again.** `dir.New`, `memory.New`, `s3.New`
+  and `s3.NewPresigner` return constructors of the shape
+  `func(gas.ConfigProvider, gas.Logger) (*T, error)`, and each backend
+  implements `gas.Service` (`Name`, `Init`, `Close`) and
+  `gas.ReadyReporter` (`CheckReady`). Every method but `Init`, `Close`
+  and `Name` returns `storage.ErrNotInitialized` before the first
+  successful `Init`, and `storage.ErrClosed` after `Close` until `Init`
+  succeeds again; `Close` waits for the calls in flight, and cancels them
+  when its context ends. The buckets and objects outlive a restart.
+  `dir.NewProvider` and `s3.NewProvider` are removed, and
+  `s3.ProviderOption` is now `s3.Option`. A constructor fails with
+  `storage.ErrNilLogger` for a nil logger, `storage.ErrNilOption` for a
+  nil option and `storage.ErrNilConfig` for `WithConfig(nil)`.
+- **Configuration is resolved on each `Init`.** Each backend has a
+  `Config` with a `Storage` field of type `Settings`, a `DefaultConfig`,
+  and a `WithConfig` option (`WithPresignerConfig` for the presigner)
+  that replaces binding from the `gas.ConfigProvider`. `Init` checks the
+  `validate` tags, then the backend's rules, such as that a configured
+  `storage.bucket` keeps the bucket rules; a failure wraps
+  `storage.ErrInvalidConfig`, and a missing `ConfigProvider` without
+  `WithConfig` is `storage.ErrNoConfigProvider`.
+- **`storage.Provider` changes.** `CreateBucket` and `DeleteObject`
+  return only an error, `PutObject` returns `*PutObjectOutput` (`ETag`,
+  `Version`, `Size`) instead of `*ObjectInfo`, and the interface gains
+  `HeadBucket`, `DeleteBucket` and `CopyObject`. Every implementation must
+  follow.
 - **`storage.Bucket` replaces `BucketInfo` and `BucketSummary`.** It has
-  `Name`, `CreationDate`, `ID` and `Region`. `CreateBucket` returns
-  `*Bucket`, and `ListBucketsOutput.Buckets` is `[]Bucket`. `Location` is
-  gone: on s3 it held CreateBucket's `Location` response header, which is a
-  path, not a place. dir no longer puts the bucket name in `ID`.
+  `CreationDate`, `Name` and `Region`. `HeadBucket` returns it, and
+  `ListBucketsOutput.Buckets` is `[]Bucket`. `ID` and `Location` are gone.
 - **`ListBucketsOutput.ContinuationToken` is renamed
-  `NextContinuationToken`**, as on `ListObjectsOutput`. On both, it is empty
-  on the last page and only there.
-- **`PutObjectInput` embeds `ObjectHeaders`**, which holds `ContentType`,
-  `Metadata`, `Expires` and the new system headers. Keyed composite
-  literals that set `ContentType` or `Metadata` directly still compile,
-  since this module requires go 1.27, which accepts promoted fields in
-  composite literals; so do reads and assignments. Unkeyed literals break.
-- **`Expires` is a `*string`**, not a `*time.Time`, so a stored value that is
-  not a date survives a round trip.
+  `NextContinuationToken`**, as on `ListObjectsOutput`. On both, it is
+  empty on the last page and only there.
+- **`PutObjectInput` embeds `ObjectHeaders` and `WriteCondition`.**
+  `ObjectHeaders` holds `ContentType`, `CacheControl`,
+  `ContentDisposition`, `ContentEncoding`, `ContentLanguage`, `Expires`
+  and `Metadata`. Keyed composite literals that set `ContentType` or
+  `Metadata` directly still compile, as do reads and assignments; unkeyed
+  literals break.
+- **`Expires` is a `*string`**, not a `*time.Time`, and must be an
+  IMF-fixdate exactly as `http.TimeFormat` writes it, on every backend.
+- **`ObjectInfo` embeds `HeaderValues`**, which holds the content type and
+  every header field written, and gains `ETag`; `ObjectSummary` gains
+  `ETag` too. The ETag is unquoted.
+- **The `Response*` fields move from `HeadObjectInput` to
+  `PresignDownloadURLInput`**, in the new embedded `ResponseHeaders`,
+  with `ResponseExpires` a `*string`. `HeadObject` and `GetObject` no
+  longer take them.
+- **Sentinel errors.** The texts no longer start with `storage: `, and
+  every error a backend returns starts with its service name and the
+  operation, such as `gas/storage/memory: get object: object not found`.
+  - `ErrKeyNotFound` and `ErrNotFound` are replaced by one
+    `ErrObjectNotFound`, which `HeadObject` and `GetObject` both return.
+  - `ErrInputRequired` is renamed `ErrNilInput`, `ErrInvalidOption`
+    `ErrNilOption`, and `ErrInvalidContinuationToken` `ErrInvalidToken`.
+  - `ErrInvalidLimit` and `ErrInvalidTTL` are removed: an argument out of
+    its bounds is `ErrInvalidArgument`.
+  - `ErrInvalidRange` now means a `Range` that is not one byte range; a
+    range that selects no byte is the new `ErrRangeNotSatisfiable`.
+  - `dir.ErrRootRequired` and `dir.ErrStaleData` are removed. A data file
+    of a replaced object that cannot be removed no longer fails the
+    write: it is logged at warn level and passed to the skip handler.
+- **Inputs keep S3's rules on every backend, before any I/O.** A key
+  that holds a control character, the tab included, is
+  `ErrInvalidKey`. Metadata names must be HTTP tokens and are stored and
+  returned in lower case, so two names that differ only in case are
+  refused; values hold only printable ASCII, space and tab, and are never
+  encoded; names and values hold at most 2048 bytes together
+  (`ErrInvalidMetadata`). Header field values keep the same character
+  rules and hold at most 1024 bytes (`ErrInvalidHeader`). A `Range` that is not one byte range is
+  `ErrInvalidRange` rather than ignored. The checks are exported (see
+  Added).
+- **Presigned uploads need a `ContentLength`**, 0 to
+  `MaxPresignUploadSize` (5 GiB), which the URL signs, as it signs the
+  Content-Type at every length. A TTL out of 1s to 7 days is
+  `ErrInvalidArgument`.
+- **Continuation tokens are opaque and sealed.** A token holds its
+  listing's last entry sealed with a key each `Init` draws at random,
+  bound to the listing that issued it, on every backend, s3 included. A
+  token from before a restart, from another `Provider` or from another
+  listing is `ErrInvalidToken`.
+- **dir has a new layout.** Keys and bucket names are still stored under
+  hashes, now with a key index, a lifecycle lock per bucket and a layout
+  marker. `Init` refuses a directory that holds buckets but no marker, as
+  one written by an earlier version, with the new `dir.ErrOldLayout`;
+  copy its objects with that version's store. `dir.Provider.Root` is
+  removed.
+- **dir reads its directory from `storage.dir`.** `Init` opens it with
+  `os.OpenRoot` and `Close` closes it. `WithRoot` is still accepted, and
+  `storage.dir` must then be empty; the store never closes a root given
+  to `WithRoot`.
+- **s3 options.** `WithClient` takes an `s3.API`, the interface of the
+  requests the store sends, so an `*s3.Client` or a fake fits, and
+  `WithPresignClient` an `s3.PresignAPI`. `WithUploaderClient` and
+  `WithPresignerS3Client` are removed. A nil client fails `Init` with
+  `s3.ErrNilClient`. `Provider.Client` returns nil when the store was
+  given another `API`.
+- **s3 `Settings`.** `SecretAccessKey` and `SessionToken` are
+  `s3.Secret` (`gas.Secret`). `Init` fails with `s3.ErrNoRegion` when
+  neither the `region` setting nor the AWS SDK's default chain gives a
+  region, and with `s3.ErrNoCredentials` when it cannot retrieve
+  credentials. Static credentials are used only when both
+  `accesskeyid` and `secretaccesskey` are set.
+- **storagetest.** `Calls` is a method that returns a deep copy, and each
+  recorded call holds a deep copy of its input. With a field nil, a
+  method that returns an output returns a zero one rather than nil, but
+  `HeadObject` and `GetObject`, which return `storage.ErrObjectNotFound`. The `Fn` fields follow
+  the new method signatures.
 
 ### Added
 
-- **dir `GetObject` bodies are seekable for ranged reads too.** A ranged
-  `Body` used to be a reader that could not seek, while a whole read gave
-  an `*os.File`; both now implement `io.ReadSeeker`, a ranged one seeking
-  within the returned bytes. The dir package documents it; the storage
-  interface still promises only `io.ReadCloser`.
-- **`Skipped` on `ListObjectsOutput` and `ListBucketsOutput`**: how many
-  entries the listing left out because the backend could not read them,
-  counted over the whole bucket (or every bucket), so every page repeats
-  that count; a `ListObjects` page also adds any of its own objects found
-  damaged while it was built. Always 0 on s3.
-- **`dir.WithSkipHandler`**, which receives the path, relative to the
-  root, and the reason of each entry a dir listing leaves out, each piece
-  of debris `DeleteBucket` removes, and each file it leaves behind. Paths
-  never appear in the listing output.
-- **`dir.ErrCorrupt` and `dir.ErrUnnamedBucket`**, exported so callers can
-  match them. `HeadObject` and `GetObject` of an object that cannot be read
-  now return an error wrapping `dir.ErrCorrupt`; before, it matched no
-  sentinel a caller could name. That includes an object whose metadata
-  holds another key, which `GetObject` used to serve while a listing left
-  it out.
-- **Conditional writes.** `PutObjectInput` embeds `WriteCondition`:
-  `IfNoneMatch` (`"*"` only) writes only a key with no object, and
-  `IfMatch` only over the object with that ETag, quoted or not. A condition
-  that does not hold is the new `storage.ErrPreconditionFailed`, and an
-  `IfMatch` of a missing key `storage.ErrKeyNotFound`; nothing is written.
-  A condition that cannot be evaluated is the new
-  `storage.ErrInvalidCondition`. dir checks the condition under the key's
-  lock, so it holds across processes sharing the root; an object without a
-  recorded ETag matches no `IfMatch`. s3 sends `If-Match` and
-  `If-None-Match`, and `PresignUploadURL` signs them.
-- **`HeadBucket` and `DeleteBucket`** in both backends, with
+- **`memory`**, a store in the process's memory with S3's rules, for
+  tests and local development: settings `storage.bucket`,
+  `storage.maxbytes` (default 256 MiB) and `storage.maxobjects` (default
+  100000), at most 10000 buckets, and `memory.ErrStorageFull` for a write
+  past them.
+- **`CopyObject`** on every backend and on `storagetest.MockProvider`
+  (`CopyObjectFn`), with `CopyObjectInput` and `CopyObjectOutput`. It
+  copies an object within a bucket or to another, with the source's
+  header fields and metadata, or with `Replace` those of the input, and
+  writes the copy whole or not at all. A copy onto itself without
+  `Replace`, header fields or metadata set without `Replace`, and a source
+  longer than `MaxCopySize` (5 GiB) are `ErrInvalidArgument`. dir never
+  holds two keys' locks at once; s3 sends S3's CopyObject pinned to the
+  source's ETag, and starts again when the source changed meanwhile.
+  `storage.CheckCopy` and `storage.CheckCopySize` hold the rules, and the
+  `s3.API` interface includes `CopyObject`.
+- **`Config()`** on `dir.Provider`, `memory.Provider` and `s3.Provider`:
+  a copy of the configuration the last successful `Init` bound, defaults
+  included, or the zero `Config` before one. A failed `Init` and `Close`
+  keep it.
+- **`HeadBucket` and `DeleteBucket`** on every backend, with
   `HeadBucketInput` and `DeleteBucketInput`, and the sentinels
-  `storage.ErrBucketNotEmpty` and `storage.ErrAccessDenied` (s3 only, for
-  a 403). Deleting a missing bucket is `ErrBucketNotFound`, unlike
-  deleting a missing key. dir's `DeleteBucket` refuses only a bucket that
-  holds an object, and then removes nothing: unreadable metadata, metadata
-  whose data file is gone and temp files of crashed writes do not count,
-  and are removed with the bucket once no object was found, so none of
-  them can make a bucket undeletable. It waits for a write of an existing
-  key in progress rather than cutting it short; a write of a new key still
-  copying its body finds the bucket gone and returns `ErrBucketNotFound`.
-  It removes the bucket's name record, so a bucket created again gets a
-  new `CreationDate`.
-  `CreateBucket` and `DeleteBucket` of one name take a lock under
-  `.gas/locks` and so never interleave, in one process or several.
-  `storagetest.MockProvider` gains `HeadBucketFn` and `DeleteBucketFn`.
-- **System headers.** `CacheControl`, `ContentDisposition`,
-  `ContentEncoding` and `ContentLanguage` on `ObjectHeaders`, stored by both
-  backends and returned on `ObjectInfo` with `Expires`.
-- **`ObjectInfo.ETag` and `ObjectSummary.ETag`**, unquoted. `PutObject`
-  returns it on both backends. dir computes the hex MD5 of the body as it
-  writes it; an object written by an earlier version has an empty ETag.
-- **dir `PutObject` returns the object it wrote**, exactly as `HeadObject`
-  then reads it: ETag, size, modification time, content type, metadata and
-  headers, with invalid UTF-8 already replaced and no map shared with the
-  input. It used to return an empty `ObjectInfo`.
-- **`storage.ErrInvalidHeader`.** s3 `PutObject` and `PresignUploadURL`
-  return it for an `Expires` that is not an IMF-fixdate, such as
-  `Wed, 21 Oct 2026 07:28:00 GMT` with the right weekday. The AWS SDK sends
-  `Expires` only as a time and writes it in that form, so any other text,
-  the RFC 850 and asctime forms included, would be stored rewritten.
-  Nothing is sent or signed.
-- **s3 `ListBuckets`** fills `ID` and `Region` from the ARN and region S3
-  sends.
+  `ErrBucketNotEmpty` and `ErrAccessDenied`. Deleting a missing bucket is
+  `ErrBucketNotFound`, unlike deleting a missing key. dir's
+  `DeleteBucket` refuses only a bucket that holds an object, and then
+  removes nothing; what no read can use is removed with the bucket and
+  passed to the skip handler. `CreateBucket` and `DeleteBucket` of one
+  name never interleave, across processes too.
+- **Conditional writes.** `WriteCondition.IfNoneMatch` (`*` only) writes
+  only a key that holds no object, and `IfMatch` only over the object
+  with that ETag, quoted or not; `IfMatch` of a missing key is
+  `ErrObjectNotFound`. A condition that does not hold is
+  `ErrPreconditionFailed`, and nothing is written; one that cannot be
+  evaluated is `ErrInvalidCondition`. dir evaluates the condition under
+  the key's lock, so it holds across processes; s3 sends `If-None-Match`
+  and `If-Match`, and `PresignUploadURL` signs them.
+- **Header fields.** `CacheControl`, `ContentDisposition`,
+  `ContentEncoding` and `ContentLanguage`, stored by every backend and
+  returned with `ContentType` and `Expires`.
+- **`ETag`** on `ObjectInfo`, `ObjectSummary`, `PutObjectOutput` and
+  `CopyObjectOutput`: the hex MD5 of the contents on memory and dir, and
+  on s3 for an object written in one part without SSE-KMS.
+- **The input rules, exported.** `CheckKey`, `CheckBucket`,
+  `ResolveBucket`, `CheckObject`, `CheckRead`, `CheckPut`, `CheckDelete`,
+  `CheckCopy`, `CheckCopySize`, `CheckHeaders`, `CheckResponseHeaders`,
+  `CheckMetadata`, `CheckCondition`, `CheckLength`, `CheckListObjects`,
+  `CheckListBuckets`, `CheckPresignUpload`, `CheckPresignDownload`,
+  `CheckPresignTTL`, `ParseRange` with `ByteRange`, and `ParseExpires`,
+  with the request types they return and the limits as constants
+  (`MaxKeyLength`, `MinBucketLength`, `MaxBucketLength`,
+  `MaxMetadataSize`, `MaxHeaderSize`, `MaxPartNumber`, `MaxListKeys`,
+  `MaxListBuckets`, `DefaultContentType`, `DefaultPresignTTL`,
+  `MinPresignTTL`, `MaxPresignTTL`, `MaxPresignUploadSize`,
+  `MaxCopySize`).
+- **Sentinels** `ErrInvalidMetadata`, `ErrInvalidHeader`,
+  `ErrInvalidCondition`, `ErrInvalidArgument`, `ErrPreconditionFailed`,
+  `ErrRangeNotSatisfiable`, `ErrBackend`, `ErrAlreadyInitialized`,
+  `ErrClosed`, `ErrNilLogger`, `ErrNilConfig`, `ErrNoConfigProvider` and
+  `ErrInvalidConfig` in `storage`.
+- **`PresignURLResponse.Expires`**, when the URL stops being valid at the
+  latest.
+- **dir:** `WithSkipHandler`, which receives the path and the reason of
+  each entry the store passes over, removes or leaves behind;
+  `ErrCorrupt`, for an object that cannot be read; `ErrUnnamedBucket`,
+  for a bucket `ListBuckets` cannot name; `ErrNilRoot`;
+  `ServiceName`; and the `storage.sweeplimit` setting
+  (`DefaultSweepLimit`, 100000). `Init` removes the leftovers of crashed
+  writes and indexes again an object that lost its index entry, each
+  under its lock taken without waiting. A `GetObject` body is an
+  `io.ReadSeeker`, a ranged one seeking within the bytes selected.
+- **s3:** the settings `storage.usepathstyle` (default true when
+  `endpoint` is set), `storage.optimeout`, the bound of each request,
+  retries included (`DefaultOpTimeout`, 10s), and `storage.maxretries`
+  (`DefaultMaxRetries`, 2, at most `MaxRetries`, 10), which holds whatever
+  `AWS_MAX_ATTEMPTS` and `AWS_RETRY_MODE` say; the sentinels `ErrConnect`,
+  `ErrThrottled`, `ErrWrongRegion`, `ErrConflict` and
+  `ErrUploadNotAborted`; `ServiceName` and `PresignerName`; and
+  `Presigner.CheckReady`. `Provider.CheckReady` sends a `HeadBucket` of
+  the configured bucket. An upload in parts that fails is aborted with
+  `AbortMultipartUpload` on a context of its own.
 
 ### Changed
 
-- **dir object metadata** records the ETag and the system headers. An
-  earlier version of the backend reading the same directory ignores those
-  fields and sees the objects without them.
+- **`CheckBucket` no longer refuses S3's reserved starts and ends**, such
+  as `xn--` and `-s3alias`: S3 refuses them itself, and the dir and memory
+  backends accept them.
+- **dir syncs every write to disk.** Once `PutObject` or `CopyObject`
+  returns, the object survives a crash of the process and a loss of power,
+  on a file system that honors fsync; on darwin a sync is F_FULLFSYNC.
+- **dir lists from a key index**, reading the metadata of the objects of
+  the page only, rather than every name in the bucket on each call.
+- **dir opens only regular files.** A metadata file, a data file and a
+  name record are opened only when they are regular files, never through
+  a symlink at their name, and without blocking on a FIFO or a device; a
+  metadata file or a name record is read no further than 64 KiB.
+- **dir checks the context between reads of a body**, so a `PutObject`
+  whose context ends stops reading its body and writes nothing.
+- **The AWS SDK modules are updated**, and the transfer manager is pinned
+  at v0.4.19.
 
 ### Fixed
 
-- **dir stores `Expires`.** It used to be accepted and dropped, and s3 sent
-  it but had no field to return it in.
-- **One unnameable bucket no longer makes `dir.ListBuckets` fail.** A bucket
-  whose name record is missing (one created by a version that kept none) or
-  holds a name that hashes to another bucket (one a crash left damaged) is
-  left out of the listing instead of failing the whole call, so the other
-  buckets stay listable; `CreateBucket` of that bucket rewrites the record
-  and brings it back, and its objects were reachable through the other
-  methods throughout. A name record that cannot be read at all, or that is
-  not a regular file, still fails the call, and those errors now name the
-  record by its path under the root rather than by the bucket's hash alone.
-  It is counted in `Skipped` and reported to the skip handler.
-- **One unreadable object no longer makes `dir.ListObjects` fail for its
-  whole bucket.** An object whose metadata does not decode or holds another
-  key, or whose data file is gone, is left out, counted in `Skipped` and
-  reported to the skip handler, so the rest of the bucket stays listable
-  and the loss is still visible. An I/O error reading metadata still fails
-  the call. Each listing now stats every data file to find these.
+- **dir stores `Expires`.** It used to be accepted and dropped.
+- **One bucket dir cannot name no longer fails `ListBuckets`.** A bucket
+  whose name record is missing or holds another name is left out and
+  passed to the skip handler with `ErrUnnamedBucket` until `CreateBucket`
+  of it rewrites the record.
+- **One object dir cannot read no longer fails `ListObjects`.** It is left
+  out and passed to the skip handler with `ErrCorrupt`.
+- **A nil client given to an s3 option fails `Init`** with
+  `s3.ErrNilClient` (KI-051). It used to discard a client an earlier
+  option gave, while the doc comments said it was ignored.
 
 ### Security
 
+- **Errors and logs hold no application data.** No error a backend
+  returns and no log it writes holds a key, a bucket name, metadata, a
+  header value, a path, an endpoint, a URL, an upload ID, a continuation
+  token or a credential. s3 no longer keeps the AWS SDK's error, which
+  holds the URL, nor S3's reply message, and gives the AWS SDK a logger
+  that discards everything.
+- **s3 secrets are redacted.** The secret key and the session token print,
+  marshal to JSON or YAML, and log with log/slog as `[redacted]`, and
+  encoding/gob fails on them.
+- **s3 caps its replies.** The client `Init` builds reads no reply past
+  16 MiB but an object's contents.
 - **Requires Go 1.27.3.** The `go` directive moves from 1.27 to 1.27.3,
   the first 1.27 release with the fix for GO-2026-6809 (CVE-2026-111943):
   `crypto/x509` now rejects intermediate certificates known to be

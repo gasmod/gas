@@ -72,41 +72,49 @@ type slogLoggerContext struct {
 
 func (c *slogLoggerContext) Str(key, val string) LoggerContext {
 	c.attrs = append(c.attrs, slog.String(key, val))
+
 	return c
 }
 
 func (c *slogLoggerContext) Int(key string, val int) LoggerContext {
 	c.attrs = append(c.attrs, slog.Int(key, val))
+
 	return c
 }
 
 func (c *slogLoggerContext) Int64(key string, val int64) LoggerContext {
 	c.attrs = append(c.attrs, slog.Int64(key, val))
+
 	return c
 }
 
 func (c *slogLoggerContext) Float64(key string, val float64) LoggerContext {
 	c.attrs = append(c.attrs, slog.Float64(key, val))
+
 	return c
 }
 
 func (c *slogLoggerContext) Bool(key string, val bool) LoggerContext {
 	c.attrs = append(c.attrs, slog.Bool(key, val))
+
 	return c
 }
 
 func (c *slogLoggerContext) Err(key string, val error) LoggerContext {
 	c.attrs = append(c.attrs, slog.Any(key, val))
+
 	return c
 }
 
 func (c *slogLoggerContext) Duration(key string, val time.Duration) LoggerContext {
 	c.attrs = append(c.attrs, slog.Duration(key, val))
+
 	return c
 }
 
 func (c *slogLoggerContext) Any(key string, val any) LoggerContext {
 	c.attrs = append(c.attrs, slog.Any(key, val))
+
 	return c
 }
 
@@ -123,41 +131,49 @@ type slogLogEvent struct {
 
 func (e *slogLogEvent) Str(key, value string) LogEvent {
 	e.attrs = append(e.attrs, slog.String(key, value))
+
 	return e
 }
 
 func (e *slogLogEvent) Int(key string, value int) LogEvent {
 	e.attrs = append(e.attrs, slog.Int(key, value))
+
 	return e
 }
 
 func (e *slogLogEvent) Int64(key string, value int64) LogEvent {
 	e.attrs = append(e.attrs, slog.Int64(key, value))
+
 	return e
 }
 
 func (e *slogLogEvent) Float64(key string, value float64) LogEvent {
 	e.attrs = append(e.attrs, slog.Float64(key, value))
+
 	return e
 }
 
 func (e *slogLogEvent) Bool(key string, value bool) LogEvent {
 	e.attrs = append(e.attrs, slog.Bool(key, value))
+
 	return e
 }
 
 func (e *slogLogEvent) Err(key string, value error) LogEvent {
 	e.attrs = append(e.attrs, slog.Any(key, value))
+
 	return e
 }
 
 func (e *slogLogEvent) Duration(key string, value time.Duration) LogEvent {
 	e.attrs = append(e.attrs, slog.Duration(key, value))
+
 	return e
 }
 
 func (e *slogLogEvent) Any(key string, value any) LogEvent {
 	e.attrs = append(e.attrs, slog.Any(key, value))
+
 	return e
 }
 

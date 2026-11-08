@@ -1,53 +1,45 @@
 package auth
 
 import (
-	"context"
-	"errors"
-	"net/http"
-	"reflect"
-
 	"github.com/gasmod/gas"
 )
 
-// Scheme constants identify the authentication method used by a principal.
+// Scheme constants name the authentication method a principal came from,
+// as gas.Principal.Scheme returns it.
 const (
-	// SchemeJWT is the scheme for JWT-authenticated principals.
+	// SchemeJWT is the scheme of principals authenticated by a JWT.
 	SchemeJWT = "jwt"
-	// SchemeSession is the scheme for session-authenticated principals.
+	// SchemeSession is the scheme of principals authenticated by a
+	// server-side session.
 	SchemeSession = "session"
-	// SchemeAPIKey is the scheme for API-key-authenticated principals.
+	// SchemeAPIKey is the scheme of principals authenticated by an API
+	// key.
 	SchemeAPIKey = "apikey"
 )
 
-// Sentinel errors returned by authenticators and middleware.
-var (
-	// ErrUnauthenticated indicates that no valid credentials were provided.
-	ErrUnauthenticated = errors.New("unauthenticated")
-	// ErrForbidden indicates that the principal lacks permission for the action.
-	ErrForbidden = errors.New("forbidden")
-	// ErrCredentialsExpired indicates that the presented credentials have expired.
-	ErrCredentialsExpired = errors.New("credentials expired")
-	// ErrCredentialRevoked indicates that the presented credentials have been revoked.
-	ErrCredentialRevoked = errors.New("credential revoked")
-)
-
-// BasePrincipal is a concrete implementation of gas.Principal.
+// BasePrincipal is a gas.Principal holding fixed values, as described in
+// the package documentation.
 type BasePrincipal struct {
-	metadata     gas.PrincipalMetadata
-	subject      string
-	scheme       string
+	// metadata is returned by Metadata; it is never nil.
+	metadata gas.PrincipalMetadata
+	// subject is returned by Subject.
+	subject string
+	// scheme is returned by Scheme.
+	scheme string
+	// credentialID is returned by CredentialID.
 	credentialID string
 }
 
 var _ gas.Principal = (*BasePrincipal)(nil)
 
-// NewPrincipal creates a new BasePrincipal. If meta is nil, an empty
-// gas.BasePrincipalMetadata is used to avoid nil dereferences on
-// Metadata().Value().
+// NewPrincipal returns a BasePrincipal with the given values. A nil meta
+// becomes an empty gas.BasePrincipalMetadata, so Metadata().Value never
+// dereferences nil. A non-nil meta is kept as given, not copied.
 func NewPrincipal(subject, scheme, credentialID string, meta gas.PrincipalMetadata) *BasePrincipal {
 	if meta == nil {
 		meta = gas.BasePrincipalMetadata{}
 	}
+
 	return &BasePrincipal{
 		subject:      subject,
 		scheme:       scheme,
@@ -56,67 +48,15 @@ func NewPrincipal(subject, scheme, credentialID string, meta gas.PrincipalMetada
 	}
 }
 
-// Subject returns the stable user identifier.
+// Subject returns the stable identifier of the user or client.
 func (p *BasePrincipal) Subject() string { return p.subject }
 
-// Scheme returns the authentication method (e.g. "jwt", "session", "apikey").
+// Scheme returns the authentication method, such as SchemeJWT.
 func (p *BasePrincipal) Scheme() string { return p.scheme }
 
-// CredentialID returns the identifier for the specific credential used.
+// CredentialID returns the identifier of the credential used, such as a
+// session's or an API key's ID.
 func (p *BasePrincipal) CredentialID() string { return p.credentialID }
 
-// Metadata returns the principal's metadata.
+// Metadata returns the principal's metadata. It is never nil.
 func (p *BasePrincipal) Metadata() gas.PrincipalMetadata { return p.metadata }
-
-// Chain is a composite authenticator that tries each authenticator in
-// order. It satisfies Authenticator.
-type Chain []Authenticator
-
-var _ Authenticator = Chain(nil)
-
-// Authenticate tries each authenticator in order. It returns the first
-// successful principal. If all fail, it returns the last error. If the
-// chain is empty, it returns ErrUnauthenticated. A member that returns a nil
-// principal with a nil error has failed with ErrUnauthenticated.
-func (c Chain) Authenticate(ctx context.Context, r *http.Request) (gas.Principal, error) {
-	if len(c) == 0 {
-		return nil, ErrUnauthenticated
-	}
-
-	var lastErr error
-	for _, a := range c {
-		principal, err := authenticate(ctx, a, r)
-		if err == nil {
-			return principal, nil
-		}
-		lastErr = err
-	}
-
-	return nil, lastErr
-}
-
-// authenticate runs a and turns a nil principal with a nil error, including
-// a typed nil such as (*BasePrincipal)(nil), into ErrUnauthenticated, so no
-// caller treats an authenticator that identified nobody as a success.
-func authenticate(ctx context.Context, a Authenticator, r *http.Request) (gas.Principal, error) {
-	principal, err := a.Authenticate(ctx, r)
-	if err != nil {
-		// Passed through unchanged, as before, so callers can match the
-		// authenticator's own sentinel errors and messages.
-		return nil, err //nolint:wrapcheck // see above
-	}
-	if isNilPrincipal(principal) {
-		return nil, ErrUnauthenticated
-	}
-	return principal, nil
-}
-
-// isNilPrincipal reports whether p is nil or an interface holding a nil
-// pointer.
-func isNilPrincipal(p gas.Principal) bool {
-	if p == nil {
-		return true
-	}
-	v := reflect.ValueOf(p)
-	return v.Kind() == reflect.Pointer && v.IsNil()
-}

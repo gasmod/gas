@@ -1,29 +1,52 @@
-// Package emailtest provides MockEmail, a mock of core's gas.EmailProvider
-// for tests. It shows that a caller is wired to send email correctly, not
-// that a backend works; the ses backend has its own tests.
+// Package emailtest holds a mock of gas.EmailProvider, [MockEmail], for
+// tests of code that sends email.
 //
-// # Role in the framework
+// # Usage
 //
-// MockEmail implements gas.EmailProvider and gas.ReadyReporter. Each method
-// records the call and delegates to its function field (SendFn,
-// SendFromTemplateFn, CheckReadyFn) when set; otherwise it returns nil.
+// The mock records each call, and returns what the function in the field
+// named after the method returns:
 //
-//	mock := &emailtest.MockEmail{}
-//	mock.SendFn = func(ctx context.Context, msg *gas.Email) error {
-//	    return nil
+//	m := &emailtest.MockEmail{
+//		SendFn: func(context.Context, *gas.Email) error { return errBounce },
 //	}
+//	err := m.Send(ctx, &gas.Email{To: []string{"alice@example.com"}})
+//	// err is errBounce, and m.CallCount("Send") is 1
 //
-// # Wiring, configuration and lifecycle
+// The mock keeps none of the email package's rules: it checks no
+// address, renders no template, and sends nothing. To test against those
+// rules without a server, use gas/email/memory, whose outbox holds what
+// SES would be sent.
 //
-// A test passes the mock wherever a gas.EmailProvider is expected, in place
-// of a real backend. The package reads no configuration, has no lifecycle
-// and starts no goroutines.
+// # Defaults
 //
-// # Invariants
+// With a field nil, its method succeeds: Send, SendFromTemplate and
+// CheckReady return nil.
 //
-// Recording and the CallCount and Reset methods are safe for concurrent
-// use. The Calls field is not guarded for readers: read it directly only
-// after the calls under test have finished, or use CallCount.
+// # Calls
 //
-// SPDX-License-Identifier: MIT
+// Each method appends a [Call] with its name and its arguments after the
+// context, before it calls its field. The arguments:
+//
+//   - Send: a copy of the *gas.Email.
+//   - SendFromTemplate: a copy of the *gas.TemplatedEmail.
+//   - Either, for a nil message: nil.
+//   - CheckReady: nothing.
+//
+// A copy shares no slice or map with the caller's message, so a caller
+// that reuses the message does not change a recorded call. The Data of a
+// TemplatedEmail is the same value, not a copy.
+//
+// To read the record:
+//
+//   - [MockEmail.Calls] returns a deep copy of the calls in the order they
+//     were made, so that changing what it returns does not change them
+//     either.
+//   - [MockEmail.CallCount] counts those of one method.
+//   - [MockEmail.Reset] forgets them all.
+//
+// # Concurrency
+//
+// The methods may be called from several goroutines at once, as the calls
+// are kept under a lock, which Calls, CallCount and Reset take too.
+// Setting a field while a method runs is a data race.
 package emailtest

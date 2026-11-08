@@ -29,15 +29,29 @@ var (
 	// itself; it can only be resolved from a Scope.
 	ErrScopeRequired = errors.New("gas: scoped service resolved outside a scope")
 
-	// ErrNoConstructor reports that the container was asked to construct a
-	// type it has no constructor for. It guards an internal invariant: every
-	// public path checks the registration first, so the public API does not
-	// return it today.
-	ErrNoConstructor = errors.New("gas: no constructor")
-
 	// ErrInvalidLifetime reports a registration whose ServiceLifetime is not
-	// Singleton, Scoped, or Transient.
+	// Singleton, Scoped, or Transient. Registering a transient Service
+	// panics with an error wrapping it, since a transient has no managed
+	// lifecycle.
 	ErrInvalidLifetime = errors.New("gas: invalid service lifetime")
+
+	// ErrInvalidConstructor reports a constructor the container cannot
+	// call. Registration panics with an error wrapping it.
+	ErrInvalidConstructor = errors.New("gas: invalid constructor")
+
+	// ErrNilInstance reports a nil value passed to RegisterServiceInstance
+	// or WithServiceInstance. Registration panics with an error wrapping
+	// it.
+	ErrNilInstance = errors.New("gas: nil instance")
+
+	// ErrInvalidAlias reports an alias RegisterServiceAlias cannot
+	// register, or a service registered under a type that is an alias.
+	// Registration panics with an error wrapping it.
+	ErrInvalidAlias = errors.New("gas: invalid alias")
+
+	// ErrScopeClosed reports a scoped service resolved from a Scope after
+	// its Close.
+	ErrScopeClosed = errors.New("gas: scope closed")
 
 	// ErrInvalidServiceShape reports a registered type that declares Init or
 	// Close but does not implement Service.

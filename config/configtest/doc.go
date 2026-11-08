@@ -1,39 +1,42 @@
-// Package configtest provides MockConfig, a mock of core's gas.ConfigProvider
-// for tests. It shows that a caller reads configuration correctly, not that a
-// configuration source works; gas/config and its providers have their own
-// tests.
+// Package configtest holds [MockConfig], a config.ConfigProvider for tests
+// of code that reads configuration.
 //
-// # Role in the framework
+// # Usage
 //
-// MockConfig has every gas.ConfigProvider method and satisfies the interface
-// structurally. Each method records the call and delegates to its function
-// field (GetFn, BindFn, FindFn, ...) when set; otherwise it returns zero
-// values.
+// A MockConfig records each call, and calls the function in the field
+// named after the method, when it is set:
 //
-//	mock := &configtest.MockConfig{}
-//	mock.GetFn = func(key string) any {
-//	    if key == "database.host" {
-//	        return "localhost"
-//	    }
-//	    return nil
+//	m := &configtest.MockConfig{
+//		GetFn: func(key string) any { return "db" },
 //	}
+//	svc := NewService(m)
+//	// m.CallCount("Get") is how many times svc called Get
 //
-// For a test that just needs working configuration with known values,
-// NewMockConfigWithValues returns a MockConfig whose function fields delegate
-// to a real *config.Config seeded with those values, so Get, Find and Bind
-// keep their normal key and binding behavior while calls are still recorded.
+// [NewMockConfigWithValues] sets every field to the methods of a real
+// config.Config holding the given values, so Get, Find, Bind and the rest
+// behave as they do in an app:
 //
-// # Wiring, configuration and lifecycle
+//	m, err := configtest.NewMockConfigWithValues(map[string]any{
+//		"database": map[string]any{"host": "db"},
+//	})
 //
-// A test registers the mock in place of the real configuration, for example
-// as the gas.ConfigProvider instance. The package reads no configuration, has
-// no lifecycle and starts no goroutines.
+// # Calls
 //
-// # Invariants
+// Each method appends a [Call] with its name and arguments to Calls, then
+// calls its field. With the field nil, it returns zero values: nil, false,
+// or a nil error. LoadProviderContext records the provider but not the
+// context.
 //
-// Recording and the CallCount and Reset methods are safe for concurrent use.
-// The Calls field is not guarded for readers: read it directly only after
-// the calls under test have finished, or use CallCount.
+// The methods may be called from several goroutines at once, as Calls is
+// appended to under a lock. [MockConfig.CallCount] and [MockConfig.Reset]
+// take the lock too, but reading Calls directly does not, so read it once
+// the calls are done. Setting a field while a method runs is a data race.
 //
-// SPDX-License-Identifier: MIT
+// # Values
+//
+// NewMockConfigWithValues sets the values with config.Config.SetDefaults,
+// so their keys are trimmed and lowercased, and two keys that become the
+// same are an error. Nil values make an empty configuration. No provider
+// loads, so the environment does not reach it. Any field may be replaced
+// afterwards, and LoadProvider loads a provider into the configuration.
 package configtest

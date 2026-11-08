@@ -7,32 +7,34 @@ import (
 	"github.com/gasmod/gas"
 )
 
-// Authenticator extracts a gas.Principal from an HTTP request. Implementations
-// may use JWTs, server-side sessions, API keys, or any other credential scheme.
-// Middleware runs an Authenticator and stores the principal it returns on the
-// request context, where handlers read it with gas.Context.Principal.
-//
-// An implementation returns a non-nil principal on success and an error,
-// such as ErrUnauthenticated, otherwise. Middleware and Chain treat a nil
-// principal with a nil error as ErrUnauthenticated, never as a success.
+// Authenticator identifies the caller of an HTTP request, following the
+// error contract in the package documentation.
 type Authenticator interface {
+	// Authenticate returns the request's principal, or nil and an error:
+	// ErrNoCredentials when the request carries no credentials for it, an
+	// error matching ErrUnauthenticated when they are not valid, and any
+	// other error when it could not decide.
 	Authenticate(ctx context.Context, r *http.Request) (gas.Principal, error)
 }
 
-// Authorizer decides whether a gas.Principal is allowed to perform an action
-// on a resource. It is a separate concern from authentication: an
-// Authenticator identifies who the caller is, while an Authorizer enforces
-// what they can do.
+// Authorizer decides whether a principal may perform an action on a
+// resource. Authentication tells who the caller is; an Authorizer decides
+// what the caller may do.
 type Authorizer interface {
+	// Authorize returns nil to allow, an error matching ErrForbidden to
+	// deny, and any other error when it could not decide.
 	Authorize(ctx context.Context, principal gas.Principal, action, resource string) error
 }
 
-// PrincipalRevoker invalidates credentials associated with a gas.Principal.
-// Use Revoke to invalidate a single credential, RevokeAll to invalidate every
-// credential for a subject, or RevokeAllByScheme to invalidate all credentials
-// of a specific scheme (e.g. all sessions, all API keys) for a subject.
+// PrincipalRevoker invalidates credentials, so that they no longer
+// authenticate.
 type PrincipalRevoker interface {
+	// Revoke invalidates the credential the principal was authenticated
+	// with.
 	Revoke(ctx context.Context, principal gas.Principal) error
+	// RevokeAll invalidates every credential of a subject.
 	RevokeAll(ctx context.Context, subject string) error
+	// RevokeAllByScheme invalidates every credential of a subject that has
+	// the given scheme, such as all its sessions.
 	RevokeAllByScheme(ctx context.Context, subject, scheme string) error
 }

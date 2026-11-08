@@ -2,59 +2,136 @@ package sqs
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"math"
+	"net/http"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	awssqs "github.com/aws/aws-sdk-go-v2/service/sqs"
-	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 
 	"github.com/gasmod/gas"
-	queue "github.com/gasmod/gas/queue"
+	"github.com/gasmod/gas/queue"
+	"github.com/gasmod/gas/queue/internal/configsrc"
 )
 
-const serviceName = "gas/queue/sqs"
+// ServiceName is the name of the SQS store, returned by Service.Name and
+// prefixed to every error the store returns.
+const ServiceName = "gas/queue/sqs"
 
-// sqsClient is the subset of the AWS SQS client API used by this service.
-// The real *sqs.Client satisfies this interface.
-type sqsClient interface {
+// The operations errors name.
+const (
+	opInit    = "init"
+	opReady   = "ready"
+	opEnqueue = "enqueue"
+	opDequeue = "dequeue"
+	opAck     = "ack"
+	opNack    = "nack"
+	opExtend  = "extend"
+	opClose   = "close"
+)
+
+var (
+	// ErrNoRegion indicates that Init found no AWS region, in the Region
+	// setting or the AWS SDK's default chain.
+	ErrNoRegion = errors.New("no region")
+	// ErrNoCredentials indicates that Init could not retrieve AWS
+	// credentials.
+	ErrNoCredentials = errors.New("no credentials")
+	// ErrNilClient indicates that WithClient was given a nil client.
+	ErrNilClient = errors.New("client is nil")
+	// ErrConnect indicates that a request got no reply from SQS: it timed
+	// out, its connection was refused, or the endpoint was unreachable, as
+	// described in the package documentation.
+	ErrConnect = errors.New("no reply")
+	// ErrCommand indicates that SQS replied to a request with an error, or
+	// that a request failed for another reason than ErrConnect's, as
+	// described in the package documentation.
+	ErrCommand = errors.New("request failed")
+	// ErrAccessDenied indicates that SQS refused the credentials, or their
+	// permission for the request. It comes with ErrCommand.
+	ErrAccessDenied = errors.New("access denied")
+	// ErrThrottled indicates that SQS throttled the request, past the
+	// retries. It comes with ErrCommand.
+	ErrThrottled = errors.New("throttled")
+)
+
+// API is the part of the SQS client the store uses. *sqs.Client
+// implements it.
+type API interface {
+	// SendMessage sends a message, for Enqueue.
 	SendMessage(
 		ctx context.Context,
 		params *awssqs.SendMessageInput,
 		optFns ...func(*awssqs.Options),
 	) (*awssqs.SendMessageOutput, error)
+	// ReceiveMessage receives messages, for Dequeue.
 	ReceiveMessage(
 		ctx context.Context,
 		params *awssqs.ReceiveMessageInput,
 		optFns ...func(*awssqs.Options),
 	) (*awssqs.ReceiveMessageOutput, error)
+	// DeleteMessage deletes a message, for Ack.
 	DeleteMessage(
 		ctx context.Context,
 		params *awssqs.DeleteMessageInput,
 		optFns ...func(*awssqs.Options),
 	) (*awssqs.DeleteMessageOutput, error)
+	// ChangeMessageVisibility changes a message's visibility timeout, for
+	// Nack, NackAfter and Extend.
 	ChangeMessageVisibility(
 		ctx context.Context,
 		params *awssqs.ChangeMessageVisibilityInput,
 		optFns ...func(*awssqs.Options),
 	) (*awssqs.ChangeMessageVisibilityOutput, error)
+	// ChangeMessageVisibilityBatch changes the visibility timeout of up to
+	// ten messages, to make visible again what a Dequeue received but
+	// does not return.
+	ChangeMessageVisibilityBatch(
+		ctx context.Context,
+		params *awssqs.ChangeMessageVisibilityBatchInput,
+		optFns ...func(*awssqs.Options),
+	) (*awssqs.ChangeMessageVisibilityBatchOutput, error)
+	// GetQueueUrl returns the URL of a queue name.
+	GetQueueUrl(
+		ctx context.Context,
+		params *awssqs.GetQueueUrlInput,
+		optFns ...func(*awssqs.Options),
+	) (*awssqs.GetQueueUrlOutput, error)
 }
 
-// Service is an SQS-backed queue implementing gas.Service and
-// gas.JobQueueProvider.
-type Service struct {
-	client sqsClient
-	cfg    *Config
-	logger gas.Logger
+var _ API = (*awssqs.Client)(nil)
 
-	cfgProvider          gas.ConfigProvider
-	customConfigProvided bool
-	customClientProvided bool
-	closed               atomic.Bool
+// Service is a queue store on Amazon SQS, as described in the package
+// documentation. It is safe for concurrent use.
+type Service struct {
+	// cfgProvider is the ConfigProvider Init binds from, unless a
+	// configuration was given to WithConfig.
+	cfgProvider gas.ConfigProvider
+	// logger receives the store's events, with `service` set.
+	logger gas.Logger
+	// client is the client given to WithClient.
+	client API
+	// st is what Init opened, or nil before Init succeeds and after
+	// Close. It is swapped whole, so a call sees one Init's state.
+	st atomic.Pointer[state]
+	// bound is the configuration the last successful Init resolved, or
+	// nil before one. Close keeps it. Config returns a copy of it.
+	bound atomic.Pointer[Config]
+	// cfgSource records the configuration given to WithConfig.
+	cfgSource configsrc.Source[Config]
+	// clientSet reports whether WithClient was given, so that a nil
+	// client is told apart from none.
+	clientSet bool
+	// closed reports whether Close has ever run after a successful Init.
+	// Close sets it before it clears st, and Init never clears it, so a
+	// call that finds st nil after a Close finds closed set, even while
+	// a restart runs.
+	closed atomic.Bool
+	// mu makes Init and Close run one at a time. Calls do not take it.
+	mu sync.Mutex
 }
 
 var (
@@ -63,317 +140,330 @@ var (
 	_ gas.ReadyReporter    = (*Service)(nil)
 )
 
-// Client returns the underlying *sqs.Client for advanced operations
-// beyond the JobQueueProvider interface (e.g. CreateQueue, PurgeQueue,
-// GetQueueAttributes). Returns nil if a custom sqsClient was injected
-// via WithClient that is not an *sqs.Client.
-func (s *Service) Client() *awssqs.Client {
-	c, _ := s.client.(*awssqs.Client)
-	return c
+// state is what one Init opened, with the settings calls use.
+type state struct {
+	// ctx ends when a Close whose context ended cancels the calls in
+	// flight; every request runs within it.
+	ctx context.Context //nolint:containedctx // the cancellation of one Init's calls.
+	// cancel ends ctx.
+	cancel context.CancelFunc
+	// client sends the requests.
+	client API
+	// transport is the HTTP transport of a client Init built, or nil.
+	transport *http.Transport
+	// urls maps the queue names resolved to their URLs.
+	urls map[string]string
+	// idle is closed once Close has begun and no call is in flight.
+	idle chan struct{}
+	// opTimeout is Settings.OpTimeout.
+	opTimeout time.Duration
+	// visibility is Settings.VisibilityTimeout, rounded up to a whole
+	// second.
+	visibility time.Duration
+	// calls counts the calls in flight, which Close waits for.
+	calls int
+	// mu guards urls, calls and closing.
+	mu sync.Mutex
+	// closing reports whether Close began.
+	closing bool
 }
 
-// Option configures a Service.
-type Option func(*Service)
-
-// WithConfig sets a custom configuration.
-func WithConfig(cfg *Config) Option {
-	return func(s *Service) {
-		s.cfg = cfg
-		s.customConfigProvided = true
-	}
-}
-
-// WithClient injects a pre-configured SQS client. Useful for testing
-// or when the caller manages AWS credentials externally.
-func WithClient(client sqsClient) Option {
-	return func(s *Service) {
-		s.client = client
-		s.customClientProvided = true
-	}
-}
-
-// New captures options and returns a DI-injectable constructor.
+// New returns the constructor of a Service with opts applied, in the shape
+// the gas container expects. The constructor returns an error wrapping
+// queue.ErrNilLogger for a nil logger; a nil ConfigProvider is accepted,
+// and Init then requires WithConfig.
 func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) (*Service, error) {
 	return func(cfgProvider gas.ConfigProvider, logger gas.Logger) (*Service, error) {
+		if logger == nil {
+			return nil, fmt.Errorf("%s: %w", ServiceName, queue.ErrNilLogger)
+		}
+
 		s := &Service{
-			cfg:         DefaultConfig(),
 			cfgProvider: cfgProvider,
-			logger:      logger.With().Str("service", serviceName).Logger(),
+			logger:      logger.With().Str("service", ServiceName).Logger(),
 		}
 		for _, opt := range opts {
 			opt(s)
 		}
+
 		return s, nil
 	}
 }
 
-// Name returns the service identifier.
-func (s *Service) Name() string { return serviceName }
+// Name returns ServiceName.
+func (*Service) Name() string { return ServiceName }
 
-// Init binds the configuration and creates the SQS client. A config bound
-// from the ConfigProvider is validated by Bind against its validate tags; one
-// passed with WithConfig is used as given. ctx bounds loading the AWS
-// configuration and fetching the credentials, so Init fails when no
-// credentials can be found.
+// Init resolves and checks the configuration, builds the client and
+// retrieves the credentials, as described in the package documentation.
+// On an initialized store it returns queue.ErrAlreadyInitialized and
+// changes nothing. A failed Init leaves the store as it was.
 func (s *Service) Init(ctx context.Context) error {
-	if !s.customConfigProvided && s.cfgProvider != nil {
-		if err := s.cfgProvider.Bind(s.cfg); err != nil {
-			return fmt.Errorf("%s: config binding: %w", s.Name(), err)
-		}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.st.Load() != nil {
+		return opError(opInit, "", queue.ErrAlreadyInitialized)
 	}
 
-	if !s.customClientProvided {
-		if err := s.createClient(ctx); err != nil {
+	err := ctx.Err()
+	if err != nil {
+		return opError(opInit, "", err)
+	}
+
+	cfg, err := s.cfgSource.Resolve(s.cfgProvider, DefaultConfig, rules)
+	if err != nil {
+		return opError(opInit, "", err)
+	}
+
+	set := &cfg.Queue
+
+	client := s.client
+	region, source := "", ""
+
+	var transport *http.Transport
+
+	switch {
+	case s.clientSet && isNil(client):
+		return opError(opInit, "", ErrNilClient)
+	case !s.clientSet:
+		var built *awssqs.Client
+
+		built, transport, source, err = s.build(ctx, set)
+		if err != nil {
 			return err
 		}
+
+		client, region = built, built.Options().Region
 	}
 
-	s.closed.Store(false)
-	s.logger.Info("sqs queue initialized").Str("region", s.cfg.Queue.Region).Send()
+	stCtx, cancel := context.WithCancel(context.Background())
+
+	s.st.Store(&state{
+		ctx:        stCtx,
+		cancel:     cancel,
+		idle:       make(chan struct{}),
+		client:     client,
+		transport:  transport,
+		urls:       make(map[string]string),
+		opTimeout:  set.OpTimeout,
+		visibility: time.Duration(queue.WholeSeconds(set.VisibilityTimeout)) * time.Second,
+	})
+	s.bound.Store(cfg)
+
+	s.logInitialized(set, region, source)
+
 	return nil
 }
 
-// createClient loads the AWS configuration under ctx and builds the SQS client.
-func (s *Service) createClient(ctx context.Context) error {
-	opts := []func(*awsconfig.LoadOptions) error{
-		awsconfig.WithRegion(s.cfg.Queue.Region),
+// Close makes every later call but Init return an error wrapping
+// queue.ErrClosed, and waits for every call in flight to return, as
+// described in the package documentation: a Dequeue in flight finishes
+// its receive, makes what it received visible again, and returns
+// queue.ErrClosed. When ctx ends first, Close cancels the requests in
+// flight, whose calls return queue.ErrClosed, and returns an error
+// wrapping ctx's error; the store stays closed. Close then closes the idle
+// connections of a client Init built. A Close that runs at the same time
+// waits for it too. Close on a store that is not initialized returns nil
+// and logs nothing.
+func (s *Service) Close(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	st := s.st.Load()
+	if st == nil {
+		return nil
 	}
 
-	if s.cfg.Queue.AccessKeyID != "" && s.cfg.Queue.SecretAccessKey != "" {
-		opts = append(opts, awsconfig.WithCredentialsProvider(
-			credentials.NewStaticCredentialsProvider(
-				s.cfg.Queue.AccessKeyID,
-				s.cfg.Queue.SecretAccessKey,
-				"",
-			),
-		))
+	st.mu.Lock()
+
+	st.closing = true
+	if st.calls == 0 {
+		close(st.idle)
 	}
 
-	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
-	if err != nil {
-		return fmt.Errorf("%s: load aws config: %w", s.Name(), err)
-	}
+	st.mu.Unlock()
 
-	// Loading the config does not fetch credentials; the SDK fetches them on
-	// the first request. Fetch them now, under Init's ctx and deadline, so a
-	// missing or broken credential setup fails startup. The result is cached
-	// by the config's credential cache, which still refreshes them on expiry.
-	if _, err := awsCfg.Credentials.Retrieve(ctx); err != nil {
-		return fmt.Errorf("%s: retrieve aws credentials: %w", s.Name(), err)
-	}
-
-	var sqsOpts []func(*awssqs.Options)
-	if s.cfg.Queue.Endpoint != "" {
-		sqsOpts = append(sqsOpts, func(o *awssqs.Options) {
-			o.BaseEndpoint = new(s.cfg.Queue.Endpoint)
-		})
-	}
-
-	s.client = awssqs.NewFromConfig(awsCfg, sqsOpts...)
-	return nil
-}
-
-// CheckReady reports whether the service is ready to accept traffic.
-// Returns an error before Init has run or after Close has been called.
-func (s *Service) CheckReady(context.Context) error {
-	if s.client == nil {
-		return fmt.Errorf("%s: not initialized", s.Name())
-	}
-	if s.closed.Load() {
-		return queue.ErrClosed
-	}
-	return nil
-}
-
-// Close marks the service as closed.
-func (s *Service) Close(context.Context) error {
 	s.closed.Store(true)
-	s.logger.Info("sqs queue closed").Send()
+	s.st.Store(nil)
+
+	var err error
+
+	select {
+	case <-st.idle:
+	case <-ctx.Done():
+		select {
+		case <-st.idle:
+		default:
+			err = opError(opClose, "", ctx.Err())
+		}
+	}
+
+	// Cancels the requests still in flight when ctx ended, and else frees
+	// the context.
+	st.cancel()
+
+	if st.transport != nil {
+		st.transport.CloseIdleConnections()
+	}
+
+	if err != nil {
+		s.logger.Warn("service closed, calls in flight canceled").Err("error", err).Send()
+
+		return err
+	}
+
+	s.logger.Info("service closed").Send()
+
 	return nil
 }
 
-// Enqueue sends a message to the specified SQS queue.
-func (s *Service) Enqueue(
+// Config returns a copy of the configuration the last successful Init
+// resolved, defaults included, or the zero Config before one. A failed
+// Init and Close leave it as it was. Config holds no slice, map or
+// pointer, so the copy shares nothing with the store, and SecretAccessKey and SessionToken stay Secrets.
+func (s *Service) Config() Config {
+	cfg := s.bound.Load()
+	if cfg == nil {
+		return Config{}
+	}
+
+	return *cfg
+}
+
+// CheckReady reports readiness without I/O: an error wrapping
+// queue.ErrNotInitialized or queue.ErrClosed when the store is not
+// initialized, the context's error when ctx has ended, and else nil.
+func (s *Service) CheckReady(ctx context.Context) error {
+	st, err := s.begin(ctx, opReady, "")
+	if err != nil {
+		return err
+	}
+
+	st.end()
+
+	return nil
+}
+
+// Client returns the *sqs.Client the store sends its requests with, or
+// nil when the store is not initialized or was given another API with
+// WithClient, as described in the package documentation.
+func (s *Service) Client() *awssqs.Client {
+	st := s.st.Load()
+	if st == nil {
+		return nil
+	}
+
+	c, _ := st.client.(*awssqs.Client)
+
+	return c
+}
+
+// logInitialized logs `service initialized`, as described in the package
+// documentation, with the credential source unless a client was given.
+func (s *Service) logInitialized(set *Settings, region, source string) {
+	event := s.logger.Info("service initialized").
+		Str("region", region).
+		Bool("endpoint", set.Endpoint != "").
+		Bool("client", s.clientSet)
+	if !s.clientSet {
+		event = event.Str("credentials", source)
+	}
+
+	event.Duration("op_timeout", set.OpTimeout).Send()
+}
+
+// build returns the client buildClient builds of set, its transport,
+// and where it takes its credentials from, as credentialSource tells,
+// after it logs a warning naming the keys missing from a partial set of
+// static credentials.
+func (s *Service) build(
 	ctx context.Context,
-	queueURL string,
-	payload []byte,
-	opts ...gas.EnqueueOption,
-) error {
-	if s.closed.Load() {
-		return queue.ErrClosed
+	set *Settings,
+) (*awssqs.Client, *http.Transport, string, error) {
+	source, missing := credentialSource(set)
+	if len(missing) > 0 {
+		s.logger.Warn("static credentials incomplete, using the default chain").
+			Str("missing", strings.Join(missing, ", ")).
+			Send()
 	}
 
-	delay, groupID, dedupeID, attrs := gas.ApplyEnqueueOptions(opts)
-
-	input := &awssqs.SendMessageInput{
-		QueueUrl:    &queueURL,
-		MessageBody: new(string(payload)),
+	client, transport, err := buildClient(ctx, set)
+	if err != nil {
+		return nil, nil, "", err
 	}
 
-	if delay > 0 {
-		input.DelaySeconds = int32(delay.Seconds())
-	}
-	if groupID != "" {
-		input.MessageGroupId = &groupID
-	}
-	if dedupeID != "" {
-		input.MessageDeduplicationId = &dedupeID
-	}
-	if len(attrs) > 0 {
-		input.MessageAttributes = make(map[string]types.MessageAttributeValue, len(attrs))
-		for k, v := range attrs {
-			input.MessageAttributes[k] = types.MessageAttributeValue{
-				DataType:    new("String"),
-				StringValue: new(v),
-			}
-		}
-	}
-
-	if _, err := s.client.SendMessage(ctx, input); err != nil {
-		return fmt.Errorf("%s: enqueue: %w", s.Name(), err)
-	}
-	return nil
+	return client, transport, source, nil
 }
 
-// Dequeue receives messages from the specified SQS queue.
-func (s *Service) Dequeue(
-	ctx context.Context,
-	queueURL string,
-	maxMessages int,
-	wait time.Duration,
-) ([]gas.Job, error) {
-	if s.closed.Load() {
-		return nil, queue.ErrClosed
+// begin returns the state of an initialized store whose ctx has not
+// ended, counted as a call in flight until the caller calls st.end, or
+// the error of op on the queue name:
+// queue.ErrNotInitialized, queue.ErrClosed or the context's.
+func (s *Service) begin(ctx context.Context, op, name string) (*state, error) {
+	st := s.st.Load()
+
+	switch {
+	case st == nil && s.closed.Load():
+		return nil, opError(op, name, queue.ErrClosed)
+	case st == nil:
+		return nil, opError(op, name, queue.ErrNotInitialized)
 	}
 
-	maxNumMessages, waitSeconds, visibilityTimeout, err := s.receiveMessageParams(maxMessages, wait)
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	if st.closing {
+		return nil, opError(op, name, queue.ErrClosed)
+	}
+
+	err := ctx.Err()
 	if err != nil {
-		return nil, err
+		return nil, opError(op, name, err)
 	}
 
-	input := &awssqs.ReceiveMessageInput{
-		QueueUrl:              &queueURL,
-		MaxNumberOfMessages:   maxNumMessages,
-		WaitTimeSeconds:       waitSeconds,
-		VisibilityTimeout:     visibilityTimeout,
-		MessageAttributeNames: []string{"All"},
-		MessageSystemAttributeNames: []types.MessageSystemAttributeName{
-			types.MessageSystemAttributeNameAll,
-		},
-	}
+	st.calls++
 
-	out, err := s.client.ReceiveMessage(ctx, input)
-	if err != nil {
-		return nil, fmt.Errorf("%s: dequeue: %w", s.Name(), err)
-	}
-
-	jobs := make([]gas.Job, 0, len(out.Messages))
-	for _, msg := range out.Messages {
-		job := gas.Job{
-			ID:            aws.ToString(msg.MessageId),
-			ReceiptHandle: aws.ToString(msg.ReceiptHandle),
-			Body:          []byte(aws.ToString(msg.Body)),
-		}
-
-		// Merge system attributes and message attributes.
-		if len(msg.Attributes) > 0 || len(msg.MessageAttributes) > 0 {
-			job.Attributes = make(map[string]string, len(msg.Attributes)+len(msg.MessageAttributes))
-			for k, v := range msg.Attributes {
-				job.Attributes[k] = v
-			}
-			for k, v := range msg.MessageAttributes {
-				if v.StringValue != nil {
-					job.Attributes[k] = *v.StringValue
-				}
-			}
-		}
-
-		jobs = append(jobs, job)
-	}
-
-	return jobs, nil
+	return st, nil
 }
 
-func (s *Service) receiveMessageParams(
-	maxMessages int,
-	wait time.Duration,
-) (maxNumMessages, waitSeconds, visibilityTimeout int32, err error) {
-	// Clamp maxMessages to SQS limits (1-10).
-	if maxMessages < 1 {
-		maxMessages = 1
-	}
-	if maxMessages > 10 {
-		s.logger.Warn("maxMessages clamped to 10 (SQS limit)").Int("requested", maxMessages).Send()
-		maxMessages = 10
-	}
+// end counts a call begin returned as no longer in flight.
+func (st *state) end() {
+	st.mu.Lock()
+	defer st.mu.Unlock()
 
-	waitSeconds, err = safeInt32(wait.Seconds())
-	if err != nil {
-		err = fmt.Errorf("invalid wait duration: %w", err)
-		return
+	st.calls--
+	if st.closing && st.calls == 0 {
+		close(st.idle)
 	}
-
-	if waitSeconds == 0 {
-		waitSeconds, err = safeInt32(s.cfg.Queue.WaitTimeSeconds)
-		if err != nil {
-			err = fmt.Errorf("invalid wait time: %w", err)
-			return
-		}
-	}
-
-	maxNumMessages, err = safeInt32(maxMessages)
-	if err != nil {
-		err = fmt.Errorf("invalid maxMessages: %w", err)
-		return
-	}
-
-	visibilityTimeout, err = safeInt32(s.cfg.Queue.VisibilityTimeout.Seconds())
-	if err != nil {
-		err = fmt.Errorf("invalid visibility timeout: %w", err)
-		return
-	}
-
-	return
 }
 
-// Ack acknowledges a job by deleting it from the queue.
-func (s *Service) Ack(ctx context.Context, queueURL string, job gas.Job) error {
-	if s.closed.Load() {
-		return queue.ErrClosed
-	}
+// isNil reports whether client is nil, or a nil *sqs.Client.
+func isNil(client API) bool {
+	c, ok := client.(*awssqs.Client)
 
-	_, err := s.client.DeleteMessage(ctx, &awssqs.DeleteMessageInput{
-		QueueUrl:      &queueURL,
-		ReceiptHandle: &job.ReceiptHandle,
-	})
-	if err != nil {
-		return fmt.Errorf("%s: ack: %w", s.Name(), err)
-	}
-	return nil
+	return client == nil || ok && c == nil
 }
 
-// Nack makes a job immediately available for reprocessing by setting
-// its visibility timeout to zero.
-func (s *Service) Nack(ctx context.Context, queueURL string, job gas.Job) error {
-	if s.closed.Load() {
-		return queue.ErrClosed
-	}
+// isClosing reports whether Close began.
+func (st *state) isClosing() bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
 
-	_, err := s.client.ChangeMessageVisibility(ctx, &awssqs.ChangeMessageVisibilityInput{
-		QueueUrl:          &queueURL,
-		ReceiptHandle:     &job.ReceiptHandle,
-		VisibilityTimeout: 0,
-	})
-	if err != nil {
-		return fmt.Errorf("%s: nack: %w", s.Name(), err)
-	}
-	return nil
+	return st.closing
 }
 
-// safeInt32 converts an int/float to int32, returning an error if the value overflows the range of int32.
-func safeInt32[T int | int32 | int64 | float32 | float64](n T) (int32, error) {
-	if n > math.MaxInt32 || n < math.MinInt32 {
-		return 0, fmt.Errorf("safeInt32: value %v overflows int32", n)
+// opError returns err as the failure of op on the queue name, after
+// ServiceName; an empty name is left out.
+func opError(op, name string, err error) error {
+	return fmt.Errorf("%s: %w", opPrefix(op, name), err)
+}
+
+// opPrefix returns the start of the errors of op on the queue name:
+// ServiceName, the operation, and the name quoted, unless it is empty.
+func opPrefix(op, name string) string {
+	if name == "" {
+		return ServiceName + ": " + op
 	}
-	return int32(n), nil
+
+	return fmt.Sprintf("%s: %s %q", ServiceName, op, name)
 }

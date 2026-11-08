@@ -5,8 +5,8 @@ import starlightLinksValidator from 'starlight-links-validator';
 import starlightLlmsTxt from 'starlight-llms-txt';
 
 // Deployed to GitHub Pages as a project page, so the site lives under /gas.
-// Starlight prefixes internal links with `base` automatically; hero action
-// links in index.mdx are the documented exception and carry it explicitly.
+// Starlight prefixes sidebar entries with `base`; links written in pages,
+// including the generated reference pages, carry /gas explicitly.
 export default defineConfig({
 	site: 'https://gasmod.github.io',
 	base: '/gas',
@@ -41,70 +41,51 @@ export default defineConfig({
 					customSelectors: { all: ['.sl-anchor-link'] },
 				}),
 			],
+			// Code is dark in both themes, framed as on the home page.
+			expressiveCode: {
+				themes: ['github-dark-default'],
+				useStarlightUiThemeColors: false,
+				styleOverrides: {
+					borderRadius: '0.5rem',
+					borderWidth: '0px',
+					codeBackground: '#0d1117',
+					codeFontSize: '0.875rem',
+					codeLineHeight: '1.6',
+					codePaddingBlock: '1rem',
+					codePaddingInline: '1.25rem',
+					frames: {
+						shadowColor: 'transparent',
+						editorBackground: '#0d1117',
+						editorTabBarBackground: '#030712',
+						editorActiveTabBackground: '#030712',
+						editorActiveTabIndicatorTopColor: 'transparent',
+						editorActiveTabIndicatorBottomColor: 'transparent',
+						editorTabBarBorderBottomColor: 'transparent',
+						editorActiveTabForeground: '#9ca3af',
+						terminalBackground: '#0d1117',
+						terminalTitlebarBackground: '#030712',
+						terminalTitlebarBorderBottomColor: 'transparent',
+						terminalTitlebarForeground: '#9ca3af',
+						inlineButtonForeground: '#9ca3af',
+					},
+				},
+			},
+			// Start and Core stay open; a module's group opens when one of its
+			// pages is open, so the sidebar fits the screen.
 			sidebar: [
-				{
-					label: 'Getting started',
-					items: [
-						{ label: 'Introduction', slug: 'start/introduction' },
-						{ label: 'Installation', slug: 'start/installation' },
-						{ label: 'Tutorial: build a notes API', slug: 'start/tutorial' },
-						{ label: 'Project structure', slug: 'start/project-structure' },
-					],
-				},
-				{
-					label: 'Core',
-					items: [
-						{ label: 'App lifecycle', slug: 'core/lifecycle' },
-						{ label: 'Services and DI', slug: 'core/services' },
-						{ label: 'Routing', slug: 'core/routing' },
-						{ label: 'Handlers and Context', slug: 'core/handlers' },
-						{ label: 'Middleware', slug: 'core/middleware' },
-						{ label: 'Request scopes', slug: 'core/request-scopes' },
-						{ label: 'Errors', slug: 'core/errors' },
-						{ label: 'Events', slug: 'core/events' },
-						{ label: 'Ownership and teardown', slug: 'core/ownership' },
-						{ label: 'Workers', slug: 'core/workers' },
-					],
-				},
-				{
-					label: 'Modules',
-					items: [
-						{ label: 'Overview', slug: 'modules/overview' },
-						{ label: 'Config', slug: 'modules/config' },
-						{ label: 'Logging', slug: 'modules/logging' },
-						{ label: 'Database', slug: 'modules/database' },
-						{ label: 'Migrations', slug: 'modules/migrations' },
-						{ label: 'Cache', slug: 'modules/cache' },
-						{ label: 'Auth', slug: 'modules/auth' },
-						{ label: 'Templates', slug: 'modules/templates' },
-						{ label: 'UI', slug: 'modules/ui' },
-						{ label: 'Storage', slug: 'modules/storage' },
-						{ label: 'Email', slug: 'modules/email' },
-						{ label: 'Queue', slug: 'modules/queue' },
-					],
-				},
-				{
-					label: 'Production',
-					collapsed: true,
-					items: [
-						{ label: 'Testing', slug: 'production/testing' },
-						{ label: 'Deployment', slug: 'production/deployment' },
-					],
-				},
-				{
-					label: 'Project',
-					collapsed: true,
-					items: [
-						{ label: 'FAQ', slug: 'project/faq' },
-						{ label: 'Known issues', slug: 'project/known-issues' },
-						{ label: 'Examples', slug: 'project/examples' },
-						{ label: 'Contributing', slug: 'project/contributing' },
-						{
-							label: 'Changelog',
-							link: 'https://github.com/gasmod/gas/blob/main/CHANGELOG.md',
-						},
-					],
-				},
+				{ label: 'Start', items: [{ label: 'Introduction', slug: 'index' }, { label: 'Installation', slug: 'start/installation' }] },
+				{ label: 'Core', items: [{ label: 'gas', slug: 'reference/gas' }] },
+				{ label: 'config', collapsed: true, items: [{ autogenerate: { directory: 'reference/config' } }] },
+				{ label: 'log', collapsed: true, items: [{ autogenerate: { directory: 'reference/log' } }] },
+				{ label: 'database', collapsed: true, items: [{ label: 'Overview', slug: 'reference/database' }] },
+				{ label: 'migrate', collapsed: true, items: [{ autogenerate: { directory: 'reference/migrate' } }] },
+				{ label: 'auth', collapsed: true, items: [{ autogenerate: { directory: 'reference/auth' } }] },
+				{ label: 'cache', collapsed: true, items: [{ autogenerate: { directory: 'reference/cache' } }] },
+				{ label: 'storage', collapsed: true, items: [{ autogenerate: { directory: 'reference/storage' } }] },
+				{ label: 'queue', collapsed: true, items: [{ autogenerate: { directory: 'reference/queue' } }] },
+				{ label: 'email', collapsed: true, items: [{ autogenerate: { directory: 'reference/email' } }] },
+				{ label: 'template', collapsed: true, items: [{ autogenerate: { directory: 'reference/template' } }] },
+				{ label: 'ui', collapsed: true, items: [{ autogenerate: { directory: 'reference/ui' } }] },
 			],
 		}),
 	],

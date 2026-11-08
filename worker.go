@@ -10,49 +10,81 @@ import (
 	"reflect"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
 
-// Worker manages service lifecycle, dependency injection, and the event bus
-// without an HTTP server. Use it for non-HTTP environments such as AWS Lambda,
-// background job processors, or CLI tools. For HTTP servers, use App which
-// embeds Worker and adds routing, CSRF protection, and an HTTP listener.
+// Lifecycle errors of a Worker or App, as described under Starting and
+// Shutting down in the package documentation.
+var (
+	// ErrAlreadyStarted indicates that Start was called on a Worker that
+	// has started or is starting, or ReadyFunc once Start has run the
+	// ready hooks.
+	ErrAlreadyStarted = errors.New("gas: already started")
+
+	// ErrNotStarted indicates a call that needs a started Worker, such as
+	// CloseService, RestartService or App.Serve, before Start succeeded.
+	ErrNotStarted = errors.New("gas: not started")
+
+	// ErrShutDown indicates a call made once Shutdown has begun: Start,
+	// CloseService, RestartService or App.Serve.
+	ErrShutDown = errors.New("gas: shut down")
+
+	// ErrInvalidOption indicates an option given a value it cannot take.
+	// Start returns it before it initializes anything. NewWorker panics
+	// with it when it is given an AppOption.
+	ErrInvalidOption = errors.New("gas: invalid option")
+)
+
+// DefaultServiceInitTimeout is the deadline a service's Init gets unless
+// WithServiceInitTimeout, WithServiceContainerServiceTimeout or the
+// service's own ServiceInitTimeout sets another.
+const DefaultServiceInitTimeout = 15 * time.Second
+
+// lifecycle is where a Worker is in its one run.
+type lifecycle uint8
+
+const (
+	// lifeIdle is a Worker that Start has not been called on.
+	lifeIdle lifecycle = iota
+	// lifeStarting is a Worker whose Start is running.
+	lifeStarting
+	// lifeStarted is a Worker whose Start succeeded.
+	lifeStarted
+	// lifeFailed is a Worker whose Start failed.
+	lifeFailed
+	// lifeShutDown is a Worker whose Shutdown has begun.
+	lifeShutDown
+)
+
+// Worker runs services without an HTTP server, as described in the
+// package documentation. Use it for non-HTTP environments such as AWS
+// Lambda, background job processors or CLI tools; App embeds one and adds
+// routing and an HTTP server. A Worker runs once: Start, then Shutdown. It
+// is safe for concurrent use.
 type Worker struct {
 	logger           Logger
+	startErr         error
+	optErr           error
 	serviceContainer *ServiceContainer
 	eventBus         *EventBus
-
-	// initErr is the result of the one run of InitServices, and startErr the
-	// error of a failed Start, which every later Start returns; startErr is
-	// guarded by mu.
-	initErr  error
-	startErr error
-
-	// postBuildHook is called by InitServices after BuildAll and service
-	// collection but before emitting SystemAllServicesInitialized. App sets
-	// this to seal the router and validate DI handler dependencies.
-	postBuildHook func() error
-
-	// onServiceClose is called by CloseService before removing event
-	// subscriptions and closing the service. App sets this to call
-	// router.RemoveByService.
-	onServiceClose func(s Service)
-
-	activeServices map[string]Service // runtime kill-switch tracking
-	serviceOrder   []Service          // init order for reverse-close at shutdown
-
-	readyFuncs []func(*ServiceContainer) error
-	readyRan   bool // set once Start reaches the ready hooks; guarded by mu
-
-	// shutDown is set when Shutdown begins, after which CloseService and
-	// RestartService refuse to run; guarded by mu.
-	shutDown bool
-
-	mu           sync.Mutex
-	initOnce     sync.Once
-	shutdownOnce sync.Once
-	loggerOnce   sync.Once // guards the one-time resolution of logger
+	afterBuild       func(ctx context.Context) error
+	onServiceClose   func(s Service)
+	// onServiceRestarted runs once a restart's Init succeeds.
+	onServiceRestarted func(s Service)
+	startDone          chan struct{}
+	shutdownDone       chan struct{}
+	services           []*trackedService
+	readyFuncs         []func(*ServiceContainer) error
+	ops                sync.WaitGroup
+	shutdownTimeout    time.Duration
+	mu                 sync.Mutex
+	loggerMu           sync.Mutex
+	opsN               atomic.Int32
+	state              lifecycle
+	readyRan           bool
+	shutdownGaveUp     bool
 }
 
 var (
@@ -60,17 +92,21 @@ var (
 	_ ReadyProvider  = (*Worker)(nil)
 )
 
-// NewWorker creates a Worker with the given options. Only WorkerOption values
-// are applied; passing an AppOption panics.
+// NewWorker returns a Worker with opts applied. Only WorkerOption values
+// apply; an AppOption panics with an error wrapping ErrInvalidOption.
 func NewWorker(opts ...Option) *Worker {
 	w := &Worker{
 		serviceContainer: NewServiceContainer(),
 		eventBus:         NewEventBus(),
-		activeServices:   make(map[string]Service),
+		startDone:        make(chan struct{}),
+		shutdownDone:     make(chan struct{}),
+		shutdownTimeout:  DefaultShutdownTimeout,
 	}
 
 	// Recovered subscriber panics are logged through the Worker's logger.
 	w.eventBus.logger = w.getLogger
+	w.serviceContainer.gate = w.checkActive
+	w.serviceContainer.fallbackLogger = w.getLogger
 	w.serviceContainer.RegisterServiceInstance[*EventBus](w.eventBus)
 	w.serviceContainer.RegisterServiceInstance[HealthProvider](w)
 	w.serviceContainer.RegisterServiceInstance[ReadyProvider](w)
@@ -80,7 +116,7 @@ func NewWorker(opts ...Option) *Worker {
 		case WorkerOption:
 			o(w)
 		case AppOption:
-			panic("gas: AppOption passed to NewWorker — use NewApp for HTTP options")
+			panic(fmt.Errorf("%w: an AppOption needs NewApp", ErrInvalidOption))
 		}
 	}
 
@@ -93,383 +129,773 @@ func (w *Worker) EventBus() *EventBus { return w.eventBus }
 // ServiceContainer returns the Worker's dependency injection container.
 func (w *Worker) ServiceContainer() *ServiceContainer { return w.serviceContainer }
 
-// MigrationManager resolves the MigrationManager from the DI container.
-// Returns nil if no MigrationManager is registered.
+// MigrationManager returns the MigrationManager registered in the
+// container, building it if it is not built yet, or nil when none is
+// registered or it cannot be built; Start reports a build failure.
 func (w *Worker) MigrationManager() MigrationManager {
-	mgr, err := w.serviceContainer.Resolve[MigrationManager]()
-	if err != nil {
-		return nil
-	}
-	return mgr
+	return resolveOptional[MigrationManager](context.Background(), w.serviceContainer)
 }
 
-// ConfigProvider resolves the ConfigProvider from the DI container.
-// Returns nil if no ConfigProvider is registered.
+// ConfigProvider returns the ConfigProvider registered in the container,
+// building it if it is not built yet, or nil when none is registered or
+// it cannot be built; Start reports a build failure.
 func (w *Worker) ConfigProvider() ConfigProvider {
-	cfg, err := w.serviceContainer.Resolve[ConfigProvider]()
+	return resolveOptional[ConfigProvider](context.Background(), w.serviceContainer)
+}
+
+// resolveOptional resolves T from c with ctx, or returns the zero T when
+// nothing is registered for T. A T that is registered but fails to build
+// is also the zero T: the build error belongs to Start, which reports it.
+func resolveOptional[T any](ctx context.Context, c *ServiceContainer) T {
+	if !c.CanResolve[T]() {
+		var zero T
+
+		return zero
+	}
+
+	v, err := resolveFrom[T](ctx, c)
 	if err != nil {
-		return nil
+		var zero T
+
+		return zero
 	}
-	return cfg
+
+	return v
 }
 
-// InitServices builds all singletons via the DI container (which calls
-// Init(ctx) on each Service automatically), then collects Service instances
-// for runtime management. Collection follows the container's instance order,
-// so serviceOrder is a genuine initialization order and Shutdown can reverse
-// it safely. ctx is passed to the Init of every singleton, each under its
-// init deadline (see WithServiceInitTimeout).
+// Start initializes every service, runs pending migrations and runs the
+// ready hooks, as described under Starting in the package documentation.
+// It does not block; call Shutdown when done. ctx is passed to the Init of
+// every service built during startup and to the migrations; canceling it
+// aborts startup.
 //
-// InitServices runs once. If it fails, it closes, in reverse order, every
-// service it had initialized, with ctx stripped of its cancellation, and
-// returns the error joined with any Close errors; later calls return that
-// same error.
-func (w *Worker) InitServices(ctx context.Context) error {
-	w.initOnce.Do(func() { w.initErr = w.initServices(ctx) })
-	return w.initErr
-}
-
-// initServices is the one run of InitServices.
-func (w *Worker) initServices(ctx context.Context) error {
-	if err := w.serviceContainer.BuildAll(ctx); err != nil {
-		// Nothing is tracked yet, so close what the container had
-		// initialized before the failure.
-		built := w.serviceContainer.initializedServices()
-		slices.Reverse(built)
-		//nolint:contextcheck // cleanup must run even when ctx is what failed
-		return errors.Join(err, w.closeServices(context.WithoutCancel(ctx), built))
-	}
-
-	// Collect all singleton Service instances for tracking.
-	w.serviceContainer.EachInstance(func(v reflect.Value) {
-		if svc, ok := v.Interface().(Service); ok {
-			w.mu.Lock()
-			// An instance registered under several types (the Worker is both
-			// HealthProvider and ReadyProvider) is tracked once, so shutdown
-			// does not close it twice.
-			if _, tracked := w.activeServices[svc.Name()]; tracked {
-				w.mu.Unlock()
-				return
-			}
-			w.activeServices[svc.Name()] = svc
-			w.serviceOrder = append(w.serviceOrder, svc)
-			w.mu.Unlock()
-		}
-	})
-
-	// App injects router seal + handler validation via this hook.
-	if w.postBuildHook != nil {
-		if err := w.postBuildHook(); err != nil {
-			//nolint:contextcheck // cleanup must run even when ctx is what failed
-			return errors.Join(err, w.closeActive(context.WithoutCancel(ctx)))
-		}
-	}
-
-	w.eventBus.Emit[SystemAllServicesInitialized](SystemAllServicesInitializedPayload{}).Wait()
-	return nil
-}
-
-// Start initializes all services, runs pending migrations, and executes
-// ready hooks. It does NOT block — use it when you need explicit lifecycle
-// control (e.g. AWS Lambda). Call Shutdown when done. ctx is passed to the
-// Init of every service built during startup; canceling it aborts startup.
-//
-// A Start that fails leaves nothing running: it closes, in reverse order,
-// every service it had initialized, with ctx stripped of its cancellation,
-// and returns the startup error joined with any Close errors. The Worker
-// cannot be started again: every later Start returns the same error, and a
-// later Shutdown has nothing to close.
+// A Worker starts once. A second Start returns ErrAlreadyStarted, a Start
+// once Shutdown has begun returns ErrShutDown, and a Start after a failed
+// one returns that failure again. A Start that fails leaves nothing
+// running: it closes, newest first, every service it had initialized,
+// with ctx stripped of its cancellation, and returns the error joined with
+// any Close errors.
 func (w *Worker) Start(ctx context.Context) error {
 	w.mu.Lock()
-	failed := w.startErr
-	w.mu.Unlock()
-	if failed != nil {
-		return failed
+
+	switch w.state {
+	case lifeStarting, lifeStarted:
+		w.mu.Unlock()
+
+		return ErrAlreadyStarted
+	case lifeFailed:
+		err := w.startErr
+		w.mu.Unlock()
+
+		return err
+	case lifeShutDown:
+		w.mu.Unlock()
+
+		return ErrShutDown
+	case lifeIdle:
 	}
 
-	err := w.start(ctx)
-	if err != nil {
-		w.failStart(err)
+	w.state = lifeStarting
+
+	optErr := w.optErr
+	w.mu.Unlock()
+
+	defer func() {
+		rec := recover()
+		if rec == nil {
+			return
+		}
+
+		// A panic in an Init or a constructor fails Start like an error,
+		// and is panicked again once nothing is left running.
+
+		w.finishStart(
+			context.WithoutCancel(ctx),
+			w.cleanupAfterPanic(context.WithoutCancel(ctx), rec),
+		)
+
+		panic(rec)
+	}()
+
+	err := optErr
+	if err == nil {
+		err = w.start(ctx)
 	}
+
+	w.finishStart(context.WithoutCancel(ctx), err)
+
 	return err
 }
 
-// failStart records err as the result of a failed Start, which every later
-// Start returns.
-func (w *Worker) failStart(err error) {
-	w.mu.Lock()
-	w.startErr = err
-	w.mu.Unlock()
-}
-
-// start is one attempt of Start.
-func (w *Worker) start(ctx context.Context) error {
-	if err := w.InitServices(ctx); err != nil {
+// Shutdown emits SystemShuttingDown, waits for its subscribers, and closes
+// every active service newest first, passing ctx to each Close, as
+// described under Shutting down in the package documentation. The Logger,
+// when it is a service, is flushed and closed last, after the final log
+// line. A failing Close does not stop the rest; every Close error is
+// returned, joined.
+//
+// Shutdown runs once. It waits for a Start or a CloseService or
+// RestartService in progress to return first. A later call waits for the
+// first to finish and returns nil. A Shutdown before Start closes nothing
+// and makes Start return ErrShutDown.
+func (w *Worker) Shutdown(ctx context.Context) error {
+	proceed, err := w.beginShutdown(ctx)
+	if !proceed {
 		return err
 	}
 
-	// Run pending migrations. Every singleton is built by now, so resolving
-	// the manager runs no Init and needs no ctx.
-	//nolint:contextcheck // see above
-	if migrationMgr := w.MigrationManager(); migrationMgr != nil {
-		w.getLogger().Info("applying pending migrations").Send()
-		if mErr := migrationMgr.RunPending(); mErr != nil {
-			//nolint:contextcheck // cleanup must run even when ctx is what failed
-			return errors.Join(
-				fmt.Errorf("gas: migrations: %w", mErr),
-				w.closeActive(context.WithoutCancel(ctx)),
-			)
+	defer close(w.shutdownDone)
+
+	var errs []error
+
+	if w.opsN.Load() > 0 {
+		err = waitFor(ctx, w.ops.Wait)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("gas: shutdown: wait for the kill switch: %w", err))
 		}
 	}
 
-	// Run ready hooks. Snapshot under the lock so a concurrent ReadyFunc
-	// either lands before this point or panics; it is never silently dropped.
 	w.mu.Lock()
-	w.readyRan = true
-	readyFuncs := slices.Clone(w.readyFuncs)
+
+	failed := w.startErr != nil
 	w.mu.Unlock()
 
-	for _, fn := range readyFuncs {
-		if fnErr := fn(w.serviceContainer); fnErr != nil {
-			//nolint:contextcheck // getLogger resolves the logger, which needs no caller ctx
-			w.getLogger().Error("ready hook failed").Err("error", fnErr).Send()
-			//nolint:contextcheck // cleanup must run even when ctx is what failed
-			return errors.Join(
-				fmt.Errorf("gas: ready hook: %w", fnErr),
-				w.closeActive(context.WithoutCancel(ctx)),
-			)
+	if failed {
+		// The Start that was running failed and closed what it had.
+		return errors.Join(errs...)
+	}
+
+	err = emitAndWait[SystemShuttingDown](ctx, w.eventBus, SystemShuttingDownPayload{})
+	if err != nil {
+		errs = append(
+			errs,
+			fmt.Errorf("gas: shutdown: wait for SystemShuttingDown subscribers: %w", err),
+		)
+	}
+
+	return errors.Join(append(errs, w.closeAll(ctx))...)
+}
+
+// emitAndWait emits data as E on bus and waits for its subscribers, or
+// for ctx to end, when it returns ctx's error.
+func emitAndWait[E event[D], D any](ctx context.Context, bus *EventBus, data D) error {
+	wg, subscribers := bus.emit[E](data)
+	if subscribers == 0 {
+		return nil
+	}
+
+	return waitFor(ctx, wg.Wait)
+}
+
+// waitFor runs wait and returns once it returns, or with ctx's error when
+// ctx ends first.
+func waitFor(ctx context.Context, wait func()) error {
+	done := make(chan struct{})
+
+	go func() {
+		wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		// A wait that ended as ctx did counts as done.
+		select {
+		case <-done:
+			return nil
+		default:
+			//nolint:wrapcheck // the caller wraps it with what it waited for
+			return ctx.Err()
 		}
+	}
+}
+
+// closeService closes svc and names it in the error.
+func closeService(ctx context.Context, svc Service) error {
+	err := svc.Close(ctx)
+	if err != nil {
+		return fmt.Errorf("gas: close %s: %w", svc.Name(), err)
 	}
 
 	return nil
 }
 
-// Shutdown emits SystemShuttingDown and closes every active service in
-// reverse initialization order, passing ctx to each Close. A service already
-// closed by CloseService is skipped, and each service Shutdown closes leaves
-// ActiveServices. A failing Close does not stop the rest; every Close error
-// is returned, joined, and not logged.
-//
-// Shutdown runs once. Later calls, including concurrent ones, wait for the
-// first to finish and return nil. Once Shutdown has begun, CloseService and
-// RestartService return an error.
-func (w *Worker) Shutdown(ctx context.Context) (err error) {
-	w.shutdownOnce.Do(func() {
-		w.mu.Lock()
-		w.shutDown = true
-		w.mu.Unlock()
+// Run starts the Worker, blocks until SIGINT, SIGTERM or the end of ctx,
+// and then shuts it down within the shutdown timeout, as described under
+// Running in the package documentation. Start runs under a context that
+// ctx and the first signal both end, so either during startup fails Start
+// through an Init that honors its ctx. Once the first signal arrives the Worker stops handling them, so
+// a second one ends the process. Shutdown gets ctx's values but not its
+// cancellation, under the timeout. Ending ctx is a normal stop: Run then
+// returns Shutdown's error.
+func (w *Worker) Run(ctx context.Context) error {
+	runCtx, sigs, stop := watchSignals(ctx)
+	defer stop()
 
-		w.eventBus.Emit[SystemShuttingDown](SystemShuttingDownPayload{}).Wait()
-
-		err = w.closeActive(ctx)
-
-		//nolint:contextcheck // getLogger resolves the logger, which needs no caller ctx
-		w.getLogger().Info("shutdown complete").Send()
-	})
-	return
-}
-
-// closeActive closes every service still active, newest first, and removes
-// each from ActiveServices first, so a CloseService racing with it cannot
-// close one again. Every Close error is returned, joined.
-func (w *Worker) closeActive(ctx context.Context) error {
-	w.mu.Lock()
-	closing := make([]Service, 0, len(w.activeServices))
-	for _, svc := range slices.Backward(w.serviceOrder) {
-		if _, active := w.activeServices[svc.Name()]; active {
-			closing = append(closing, svc)
-			delete(w.activeServices, svc.Name())
-		}
-	}
-	w.mu.Unlock()
-
-	return w.closeServices(ctx, closing)
-}
-
-// closeServices closes each service in order, passing ctx to every Close.
-// A failing Close does not stop the rest; every Close error is returned,
-// joined, and not logged.
-func (w *Worker) closeServices(ctx context.Context, services []Service) error {
-	var err error
-	for _, svc := range services {
-		//nolint:contextcheck // getLogger resolves the logger, which needs no caller ctx
-		w.getLogger().Info("closing service").Str("service", svc.Name()).Send()
-		if svcErr := svc.Close(ctx); svcErr != nil {
-			err = errors.Join(err, fmt.Errorf("gas: close %s: %w", svc.Name(), svcErr))
-		}
-	}
-	return err
-}
-
-// Run initializes services, runs migrations and ready hooks, then blocks
-// until a SIGINT or SIGTERM signal is received before shutting down.
-// For non-blocking lifecycle control, use Start and Shutdown directly.
-// Startup and shutdown use context.Background().
-func (w *Worker) Run() error {
-	ctx := context.Background()
-	if err := w.Start(ctx); err != nil {
+	err := w.Start(runCtx)
+	if err != nil {
 		return err
 	}
 
 	w.getLogger().Info("worker started").Send()
 
+	awaitStop(ctx, sigs, w.getLogger())
+
+	w.mu.Lock()
+
+	timeout := w.shutdownTimeout
+	w.mu.Unlock()
+
+	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+	defer cancel()
+
+	return w.Shutdown(shutdownCtx)
+}
+
+// awaitStop blocks until the first signal on sigs or the end of ctx, and
+// logs which to logger.
+func awaitStop(ctx context.Context, sigs <-chan os.Signal, logger Logger) {
+	select {
+	case sig := <-sigs:
+		logger.Info("shutdown signal received").Str("signal", sig.String()).Send()
+	case <-ctx.Done():
+		logger.Info("shutdown requested").Err("cause", context.Cause(ctx)).Send()
+	}
+}
+
+// watchSignals handles SIGINT and SIGTERM until the first one arrives,
+// which it delivers on the channel after it cancels the returned context,
+// a child of parent, and stops handling signals, so a second one ends the
+// process. stop stops handling them without a signal.
+func watchSignals(parent context.Context) (context.Context, <-chan os.Signal, func()) {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
-	sig := <-quit
-	w.getLogger().Info("shutdown signal received").Str("signal", sig.String()).Send()
+	ctx, cancel := context.WithCancel(parent)
+	got := make(chan os.Signal, 1)
+	done := make(chan struct{})
 
-	return w.Shutdown(ctx)
+	go func() {
+		select {
+		case sig := <-quit:
+			signal.Stop(quit)
+
+			got <- sig
+
+			cancel()
+		case <-done:
+			signal.Stop(quit)
+		}
+	}()
+
+	var once sync.Once
+
+	return ctx, got, func() {
+		once.Do(func() {
+			close(done)
+			cancel()
+		})
+	}
 }
 
-// ReadyFunc registers a function that runs after all services are initialized
-// and migrations are applied, but before Run blocks or Start returns. It is
-// the imperative form of WithReadyFunc and may be called any number of times
-// before startup; the funcs run in registration order and the first error
-// aborts startup.
+// ReadyFunc registers a function that runs once every service is
+// initialized and the migrations are applied, before Start returns. It is
+// the imperative form of WithReadyFunc and may be called any number of
+// times before Start runs the ready hooks; the funcs run in registration
+// order and the first error fails Start.
 //
-// Safe for concurrent use. Panics if called once Start has reached the ready
-// hooks, because the func would never run.
+// Safe for concurrent use. It panics with ErrAlreadyStarted once Start has
+// run the ready hooks, because the func would never run.
 func (w *Worker) ReadyFunc(fn func(*ServiceContainer) error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
 	if w.readyRan {
-		panic("gas: ReadyFunc called after ready hooks have run")
+		panic(fmt.Errorf("%w: ReadyFunc after the ready hooks ran", ErrAlreadyStarted))
 	}
+
 	w.readyFuncs = append(w.readyFuncs, fn)
 }
 
-// getLogger returns the Worker's logger, resolving it from the container
-// the first time it is called. If no Logger is registered, it uses a logger
-// over slog.Default and warns once; that fallback is not registered in the
-// container. It is safe for concurrent use.
-func (w *Worker) getLogger() Logger {
-	w.loggerOnce.Do(func() {
-		// See if we have a logger registered
-		logger, err := w.serviceContainer.Resolve[Logger]()
-		if err != nil {
-			// Fall back to slog. The fallback stays private to the Worker:
-			// registering it would write the container's instance map while
-			// other goroutines read it.
-			logger = newSlogLogger(slog.Default())
-			logger.Warn("no logger registered").Err("reason", err).Send()
-		}
-		w.logger = logger
-	})
-	return w.logger
-}
-
-// --- ServiceContainer helpers ---
-
-// RegisterService registers a constructor for type T with the given lifetime
-// on the worker's service container. It is the imperative form of WithService,
-// for wiring done after the Worker is built. See
-// ServiceContainer.RegisterService for the accepted constructor signatures and
-// the panics on a bad one.
+// RegisterService registers a constructor for type T with the given
+// lifetime on the Worker's container. It is the imperative form of
+// WithService; see ServiceContainer.RegisterService.
 func (w *Worker) RegisterService[T any](ctor any, lifetime ServiceLifetime) {
 	w.serviceContainer.RegisterService[T](ctor, lifetime)
 }
 
-// RegisterTransientService registers a constructor for type T with the
-// Transient lifetime on the worker's service container, so a fresh T is built
-// on every resolution. T must not implement Service.
+// RegisterTransientService registers a transient constructor for type T
+// on the Worker's container; see ServiceContainer.RegisterTransientService.
 func (w *Worker) RegisterTransientService[T any](ctor any) {
 	w.serviceContainer.RegisterTransientService[T](ctor)
 }
 
-// RegisterScopedService registers a constructor for type T with the Scoped
-// lifetime on the worker's service container, so one T is built per Scope. In
-// an App, each request gets its own scope; see ResolveFromRequestScope.
+// RegisterScopedService registers a scoped constructor for type T on the
+// Worker's container; see ServiceContainer.RegisterScopedService.
 func (w *Worker) RegisterScopedService[T any](ctor any) {
 	w.serviceContainer.RegisterScopedService[T](ctor)
 }
 
-// RegisterSingletonService registers a constructor for type T with the
-// Singleton lifetime on the worker's service container, so one T is built and
-// shared by every consumer.
+// RegisterSingletonService registers a singleton constructor for type T on
+// the Worker's container; see ServiceContainer.RegisterSingletonService.
 func (w *Worker) RegisterSingletonService[T any](ctor any) {
 	w.serviceContainer.RegisterSingletonService[T](ctor)
 }
 
-// RegisterServiceInstance registers an already-built value on the worker's
-// service container under T, the static type at the call site, not the dynamic
-// type of val. Treated as a singleton; see
-// ServiceContainer.RegisterServiceInstance for the lifecycle it takes on.
+// RegisterServiceInstance registers val under T on the Worker's container;
+// see ServiceContainer.RegisterServiceInstance.
 func (w *Worker) RegisterServiceInstance[T any](val T) {
 	w.serviceContainer.RegisterServiceInstance[T](val)
 }
 
-// RegisterServiceAlias makes the service registered under Target on the
-// worker's service container resolvable as the interface Alias too. It is the
-// imperative form of WithServiceAlias. See
-// ServiceContainer.RegisterServiceAlias for what an alias resolves to and the
-// panics on a bad one.
+// RegisterServiceAlias makes the service registered under Target
+// resolvable as Alias on the Worker's container; see
+// ServiceContainer.RegisterServiceAlias.
 func (w *Worker) RegisterServiceAlias[Target, Alias any]() {
 	w.serviceContainer.RegisterServiceAlias[Target, Alias]()
 }
 
-// --- WorkerOption functions ---
+// finishStart records the result of Start and lets a waiting Shutdown go
+// on. When a Shutdown gave up waiting for Start, it closes what Start
+// initialized itself, with ctx.
+func (w *Worker) finishStart(ctx context.Context, err error) {
+	w.mu.Lock()
 
-// WithService registers a constructor-based service with the given lifetime.
+	// A Shutdown that began during Start has moved the state on already.
+	if err != nil {
+		w.startErr = err
+	}
+
+	if w.state == lifeStarting {
+		w.state = lifeStarted
+		if err != nil {
+			w.state = lifeFailed
+		}
+	}
+
+	abandoned := w.shutdownGaveUp && err == nil
+
+	close(w.startDone)
+	w.mu.Unlock()
+
+	if abandoned {
+		// The Shutdown that gave up has returned; the error has no one
+		// else to go to.
+		closeErr := w.closeActive(ctx, nil)
+		if closeErr != nil {
+			w.getLogger().
+				Error("close after an abandoned shutdown failed").
+				Err("error", closeErr).
+				Send()
+		}
+	}
+}
+
+// cleanupAfterPanic closes what a Start that panicked with rec had
+// initialized, and returns the error Start records: one wrapping ErrPanic,
+// joined with any Close error.
+func (w *Worker) cleanupAfterPanic(ctx context.Context, rec any) error {
+	err := fmt.Errorf("%w in Start: %v", ErrPanic, rec)
+
+	w.mu.Lock()
+
+	tracked := len(w.services) > 0
+	w.mu.Unlock()
+
+	if tracked {
+		return errors.Join(err, w.closeActive(ctx, nil))
+	}
+
+	built := w.serviceContainer.initializedServices()
+	slices.Reverse(built)
+
+	return errors.Join(err, w.closeServices(ctx, built))
+}
+
+// beginShutdown moves the Worker to shut down and reports whether this
+// Shutdown closes the services. One that does not returns at once: a
+// later Shutdown once the first is done, one before Start or after a
+// failed Start with nil, and one whose ctx ended while Start ran with
+// that error, leaving Start to close what it initialized.
+func (w *Worker) beginShutdown(ctx context.Context) (bool, error) {
+	w.mu.Lock()
+
+	prev := w.state
+
+	w.state = lifeShutDown
+	w.mu.Unlock()
+
+	switch prev {
+	case lifeShutDown:
+		<-w.shutdownDone
+
+		return false, nil
+	case lifeIdle, lifeFailed:
+		close(w.shutdownDone)
+
+		return false, nil
+	case lifeStarting:
+		select {
+		case <-w.startDone:
+		case <-ctx.Done():
+			w.mu.Lock()
+			defer w.mu.Unlock()
+
+			// finishStart closes startDone under mu, so Start either has
+			// returned already or will see the flag and close.
+			select {
+			case <-w.startDone:
+				return true, nil
+			default:
+			}
+
+			w.shutdownGaveUp = true
+
+			close(w.shutdownDone)
+
+			return false, fmt.Errorf("gas: shutdown: wait for Start: %w", ctx.Err())
+		}
+	case lifeStarted:
+	}
+
+	return true, nil
+}
+
+// closeAll closes every active service: first all but the Logger and the
+// services it depends on, newest first; then, after the final log line
+// and a flush, the Logger, and then its dependencies, newest first.
+func (w *Worker) closeAll(ctx context.Context) error {
+	logger := w.getLogger()
+
+	var last []Service
+
+	if svc, ok := logger.(Service); ok {
+		last = append(last, svc)
+	}
+
+	deps := w.serviceContainer.dependencyServices(reflect.TypeFor[Logger]())
+
+	err := w.closeActive(ctx, append(slices.Clone(last), deps...))
+
+	logger.Info("shutdown complete").Send()
+	logger.Flush()
+
+	for _, svc := range append(last, w.newestFirst(deps)...) {
+		err = errors.Join(err, w.closeActiveService(ctx, svc))
+	}
+
+	return err
+}
+
+// newestFirst returns the services of svcs the Worker tracks, newest
+// first.
+func (w *Worker) newestFirst(svcs []Service) []Service {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	out := make([]Service, 0, len(svcs))
+
+	for _, ts := range slices.Backward(w.services) {
+		if slices.ContainsFunc(svcs, func(s Service) bool { return sameInstance(s, ts.svc) }) {
+			out = append(out, ts.svc)
+		}
+	}
+
+	return out
+}
+
+// recordOptionError keeps err as the first option error, which Start
+// returns.
+func (w *Worker) recordOptionError(err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.optErr == nil {
+		w.optErr = err
+	}
+}
+
+// start is the work of Start.
+func (w *Worker) start(ctx context.Context) error {
+	err := w.serviceContainer.BuildAll(ctx)
+	if err != nil {
+		// Nothing is tracked yet, so close what the container had
+		// initialized before the failure.
+		built := w.serviceContainer.initializedServices()
+		slices.Reverse(built)
+
+		return errors.Join(err, w.closeServices(context.WithoutCancel(ctx), built))
+	}
+
+	w.mu.Lock()
+
+	for _, svc := range w.serviceContainer.initializedServices() {
+		w.services = append(w.services, &trackedService{svc: svc})
+	}
+
+	w.mu.Unlock()
+
+	cleanup := func(err error) error {
+		return errors.Join(err, w.closeActive(context.WithoutCancel(ctx), nil))
+	}
+
+	if w.afterBuild != nil {
+		err = w.afterBuild(ctx)
+		if err != nil {
+			return cleanup(err)
+		}
+	}
+
+	w.eventBus.Emit[SystemAllServicesInitialized](SystemAllServicesInitializedPayload{}).Wait()
+
+	err = w.runMigrations(ctx)
+	if err != nil {
+		return cleanup(err)
+	}
+
+	err = w.runReadyHooks()
+	if err != nil {
+		return cleanup(err)
+	}
+
+	return nil
+}
+
+// runMigrations runs the pending migrations of the MigrationManager, when
+// one is registered, with ctx.
+func (w *Worker) runMigrations(ctx context.Context) error {
+	if !w.serviceContainer.CanResolve[MigrationManager]() {
+		return nil
+	}
+
+	// Every singleton is built, so resolving the manager runs no Init.
+	mgr, err := resolveFrom[MigrationManager](ctx, w.serviceContainer)
+	if err != nil {
+		return fmt.Errorf("gas: run migrations: %w", err)
+	}
+
+	w.getLogger().Info("applying pending migrations").Send()
+
+	err = mgr.RunPendingContext(ctx)
+	if err != nil {
+		return fmt.Errorf("gas: run migrations: %w", err)
+	}
+
+	return nil
+}
+
+// runReadyHooks runs the ready hooks in order and returns the first
+// error, wrapped.
+func (w *Worker) runReadyHooks() error {
+	// Snapshot under the lock so a concurrent ReadyFunc either lands
+	// before this point or panics; it is never silently dropped.
+	w.mu.Lock()
+
+	w.readyRan = true
+
+	readyFuncs := slices.Clone(w.readyFuncs)
+
+	w.mu.Unlock()
+
+	for _, fn := range readyFuncs {
+		err := fn(w.serviceContainer)
+		if err != nil {
+			return fmt.Errorf("gas: ready hook: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// closeActive closes every active service but those in skip, newest
+// first, and marks each closed just before its Close runs, so nothing
+// closes one twice. Every Close error is returned, joined.
+func (w *Worker) closeActive(ctx context.Context, skip []Service) error {
+	w.mu.Lock()
+
+	closing := make([]Service, 0, len(w.services))
+	for _, ts := range slices.Backward(w.services) {
+		if ts.state != serviceActive ||
+			slices.ContainsFunc(skip, func(s Service) bool { return sameInstance(s, ts.svc) }) {
+			continue
+		}
+
+		closing = append(closing, ts.svc)
+	}
+
+	w.mu.Unlock()
+
+	// Each service turns closed just before its own Close, so a Close may
+	// still resolve the services that close after it.
+	var err error
+
+	for _, svc := range closing {
+		w.getLogger().Info("closing service").Str("service", svc.Name()).Send()
+
+		err = errors.Join(err, w.closeActiveService(ctx, svc))
+	}
+
+	return err
+}
+
+// closeActiveService closes svc when it is tracked and active.
+func (w *Worker) closeActiveService(ctx context.Context, svc Service) error {
+	w.mu.Lock()
+
+	ts := w.trackedLocked(svc)
+	if ts == nil || ts.state != serviceActive {
+		w.mu.Unlock()
+
+		return nil
+	}
+
+	ts.state = serviceClosed
+	w.mu.Unlock()
+
+	return closeService(ctx, svc)
+}
+
+// closeServices closes each service in order, passing ctx to every Close
+// and logging each first. A failing Close does not stop the rest; every
+// Close error is returned, joined.
+func (w *Worker) closeServices(ctx context.Context, services []Service) error {
+	var err error
+
+	for _, svc := range services {
+		w.getLogger().Info("closing service").Str("service", svc.Name()).Send()
+
+		err = errors.Join(err, closeService(ctx, svc))
+	}
+
+	return err
+}
+
+// getLogger returns the Worker's logger: the registered Logger once it is
+// built, or a logger over slog.Default when none is registered, which
+// warns once and is not registered in the container. It never builds a
+// service: while a registered Logger is not built yet, such as during the
+// cleanup of a failed Start, it returns the slog logger without keeping
+// it. It is safe for concurrent use.
+func (w *Worker) getLogger() Logger {
+	w.loggerMu.Lock()
+	defer w.loggerMu.Unlock()
+
+	if w.logger != nil {
+		return w.logger
+	}
+
+	c := w.serviceContainer
+
+	v, built := c.lookupInstance(c.aliasTarget(reflect.TypeFor[Logger]()))
+	if built {
+		if logger, ok := reflect.TypeAssert[Logger](v); ok {
+			w.logger = logger
+
+			return logger
+		}
+	}
+
+	fallback := newSlogLogger(slog.Default())
+
+	if !c.CanResolve[Logger]() {
+		w.logger = fallback
+		fallback.Warn("no logger registered").Send()
+	}
+
+	return fallback
+}
+
+// WithService registers a constructor for type T with the given lifetime,
+// as ServiceContainer.RegisterService does.
 func WithService[T any](ctor any, lifetime ServiceLifetime) WorkerOption {
 	return func(w *Worker) { w.serviceContainer.RegisterService[T](ctor, lifetime) }
 }
 
-// WithServiceInstance registers a pre-built service instance (singleton).
+// WithServiceInstance registers val under T, as
+// ServiceContainer.RegisterServiceInstance does.
 //
 // Pre-built means pre-constructed, not pre-initialized: if the value
-// implements Service, the container calls Init(ctx) on it during
-// InitServices like any other service, and Close(ctx) at shutdown.
-// Implementing Service is what hands the lifecycle to the container, however
-// the value got there. Do not call Init yourself before registering, or it
-// runs twice.
+// implements Service, the container calls Init(ctx) on it during Start
+// like any other service, and Close(ctx) at shutdown. Do not call Init
+// yourself before registering, or it runs twice.
 func WithServiceInstance[T any](val T) WorkerOption {
 	return func(w *Worker) { w.serviceContainer.RegisterServiceInstance[T](val) }
 }
 
-// WithTransientService registers a transient service constructor.
+// WithTransientService registers a transient constructor for type T.
 func WithTransientService[T any](ctor any) WorkerOption {
 	return func(w *Worker) { w.serviceContainer.RegisterTransientService[T](ctor) }
 }
 
-// WithScopedService registers a service constructor with a scoped lifetime.
+// WithScopedService registers a scoped constructor for type T.
 func WithScopedService[T any](ctor any) WorkerOption {
 	return func(w *Worker) { w.serviceContainer.RegisterScopedService[T](ctor) }
 }
 
-// WithSingletonService registers a singleton service constructor.
+// WithSingletonService registers a singleton constructor for type T.
 func WithSingletonService[T any](ctor any) WorkerOption {
 	return func(w *Worker) { w.serviceContainer.RegisterSingletonService[T](ctor) }
 }
 
-// WithServiceAlias makes the service registered under Target resolvable as
-// the interface Alias too, sharing Target's instance and lifetime. Target may
-// be registered by an earlier or a later option. See
+// WithServiceAlias makes the service registered under Target resolvable
+// as the interface Alias too, sharing Target's instance and lifetime.
+// Target may be registered by an earlier or a later option. See
 // ServiceContainer.RegisterServiceAlias.
 func WithServiceAlias[Target, Alias any]() WorkerOption {
 	return func(w *Worker) { w.serviceContainer.RegisterServiceAlias[Target, Alias]() }
 }
 
-// WithReadyFunc registers a function that runs after all services are
-// initialized and migrations are applied but before Run blocks or Start
-// returns. Multiple funcs are called in registration order; any error
-// aborts startup.
+// WithReadyFunc registers a ready hook, as ReadyFunc does.
 func WithReadyFunc(fn func(*ServiceContainer) error) WorkerOption {
 	return func(w *Worker) { w.ReadyFunc(fn) }
 }
 
-// WithServiceInitTimeout sets the deadline the Worker's service container
-// gives each service's Init: a singleton's at startup and on RestartService,
-// and a scoped service's on its first resolution in a scope. When it passes,
-// Init's context is canceled and startup, or the resolution, fails once Init
-// returns.
-// The default is 15 seconds, and 0 disables the deadline so only the caller's
-// context applies. A service that implements ServiceInitTimeout overrides it
-// for itself.
+// WithServiceInitTimeout sets the deadline the Worker's container gives
+// each service's Init: a singleton's at startup and on RestartService,
+// and a scoped service's on its first resolution in a scope. When it
+// passes, Init's context is canceled and startup, or the resolution,
+// fails once Init returns. 0 disables the deadline, so only the caller's
+// context applies. A service that implements ServiceInitTimeout overrides
+// it for itself. A negative timeout makes Start fail with an error
+// wrapping ErrInvalidOption.
 //
-// Panics if timeout is negative.
+// Default: DefaultServiceInitTimeout.
 func WithServiceInitTimeout(timeout time.Duration) WorkerOption {
-	mustNotBeNegativeInitTimeout("WithServiceInitTimeout", timeout)
-	return func(w *Worker) { w.serviceContainer.opt.serviceInitTimeout = timeout }
+	return func(w *Worker) {
+		if timeout < 0 {
+			w.recordOptionError(
+				fmt.Errorf("%w: WithServiceInitTimeout must not be negative", ErrInvalidOption),
+			)
+
+			return
+		}
+
+		w.serviceContainer.opt.serviceInitTimeout = timeout
+	}
+}
+
+// WithShutdownTimeout sets the deadline of the Shutdown that Worker.Run
+// starts after a signal or the end of its ctx. In an App, Stop and App.Run use the Config's
+// ShutdownTimeout instead, and this option has no effect. A timeout that
+// is not positive makes Start fail with an error wrapping
+// ErrInvalidOption.
+//
+// Default: DefaultShutdownTimeout.
+func WithShutdownTimeout(timeout time.Duration) WorkerOption {
+	return func(w *Worker) {
+		if timeout <= 0 {
+			w.recordOptionError(
+				fmt.Errorf("%w: WithShutdownTimeout must be positive", ErrInvalidOption),
+			)
+
+			return
+		}
+
+		w.mu.Lock()
+
+		w.shutdownTimeout = timeout
+		w.mu.Unlock()
+	}
 }

@@ -14,27 +14,29 @@ go get github.com/gasmod/gas/template
 ```
 
 ```go
-gas.WithSingletonService[gas.TemplateProvider](templatefs.NewStore(os.DirFS("templates"))),
+gas.WithSingletonService[gas.TemplateProvider](dir.NewStore("templates")),
 ```
 
-`db.NewStore()` needs `gas.DatabaseProvider`, `gas.Logger` and `gas.MigrationManager`. The
-others need nothing; `dir` and `fs` return a constructor you call yourself.
+Every `NewStore` returns a constructor for the container. `db.NewStore()` needs
+`gas.DatabaseProvider`, `gas.Logger` and `gas.MigrationManager`; the others need nothing.
+Stored templates are code: never let users write them.
 
-| Package | Use case |
+| Package | Provides |
 |---|---|
-| `template/memory` | Development, tests, ephemeral content |
-| `template/dir` | A directory on disk, with an in-memory overlay |
-| `template/fs` | Read-only over any `fs.FS`, including `embed.FS` |
-| `template/db` | Persistent and multi-instance: PostgreSQL, MySQL, SQLite |
-| `template/composite` | Chain providers: write to the first, read through all |
-| `template/templatetest` | Recording mock of `gas.TemplateProvider` |
+| `github.com/gasmod/gas/template` | Sentinel errors, the name and extension rules |
+| `github.com/gasmod/gas/template/memory` | A store in memory |
+| `github.com/gasmod/gas/template/fs` | A read-only store over any `fs.FS`, such as `embed.FS` |
+| `github.com/gasmod/gas/template/dir` | A directory on disk through `os.Root`, with registered templates over it |
+| `github.com/gasmod/gas/template/db` | A table in PostgreSQL, MySQL or SQLite, with its migrations |
+| `github.com/gasmod/gas/template/composite` | A writable store over read-only fallbacks |
+| `github.com/gasmod/gas/template/templatetest` | `MockTemplate` for tests |
 
 ## Documentation
 
-The full guide, with configuration, testing, and worked examples, is on the docs site.
+The full documentation is on the docs site.
 This README is deliberately a signpost: keeping a second copy here is how the docs drifted before.
 
-- **Guide:** [Templates](https://gasmod.github.io/gas/modules/templates/)
+- **Docs:** [template](https://gasmod.github.io/gas/reference/template/)
 - **API reference:** [pkg.go.dev/github.com/gasmod/gas/template](https://pkg.go.dev/github.com/gasmod/gas/template)
 - **Contributing:** [CONTRIBUTING.md](../CONTRIBUTING.md)
 

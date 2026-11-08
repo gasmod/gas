@@ -4,12 +4,13 @@ import (
 	"context"
 )
 
-// Extension defines an interface for executing actions during the configuration loading process.
-// The Name method is used to identify the extension by name.
-// The PreLoad method is invoked prior to the main configuration loading phase.
-// The PostLoad method is invoked after the main configuration loading phase.
+// Extension runs code before and after the providers load, as described in
+// the package documentation.
 type Extension interface {
+	// Name names the extension in errors.
 	Name() string
+	// PreLoad runs before any provider loads.
 	PreLoad(ctx context.Context, cfg *Config) error
+	// PostLoad runs after the providers' values are merged.
 	PostLoad(ctx context.Context, cfg *Config) error
 }

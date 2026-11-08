@@ -3,155 +3,240 @@ package ui
 import (
 	"errors"
 	"fmt"
-	"html/template"
-	"os"
-	"path/filepath"
+	"io/fs"
+	"slices"
 	"strings"
-	"testing"
-
-	"github.com/gasmod/gas"
+	"time"
+	"unicode/utf8"
 )
 
 const (
-	defaultStaticDir    = "static/"
-	defaultUIStaticPath = "/static/*"
-	defaultUILayout     = "base"
+	// DefaultStaticDir is the directory static files are served from in
+	// DefaultConfig: none, so that no static files are served unless
+	// configured.
+	DefaultStaticDir = ""
+	// DefaultStaticPath is the route static files are served on in
+	// DefaultConfig.
+	DefaultStaticPath = "/static/*"
+	// DefaultLayoutName is the name of the template Render executes in
+	// DefaultConfig.
+	DefaultLayoutName = "base"
+	// DefaultFragmentBlock is the name of the block RenderFragment
+	// executes in DefaultConfig.
+	DefaultFragmentBlock = "content"
+	// DefaultExtension is the one template extension of DefaultConfig.
+	DefaultExtension = ".html"
+	// LayoutsPrefix starts the name of every layout in the template
+	// store.
+	LayoutsPrefix = "layouts/"
+	// PartialsPrefix starts the name of every partial in the template
+	// store.
+	PartialsPrefix = "partials/"
 )
 
-// Config holds all user-facing settings for the gas/ui service.
+// Config holds the service's configuration, read from the `ui` section.
 type Config struct {
-	// Embedded GasEnv
-	gas.WithGasEnv
-
-	// FuncMap supplies additional template functions. These are merged on
-	// top of the built-in defaults; collisions override the default.
-	FuncMap template.FuncMap
-
+	// UI holds the settings.
 	UI Settings
 }
 
-// Settings represents the configuration for user-facing template and static file settings.
+// Settings are the service's settings, as described in the package
+// documentation.
 type Settings struct {
-	// StaticDir is the root directory for static files (CSS, JS, images).
-	// Leave empty to disable static file serving.
-	StaticDir string
-
-	// StaticPath is the URL route pattern for static assets. Default: "/static/*".
-	StaticPath string
-
-	// LayoutName is the {{define}} name of the entry-point layout template.
-	// Default: "base".
-	LayoutName string
-
-	// StaticStripPrefix is the URL prefix stripped from requests before looking
-	// up files in the static directory or FS. When empty, it defaults to
-	// StaticPath's literal part up to its first wildcard ("/static/*" strips
-	// "/static/"), or, when StaticPaths is set, to nothing. Set this
-	// independently when the route paths differ from the FS layout.
+	StaticDir         string
+	StaticPath        string
 	StaticStripPrefix string
-
-	// StaticPaths is a slice of URL patterns for static assets (e.g. ["/css/*", "/js/*"]).
-	// When set, routes are registered for each path instead of using StaticPath.
-	StaticPaths []string
+	PagesPrefix       string
+	LayoutName        string `validate:"required"`
+	FragmentBlock     string `validate:"required"`
+	Extensions        []string
+	StaticPaths       []string
+	StaticMaxAge      time.Duration `validate:"min=0"`
+	StaticDotfiles    bool
+	Reload            bool
 }
 
-// DefaultConfig returns a Config with sensible defaults.
+// DefaultConfig returns the configuration the service starts from before
+// binding: DefaultExtension, DefaultStaticDir, DefaultStaticPath,
+// DefaultLayoutName and DefaultFragmentBlock, and every other setting
+// zero.
 func DefaultConfig() *Config {
 	return &Config{
 		UI: Settings{
-			StaticDir:  defaultStaticDir,
-			StaticPath: defaultUIStaticPath,
-			LayoutName: defaultUILayout,
+			Extensions:    []string{DefaultExtension},
+			StaticDir:     DefaultStaticDir,
+			StaticPath:    DefaultStaticPath,
+			LayoutName:    DefaultLayoutName,
+			FragmentBlock: DefaultFragmentBlock,
 		},
 	}
 }
 
-// Validate checks that the Config fields are valid.
-// hasStaticFS should be true if a custom fs.FS has been provided for static
-// files, in which case UIStaticDir is not required.
-func (c *Config) Validate(hasStaticFS bool) error {
-	wd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("could not determine working directory: %w", err)
-	}
+// The rules the validate tags cannot express. Each names the setting,
+// never its value.
+var (
+	errNoExtension = errors.New("UI.Extensions must hold at least one extension")
+	errPagesPrefix = errors.New(
+		"UI.PagesPrefix must be empty or a clean path ending in /, not in layouts/ or partials/",
+	)
+	errNoStaticPath = errors.New(
+		"UI.StaticPath must be set when static files are served and UI.StaticPaths is empty",
+	)
+	errStripPrefix = errors.New("UI.StaticStripPrefix must be empty or start and end with `/`")
+	errMaxAge      = errors.New("UI.StaticMaxAge must be 0 or at least 1s")
+	// errExtension is the rule of one extension, after its setting.
+	errExtension = errors.New("must be a dot and characters, none a slash, backslash or NUL")
+	// errRoute is the rule of a static route, after its setting.
+	errRoute = errors.New("must start with `/`, hold `*` only last, and pair `{` with `}`")
+)
 
-	if c.UI.StaticDir != "" && !hasStaticFS {
-		if err = validateDir(c.UI.StaticDir, wd); err != nil {
-			return fmt.Errorf("UI.StaticDir: %w", err)
+// rules returns the check of the rules the validate tags cannot express,
+// for a service with a static fs.FS when staticFS is true.
+func rules(staticFS bool) func(*Config) error {
+	return func(cfg *Config) error {
+		set := &cfg.UI
+
+		err := checkExtensions(set.Extensions)
+		if err != nil {
+			return err
 		}
+
+		if !validPagesPrefix(set.PagesPrefix) {
+			return errPagesPrefix
+		}
+
+		if !staticFS && set.StaticDir == "" {
+			return nil
+		}
+
+		return checkStatic(set)
+	}
+}
+
+// checkExtensions returns nil when exts holds at least one extension and
+// each is a dot and one or more characters, none a slash, a backslash or
+// NUL.
+func checkExtensions(exts []string) error {
+	if len(exts) == 0 {
+		return errNoExtension
 	}
 
-	if err = c.UI.validateRoutes(); err != nil {
-		return err
-	}
-
-	if c.UI.LayoutName == "" {
-		return errors.New("UI.LayoutName must not be empty")
+	for i, ext := range exts {
+		if len(ext) < len(".x") || ext[0] != '.' || !utf8.ValidString(ext) ||
+			strings.ContainsAny(ext, "/\\\x00") {
+			return fmt.Errorf("UI.Extensions[%d] %w", i, errExtension)
+		}
 	}
 
 	return nil
 }
 
-// validateRoutes checks the static route patterns and strip prefix.
-func (s *Settings) validateRoutes() error {
-	if s.StaticPath != "" {
-		if err := validateRoutePattern(s.StaticPath); err != nil {
-			return fmt.Errorf("UI.StaticPath: %w", err)
+// validPagesPrefix reports whether p is empty or a clean slash path
+// ending in `/` that is not inside the layouts or the partials.
+func validPagesPrefix(p string) bool {
+	if p == "" {
+		return true
+	}
+
+	dir, ok := strings.CutSuffix(p, "/")
+
+	return ok && dir != "." && fs.ValidPath(dir) && !strings.ContainsRune(dir, '\\') &&
+		!strings.HasPrefix(p, LayoutsPrefix) && !strings.HasPrefix(p, PartialsPrefix)
+}
+
+// checkStatic checks the static settings of a service that serves static
+// files.
+func checkStatic(set *Settings) error {
+	if len(set.StaticPaths) == 0 {
+		if set.StaticPath == "" {
+			return errNoStaticPath
+		}
+
+		if !validRoute(set.StaticPath) {
+			return fmt.Errorf("UI.StaticPath %w", errRoute)
 		}
 	}
 
-	for i, sp := range s.StaticPaths {
-		if err := validateRoutePattern(sp); err != nil {
-			return fmt.Errorf("UI.StaticPaths[%d]: %w", i, err)
+	for i, p := range set.StaticPaths {
+		if !validRoute(p) {
+			return fmt.Errorf("UI.StaticPaths[%d] %w", i, errRoute)
 		}
 	}
 
-	if s.StaticStripPrefix != "" {
-		if err := validateStaticPath(s.StaticStripPrefix); err != nil {
-			return fmt.Errorf("UI.StaticStripPrefix: %w", err)
-		}
+	if set.StaticStripPrefix != "" && !validPrefix(set.StaticStripPrefix) {
+		return errStripPrefix
+	}
+
+	if set.StaticMaxAge != 0 && set.StaticMaxAge < time.Second {
+		return errMaxAge
 	}
 
 	return nil
 }
 
-func validateDir(dir, projectRoot string) error {
-	// skip in test environment
-	if testing.Testing() {
-		return nil
+// validRoute reports whether p is a route the router takes: it starts
+// with `/`, holds `*` only as its last character, and holds `{` and `}`
+// only in pairs that do not nest.
+func validRoute(p string) bool {
+	if !strings.HasPrefix(p, "/") {
+		return false
 	}
 
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		return fmt.Errorf("could not resolve path %q: %w", dir, err)
+	if i := strings.IndexByte(p, '*'); i >= 0 && i != len(p)-1 {
+		return false
 	}
-	// Ensure the path is within the project root
-	if !strings.HasPrefix(abs, projectRoot+string(filepath.Separator)) && abs != projectRoot {
-		return fmt.Errorf("%q is outside the project directory", dir)
-	}
-	info, err := os.Stat(abs)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("%q does not exist", dir)
+
+	return pairedBraces(p)
+}
+
+// pairedBraces reports whether p holds `{` and `}` only in pairs that do
+// not nest.
+func pairedBraces(p string) bool {
+	open := false
+
+	for _, c := range p {
+		switch {
+		case c == '{' && !open:
+			open = true
+		case c == '}' && open:
+			open = false
+		case c == '{' || c == '}':
+			return false
 		}
-		return fmt.Errorf("could not stat %q: %w", dir, err)
 	}
-	if !info.IsDir() {
-		return fmt.Errorf("%q is not a directory", dir)
-	}
-	return nil
+
+	return !open
 }
 
-func validateRoutePattern(path string) error {
-	if !strings.HasPrefix(path, "/") {
-		return fmt.Errorf("%q must start with '/'", path)
-	}
-	return nil
+// validPrefix reports whether p starts and ends with `/`.
+func validPrefix(p string) bool {
+	return strings.HasPrefix(p, "/") && strings.HasSuffix(p, "/")
 }
 
-func validateStaticPath(path string) error {
-	if !strings.HasPrefix(path, "/") || !strings.HasSuffix(path, "/") {
-		return fmt.Errorf("%q must start and end with '/'", path)
+// stripPrefix returns the prefix the static handler removes: the
+// StaticStripPrefix setting, else nothing with StaticPaths set, else
+// StaticPath up to the last `/` before its first `*` or `{`.
+func stripPrefix(set *Settings) string {
+	switch {
+	case set.StaticStripPrefix != "":
+		return set.StaticStripPrefix
+	case len(set.StaticPaths) > 0:
+		return ""
 	}
-	return nil
+
+	literal := set.StaticPath
+	if i := strings.IndexAny(literal, "*{"); i >= 0 {
+		literal = literal[:i]
+	}
+
+	return literal[:strings.LastIndexByte(literal, '/')+1]
+}
+
+// staticRoutes returns the routes static files are served on.
+func staticRoutes(set *Settings) []string {
+	if len(set.StaticPaths) > 0 {
+		return slices.Clone(set.StaticPaths)
+	}
+
+	return []string{set.StaticPath}
 }

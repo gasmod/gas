@@ -2,203 +2,447 @@ package dir
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"sync"
 
 	"github.com/gasmod/gas"
-	template "github.com/gasmod/gas/template"
-	"github.com/gasmod/gas/template/internal/util"
+	"github.com/gasmod/gas/template"
+	"github.com/gasmod/gas/template/internal/files"
+	"github.com/gasmod/gas/template/internal/value"
 )
 
-// Store reads templates from a directory on disk. File operations are
-// sandboxed to the root directory via os.Root. An in-memory overlay
-// handles programmatic registrations via Register and RegisterFS.
-//
-// mu guards overlay, root, openErr, and closed. Disk reads hold the read
-// lock, so Close waits for reads in flight before it closes the root.
+// ServiceName is the name of the store, returned by Store.Name.
+const ServiceName = "gas/template/dir"
+
+var (
+	// ErrEmptyDir indicates that the constructor was given an empty
+	// directory path.
+	ErrEmptyDir = errors.New(template.ErrorPrefix + "directory path is empty")
+	// ErrDirUnavailable indicates that Init could not open the directory.
+	ErrDirUnavailable = errors.New(template.ErrorPrefix + "directory unavailable")
+)
+
+// state is where a Store is in its lifecycle.
+type state int
+
+const (
+	// stateNew is a store Init never succeeded on.
+	stateNew state = iota
+	// stateOpen is an initialized store.
+	stateOpen
+	// stateClosed is a store closed after Init, until Init runs again.
+	stateClosed
+)
+
+// Store reads templates from a directory on disk, through an os.Root, and
+// keeps registered ones in memory over them, as described in the package
+// documentation. It implements gas.Service and is safe for concurrent
+// use.
 type Store struct {
-	openErr error
+	// root is the open directory, or nil unless the store is open.
+	root *os.Root
+	// overlay holds the registered templates by name.
 	overlay map[string][]byte
-	root    *os.Root
-	dir     string
-	ext     string
-	mu      sync.RWMutex
-	closed  bool
+	// path is the directory's path, as given.
+	path string
+	// abs is the directory's absolute path, taken in Init, to tell
+	// whether it is still there.
+	abs string
+	// exts are the extensions a name must end in.
+	exts []string
+	// maxSize is the most bytes a template may hold.
+	maxSize int64
+	// state is the store's lifecycle state.
+	state state
+	// rootMu guards root and state. Reads of the directory hold it for
+	// reading, so that Close, which holds it for writing, waits for them
+	// before it closes the root.
+	rootMu sync.RWMutex
+	// mu guards overlay, so that Register does not wait for reads of the
+	// directory.
+	mu sync.RWMutex
 }
 
 var (
 	_ gas.TemplateProvider = (*Store)(nil)
-	_ io.Closer            = (*Store)(nil)
+	_ gas.Service          = (*Store)(nil)
 )
 
-// NewStore returns a DI-injectable constructor for a filesystem-backed
-// template store rooted at dir. Only files with the ".html" extension are
-// recognized from disk.
-func NewStore(dir string) func() (*Store, error) {
+// Option configures a Store.
+type Option func(*Store)
+
+// WithExtensions sets the extensions a template name must end in. The
+// constructor checks them, as described in the template package
+// documentation.
+//
+// Default: template.DefaultExtension.
+func WithExtensions(exts ...string) Option {
+	exts = slices.Clone(exts)
+
+	return func(s *Store) { s.exts = exts }
+}
+
+// WithMaxSize sets the most bytes a template may hold. The constructor
+// checks it with template.CheckMaxSize.
+//
+// Default: template.DefaultMaxSize.
+func WithMaxSize(n int64) Option {
+	return func(s *Store) { s.maxSize = n }
+}
+
+// NewStore returns the constructor of a Store over the directory at path
+// with opts applied, in the shape the gas container expects. The
+// constructor opens nothing; Init does. It returns ErrEmptyDir for an
+// empty path and an error wrapping template.ErrInvalidExtension for a bad
+// extension set.
+func NewStore(path string, opts ...Option) func() (*Store, error) {
 	return func() (*Store, error) {
-		return &Store{
-			dir:     dir,
-			ext:     ".html",
-			overlay: make(map[string][]byte),
-		}, nil
+		if path == "" {
+			return nil, ErrEmptyDir
+		}
+
+		s := &Store{
+			path:    path,
+			exts:    []string{template.DefaultExtension},
+			maxSize: template.DefaultMaxSize,
+		}
+
+		for _, opt := range opts {
+			opt(s)
+		}
+
+		err := template.CheckExtensions(s.exts)
+		if err != nil {
+			return nil, err //nolint:wrapcheck // CheckExtensions returns complete errors.
+		}
+
+		err = template.CheckMaxSize(s.maxSize)
+		if err != nil {
+			return nil, err //nolint:wrapcheck // CheckMaxSize returns complete errors.
+		}
+
+		return s, nil
 	}
 }
 
-// open opens the root directory on first use. A failure to open it is
-// kept and returned by every later call. It returns template.ErrClosed
-// once the store is closed.
-func (s *Store) open() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// Name returns ServiceName.
+func (*Store) Name() string { return ServiceName }
 
-	if s.closed {
-		return template.ErrClosed
+// Init opens the directory, as described in the package documentation. A
+// failure is an error wrapping ErrDirUnavailable that gives the reason and
+// never the path, and leaves the store as it was. On an open store Init
+// returns template.ErrAlreadyInitialized and changes nothing.
+func (s *Store) Init(context.Context) error {
+	s.rootMu.Lock()
+	defer s.rootMu.Unlock()
+
+	if s.state == stateOpen {
+		return template.ErrAlreadyInitialized
 	}
-	if s.root == nil && s.openErr == nil {
-		s.root, s.openErr = os.OpenRoot(s.dir)
+
+	abs, err := filepath.Abs(s.path)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrDirUnavailable, files.Cause(err))
 	}
-	if s.openErr != nil {
-		return fmt.Errorf("template: opening root: %w", s.openErr)
+
+	root, err := os.OpenRoot(abs)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrDirUnavailable, files.Cause(err))
 	}
+
+	s.abs = abs
+
+	s.mu.Lock()
+
+	s.overlay = make(map[string][]byte)
+	s.mu.Unlock()
+
+	s.root = root
+	s.state = stateOpen
+
 	return nil
 }
 
-// withRoot opens the root if needed and runs fn with the read lock held,
-// so Close cannot close the root while fn uses it.
-func (s *Store) withRoot(fn func(root *os.Root) error) error {
-	if err := s.open(); err != nil {
+// Close closes the directory and drops the registered templates, after
+// the reads in flight end. Every later call but Init returns an error
+// wrapping template.ErrClosed. Close on a store that is not open returns
+// nil.
+func (s *Store) Close(context.Context) error {
+	s.rootMu.Lock()
+	defer s.rootMu.Unlock()
+
+	if s.state != stateOpen {
+		return nil
+	}
+
+	root := s.root
+
+	s.root = nil
+	s.state = stateClosed
+
+	s.mu.Lock()
+
+	s.overlay = nil
+	s.mu.Unlock()
+
+	err := root.Close()
+	if err != nil {
+		return fmt.Errorf("%sclose directory: %w", template.ErrorPrefix, files.Cause(err))
+	}
+
+	return nil
+}
+
+// Get returns a copy of the registered template name, or else its content
+// read from the directory, as described in the package documentation. Its
+// errors wrap template.ErrInvalidName, template.ErrTemplateNotFound,
+// template.ErrRead, template.ErrTooLarge, template.ErrNotInitialized,
+// template.ErrClosed or ctx's error.
+func (s *Store) Get(ctx context.Context, name string) ([]byte, error) {
+	err := template.CheckName(name, s.exts)
+	if err != nil {
+		return nil, err //nolint:wrapcheck // CheckName returns complete errors.
+	}
+
+	err = ctx.Err()
+	if err != nil {
+		return nil, fmt.Errorf("%sget %q: %w", template.ErrorPrefix, name, err)
+	}
+
+	s.rootMu.RLock()
+	defer s.rootMu.RUnlock()
+
+	err = s.usable()
+	if err != nil {
+		return nil, err
+	}
+
+	s.mu.RLock()
+
+	content, ok := s.overlay[name]
+	s.mu.RUnlock()
+
+	if ok {
+		return value.Clone(content), nil
+	}
+
+	return s.read(s.root, name)
+}
+
+// List returns the names of the registered templates and of the
+// directory's templates, once each, in byte order, as described in the
+// package documentation. A failure to walk the directory is an error
+// wrapping template.ErrList.
+func (s *Store) List(ctx context.Context) ([]string, error) {
+	s.rootMu.RLock()
+	defer s.rootMu.RUnlock()
+
+	err := s.usable()
+	if err != nil {
+		return nil, err
+	}
+
+	names, err := s.list(ctx, s.root)
+	if err != nil {
+		// On Linux a removed directory fails the walk rather than reading
+		// as empty, so the walk's error yields to the one present gives.
+		pErr := s.present(s.root)
+		if pErr != nil {
+			return nil, pErr
+		}
+
+		return nil, err
+	}
+
+	err = s.present(s.root)
+	if err != nil {
+		return nil, err
+	}
+
+	s.mu.RLock()
+
+	names = slices.AppendSeq(names, maps.Keys(s.overlay))
+	s.mu.RUnlock()
+
+	slices.Sort(names)
+
+	return slices.Compact(names), nil
+}
+
+// Register keeps a copy of content as the template name, over any file of
+// that name. Nil content is kept as empty. Its errors wrap
+// template.ErrInvalidName, template.ErrTooLarge,
+// template.ErrNotInitialized or template.ErrClosed.
+func (s *Store) Register(_ context.Context, name string, content []byte) error {
+	err := template.CheckName(name, s.exts)
+	if err != nil {
+		return err //nolint:wrapcheck // CheckName returns complete errors.
+	}
+
+	if int64(len(content)) > s.maxSize {
+		//nolint:wrapcheck // TooLarge returns complete errors.
+		return template.TooLarge(name, s.maxSize)
+	}
+
+	content = value.Clone(content)
+
+	s.rootMu.RLock()
+	defer s.rootMu.RUnlock()
+
+	err = s.usable()
+	if err != nil {
 		return err
 	}
 
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
 
-	if s.closed {
-		return template.ErrClosed
-	}
-	return fn(s.root)
+	s.overlay[name] = content
+	s.mu.Unlock()
+
+	return nil
 }
 
-// Get returns the raw template content by name. Checks the in-memory
-// overlay first, then falls back to disk. It returns template.ErrClosed
-// after Close.
-func (s *Store) Get(_ context.Context, name string) ([]byte, error) {
-	s.mu.RLock()
-	if s.closed {
-		s.mu.RUnlock()
-		return nil, template.ErrClosed
+// RegisterFS reads the files of fsys with one of the store's extensions
+// and keeps them all, or none when reading fails, as described in the
+// template package documentation. It reads fsys before it takes the
+// store's lock, so that a slow fsys does not hold up Close.
+func (s *Store) RegisterFS(ctx context.Context, fsys fs.FS) error {
+	if value.IsNil(fsys) {
+		return template.ErrNilFS
 	}
-	if content, ok := s.overlay[name]; ok {
-		s.mu.RUnlock()
-		return content, nil
-	}
-	s.mu.RUnlock()
 
-	var data []byte
-	err := s.withRoot(func(root *os.Root) error {
-		var readErr error
-		data, readErr = fs.ReadFile(root.FS(), name)
-		if readErr != nil {
-			return template.ErrTemplateNotFound
-		}
-		return nil
-	})
+	err := s.usableNow()
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return data, nil
+
+	all, err := files.ReadAll(ctx, fsys, s.exts, s.maxSize)
+	if err != nil {
+		return err //nolint:wrapcheck // ReadAll returns complete errors.
+	}
+
+	s.rootMu.RLock()
+	defer s.rootMu.RUnlock()
+
+	// Close, and Init after it, may have run while fsys was read.
+	err = s.usable()
+	if err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+
+	for _, f := range all {
+		s.overlay[f.Name] = f.Content
+	}
+
+	s.mu.Unlock()
+
+	return nil
 }
 
-// List returns all available template names from both disk and the
-// overlay, sorted and deduplicated. It returns template.ErrClosed after
-// Close.
-func (s *Store) List(context.Context) ([]string, error) {
-	seen := make(map[string]struct{})
+// present returns nil when the directory the store opened is still at
+// its path, and otherwise an error wrapping template.ErrList, which names
+// no path: an open directory that was removed reads as empty, and a
+// directory moved away is not the one the store was given. On Linux the
+// open directory of a removed one does not stat at all.
+func (s *Store) present(root *os.Root) error {
+	opened, err := root.Stat(".")
+	if files.Absent(err) {
+		return fmt.Errorf("%w: directory removed or moved", template.ErrList)
+	}
 
-	err := s.withRoot(func(root *os.Root) error {
-		// Walk disk.
-		_ = fs.WalkDir(root.FS(), ".", func(path string, d fs.DirEntry, err error) error {
-			if err != nil || d.IsDir() {
-				return err
-			}
-			if filepath.Ext(path) != s.ext {
-				return nil
-			}
-			seen[filepath.ToSlash(path)] = struct{}{}
+	if err != nil {
+		return fmt.Errorf("%w: %q: %w", template.ErrList, ".", files.Cause(err))
+	}
+
+	current, err := os.Stat(s.abs)
+	if files.Absent(err) || (err == nil && !os.SameFile(opened, current)) {
+		return fmt.Errorf("%w: directory removed or moved", template.ErrList)
+	}
+
+	if err != nil {
+		return fmt.Errorf("%w: %q: %w", template.ErrList, ".", files.Cause(err))
+	}
+
+	return nil
+}
+
+// usableNow is usable, under rootMu.
+func (s *Store) usableNow() error {
+	s.rootMu.RLock()
+	defer s.rootMu.RUnlock()
+
+	return s.usable()
+}
+
+// list returns the names of the directory's templates, as described in
+// the package documentation: its regular files and the symlinks that
+// lead to one, whose names the store accepts, in walk order. A failure
+// to walk is an error wrapping template.ErrList.
+func (s *Store) list(ctx context.Context, root *os.Root) ([]string, error) {
+	r := newResolver(root, s.exts)
+	names := []string{}
+
+	err := fs.WalkDir(rootFS{root: root}, ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return fmt.Errorf("%q: %w", p, files.Cause(err))
+		}
+
+		err = ctx.Err()
+		if err != nil {
+			return err //nolint:wrapcheck // list wraps it with ErrList.
+		}
+
+		if d.IsDir() || !files.Accepted(p, s.exts) {
 			return nil
-		})
-
-		// Merge overlay.
-		for name := range s.overlay {
-			seen[name] = struct{}{}
 		}
+
+		if d.Type().IsRegular() {
+			names = append(names, p)
+
+			return nil
+		}
+
+		if d.Type()&fs.ModeSymlink == 0 {
+			return nil
+		}
+
+		_, _, found, err := r.lookup(p, true)
+		if err != nil {
+			return fmt.Errorf("%q: %w", p, files.Cause(err))
+		}
+
+		if found {
+			names = append(names, p)
+		}
+
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", template.ErrList, err)
 	}
 
-	names := make([]string, 0, len(seen))
-	for name := range seen {
-		names = append(names, name)
-	}
-	sort.Strings(names)
 	return names, nil
 }
 
-// Register adds or replaces a template in the in-memory overlay. It
-// returns template.ErrClosed after Close.
-func (s *Store) Register(_ context.Context, name string, content []byte) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.closed {
-		return template.ErrClosed
+// usable returns nil when the store is open, and otherwise
+// template.ErrNotInitialized or template.ErrClosed. The caller holds
+// rootMu.
+func (s *Store) usable() error {
+	if s.state == stateNew {
+		return template.ErrNotInitialized
 	}
-	s.overlay[name] = content
-	return nil
-}
 
-// RegisterFS walks an fs.FS and registers every .html file found into
-// the in-memory overlay. It returns template.ErrClosed after Close.
-func (s *Store) RegisterFS(ctx context.Context, fsys fs.FS) error {
-	s.mu.RLock()
-	closed := s.closed
-	s.mu.RUnlock()
-	if closed {
+	if s.state == stateClosed {
 		return template.ErrClosed
 	}
 
-	if err := util.RegisterFS(ctx, s, fsys, ".html"); err != nil {
-		return fmt.Errorf("template: register fs: %w", err)
-	}
-	return nil
-}
-
-// Close releases the os.Root handle if it was opened and drops the
-// overlay. It waits for disk reads in flight. Every later operation
-// returns template.ErrClosed, and a second Close returns nil.
-func (s *Store) Close() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.closed {
-		return nil
-	}
-	s.closed = true
-	s.overlay = nil
-
-	if s.root != nil {
-		root := s.root
-		s.root = nil
-		if err := root.Close(); err != nil {
-			return fmt.Errorf("template: closing root: %w", err)
-		}
-	}
 	return nil
 }

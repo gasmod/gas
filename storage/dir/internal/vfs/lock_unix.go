@@ -13,13 +13,19 @@ import (
 // tryLock takes an exclusive flock on f without blocking. It reports false
 // with a nil error when another holder has the lock.
 func tryLock(f *os.File) (bool, error) {
-	err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+	err := fault(OpFlock, f.Name())
+	if err == nil {
+		err = unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+	}
+
 	if errors.Is(err, unix.EWOULDBLOCK) {
 		return false, nil
 	}
+
 	if err != nil {
 		return false, fmt.Errorf("flock: %w", err)
 	}
+
 	return true, nil
 }
 
@@ -27,13 +33,19 @@ func tryLock(f *os.File) (bool, error) {
 // retrying when a signal interrupts the wait.
 func lockBlocking(f *os.File) error {
 	for {
-		err := unix.Flock(int(f.Fd()), unix.LOCK_EX)
+		err := fault(OpFlock, f.Name())
+		if err == nil {
+			err = unix.Flock(int(f.Fd()), unix.LOCK_EX)
+		}
+
 		if errors.Is(err, unix.EINTR) {
 			continue
 		}
+
 		if err != nil {
 			return fmt.Errorf("flock: %w", err)
 		}
+
 		return nil
 	}
 }

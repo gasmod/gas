@@ -4,614 +4,388 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
+	"sync/atomic"
 
 	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/storage"
 	"github.com/gasmod/gas/storage/dir/internal/vfs"
-	"github.com/gasmod/gas/storage/internal"
+	"github.com/gasmod/gas/storage/internal/configsrc"
+	"github.com/gasmod/gas/storage/internal/lifecycle"
+	"github.com/gasmod/gas/storage/internal/listing"
 )
 
-// mod is the module path every provider error is prefixed with.
-const mod = "dir/provider"
+// ServiceName is the name of the dir store, returned by Provider.Name and
+// prefixed to every error the store returns.
+const ServiceName = "gas/storage/dir"
 
-// Provider is a storage.Provider that stores buckets and objects in a
-// directory, through an os.Root. Build it with NewProvider; a Provider that
-// NewProvider did not build returns storage.ErrNotInitialized from every
-// method.
+// The operations errors name.
+const (
+	opInit         = "init"
+	opReady        = "ready"
+	opClose        = "close"
+	opCreateBucket = "create bucket"
+	opHeadBucket   = "head bucket"
+	opDeleteBucket = "delete bucket"
+	opListBuckets  = "list buckets"
+	opHeadObject   = "head object"
+	opPutObject    = "put object"
+	opGetObject    = "get object"
+	opDeleteObject = "delete object"
+	opListObjects  = "list objects"
+	opCopyObject   = "copy object"
+)
+
+// Provider is an object store in a directory on a local disk, as
+// described in the package documentation. It is safe for concurrent use.
 type Provider struct {
-	vfs    *vfs.VFS
-	root   *os.Root
-	config *Config
-	skip   SkipHandler
+	// cfgProvider is the ConfigProvider Init binds from, unless a
+	// configuration was given to WithConfig.
+	cfgProvider gas.ConfigProvider
+	// logger receives the store's events, with `service` set.
+	logger gas.Logger
+	// root is the directory WithRoot gave, which the caller owns, or nil.
+	root *os.Root
+	// skip receives the entries the store passes over, or is nil.
+	skip SkipHandler
+	// cfg is the configuration the last successful Init bound, or nil
+	// before the first. It outlives Close.
+	cfg atomic.Pointer[Config]
+	// cfgSource records the configuration given to WithConfig.
+	cfgSource configsrc.Source[Config]
+	// lc is the lifecycle, whose sessions hold what one Init opened.
+	lc lifecycle.Lifecycle[*session]
+	// rootSet reports whether WithRoot was given, so that WithRoot(nil)
+	// is told apart from no WithRoot.
+	rootSet bool
 }
 
-var _ storage.Provider = (*Provider)(nil)
+// session is what one Init opened.
+type session struct {
+	// vfs stores the buckets and objects.
+	vfs *vfs.VFS
+	// root is the directory, which Close closes when owned is set.
+	root *os.Root
+	// codec seals and opens the continuation tokens of this Init.
+	codec *listing.Codec
+	// settings is the resolved configuration.
+	settings Settings
+	// owned reports whether Init opened root, so that Close closes it.
+	owned bool
+}
 
-// NewProvider returns a constructor for a Provider, for registration with the
-// gas service container. The constructor takes the gas.ConfigProvider as its
-// dependency, binds Config from it, and applies opts. A nil config provider
-// returns an error. A configured bucket that is not a valid bucket name
-// returns an error wrapping storage.ErrInvalidBucket; no root returns
-// ErrRootRequired; a root the internal directories cannot be created in
-// returns an error wrapping storage.ErrNotInitialized.
-func NewProvider(opts ...Option) func(cfgProvider gas.ConfigProvider) (*Provider, error) {
-	return func(cfgProvider gas.ConfigProvider) (*Provider, error) {
-		p := &Provider{}
+var (
+	_ storage.Provider  = (*Provider)(nil)
+	_ gas.Service       = (*Provider)(nil)
+	_ gas.ReadyReporter = (*Provider)(nil)
+)
 
-		cfg, err := internal.BindConfig[Config](cfgProvider)
-		if err != nil {
-			return nil, internal.Errorf(mod, "%w", err)
+// New returns the constructor of a Provider with opts applied, in the
+// shape the gas container expects. The constructor opens nothing; Init
+// does. It returns an error wrapping storage.ErrNilLogger for a nil
+// logger, storage.ErrNilOption for a nil option, storage.ErrNilConfig for
+// WithConfig(nil), and ErrNilRoot for WithRoot(nil); a nil ConfigProvider
+// is accepted, and Init then requires WithConfig.
+func New(opts ...Option) func(gas.ConfigProvider, gas.Logger) (*Provider, error) {
+	return func(cfgProvider gas.ConfigProvider, logger gas.Logger) (*Provider, error) {
+		if logger == nil {
+			return nil, fmt.Errorf("%s: %w", ServiceName, storage.ErrNilLogger)
 		}
-		p.config = cfg
 
-		if bk := p.config.Storage.Bucket; bk != "" && !internal.IsValidBucketName(bk) {
-			return nil, internal.Errorf(mod, "%w: %s", storage.ErrInvalidBucket, bk)
+		p := &Provider{
+			cfgProvider: cfgProvider,
+			logger:      logger.With().Str("service", ServiceName).Logger(),
 		}
 
-		for i, o := range opts {
-			if o == nil {
-				return nil, internal.Errorf(
-					mod,
-					"%w: option %d is nil",
-					storage.ErrInvalidOption,
+		for i, opt := range opts {
+			if opt == nil {
+				return nil, fmt.Errorf(
+					"%s: %w: at position %d",
+					ServiceName,
+					storage.ErrNilOption,
 					i,
 				)
 			}
-			o(p)
+
+			opt(p)
 		}
 
-		if p.root == nil {
-			return nil, internal.Errorf(mod, "%w", ErrRootRequired)
+		switch {
+		case p.cfgSource.IsNil():
+			return nil, fmt.Errorf("%s: %w", ServiceName, storage.ErrNilConfig)
+		case p.rootSet && p.root == nil:
+			return nil, fmt.Errorf("%s: %w", ServiceName, ErrNilRoot)
 		}
-
-		v, vErr := vfs.NewVFS(p.root)
-		if vErr != nil {
-			return nil, internal.Errorf(mod, "%w: %w", storage.ErrNotInitialized, vErr)
-		}
-		p.vfs = v
 
 		return p, nil
 	}
 }
 
-// CreateBucket creates the bucket input.Bucket. It waits for a DeleteBucket
-// of the same name in progress, until ctx is done. The returned Bucket has its
-// Name and its CreationDate, when CreateBucket first ran for it; ID and
-// Region are empty. Every bucket under the root
-// belongs to the caller, so a bucket that already exists is success, as for a
-// bucket the caller owns on S3, and its objects are kept; this backend never
-// returns storage.ErrBucketExists. An invalid name returns an error wrapping
-// storage.ErrInvalidBucket.
-func (p *Provider) CreateBucket(
-	ctx context.Context,
-	input *storage.CreateBucketInput,
-) (*storage.Bucket, error) {
-	if err := p.checkReady(); err != nil {
-		return nil, err
+// Name returns ServiceName.
+func (*Provider) Name() string { return ServiceName }
+
+// Init resolves the configuration, opens the directory, removes the
+// leftovers of crashed writes and creates the configured bucket, as
+// described in the package documentation. On an initialized store it
+// returns storage.ErrAlreadyInitialized and changes nothing.
+func (p *Provider) Init(ctx context.Context) error {
+	if p == nil {
+		return opError(opInit, storage.ErrNotInitialized)
 	}
 
-	if input == nil {
-		return nil, internal.Errorf(mod, "create bucket: %w", storage.ErrInputRequired)
-	}
+	var (
+		set   Settings
+		swept vfs.SweepResult
+	)
 
-	if !internal.IsValidBucketName(input.Bucket) {
-		return nil, internal.Errorf(mod, "create bucket: %w", storage.ErrInvalidBucket)
-	}
+	err := p.lc.Init(ctx, func() (*session, error) {
+		sess, res, err := p.open(ctx)
+		if err != nil {
+			return nil, err
+		}
 
-	entry, err := p.vfs.CreateBucket(ctx, input.Bucket)
-	if err != nil && !errors.Is(err, vfs.ErrBucketExists) {
-		return nil, opError("create bucket", nil, err)
-	}
-	return &storage.Bucket{Name: input.Bucket, CreationDate: entry.Created}, nil
-}
+		set, swept = sess.settings, res
 
-// HeadBucket reports whether the bucket input.Bucket exists. The returned
-// Bucket has its Name and, when its name record names it, its CreationDate;
-// ID and Region are empty. A bucket whose name record is missing or damaged,
-// which ListBuckets leaves out, exists with a zero CreationDate. A missing
-// bucket returns an error wrapping storage.ErrBucketNotFound, and an invalid
-// name one wrapping storage.ErrInvalidBucket. This backend never returns
-// storage.ErrAccessDenied.
-func (p *Provider) HeadBucket(
-	_ context.Context,
-	input *storage.HeadBucketInput,
-) (*storage.Bucket, error) {
-	if err := p.checkReady(); err != nil {
-		return nil, err
-	}
+		// Nothing fails once this function returns, so the Init succeeds.
+		p.cfg.Store(&Config{Storage: set})
 
-	if input == nil {
-		return nil, internal.Errorf(mod, "head bucket: %w", storage.ErrInputRequired)
-	}
-
-	if !internal.IsValidBucketName(input.Bucket) {
-		return nil, internal.Errorf(mod, "head bucket: %w", storage.ErrInvalidBucket)
-	}
-
-	entry, err := p.vfs.HeadBucket(input.Bucket)
+		return sess, nil
+	})
 	if err != nil {
-		return nil, opError("head bucket", nil, err)
+		return opError(opInit, err)
 	}
-	return &storage.Bucket{Name: entry.Name, CreationDate: entry.Created}, nil
+
+	if swept.Removed > 0 {
+		p.logger.Info("leftovers of crashed writes removed").Int("removed", swept.Removed).Send()
+	}
+
+	if swept.Reindexed > 0 {
+		p.logger.Info("objects with no index entry re-indexed").
+			Int("reindexed", swept.Reindexed).
+			Send()
+	}
+
+	if swept.Limited {
+		p.logger.Warn("leftover sweep stopped at its limit").Int("limit", set.SweepLimit).Send()
+	}
+
+	p.logger.Info("service initialized").
+		Bool("bucket", set.Bucket != "").
+		Bool("own_root", p.root == nil).
+		Send()
+
+	return nil
 }
 
-// DeleteBucket deletes the bucket input.Bucket, which must hold no object: a
-// bucket that does returns an error wrapping storage.ErrBucketNotEmpty and
-// keeps everything. A missing bucket returns an error wrapping
-// storage.ErrBucketNotFound, and an invalid name one wrapping
-// storage.ErrInvalidBucket.
-//
-// Entries no read can use do not count as objects, so they never keep a
-// bucket from being deleted: metadata that cannot be used, metadata whose
-// data file is gone, and the temp files of crashed writes are removed with
-// the bucket, but only once no object was found. Their contents could not
-// be read through this backend anyway. A write that lands while the delete
-// runs can still make it return storage.ErrBucketNotEmpty after that debris
-// is gone. A file in the bucket's metadata directory that this backend did
-// not write stops the delete with an error.
-//
-// A write of an existing key in progress is waited for, never cut short, so
-// a slow PutObject holds DeleteBucket, and with it a CreateBucket of the
-// same name, until it ends or ctx is done. A write of a new key still
-// copying its body is not waited for: the bucket is deleted under it, and
-// the PutObject returns an error wrapping storage.ErrBucketNotFound.
-//
-// A bucket created again afterwards gets a new CreationDate, except after a
-// crash between the delete's commit and its removal of the bucket's name
-// record, which leaves the old CreationDate in place.
-func (p *Provider) DeleteBucket(ctx context.Context, input *storage.DeleteBucketInput) error {
-	if err := p.checkReady(); err != nil {
+// Config returns a copy of the configuration the last successful Init
+// bound, defaults included, as described in the package documentation:
+// the zero Config before the first successful Init, and on a nil
+// Provider, and the last one bound after Close. Changing it changes
+// nothing in the store. It is safe to call at any time, while Init or
+// Close runs included.
+func (p *Provider) Config() Config {
+	if p == nil {
+		return Config{}
+	}
+
+	cfg := p.cfg.Load()
+	if cfg == nil {
+		return Config{}
+	}
+
+	return *cfg
+}
+
+// Close makes every later call but Init return an error wrapping
+// storage.ErrClosed, waits for every call in flight to return, and closes
+// the directory Init opened, as described in the package documentation.
+// When ctx ends first, it cancels the calls in flight, which return
+// storage.ErrClosed, and returns an error wrapping ctx's error. Close on
+// a store that is not initialized returns nil and logs nothing.
+func (p *Provider) Close(ctx context.Context) error {
+	if p == nil {
+		return nil
+	}
+
+	sess, err := p.lc.Close(ctx)
+	if sess == nil {
+		return nil
+	}
+
+	if sess.Value.owned {
+		cErr := sess.Value.root.Close()
+		if cErr != nil {
+			err = errors.Join(
+				err,
+				fmt.Errorf("%w: close dir: %w", storage.ErrBackend, pathFree(cErr)),
+			)
+		}
+	}
+
+	if err != nil {
+		err = opError(opClose, err)
+		p.logger.Warn("service closed, calls in flight canceled").Err("error", err).Send()
+
 		return err
 	}
 
-	if input == nil {
-		return internal.Errorf(mod, "delete bucket: %w", storage.ErrInputRequired)
-	}
+	p.logger.Info("service closed").Send()
 
-	if !internal.IsValidBucketName(input.Bucket) {
-		return internal.Errorf(mod, "delete bucket: %w", storage.ErrInvalidBucket)
-	}
-
-	if err := p.vfs.DeleteBucket(ctx, input.Bucket, p.report); err != nil {
-		return opError("delete bucket", nil, err)
-	}
 	return nil
 }
 
-// HeadObject returns the info of the object. A missing object returns an
-// error wrapping storage.ErrNotFound (and not storage.ErrKeyNotFound, as an
-// S3 HEAD), and a missing bucket one wrapping storage.ErrBucketNotFound. A set
-// Version returns an error wrapping storage.ErrNotSupported, after the key and
-// bucket are validated and before anything is read. A Range is applied as by
-// GetObject, so Size is the length of the selected range, and an
-// unsatisfiable one returns an error wrapping storage.ErrInvalidRange. A set
-// PartNumber returns an error wrapping storage.ErrNotSupported, as Version
-// does. The Response* fields of input are ignored.
-func (p *Provider) HeadObject(
-	ctx context.Context,
-	input *storage.HeadObjectInput,
-) (*storage.ObjectInfo, error) {
-	if err := p.checkReady(); err != nil {
-		return nil, err
-	}
-
-	if input == nil {
-		return nil, internal.Errorf(mod, "head: %w", storage.ErrInputRequired)
-	}
-
-	if err := p.rejectUnsupported("head", input); err != nil {
-		return nil, err
-	}
-
-	obj, err := p.openObject(ctx, "head", storage.ErrNotFound, &input.BaseObjectInput)
+// CheckReady reports readiness: an error wrapping
+// storage.ErrNotInitialized or storage.ErrClosed when the store is not
+// initialized, the context's error when ctx has ended, one wrapping
+// storage.ErrBackend when the directory no longer holds the store's
+// layout marker, such as a directory that was removed, and else nil.
+func (p *Provider) CheckReady(ctx context.Context) error {
+	sess, err := p.begin(ctx)
 	if err != nil {
-		return nil, err
+		return opError(opReady, err)
 	}
+	defer sess.End()
 
-	if cErr := obj.File.Close(); cErr != nil {
-		return nil, internal.Errorf(mod, "head: close data file: %w", cErr)
-	}
-
-	info := objectInfo(&obj.ObjectStat)
-	if input.Range != nil {
-		_, n, rErr := parseByteRange(*input.Range, obj.Size)
-		if rErr != nil {
-			return nil, internal.Errorf(mod, "head: %w", rErr)
-		}
-		info.Size = n
-	}
-	return &info, nil
-}
-
-// PutObject writes the object, replacing any object at its key. A nil Body
-// is an empty object; a nil or empty ContentType is sniffed from the body.
-// A set ContentLength must match the body: a shorter or longer body, or a
-// negative length, returns an error wrapping storage.ErrContentLengthMismatch
-// and stores nothing. The bucket is checked first, so a missing bucket is
-// reported as such even when the length would also mismatch. Body is read to
-// EOF, so a body that blocks after exactly ContentLength bytes without ending
-// blocks PutObject. Every header of input is stored as given, Expires
-// included, and the returned ObjectInfo is the object as HeadObject reads it,
-// with its ETag, the hex MD5 of the body.
-//
-// A WriteCondition is checked under the object's lock, against the object
-// the write would replace, so it holds across processes sharing the root. A
-// condition that does not hold returns an error wrapping
-// storage.ErrPreconditionFailed, and an IfMatch of a missing key one
-// wrapping storage.ErrKeyNotFound, unless the key is missing because
-// DeleteBucket removed the bucket during the call, which is
-// storage.ErrBucketNotFound; either way nothing is written. An object
-// stored by a version of this backend that recorded no ETag, or whose
-// metadata is corrupt, matches no IfMatch, and corrupt metadata fails
-// IfNoneMatch too. An invalid condition returns an error wrapping
-// storage.ErrInvalidCondition before anything is read.
-//
-// The write is atomic: a failed PutObject leaves the previous object as it
-// was and returns a nil ObjectInfo, with one exception. When the new object
-// was written but the previous data file could not be removed, PutObject
-// returns the ObjectInfo together with an error wrapping ErrStaleData: the
-// object reads back as written.
-//
-// A missing bucket returns an error wrapping storage.ErrBucketNotFound, and
-// so does a bucket that DeleteBucket removes while the body is being
-// written: the delete does not wait for a write of a new key, since the
-// bucket holds no object yet, and the write then finds no bucket to commit
-// to and stores nothing, even if a bucket of the same name is created
-// again before it ends.
-func (p *Provider) PutObject(
-	ctx context.Context,
-	input *storage.PutObjectInput,
-) (*storage.ObjectInfo, error) {
-	if err := p.checkReady(); err != nil {
-		return nil, err
-	}
-
-	if input == nil {
-		return nil, internal.Errorf(mod, "put: %w", storage.ErrInputRequired)
-	}
-
-	bucket, inErr := internal.ValidateInput(&input.BaseObjectInput, p.config.Storage.Bucket)
-	if inErr != nil {
-		return nil, internal.Errorf(mod, "put: %w", inErr)
-	}
-
-	ifMatch, cErr := internal.ValidateCondition(&input.WriteCondition)
-	if cErr != nil {
-		return nil, internal.Errorf(mod, "put: %w", cErr)
-	}
-
-	bk, bkErr := p.vfs.OpenBucket(bucket)
-	if bkErr != nil {
-		return nil, opError("put", nil, bkErr)
-	}
-
-	// Checked after the bucket, so a missing bucket is reported first.
-	body, lenErr := internal.CheckLength(input.Body, input.ContentLength)
-	if lenErr != nil {
-		return nil, internal.Errorf(mod, "put: %w", errors.Join(lenErr, bk.Close()))
-	}
-
-	out, err := bk.CreateObject(ctx, &vfs.CreateObjectInput{
-		Key:         input.Key,
-		Body:        body,
-		ContentType: input.ContentType,
-		Metadata:    input.Metadata,
-		Headers: vfs.Headers{
-			CacheControl:       valueOf(input.CacheControl),
-			ContentDisposition: valueOf(input.ContentDisposition),
-			ContentEncoding:    valueOf(input.ContentEncoding),
-			ContentLanguage:    valueOf(input.ContentLanguage),
-			Expires:            valueOf(input.Expires),
-		},
-		Condition: vfs.Condition{IfMatch: ifMatch, IfNoneMatch: input.IfNoneMatch != nil},
-	})
-	return p.putResult(bk, out, err)
-}
-
-// putResult closes bk and returns what PutObject reports for a write into
-// it that returned out and err: the object, the ObjectInfo with an
-// ErrStaleData error when the object was written but the old data file
-// stayed, or a nil ObjectInfo. A write that failed for want of its files
-// because DeleteBucket removed the bucket under it, even if a bucket of the
-// same name was created since, reports the bucket missing.
-func (p *Provider) putResult(
-	bk *vfs.Bucket,
-	out *vfs.ObjectStat,
-	err error,
-) (*storage.ObjectInfo, error) {
-	if err = errors.Join(p.removedErr(bk, err), bk.Close()); err != nil {
-		if out != nil && errors.Is(err, vfs.ErrStaleData) {
-			info := objectInfo(out)
-			return &info, opError("put", nil, err)
-		}
-		// Only an IfMatch of a missing key reports the object missing.
-		return nil, opError("put", storage.ErrKeyNotFound, err)
-	}
-	info := objectInfo(out)
-	return &info, nil
-}
-
-// GetObject opens the object for reading. The caller closes Body, which keeps
-// reading the body it opened even if the object is overwritten or deleted
-// meanwhile. A missing object returns an error wrapping
-// storage.ErrKeyNotFound, and a missing bucket one wrapping
-// storage.ErrBucketNotFound. A set Version returns an error wrapping
-// storage.ErrNotSupported, as for HeadObject.
-//
-// Body implements io.ReadSeeker, for whole and ranged reads alike: a ranged
-// Body seeks within the bytes it returns, with offset 0 at the range's
-// first byte. Callers that type-assert for io.ReadSeeker, to serve the body
-// with http.ServeContent for example, can rely on it with this backend; the
-// s3 backend makes no such promise.
-//
-// A Range selects part of the object with RFC 9110 single-range semantics,
-// matching S3: Body reads only those bytes and Size is their count. A Range
-// that is not a single valid byte range is ignored and the whole object is
-// returned; one that cannot be satisfied (its first byte at or past the end,
-// or "bytes=-0") returns an error wrapping storage.ErrInvalidRange. A set
-// PartNumber returns an error wrapping storage.ErrNotSupported. The
-// Response* fields of input are ignored.
-func (p *Provider) GetObject(
-	ctx context.Context,
-	input *storage.GetObjectInput,
-) (*storage.Object, error) {
-	if err := p.checkReady(); err != nil {
-		return nil, err
-	}
-
-	if input == nil {
-		return nil, internal.Errorf(mod, "get: %w", storage.ErrInputRequired)
-	}
-
-	if err := p.rejectUnsupported("get", &input.HeadObjectInput); err != nil {
-		return nil, err
-	}
-
-	obj, err := p.openObject(ctx, "get", storage.ErrKeyNotFound, &input.BaseObjectInput)
+	err = sess.Value.vfs.Check()
 	if err != nil {
-		return nil, err
+		return opError(opReady, fmt.Errorf("%w: %w", storage.ErrBackend, err))
 	}
 
-	out, rErr := rangedObject(obj, input.Range)
-	if rErr != nil {
-		if cErr := obj.File.Close(); cErr != nil {
-			rErr = errors.Join(rErr, cErr)
+	return nil
+}
+
+// open does the work of Init: it resolves the configuration, opens the
+// directory and the store in it, sweeps it, and creates the configured
+// bucket. A failure closes the directory it opened.
+func (p *Provider) open(ctx context.Context) (*session, vfs.SweepResult, error) {
+	cfg, err := p.cfgSource.Resolve(p.cfgProvider, DefaultConfig, rules(p.root != nil))
+	if err != nil {
+		return nil, vfs.SweepResult{}, err //nolint:wrapcheck // Init adds the name and the operation.
+	}
+
+	sess := &session{root: p.root, settings: cfg.Storage}
+
+	if sess.root == nil {
+		sess.root, err = os.OpenRoot(cfg.Storage.Dir)
+		if err != nil {
+			return nil, vfs.SweepResult{}, fmt.Errorf(
+				"%w: open dir: %w",
+				storage.ErrBackend,
+				pathFree(err),
+			)
 		}
-		return nil, internal.Errorf(mod, "get: %w", rErr)
+
+		sess.owned = true
 	}
-	return out, nil
+
+	res, err := p.prepare(ctx, sess)
+	if err != nil && sess.owned {
+		err = errors.Join(err, sess.root.Close())
+	}
+
+	if err != nil {
+		return nil, vfs.SweepResult{}, err
+	}
+
+	return sess, res, nil
 }
 
-// DeleteObject deletes the object. Deleting a missing object succeeds, as in
-// S3; a missing bucket returns an error wrapping storage.ErrBucketNotFound.
-// A set Version returns an error wrapping storage.ErrNotSupported and deletes
-// nothing. The returned ObjectInfo carries no fields.
-func (p *Provider) DeleteObject(
-	ctx context.Context,
-	input *storage.DeleteObjectInput,
-) (*storage.ObjectInfo, error) {
-	if err := p.checkReady(); err != nil {
-		return nil, err
+// prepare opens the store of sess in its directory, sweeps it, creates the
+// configured bucket and draws the codec.
+func (p *Provider) prepare(ctx context.Context, sess *session) (vfs.SweepResult, error) {
+	var err error
+
+	sess.vfs, err = vfs.Open(sess.root)
+	if err != nil {
+		return vfs.SweepResult{}, fmt.Errorf("%w: %w", storage.ErrBackend, err)
 	}
 
-	if input == nil {
-		return nil, internal.Errorf(mod, "delete: %w", storage.ErrInputRequired)
+	res, err := sess.vfs.Sweep(ctx, sess.settings.SweepLimit, p.report)
+	if err == nil && sess.settings.Bucket != "" {
+		err = sess.vfs.CreateBucket(ctx, sess.settings.Bucket)
 	}
 
-	bucket, inErr := internal.ValidateInput(&input.BaseObjectInput, p.config.Storage.Bucket)
-	if inErr != nil {
-		return nil, internal.Errorf(mod, "delete: %w", inErr)
+	switch {
+	case ctx.Err() != nil && err != nil:
+		return vfs.SweepResult{}, ctx.Err() //nolint:wrapcheck // Init adds the name and the operation.
+	case err != nil:
+		return vfs.SweepResult{}, classify(err, !isRead)
 	}
 
-	if input.Version != nil {
-		return nil, internal.Errorf(mod, "delete: version: %w", storage.ErrNotSupported)
+	sess.codec, err = listing.NewCodec()
+	if err != nil {
+		return vfs.SweepResult{}, err //nolint:wrapcheck // Init adds the name and the operation.
 	}
 
-	bk, bkErr := p.vfs.OpenBucket(bucket)
-	if bkErr != nil {
-		return nil, opError("delete", nil, bkErr)
-	}
-
-	err := bk.DeleteObject(ctx, &vfs.DeleteObjectInput{Key: input.Key})
-	if err = errors.Join(p.removedErr(bk, err), bk.Close()); err != nil {
-		return nil, opError("delete", nil, err)
-	}
-
-	return &storage.ObjectInfo{}, nil
+	return res, nil
 }
 
-// removedErr returns err, an error from an operation on bk, marked as the
-// bucket's absence when it is a missing file (see vfs.IsMissing, which on
-// Windows includes a delete-pending directory) because DeleteBucket removed
-// bk while the operation ran, even if a bucket of the same name was created
-// since (see vfs.Removed). Without that, such an operation would report a
-// bare missing file, or a missing key where the whole bucket is gone.
-func (p *Provider) removedErr(bk *vfs.Bucket, err error) error {
-	if vfs.IsMissing(err) && p.vfs.Removed(bk) {
-		return fmt.Errorf("%w: deleted during the operation: %w", vfs.ErrBucketNotFound, err)
+// begin starts a call, as lifecycle.Lifecycle.Begin does, on a Provider
+// that may be nil.
+func (p *Provider) begin(ctx context.Context) (*lifecycle.Session[*session], error) {
+	if p == nil {
+		return nil, storage.ErrNotInitialized
 	}
+
+	return p.lc.Begin(ctx) //nolint:wrapcheck // the method adds the name and the operation.
+}
+
+// report passes s to the skip handler, if there is one.
+func (p *Provider) report(s vfs.Skipped) {
+	if p.skip != nil {
+		p.skip(s.Path, s.Err)
+	}
+}
+
+// pathFree returns err, an error of an os call, without the path it
+// quotes.
+func pathFree(err error) error {
+	if pe, ok := errors.AsType[*fs.PathError](err); ok {
+		return pe.Err
+	}
+
 	return err
 }
 
-// report passes s to the skip handler, if there is one, with its error
-// wrapping the sentinel of this package its vfs sentinel stands for.
-func (p *Provider) report(s vfs.Skipped) {
-	if p.skip == nil {
-		return
-	}
-	err := s.Err
-	switch {
-	case errors.Is(err, vfs.ErrCorrupt):
-		err = fmt.Errorf("%w: %w", ErrCorrupt, err)
-	case errors.Is(err, vfs.ErrUnnamed):
-		err = fmt.Errorf("%w: %w", ErrUnnamedBucket, err)
-	}
-	p.skip(s.Path, err)
-}
-
-// reportAll passes each of skipped to the skip handler; see report.
-func (p *Provider) reportAll(skipped []vfs.Skipped) {
-	for _, s := range skipped {
-		p.report(s)
-	}
-}
-
-// Root returns the root the provider stores into, or nil for a Provider that
-// NewProvider did not build. The caller that opened the root closes it.
-func (p *Provider) Root() *os.Root {
-	return p.root
-}
-
-// checkReady returns an error wrapping storage.ErrNotInitialized unless
-// NewProvider built p.
-func (p *Provider) checkReady() error {
-	if p.vfs == nil || p.config == nil {
-		return internal.Errorf(mod, "%w", storage.ErrNotInitialized)
-	}
-	return nil
-}
-
-// openObject validates in, then opens the object it names for reading. The
-// bucket is closed before it returns; the caller closes the object's File.
-// Errors are complete operation errors for op, with a missing key mapped to
-// notFound.
-func (p *Provider) openObject(
+// callContext returns a context that ends when ctx does or when a Close
+// cancels sess, and the function that frees it.
+func callContext(
 	ctx context.Context,
-	op string,
-	notFound error,
-	in *storage.BaseObjectInput,
-) (*vfs.Object, error) {
-	bucket, inErr := internal.ValidateInput(in, p.config.Storage.Bucket)
-	if inErr != nil {
-		return nil, internal.Errorf(mod, "%s: %w", op, inErr)
-	}
+	sess *lifecycle.Session[*session],
+) (context.Context, func()) {
+	cctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(sess.Context(), cancel)
 
-	bk, bkErr := p.vfs.OpenBucket(bucket)
-	if bkErr != nil {
-		return nil, opError(op, notFound, bkErr)
-	}
-
-	obj, oErr := bk.OpenObject(ctx, &vfs.OpenObjectInput{Key: in.Key})
-	oErr = p.removedErr(bk, oErr)
-	cErr := bk.Close()
-	if oErr != nil {
-		return nil, opError(op, notFound, errors.Join(oErr, cErr))
-	}
-	if cErr != nil {
-		return nil, opError(op, notFound, errors.Join(cErr, obj.File.Close()))
-	}
-
-	return obj, nil
-}
-
-// objectInfo returns the storage view of an object.
-func objectInfo(obj *vfs.ObjectStat) storage.ObjectInfo {
-	return storage.ObjectInfo{
-		Size:               obj.Size,
-		LastModified:       obj.LastModified,
-		ContentType:        obj.ContentType,
-		Metadata:           obj.Metadata,
-		CacheControl:       obj.CacheControl,
-		ContentDisposition: obj.ContentDisposition,
-		ContentEncoding:    obj.ContentEncoding,
-		ContentLanguage:    obj.ContentLanguage,
-		Expires:            obj.Expires,
-		ETag:               obj.ETag,
+	return cctx, func() {
+		stop()
+		cancel()
 	}
 }
 
-// rangedObject returns the Object for obj with header, the Range of a Get,
-// applied: the body and Size of the selected bytes, the whole object when
-// header is nil or ignored, or a bare storage.ErrInvalidRange. It does not
-// close obj.File on error; the caller does.
-func rangedObject(obj *vfs.Object, header *string) (*storage.Object, error) {
-	out := &storage.Object{ObjectInfo: objectInfo(&obj.ObjectStat), Body: obj.File}
-	if header == nil {
-		return out, nil
-	}
-	off, n, err := parseByteRange(*header, obj.Size)
+// withBucket opens the bucket name of sess, runs fn on it and closes it.
+// A failure of fn for want of a file, because DeleteBucket removed the
+// bucket meanwhile, even if a bucket of the same name was created since,
+// is an error wrapping vfs.ErrBucketNotFound.
+func withBucket(sess *session, name string, fn func(*vfs.Bucket) error) error {
+	bk, err := sess.vfs.OpenBucket(name)
 	if err != nil {
-		return nil, err
+		return err //nolint:wrapcheck // the method classifies it.
 	}
-	if off != 0 || n != obj.Size {
-		if out.Body, err = rangeBody(obj.File, off, n); err != nil {
-			return nil, err
-		}
-	}
-	out.Size = n
-	return out, nil
-}
 
-// rangeBody returns the body of a ranged read: n bytes of f from off, which
-// reads, seeks within those bytes, and closes f. f must support io.ReaderAt,
-// which every data file opened from the root does.
-func rangeBody(f fs.File, off, n int64) (io.ReadCloser, error) {
-	ra, ok := f.(io.ReaderAt)
-	if !ok {
-		return nil, errors.New("data file does not support ranged reads")
+	err = fn(bk)
+	if err != nil && vfs.IsMissing(err) && sess.vfs.Removed(bk) {
+		err = vfs.ErrBucketNotFound
 	}
-	return &sectionBody{SectionReader: io.NewSectionReader(ra, off, n), file: f}, nil
-}
 
-// sectionBody is the Body of a ranged GetObject: an io.SectionReader over
-// the selected bytes of the data file, so it implements io.ReadSeeker like
-// the *os.File of a whole read, and Close closes the data file.
-type sectionBody struct {
-	*io.SectionReader
-	file fs.File
-}
+	cErr := bk.Close()
+	if cErr != nil && err == nil {
+		return cErr //nolint:wrapcheck // the method classifies it.
+	}
 
-// Close closes the data file the body reads.
-func (b *sectionBody) Close() error {
-	if err := b.file.Close(); err != nil {
-		return fmt.Errorf("close data file: %w", err)
+	if cErr != nil {
+		return &vfs.JoinedError{Errs: []error{err, cErr}}
 	}
-	return nil
-}
 
-// rejectUnsupported validates in's key and bucket, then reports a set
-// Version or PartNumber as storage.ErrNotSupported: dir neither versions
-// objects nor stores them in parts. It returns nil when the input is valid
-// and asks for neither.
-func (p *Provider) rejectUnsupported(op string, in *storage.HeadObjectInput) error {
-	if _, err := internal.ValidateInput(&in.BaseObjectInput, p.config.Storage.Bucket); err != nil {
-		return internal.Errorf(mod, "%s: %w", op, err)
-	}
-	if in.Version != nil {
-		return internal.Errorf(mod, "%s: version: %w", op, storage.ErrNotSupported)
-	}
-	if in.PartNumber != nil {
-		return internal.Errorf(mod, "%s: part number: %w", op, storage.ErrNotSupported)
-	}
-	return nil
-}
-
-// opError returns the error op reports for err, a vfs error: the provider
-// prefix and op, then the storage sentinel its vfs sentinel maps to, if any,
-// then err. This is the same shape as the s3 backend's errors. A missing
-// object maps to notFound, which is nil for operations where a missing object
-// is not an error.
-func opError(op string, notFound, err error) error {
-	var sentinel error
-	switch {
-	case errors.Is(err, vfs.ErrBucketNotFound):
-		sentinel = storage.ErrBucketNotFound
-	case errors.Is(err, vfs.ErrBucketNotEmpty):
-		sentinel = storage.ErrBucketNotEmpty
-	case errors.Is(err, vfs.ErrCorrupt):
-		sentinel = ErrCorrupt
-	case errors.Is(err, vfs.ErrPreconditionFailed):
-		sentinel = storage.ErrPreconditionFailed
-	case errors.Is(err, vfs.ErrObjectNotFound):
-		sentinel = notFound
-	case errors.Is(err, vfs.ErrStaleData):
-		sentinel = ErrStaleData
-	}
-	if sentinel != nil {
-		return internal.Errorf(mod, "%s: %w: %w", op, sentinel, err)
-	}
-	return internal.Errorf(mod, "%s: %w", op, err)
+	return err
 }

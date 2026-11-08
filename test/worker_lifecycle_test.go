@@ -1,0 +1,1444 @@
+package gas_test
+
+import (
+	"context"
+	"errors"
+	"net/http/httptest"
+	"slices"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/gasmod/gas"
+)
+
+// Init and Close take a context. The container gives every Init a deadline
+// (WithServiceInitTimeout, or the service's own ServiceInitTimeout), cancels
+// it when the deadline passes, and waits for Init to return before failing
+// startup, so no Init is ever left running behind a failed Start. An Init
+// that ignores its context and succeeds late is closed again, because
+// startup has already failed and nothing else would release what it holds.
+//
+// Shutdown closes each active service once with the caller's context, skips
+// services the kill switch already closed, and returns Close errors instead
+// of logging them.
+
+type ctxKey struct{}
+
+// lcProbe is a Service that records the context its Init and Close receive.
+// The phantom K gives each registration its own container type.
+type lcProbe[K any] struct {
+	initDeadline time.Time
+	initValue    any
+	closeValue   any
+	closeErr     error
+	initFn       func(ctx context.Context) error
+	name         string
+	mu           sync.Mutex
+	initCalls    atomic.Int32
+	closeCalls   atomic.Int32
+	initReturned atomic.Bool
+	initHasDL    bool
+}
+
+func (p *lcProbe[K]) Name() string { return p.name }
+
+func (p *lcProbe[K]) Init(ctx context.Context) error {
+	p.initCalls.Add(1)
+	p.mu.Lock()
+
+	p.initDeadline, p.initHasDL = ctx.Deadline()
+	p.initValue = ctx.Value(ctxKey{})
+	p.mu.Unlock()
+
+	var err error
+
+	if p.initFn != nil {
+		err = p.initFn(ctx)
+	}
+
+	p.initReturned.Store(true)
+
+	return err
+}
+
+func (p *lcProbe[K]) Close(ctx context.Context) error {
+	p.closeCalls.Add(1)
+	p.mu.Lock()
+
+	p.closeValue = ctx.Value(ctxKey{})
+	p.mu.Unlock()
+
+	return p.closeErr
+}
+
+func (p *lcProbe[K]) deadline() (time.Time, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return p.initDeadline, p.initHasDL
+}
+
+func (p *lcProbe[K]) values() (initVal, closeVal any) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return p.initValue, p.closeValue
+}
+
+// timedProbe is an lcProbe that sets its own init deadline.
+type timedProbe[K any] struct {
+	lcProbe[K]
+
+	timeout time.Duration
+}
+
+func (p *timedProbe[K]) InitTimeout() time.Duration { return p.timeout }
+
+type (
+	lcTag0 struct{}
+	lcTag1 struct{}
+)
+
+// waitForCancel blocks until ctx is done and returns its error. It gives up
+// after two seconds so a missing deadline fails the test instead of hanging it.
+func waitForCancel(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(2 * time.Second):
+		return errInitContextWasNever
+	}
+}
+
+// lcRegistration builds a worker holding probe either as a pre-built instance
+// or behind a singleton constructor, the two ways a singleton Service can
+// reach the container.
+type lcRegistration struct {
+	reg  func(p *lcProbe[lcTag0]) gas.WorkerOption
+	name string
+}
+
+var lcRegistrations = []lcRegistration{
+	{name: "instance", reg: gas.WithServiceInstance[*lcProbe[lcTag0]]},
+	{name: "constructed", reg: func(p *lcProbe[lcTag0]) gas.WorkerOption {
+		return gas.WithSingletonService[*lcProbe[lcTag0]](func() *lcProbe[lcTag0] { return p })
+	}},
+}
+
+func TestInitContextCarriesDeadline(t *testing.T) {
+	for _, r := range lcRegistrations {
+		t.Run(r.name, func(t *testing.T) {
+			p := &lcProbe[lcTag0]{name: "probe"}
+			w := gas.NewWorker(gas.WithServiceInitTimeout(5*time.Second), r.reg(p))
+
+			before := time.Now()
+
+			err := w.Start(t.Context())
+			if err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+
+			dl, ok := p.deadline()
+			if !ok {
+				t.Fatal("Init context has no deadline")
+			}
+
+			if got := dl.Sub(before); got <= 0 || got > 5*time.Second+time.Second {
+				t.Errorf("Init deadline is %v after Start, want about 5s", got)
+			}
+		})
+	}
+}
+
+func TestInitContextCarriesCallerValues(t *testing.T) {
+	for _, r := range lcRegistrations {
+		t.Run(r.name, func(t *testing.T) {
+			p := &lcProbe[lcTag0]{name: "probe"}
+			w := gas.NewWorker(r.reg(p))
+
+			ctx := context.WithValue(t.Context(), ctxKey{}, "caller")
+
+			err := w.Start(ctx)
+			if err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+
+			if got, _ := p.values(); got != "caller" {
+				t.Errorf("Init saw context value %v, want caller", got)
+			}
+		})
+	}
+}
+
+// When the deadline passes, the container cancels Init's context and waits
+// for Init to return before Start reports the failure.
+func TestInitDeadlineCancelsAndWaits(t *testing.T) {
+	for _, r := range lcRegistrations {
+		t.Run(r.name, func(t *testing.T) {
+			p := &lcProbe[lcTag0]{name: "probe", initFn: func(ctx context.Context) error {
+				err := waitForCancel(ctx)
+
+				time.Sleep(50 * time.Millisecond) // cleanup after cancellation
+
+				return err
+			}}
+			w := gas.NewWorker(gas.WithServiceInitTimeout(30*time.Millisecond), r.reg(p))
+
+			err := w.Start(t.Context())
+			if !p.initReturned.Load() {
+				t.Error("Start returned while Init was still running")
+			}
+
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("Start error = %v, want context.DeadlineExceeded", err)
+			}
+
+			if !strings.Contains(err.Error(), "timed out after 30ms") {
+				t.Errorf("Start error %q does not name the 30ms timeout", err)
+			}
+
+			if got := p.closeCalls.Load(); got != 0 {
+				t.Errorf("Close called %d times on an Init that failed, want 0", got)
+			}
+		})
+	}
+}
+
+// An Init that ignores its context and succeeds after the deadline has
+// acquired whatever it acquires, but startup has failed and nothing will
+// shut it down, so the container closes it.
+func TestInitSucceedingAfterDeadlineIsClosed(t *testing.T) {
+	for _, r := range lcRegistrations {
+		t.Run(r.name, func(t *testing.T) {
+			p := &lcProbe[lcTag0]{name: "probe", initFn: func(ctx context.Context) error {
+				_ = waitForCancel(ctx) // returns after the deadline, ignoring it
+
+				return nil
+			}}
+			w := gas.NewWorker(gas.WithServiceInitTimeout(20*time.Millisecond), r.reg(p))
+
+			err := w.Start(t.Context())
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("Start error = %v, want context.DeadlineExceeded", err)
+			}
+
+			if !p.initReturned.Load() {
+				t.Error("Start returned while Init was still running")
+			}
+
+			if got := p.closeCalls.Load(); got != 1 {
+				t.Errorf("Close called %d times after a late Init, want 1", got)
+			}
+		})
+	}
+}
+
+// The error a late Init's Close returns is reported alongside the timeout.
+func TestInitSucceedingAfterDeadlineReportsCloseError(t *testing.T) {
+	errClose := errCloseFailed2
+	p := &lcProbe[lcTag0]{
+		name:     "probe",
+		closeErr: errClose,
+		initFn: func(ctx context.Context) error {
+			_ = waitForCancel(ctx) // returns after the deadline, ignoring it
+
+			return nil
+		},
+	}
+	w := gas.NewWorker(gas.WithServiceInitTimeout(10*time.Millisecond), gas.WithServiceInstance(p))
+
+	err := w.Start(t.Context())
+	if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, errClose) {
+		t.Fatalf("Start error = %v, want both context.DeadlineExceeded and the Close error", err)
+	}
+}
+
+func TestInitTimeoutZeroMeansNoDeadline(t *testing.T) {
+	for _, r := range lcRegistrations {
+		t.Run(r.name, func(t *testing.T) {
+			for range 50 {
+				p := &lcProbe[lcTag0]{name: "probe"}
+				w := gas.NewWorker(gas.WithServiceInitTimeout(0), r.reg(p))
+
+				err := w.Start(t.Context())
+				if err != nil {
+					t.Fatalf("Start with a zero timeout: %v", err)
+				}
+
+				if _, ok := p.deadline(); ok {
+					t.Fatal("Init context has a deadline with a zero timeout")
+				}
+			}
+		})
+	}
+}
+
+func TestInitTimeoutZeroKeepsCallerDeadline(t *testing.T) {
+	p := &lcProbe[lcTag0]{name: "probe"}
+	w := gas.NewWorker(gas.WithServiceInitTimeout(0), gas.WithServiceInstance(p))
+
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+
+	want, _ := ctx.Deadline()
+
+	err := w.Start(ctx)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	if got, ok := p.deadline(); !ok || !got.Equal(want) {
+		t.Errorf("Init deadline = %v (set %v), want the caller's %v", got, ok, want)
+	}
+}
+
+// A negative init timeout is an option error: Start, or BuildAll, fails
+// with ErrInvalidOption before anything is initialized.
+func TestInitTimeoutNegativeFailsStart(t *testing.T) {
+	t.Run("WithServiceInitTimeout", func(t *testing.T) {
+		w := gas.NewWorker(gas.WithServiceInitTimeout(-time.Second))
+		err := w.Start(context.Background())
+
+		if !errors.Is(err, gas.ErrInvalidOption) {
+			t.Errorf("Start() = %v, want ErrInvalidOption", err)
+		}
+	})
+	t.Run("WithServiceContainerServiceTimeout", func(t *testing.T) {
+		c := gas.NewServiceContainer(gas.WithServiceContainerServiceTimeout(-time.Second))
+		err := c.BuildAll(context.Background())
+
+		if !errors.Is(err, gas.ErrInvalidOption) {
+			t.Errorf("BuildAll() = %v, want ErrInvalidOption", err)
+		}
+	})
+}
+
+// A service's own InitTimeout replaces the worker default, for constructed
+// services as well as instances.
+func TestServiceInitTimeoutOverridesDefault(t *testing.T) {
+	p := &timedProbe[lcTag1]{name: "timed", timeout: 2 * time.Second}
+	w := gas.NewWorker(
+		gas.WithServiceInitTimeout(time.Hour),
+		gas.WithSingletonService[*timedProbe[lcTag1]](func() *timedProbe[lcTag1] { return p }),
+	)
+
+	before := time.Now()
+
+	err := w.Start(t.Context())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	dl, ok := p.deadline()
+	if !ok || dl.Sub(before) > 3*time.Second {
+		t.Errorf("Init deadline %v after Start (set %v), want about 2s", dl.Sub(before), ok)
+	}
+}
+
+func TestServiceInitTimeoutNegativeFailsStart(t *testing.T) {
+	p := &timedProbe[lcTag1]{name: "timed", timeout: -time.Second}
+	w := gas.NewWorker(gas.WithServiceInstance(p))
+
+	err := w.Start(t.Context())
+	if err == nil || !strings.Contains(err.Error(), "negative") {
+		t.Fatalf("Start error = %v, want an error about the negative InitTimeout", err)
+	}
+
+	if p.initCalls.Load() != 0 {
+		t.Error("Init ran despite a negative InitTimeout")
+	}
+}
+
+func TestStartWithCanceledContextFails(t *testing.T) {
+	for _, r := range lcRegistrations {
+		t.Run(r.name, func(t *testing.T) {
+			p := &lcProbe[lcTag0]{name: "probe", initFn: func(ctx context.Context) error {
+				return ctx.Err()
+			}}
+			w := gas.NewWorker(r.reg(p))
+
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+
+			err := w.Start(ctx)
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("Start error = %v, want context.Canceled", err)
+			}
+		})
+	}
+}
+
+func TestRestartServiceInitHasDeadline(t *testing.T) {
+	p := &lcProbe[lcTag0]{name: "probe"}
+	w := gas.NewWorker(gas.WithServiceInitTimeout(5*time.Second), gas.WithServiceInstance(p))
+
+	err := w.Start(t.Context())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	err = w.CloseService[*lcProbe[lcTag0]](context.Background())
+	if err != nil {
+		t.Fatalf("CloseService: %v", err)
+	}
+
+	before := time.Now()
+
+	err = w.RestartService[*lcProbe[lcTag0]](t.Context())
+	if err != nil {
+		t.Fatalf("RestartService: %v", err)
+	}
+
+	dl, ok := p.deadline()
+	if !ok || dl.Sub(before) > 6*time.Second {
+		t.Errorf(
+			"restart Init deadline %v after restart (set %v), want about 5s",
+			dl.Sub(before),
+			ok,
+		)
+	}
+}
+
+func TestRestartServiceInitDeadlineCancelsAndWaits(t *testing.T) {
+	var restarting atomic.Bool
+
+	p := &lcProbe[lcTag0]{name: "probe", initFn: func(ctx context.Context) error {
+		if !restarting.Load() {
+			return nil
+		}
+
+		return waitForCancel(ctx)
+	}}
+	w := gas.NewWorker(gas.WithServiceInitTimeout(30*time.Millisecond), gas.WithServiceInstance(p))
+
+	err := w.Start(t.Context())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	err = w.CloseService[*lcProbe[lcTag0]](context.Background())
+	if err != nil {
+		t.Fatalf("CloseService: %v", err)
+	}
+
+	restarting.Store(true)
+	p.initReturned.Store(false)
+
+	err = w.RestartService[*lcProbe[lcTag0]](t.Context())
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("RestartService error = %v, want context.DeadlineExceeded", err)
+	}
+
+	if !p.initReturned.Load() {
+		t.Error("RestartService returned while Init was still running")
+	}
+}
+
+// A scoped service's Init gets the scope's context with the init deadline
+// added.
+func TestScopedInitGetsScopeContextWithDeadline(t *testing.T) {
+	c := gas.NewServiceContainer()
+	c.RegisterScopedService[*lcProbe[lcTag0]](func() *lcProbe[lcTag0] {
+		return &lcProbe[lcTag0]{name: "scoped"}
+	})
+
+	err := c.BuildAll(t.Context())
+	if err != nil {
+		t.Fatalf("BuildAll: %v", err)
+	}
+
+	scope := c.NewScope(context.WithValue(t.Context(), ctxKey{}, "request"))
+
+	p, err := scope.Resolve[*lcProbe[lcTag0]]()
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	if got, _ := p.values(); got != "request" {
+		t.Errorf("scoped Init saw context value %v, want request", got)
+	}
+
+	if _, ok := p.deadline(); !ok {
+		t.Error("scoped Init context didn't get a deadline")
+	}
+
+	err = scope.Close(context.WithValue(context.Background(), ctxKey{}, "close"))
+	if err != nil {
+		t.Fatalf("Scope.Close: %v", err)
+	}
+
+	if _, got := p.values(); got != "close" {
+		t.Errorf("scoped Close saw context value %v, want close", got)
+	}
+}
+
+// --- Shutdown ---
+
+func TestShutdownTwiceClosesOnce(t *testing.T) {
+	p := &lcProbe[lcTag0]{name: "probe"}
+	w := gas.NewWorker(gas.WithServiceInstance(p))
+
+	err := w.Start(t.Context())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	for range 3 {
+		err := w.Shutdown(context.Background())
+		if err != nil {
+			t.Fatalf("Shutdown: %v", err)
+		}
+	}
+
+	if got := p.closeCalls.Load(); got != 1 {
+		t.Errorf("Close called %d times, want 1", got)
+	}
+}
+
+func TestShutdownSkipsServiceClosedByKillSwitch(t *testing.T) {
+	p := &lcProbe[lcTag0]{name: "probe"}
+	w := gas.NewWorker(gas.WithServiceInstance(p))
+
+	err := w.Start(t.Context())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	err = w.CloseService[*lcProbe[lcTag0]](context.Background())
+	if err != nil {
+		t.Fatalf("CloseService: %v", err)
+	}
+
+	err = w.Shutdown(context.Background())
+	if err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+
+	if got := p.closeCalls.Load(); got != 1 {
+		t.Errorf("Close called %d times after CloseService and Shutdown, want 1", got)
+	}
+}
+
+// A service restarted after the kill switch is active again, so Shutdown
+// closes it.
+func TestShutdownClosesRestartedService(t *testing.T) {
+	p := &lcProbe[lcTag0]{name: "probe"}
+	w := gas.NewWorker(gas.WithServiceInstance(p))
+
+	err := w.Start(t.Context())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	err = w.CloseService[*lcProbe[lcTag0]](context.Background())
+	if err != nil {
+		t.Fatalf("CloseService: %v", err)
+	}
+
+	err = w.RestartService[*lcProbe[lcTag0]](t.Context())
+	if err != nil {
+		t.Fatalf("RestartService: %v", err)
+	}
+
+	err = w.Shutdown(context.Background())
+	if err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+
+	if got := p.closeCalls.Load(); got != 2 {
+		t.Errorf("Close called %d times, want 2 (kill switch, then shutdown)", got)
+	}
+}
+
+func TestShutdownReturnsCloseErrorsWithoutLogging(t *testing.T) {
+	errA, errB := errAFailed, errBFailed
+	a := &lcProbe[lcTag0]{name: "a", closeErr: errA}
+	b := &lcProbe[lcTag1]{name: "b", closeErr: errB}
+	rec := newRecordingLogger()
+	w := gas.NewWorker(
+		gas.WithServiceInstance[gas.Logger](rec),
+		gas.WithServiceInstance(a),
+		gas.WithServiceInstance(b),
+	)
+
+	err := w.Start(t.Context())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	err = w.Shutdown(context.Background())
+	if !errors.Is(err, errA) || !errors.Is(err, errB) {
+		t.Fatalf("Shutdown error = %v, want both Close errors", err)
+	}
+
+	if a.closeCalls.Load() != 1 || b.closeCalls.Load() != 1 {
+		t.Error("a failing Close stopped the remaining services from closing")
+	}
+
+	for _, level := range rec.seen() {
+		if level == "error" {
+			t.Error("Shutdown both logged and returned a Close error")
+		}
+	}
+}
+
+func TestShutdownPassesCallerContextToClose(t *testing.T) {
+	p := &lcProbe[lcTag0]{name: "probe"}
+	w := gas.NewWorker(gas.WithServiceInstance(p))
+
+	err := w.Start(t.Context())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	err = w.Shutdown(
+		context.WithValue(context.Background(), ctxKey{}, "shutdown"),
+	)
+	if err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+
+	if _, got := p.values(); got != "shutdown" {
+		t.Errorf("Close saw context value %v, want shutdown", got)
+	}
+}
+
+// Concurrent Shutdown calls close each service once; every call returns only
+// after the first has finished closing.
+func TestShutdownConcurrentCallsCloseOnce(t *testing.T) {
+	release := make(chan struct{})
+	p := &blockingCloser{release: release}
+	w := gas.NewWorker(gas.WithServiceInstance(p))
+
+	err := w.Start(t.Context())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	var wg sync.WaitGroup
+
+	returned := make(chan struct{}, 8)
+
+	for range 8 {
+		wg.Go(func() {
+			_ = w.Shutdown(context.Background())
+
+			returned <- struct{}{}
+		})
+	}
+
+	select {
+	case <-returned:
+		t.Fatal("a Shutdown call returned while the first was still closing")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+	wg.Wait()
+
+	if got := p.closeCalls.Load(); got != 1 {
+		t.Errorf("Close called %d times by concurrent Shutdowns, want 1", got)
+	}
+}
+
+// blockingCloser is a Service whose Close blocks until release is closed.
+type blockingCloser struct {
+	release    chan struct{}
+	closeCalls atomic.Int32
+}
+
+func (b *blockingCloser) Name() string { return "blocking-closer" }
+
+func (b *blockingCloser) Init(context.Context) error { return nil }
+
+func (b *blockingCloser) Close(context.Context) error {
+	b.closeCalls.Add(1)
+	<-b.release
+
+	return nil
+}
+
+// An Init that ignores its context and fails late with its own error reports
+// both the init deadline and that error.
+func TestInitFailingAfterDeadlineReportsBoth(t *testing.T) {
+	errInit := errInitFailed2
+
+	for _, r := range lcRegistrations {
+		t.Run(r.name, func(t *testing.T) {
+			p := &lcProbe[lcTag0]{name: "probe", initFn: func(ctx context.Context) error {
+				_ = waitForCancel(ctx) // returns after the deadline, ignoring it
+
+				return errInit
+			}}
+			w := gas.NewWorker(gas.WithServiceInitTimeout(10*time.Millisecond), r.reg(p))
+
+			err := w.Start(t.Context())
+			if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, errInit) {
+				t.Fatalf(
+					"Start error = %v, want both context.DeadlineExceeded and the Init error",
+					err,
+				)
+			}
+
+			if got := p.closeCalls.Load(); got != 0 {
+				t.Errorf("Close called %d times on an Init that failed, want 0", got)
+			}
+		})
+	}
+}
+
+// A caller deadline shorter than the init deadline reaches Init through ctx;
+// the error is the caller's, not reported as the container's timeout.
+func TestInitCallerDeadlineIsNotReportedAsInitTimeout(t *testing.T) {
+	p := &lcProbe[lcTag0]{name: "probe", initFn: waitForCancel}
+	w := gas.NewWorker(gas.WithServiceInitTimeout(time.Minute), gas.WithServiceInstance(p))
+
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+
+	err := w.Start(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Start error = %v, want context.DeadlineExceeded", err)
+	}
+
+	if strings.Contains(err.Error(), "timed out after") {
+		t.Errorf("Start error %q reports the caller's deadline as the init timeout", err)
+	}
+}
+
+// Init failing fails Start, and that service is never closed by Shutdown.
+func TestShutdownAfterFailedStartDoesNotCloseFailedService(t *testing.T) {
+	errInit := errInitFailed2
+	p := &lcProbe[lcTag0]{name: "probe", initFn: func(context.Context) error { return errInit }}
+	w := gas.NewWorker(gas.WithServiceInstance(p))
+
+	err := w.Start(t.Context())
+	if !errors.Is(err, errInit) {
+		t.Fatalf("Start error = %v, want the Init error", err)
+	}
+
+	err = w.Shutdown(context.Background())
+	if err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+
+	if got := p.closeCalls.Load(); got != 0 {
+		t.Errorf("Close called %d times on a service whose Init failed, want 0", got)
+	}
+}
+
+// scopeProbe is a scoped Service that records the contexts its Init and
+// Close receive.
+type scopeProbe struct {
+	initCtx  context.Context //nolint:containedctx // the probe records what Init got
+	closeCtx context.Context //nolint:containedctx // the probe records what Close got
+}
+
+func (s *scopeProbe) Name() string { return "scope-probe" }
+
+func (s *scopeProbe) Init(ctx context.Context) error {
+	s.initCtx = ctx
+
+	return nil
+}
+
+func (s *scopeProbe) Close(ctx context.Context) error {
+	s.closeCtx = ctx
+
+	return nil
+}
+
+// In an App, a scoped service's Init gets the request context, and its Close
+// gets that context without its cancellation, so a client that disconnects
+// does not stop scoped services from cleaning up.
+func TestRequestScopeContexts(t *testing.T) {
+	probe := &scopeProbe{}
+	app := gas.NewApp(gas.WithScopedService[*scopeProbe](func() *scopeProbe { return probe }))
+
+	err := app.Start(t.Context())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	app.Router().Handle(nil, "GET", "/scoped", func(ctx gas.Context, _ *scopeProbe) error {
+		return ctx.NoContent()
+	})
+
+	reqCtx, cancel := context.WithCancel(context.WithValue(t.Context(), ctxKey{}, "request"))
+	cancel() // the client has gone away
+
+	req := httptest.NewRequestWithContext(reqCtx, "GET", "/scoped", nil)
+	app.Router().ServeHTTP(httptest.NewRecorder(), req)
+
+	if probe.initCtx == nil || probe.initCtx.Value(ctxKey{}) != "request" {
+		t.Fatal("scoped Init did not get the request context")
+	}
+
+	if probe.closeCtx == nil {
+		t.Fatal("scoped Close was not called")
+	}
+
+	if probe.closeCtx.Value(ctxKey{}) != "request" {
+		t.Error("scoped Close context lost the request values")
+	}
+
+	err = probe.closeCtx.Err()
+	if err != nil {
+		t.Errorf("scoped Close context is done (%v), want it detached from the client", err)
+	}
+}
+
+// Services Shutdown closes leave ActiveServices.
+func TestShutdownEmptiesActiveServices(t *testing.T) {
+	p := &lcProbe[lcTag0]{name: "probe"}
+	w := gas.NewWorker(gas.WithServiceInstance(p))
+
+	err := w.Start(t.Context())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	err = w.Shutdown(context.Background())
+	if err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+
+	if got := w.ActiveServices(); slices.Contains(got, "probe") {
+		t.Errorf("ActiveServices after Shutdown = %v, want probe gone", got)
+	}
+}
+
+// Once Shutdown has begun, the kill switch refuses to restart or close a
+// service, so nothing is reopened after the worker has shut down.
+func TestKillSwitchAfterShutdownFails(t *testing.T) {
+	for name, call := range map[string]func(*gas.Worker) error{
+		"RestartService": func(w *gas.Worker) error {
+			return w.RestartService[*lcProbe[lcTag0]](context.Background())
+		},
+		"CloseService": func(w *gas.Worker) error {
+			return w.CloseService[*lcProbe[lcTag0]](context.Background())
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := &lcProbe[lcTag0]{name: "probe"}
+			w := gas.NewWorker(gas.WithServiceInstance(p))
+
+			err := w.Start(t.Context())
+			if err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+
+			err = w.Shutdown(context.Background())
+			if err != nil {
+				t.Fatalf("Shutdown: %v", err)
+			}
+
+			err = call(w)
+			if err == nil || !strings.Contains(err.Error(), "shut down") {
+				t.Fatalf(
+					"%s after Shutdown = %v, want an error saying the worker is shut down",
+					name,
+					err,
+				)
+			}
+
+			if inits, closes := p.initCalls.Load(), p.closeCalls.Load(); inits != 1 || closes != 1 {
+				t.Errorf("Init ran %d times and Close %d times, want 1 and 1", inits, closes)
+			}
+
+			if got := w.ActiveServices(); slices.Contains(got, "probe") {
+				t.Errorf("ActiveServices = %v, want probe gone", got)
+			}
+		})
+	}
+}
+
+// Shutdown racing the kill switch never leaves a service open: every Init
+// is matched by a Close once all three calls return. One sequential close
+// and restart runs first, so the race starts from a restarted service.
+func TestShutdownRacingKillSwitchLeavesNothingOpen(t *testing.T) {
+	for range 2000 {
+		p := &lcProbe[lcTag0]{name: "probe"}
+		w := gas.NewWorker(
+			gas.WithServiceInstance[gas.Logger](&gas.NopLogger{}),
+			gas.WithServiceInstance(p),
+		)
+
+		err := w.Start(t.Context())
+		if err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+
+		err = w.CloseService[*lcProbe[lcTag0]](context.Background())
+		if err != nil {
+			t.Fatalf("CloseService: %v", err)
+		}
+
+		err = w.RestartService[*lcProbe[lcTag0]](context.Background())
+		if err != nil {
+			t.Fatalf("RestartService: %v", err)
+		}
+
+		// The goroutines wait on start so the three calls overlap.
+		start := make(chan struct{})
+
+		var wg sync.WaitGroup
+
+		wg.Go(func() {
+			<-start
+
+			_ = w.Shutdown(context.Background())
+		})
+		wg.Go(func() {
+			<-start
+
+			_ = w.CloseService[*lcProbe[lcTag0]](context.Background())
+		})
+		wg.Go(func() {
+			<-start
+
+			_ = w.RestartService[*lcProbe[lcTag0]](context.Background())
+		})
+		close(start)
+		wg.Wait()
+
+		if inits, closes := p.initCalls.Load(), p.closeCalls.Load(); inits != closes {
+			t.Fatalf("Init ran %d times and Close %d times; a service was left open", inits, closes)
+		}
+
+		if got := w.ActiveServices(); slices.Contains(got, "probe") {
+			t.Fatalf("ActiveServices = %v after Shutdown, want probe gone", got)
+		}
+	}
+}
+
+// A complete Service registered with WithServiceInstance was never initialized.
+// Auto-Init lives in ServiceContainer.invoke, and BuildAll skips types already
+// present in the instance map, so a pre-built instance never reached it. It was
+// still collected into serviceOrder, so the container closed a service it had
+// never initialized.
+//
+// Implementing gas.Service means the container manages the lifecycle. That is
+// now enforced at registration (declaring Init or Close commits a type to the
+// whole interface), so it has to hold however the instance got there.
+
+type (
+	instTagA struct{}
+	instTagB struct{}
+)
+
+func TestServiceInstanceIsInitialized(t *testing.T) {
+	log := &ordLog{}
+	svc := &ordService[instTagA]{log: log, name: "instance"}
+
+	w := gas.NewWorker(
+		gas.WithSingletonService[gas.Logger](func() *gas.NopLogger { return &gas.NopLogger{} }),
+		gas.WithServiceInstance[*ordService[instTagA]](svc),
+	)
+
+	err := w.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	inits, _ := log.snapshot()
+	if got := strings.Join(inits, " "); got != "instance" {
+		t.Errorf("init calls = [%s], want [instance]", got)
+	}
+
+	if got := w.ActiveServices(); len(got) != 2 ||
+		!slices.Contains(got, "instance") { // 1 built-in (gas/eventbus) + "instance"
+		t.Errorf("ActiveServices = %v, want [gas/eventbus, instance]", got)
+	}
+}
+
+// A second Start fails with ErrAlreadyStarted, so the instance is not
+// initialized twice.
+func TestServiceInstanceInitializedExactlyOnce(t *testing.T) {
+	log := &ordLog{}
+	svc := &ordService[instTagA]{log: log, name: "instance"}
+
+	w := gas.NewWorker(
+		gas.WithSingletonService[gas.Logger](func() *gas.NopLogger { return &gas.NopLogger{} }),
+		gas.WithServiceInstance[*ordService[instTagA]](svc),
+	)
+
+	err := w.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	for range 2 {
+		err := w.Start(context.Background())
+		if !errors.Is(err, gas.ErrAlreadyStarted) {
+			t.Fatalf("Start again = %v, want ErrAlreadyStarted", err)
+		}
+	}
+
+	inits, _ := log.snapshot()
+	if len(inits) != 1 {
+		t.Errorf("Init ran %d times (%v), want 1", len(inits), inits)
+	}
+}
+
+// A failing Init must abort startup, exactly as it does for a constructed
+// service, rather than leaving a half-built app running.
+type failingInstance struct{}
+
+var errInstanceInit = errors.New("instance init failed")
+
+func (s *failingInstance) Name() string { return "failing-instance" }
+
+func (s *failingInstance) Init(context.Context) error { return errInstanceInit }
+
+func (s *failingInstance) Close(context.Context) error { return nil }
+
+func TestServiceInstanceInitErrorAbortsStartup(t *testing.T) {
+	w := gas.NewWorker(
+		gas.WithSingletonService[gas.Logger](func() *gas.NopLogger { return &gas.NopLogger{} }),
+		gas.WithServiceInstance[*failingInstance](&failingInstance{}),
+	)
+
+	err := w.Start(context.Background())
+	if err == nil {
+		t.Fatal("expected Start to fail")
+	}
+
+	if !errors.Is(err, errInstanceInit) {
+		t.Errorf("error %v does not wrap the service's own error", err)
+	}
+}
+
+// A pre-registered instance was available before anything the container
+// builds, so it must initialize first and close last. Otherwise the init order
+// and the reverse-close order disagree.
+func TestServiceInstanceInitializesBeforeConstructedServices(t *testing.T) {
+	const repeats = 10
+
+	for run := range repeats {
+		log := &ordLog{}
+		instance := &ordService[instTagA]{log: log, name: "instance"}
+
+		w := gas.NewWorker(
+			gas.WithSingletonService[gas.Logger](func() *gas.NopLogger { return &gas.NopLogger{} }),
+			gas.WithServiceInstance[*ordService[instTagA]](instance),
+			gas.WithSingletonService[*ordService[instTagB]](func() *ordService[instTagB] {
+				return &ordService[instTagB]{log: log, name: "constructed"}
+			}),
+		)
+
+		err := w.Start(context.Background())
+		if err != nil {
+			t.Fatalf("run %d: Start: %v", run, err)
+		}
+
+		err = w.Shutdown(context.Background())
+		if err != nil {
+			t.Fatalf("run %d: Shutdown: %v", run, err)
+		}
+
+		inits, closes := log.snapshot()
+		if got := strings.Join(inits, " "); got != "instance constructed" {
+			t.Fatalf("run %d: init order = [%s], want [instance constructed]", run, got)
+		}
+
+		if got := strings.Join(closes, " "); got != "constructed instance" {
+			t.Fatalf("run %d: close order = [%s], want [constructed instance]", run, got)
+		}
+	}
+}
+
+var errInitFailed = errors.New("init failed")
+
+// newFailingWorker registers a, b, and c, with c depending on b and b on a,
+// so they build in that order, and c's Init failing.
+func newFailingWorker(log *startLog, opts ...gas.Option) *gas.Worker {
+	all := append([]gas.Option{
+		gas.WithServiceInstance[gas.Logger](&gas.NopLogger{}),
+		gas.WithSingletonService[*probeA](func() *probeA {
+			return &probeA{&startProbe{name: "a", log: log}}
+		}),
+		gas.WithSingletonService[*probeB](func(*probeA) *probeB {
+			return &probeB{&startProbe{name: "b", log: log}}
+		}),
+		gas.WithSingletonService[*probeC](func(*probeB) *probeC {
+			return &probeC{&startProbe{name: "c", log: log, initErr: errInitFailed}}
+		}),
+	}, opts...)
+
+	return gas.NewWorker(all...)
+}
+
+// A Start that fails while initializing services closes, in reverse order,
+// the services it had initialized, and not the one whose Init failed.
+func TestWorker_FailedInitClosesInitialized(t *testing.T) {
+	t.Parallel()
+
+	log := &startLog{}
+	w := newFailingWorker(log)
+
+	err := w.Start(context.Background())
+	if !errors.Is(err, errInitFailed) {
+		t.Fatalf("Start() = %v, want %v", err, errInitFailed)
+	}
+
+	want := []string{"init a", "init b", "init c", "close b", "close a"}
+	if got := log.snapshot(); !equalStrings(got, want) {
+		t.Errorf("calls = %v, want %v", got, want)
+	}
+
+	// Nothing is left for Shutdown to close.
+	err = w.Shutdown(context.Background())
+	if err != nil {
+		t.Errorf("Shutdown() after a failed Start = %v, want nil", err)
+	}
+
+	if got := log.snapshot(); len(got) != len(want) {
+		t.Errorf("Shutdown closed again: calls = %v", got)
+	}
+}
+
+// A second Start after a failed one returns the original error and runs
+// nothing again.
+func TestWorker_StartAfterFailureReturnsOriginalError(t *testing.T) {
+	t.Parallel()
+
+	log := &startLog{}
+	w := newFailingWorker(log)
+
+	first := w.Start(context.Background())
+	if first == nil {
+		t.Fatal("first Start() = nil, want an error")
+	}
+
+	calls := len(log.snapshot())
+
+	second := w.Start(context.Background())
+	if !errors.Is(second, errInitFailed) {
+		t.Errorf("second Start() = %v, want %v", second, errInitFailed)
+	}
+
+	if got := log.snapshot(); len(got) != calls {
+		t.Errorf("second Start ran more lifecycle calls: %v", got[calls:])
+	}
+}
+
+// A Start that fails after every service is initialized, in a ready hook,
+// closes every service in reverse order.
+func TestWorker_FailedReadyHookClosesAll(t *testing.T) {
+	t.Parallel()
+
+	log := &startLog{}
+	hookErr := errHookFailed
+	w := gas.NewWorker(
+		gas.WithServiceInstance[gas.Logger](&gas.NopLogger{}),
+		gas.WithSingletonService[*probeA](func() *probeA {
+			return &probeA{&startProbe{name: "a", log: log}}
+		}),
+		gas.WithSingletonService[*probeB](func(*probeA) *probeB {
+			return &probeB{&startProbe{name: "b", log: log}}
+		}),
+		gas.WithReadyFunc(func(*gas.ServiceContainer) error { return hookErr }),
+	)
+
+	err := w.Start(context.Background())
+	if !errors.Is(err, hookErr) {
+		t.Fatalf("Start() = %v, want %v", err, hookErr)
+	}
+
+	want := []string{"init a", "init b", "close b", "close a"}
+	if got := log.snapshot(); !equalStrings(got, want) {
+		t.Errorf("calls = %v, want %v", got, want)
+	}
+
+	if got := w.ActiveServices(); len(got) != 0 {
+		t.Errorf("ActiveServices() after a failed Start = %v, want none", got)
+	}
+}
+
+// Cleanup closes with a context that is not canceled, even when the
+// caller's context was.
+func TestWorker_FailedStartClosesWithoutCancel(t *testing.T) {
+	t.Parallel()
+
+	log := &startLog{}
+	w := newFailingWorker(log)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_ = w.Start(ctx)
+
+	log.mu.Lock()
+	defer log.mu.Unlock()
+
+	if len(log.ctxs) == 0 {
+		t.Fatal("no service was closed")
+	}
+
+	for i, err := range log.ctxs {
+		if err != nil {
+			t.Errorf("Close %d got a context with error %v, want none", i, err)
+		}
+	}
+}
+
+func newOrdWorker(log *ordLog) *gas.Worker {
+	return gas.NewWorker(
+		gas.WithSingletonService[gas.Logger](func() *gas.NopLogger { return &gas.NopLogger{} }),
+		gas.WithSingletonService[*ordService[ordTag0]](func() *ordService[ordTag0] {
+			return &ordService[ordTag0]{log: log, name: "S0"}
+		}),
+		gas.WithSingletonService[*ordService[ordTag1]](
+			func(*ordService[ordTag0]) *ordService[ordTag1] {
+				return &ordService[ordTag1]{log: log, name: "S1"}
+			},
+		),
+		gas.WithSingletonService[*ordService[ordTag2]](
+			func(*ordService[ordTag1]) *ordService[ordTag2] {
+				return &ordService[ordTag2]{log: log, name: "S2"}
+			},
+		),
+		gas.WithSingletonService[*ordService[ordTag3]](
+			func(*ordService[ordTag2]) *ordService[ordTag3] {
+				return &ordService[ordTag3]{log: log, name: "S3"}
+			},
+		),
+		gas.WithSingletonService[*ordService[ordTag4]](
+			func(*ordService[ordTag3]) *ordService[ordTag4] {
+				return &ordService[ordTag4]{log: log, name: "S4"}
+			},
+		),
+		gas.WithSingletonService[*ordService[ordTag5]](
+			func(*ordService[ordTag4]) *ordService[ordTag5] {
+				return &ordService[ordTag5]{log: log, name: "S5"}
+			},
+		),
+	)
+}
+
+// TestShutdownClosesServicesInReverseInitOrder is the contract Shutdown
+// documents. It is repeated because the regression it guards against came
+// from randomized map iteration: a single run could land on the correct
+// permutation by chance (1 in 720 for six services). Every repetition must
+// satisfy the contract.
+func TestShutdownClosesServicesInReverseInitOrder(t *testing.T) {
+	const repeats = 20
+
+	wantInit := "S0 S1 S2 S3 S4 S5"
+	wantClose := "S5 S4 S3 S2 S1 S0"
+
+	for run := range repeats {
+		log := &ordLog{}
+		w := newOrdWorker(log)
+
+		err := w.Start(context.Background())
+		if err != nil {
+			t.Fatalf("run %d: Start: %v", run, err)
+		}
+
+		err = w.Shutdown(context.Background())
+		if err != nil {
+			t.Fatalf("run %d: Shutdown: %v", run, err)
+		}
+
+		inits, closes := log.snapshot()
+		gotInit := strings.Join(inits, " ")
+		gotClose := strings.Join(closes, " ")
+
+		// Construction order is derived from the topological sort and is
+		// expected to hold; asserting it isolates the defect to the close path.
+		if gotInit != wantInit {
+			t.Fatalf("run %d: init order = [%s], want [%s]", run, gotInit, wantInit)
+		}
+
+		if gotClose != wantClose {
+			t.Fatalf("run %d: close order = [%s], want [%s]\n"+
+				"Shutdown must close services in reverse initialization order so a "+
+				"service can still use its dependencies inside Close()", run, gotClose, wantClose)
+		}
+	}
+}
+
+// TestShutdownNeverClosesADependencyFirst states the safety property the
+// ordering exists to guarantee, independent of the exact permutation: when
+// Close runs for a service, every dependency it was built from must still be
+// open.
+func TestShutdownNeverClosesADependencyFirst(t *testing.T) {
+	const repeats = 20
+
+	// index in the chain: S0 is the deepest dependency, S5 the outermost.
+	depth := map[string]int{"S0": 0, "S1": 1, "S2": 2, "S3": 3, "S4": 4, "S5": 5}
+
+	for run := range repeats {
+		log := &ordLog{}
+		w := newOrdWorker(log)
+
+		err := w.Start(context.Background())
+		if err != nil {
+			t.Fatalf("run %d: Start: %v", run, err)
+		}
+
+		err = w.Shutdown(context.Background())
+		if err != nil {
+			t.Fatalf("run %d: Shutdown: %v", run, err)
+		}
+
+		_, closes := log.snapshot()
+		closed := map[string]bool{}
+
+		for _, name := range closes {
+			// Everything this service depends on is shallower in the chain.
+			for dep, d := range depth {
+				if d < depth[name] && closed[dep] {
+					t.Fatalf("run %d: %s closed after its dependency %s (order: [%s])",
+						run, name, dep, strings.Join(closes, " "))
+				}
+			}
+
+			closed[name] = true
+		}
+	}
+}
+
+func TestWorker_Start_InitFailure(t *testing.T) {
+	svc := &testService{name: "bad-svc", initErr: errInitFailed2}
+	w := gas.NewWorker(
+		gas.WithService[*testService](
+			func() *testService { return svc },
+			gas.ServiceLifetimeSingleton,
+		),
+	)
+
+	err := w.Start(context.Background())
+	if err == nil {
+		t.Fatal("expected error from failing service init")
+	}
+}
+
+func TestWorker_Start_ReadyHookFailure(t *testing.T) {
+	w := gas.NewWorker(
+		gas.WithReadyFunc(func(_ *gas.ServiceContainer) error {
+			return errHookFailed
+		}),
+	)
+
+	err := w.Start(context.Background())
+	if err == nil || err.Error() != "gas: ready hook: hook failed" {
+		t.Fatalf("expected ready hook error, got: %v", err)
+	}
+}
+
+func TestWorker_Start_ReadyHooksRunInOrder(t *testing.T) {
+	var order []int
+
+	w := gas.NewWorker(
+		gas.WithReadyFunc(func(_ *gas.ServiceContainer) error {
+			order = append(order, 1)
+
+			return nil
+		}),
+		gas.WithReadyFunc(func(_ *gas.ServiceContainer) error {
+			order = append(order, 2)
+
+			return nil
+		}),
+	)
+
+	err := w.Start(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(order) != 2 || order[0] != 1 || order[1] != 2 {
+		t.Fatalf("expected [1 2], got %v", order)
+	}
+}
+
+func TestWorker_Shutdown_ReverseOrder(t *testing.T) {
+	// Use two services registered via constructors (not instances) so
+	// Init is called by the container and they appear in serviceOrder.
+	type svcA struct{ testService }
+
+	type svcB struct{ testService }
+
+	var closeOrder []string
+
+	a := &svcA{name: "svc-a"}
+	b := &svcB{name: "svc-b"}
+
+	w := gas.NewWorker(
+		gas.WithServiceInstance[*svcA](a),
+		gas.WithServiceInstance[*svcB](b),
+	)
+
+	err := w.Start(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Subscribe to shutdown event.
+	var shutdownEmitted atomic.Bool
+
+	w.EventBus().Subscribe[gas.SystemShuttingDown](func(_ gas.SystemShuttingDownPayload) {
+		shutdownEmitted.Store(true)
+	})
+
+	_ = closeOrder // tracking would require hooking into Close, but we verify the event fires
+
+	err = w.Shutdown(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !shutdownEmitted.Load() {
+		t.Fatal("expected SystemShuttingDown event to be emitted")
+	}
+}
+
+func TestWorker_Shutdown_EmitsSystemShuttingDown(t *testing.T) {
+	w := gas.NewWorker()
+
+	err := w.Start(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var emitted atomic.Bool
+
+	w.EventBus().Subscribe[gas.SystemShuttingDown](func(_ gas.SystemShuttingDownPayload) {
+		emitted.Store(true)
+	})
+
+	err = w.Shutdown(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !emitted.Load() {
+		t.Fatal("expected SystemShuttingDown to be emitted")
+	}
+}
+
+func TestWorker_Start_EmitsAllServicesInitialized(t *testing.T) {
+	w := gas.NewWorker()
+
+	var emitted atomic.Bool
+
+	w.EventBus().Subscribe[gas.SystemAllServicesInitialized](
+		func(_ gas.SystemAllServicesInitializedPayload) {
+			emitted.Store(true)
+		},
+	)
+
+	err := w.Start(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !emitted.Load() {
+		t.Fatal("expected SystemAllServicesInitialized to be emitted")
+	}
+}

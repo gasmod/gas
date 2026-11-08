@@ -1,41 +1,118 @@
-// Package apikey provides API key authentication for the Gas ecosystem.
-// It implements auth.Authenticator, auth.PrincipalRevoker, and gas.Service.
 package apikey
 
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"maps"
-	"net/http"
-	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/gasmod/gas"
-	auth "github.com/gasmod/gas/auth"
-	"github.com/gasmod/gas/auth/apikey/db"
-	"github.com/gasmod/gas/auth/internal/cryptoutil"
+	"github.com/gasmod/gas/auth"
+	"github.com/gasmod/gas/auth/internal/apikeystore"
+	"github.com/gasmod/gas/auth/internal/svcutil"
 )
 
-const serviceName = "gas/auth/apikey"
+const (
+	// ServiceName is the service's name, which prefixes its errors.
+	ServiceName = "gas/auth/apikey"
+	// PrincipalMetadataKeyScopes is the principal metadata key that holds
+	// a key's scopes, as a []string. Key metadata may not use it.
+	PrincipalMetadataKeyScopes = "scopes"
+)
 
-// KeyInfo contains non-sensitive information about an API key.
-// Re-exported from the db package for convenience.
-type KeyInfo = db.KeyInfo
+// cleanupTaskName names the expired-key cleanup in its log events.
+const cleanupTaskName = "api key cleanup"
 
-// Service is an API key authenticator implementing auth.Authenticator,
-// auth.PrincipalRevoker, and gas.Service.
+var (
+	// ErrNilConfig indicates that WithConfig was given a nil
+	// configuration. It is svcutil's sentinel, so either matches.
+	ErrNilConfig = svcutil.ErrNilConfig
+	// ErrNoConfigProvider indicates that the service has neither a
+	// configuration given to WithConfig nor a ConfigProvider.
+	ErrNoConfigProvider = svcutil.ErrNoConfigProvider
+	// ErrInvalidConfig indicates that the configuration failed to bind,
+	// failed its validate tags, or broke one of the service's rules.
+	ErrInvalidConfig = svcutil.ErrInvalidConfig
+	// ErrNotInitialized indicates that a method was called before Init
+	// succeeded, after a failed Init, or after Close.
+	ErrNotInitialized = svcutil.ErrNotInitialized
+	// ErrNilLogger indicates that New's constructor was given a nil
+	// logger. It is svcutil's sentinel, so either matches.
+	ErrNilLogger = svcutil.ErrNilLogger
+	// ErrEmptySubject indicates that Generate was given an empty subject.
+	// It is auth.ErrEmptySubject, so either matches.
+	ErrEmptySubject = auth.ErrEmptySubject
+	// ErrValueTooLong indicates that Generate was given a subject or a
+	// name longer than auth.MaxValueLength bytes. It is
+	// auth.ErrValueTooLong, so either matches.
+	ErrValueTooLong = auth.ErrValueTooLong
+	// ErrNilPrincipal indicates that Revoke or Delete was given a nil
+	// principal or a nil pointer. It is auth.ErrNilPrincipal, so either
+	// matches.
+	ErrNilPrincipal = auth.ErrNilPrincipal
+	// ErrSchemeMismatch indicates that Revoke or Delete was given a
+	// principal of another scheme than auth.SchemeAPIKey. It is
+	// auth.ErrSchemeMismatch, so either matches.
+	ErrSchemeMismatch = auth.ErrSchemeMismatch
+	// ErrReservedMetadataKey indicates that Generate was given metadata
+	// holding PrincipalMetadataKeyScopes.
+	ErrReservedMetadataKey = errors.New("reserved metadata key")
+	// ErrInvalidMetadata indicates that Generate was given metadata that
+	// does not encode as JSON.
+	ErrInvalidMetadata = errors.New("invalid metadata")
+	// ErrInvalidScope indicates that Generate was given a scope that is
+	// empty, holds a comma, or starts or ends with white space.
+	ErrInvalidScope = errors.New("invalid scope")
+	// ErrInvalidTTL indicates that Generate was given a TTL that is not
+	// positive.
+	ErrInvalidTTL = errors.New("invalid ttl")
+	// ErrInvalidExpiry indicates that Generate was given an expiry time
+	// that is not in the future.
+	ErrInvalidExpiry = errors.New("invalid expiry")
+)
+
+// Service authenticates requests by API key and manages the keys, as
+// described in the package documentation. It is safe for concurrent use.
 type Service struct {
-	store  *db.Store
+	// db is the database the store uses.
+	db gas.DatabaseProvider
+	// logger receives the service's log events.
 	logger gas.Logger
-	cfg    *Config
-
+	// migMgr receives the store's migrations in Init.
+	migMgr gas.MigrationManager
+	// cfgProvider binds the configuration when WithConfig is not used.
 	cfgProvider gas.ConfigProvider
+	// root is the Service whose state a Provider WithTx returned uses, or
+	// nil for a Service New built.
+	root *Service
+	// tx is the transaction a Provider WithTx returned runs in, or nil.
+	tx *sql.Tx
+	// state is what the last successful Init set up, or nil before it,
+	// after a failed Init, and after Close.
+	state atomic.Pointer[state]
+	// bound is the configuration the last successful Init resolved, or
+	// nil before one. Close keeps it. Config returns a copy of it.
+	bound atomic.Pointer[Config]
+	// cfgSource records the configuration given to WithConfig.
+	cfgSource svcutil.ConfigSource[Config]
+	// cleanup runs the expired-key cleanup between Init and Close.
+	cleanup svcutil.Loop
+	// lifecycle makes Init and Close one at a time, so the state they
+	// publish and the cleanup they start or stop always agree. The other
+	// methods never take it.
+	lifecycle sync.Mutex
+}
 
-	customConfigProvided bool
+// state is what one successful Init set up. It is never changed after it
+// is published, so a request that loaded it keeps a consistent view.
+type state struct {
+	// cfg is the resolved configuration.
+	cfg *Config
+	// store reads and writes the keys.
+	store *apikeystore.Store
 }
 
 var (
@@ -45,304 +122,186 @@ var (
 	_ Provider              = (*Service)(nil)
 )
 
-// Option configures a Service.
-type Option func(*Service)
-
-// WithConfig sets a custom configuration, skipping auto-bind from ConfigProvider.
-func WithConfig(cfg *Config) Option {
-	return func(s *Service) {
-		s.cfg = cfg
-		s.customConfigProvided = true
-	}
-}
-
-// New captures options and returns a DI-injectable constructor.
+// New returns a constructor for a Service, in the shape the dependency
+// injection container calls. The constructor applies opts, and fails only
+// for a nil logger, with ErrNilLogger; the configuration is resolved and
+// checked in Init.
 func New(
 	opts ...Option,
 ) func(gas.DatabaseProvider, gas.Logger, gas.MigrationManager, gas.ConfigProvider) (*Service, error) {
-	return func(dbProv gas.DatabaseProvider, logger gas.Logger, migMgr gas.MigrationManager, cfgProvider gas.ConfigProvider) (*Service, error) {
-		store, err := db.New()(dbProv, logger, migMgr)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", serviceName, err)
+	return func(
+		db gas.DatabaseProvider,
+		logger gas.Logger,
+		migMgr gas.MigrationManager,
+		cfgProvider gas.ConfigProvider,
+	) (*Service, error) {
+		if logger == nil {
+			return nil, fmt.Errorf("%s: %w", ServiceName, ErrNilLogger)
 		}
+
 		s := &Service{
-			cfg:         DefaultConfig(),
-			store:       store,
-			logger:      logger.With().Str("service", serviceName).Logger(),
+			db:          db,
+			logger:      logger,
+			migMgr:      migMgr,
 			cfgProvider: cfgProvider,
 		}
+
 		for _, opt := range opts {
 			opt(s)
 		}
+
 		return s, nil
 	}
 }
 
-// Name returns the service identifier.
-func (s *Service) Name() string { return serviceName }
+// Name returns ServiceName.
+func (s *Service) Name() string { return ServiceName }
 
-// Init validates configuration and initializes the store. The store only
-// selects its query adapter and registers migrations, so the context is unused.
+// Init resolves and checks the configuration, sets up the store and
+// registers its migrations, and starts the expired-key cleanup when it is
+// enabled, as described in the package documentation. A failed Init
+// stops the cleanup and leaves the service uninitialized. The context is
+// unused.
 func (s *Service) Init(context.Context) error {
-	if !s.customConfigProvided && s.cfgProvider != nil {
-		if err := s.cfgProvider.Bind(s.cfg); err != nil {
-			return fmt.Errorf("%s: config binding: %w", s.Name(), err)
-		}
-	}
+	s.lifecycle.Lock()
+	defer s.lifecycle.Unlock()
 
-	if err := s.store.Init(s); err != nil {
-		return fmt.Errorf("%s: store init: %w", s.Name(), err)
-	}
-
-	s.logger.Info("service initialized").Send()
-	return nil
-}
-
-// Close performs cleanup. API key service is stateless so this is a no-op
-// and the context is unused.
-func (s *Service) Close(context.Context) error { return nil }
-
-// Authenticate reads the API key from the configured header, hashes it,
-// looks it up in the database, validates expiry, updates last_used, and
-// returns a principal with scheme "apikey".
-func (s *Service) Authenticate(ctx context.Context, r *http.Request) (gas.Principal, error) {
-	key := r.Header.Get(s.cfg.APIKey.HeaderName)
-	if key == "" {
-		return nil, auth.ErrUnauthenticated
-	}
-
-	keyHash := cryptoutil.SHA256Hex(key)
-
-	rec, err := s.store.GetKeyByHash(ctx, keyHash)
+	st, err := s.newState()
 	if err != nil {
-		return nil, fmt.Errorf("%s: authenticate: %w", s.Name(), err)
+		s.state.Store(nil)
+		s.cleanup.Stop()
+
+		return err
 	}
 
-	if rec.ExpiresAt != nil && time.Now().After(*rec.ExpiresAt) {
-		return nil, auth.ErrCredentialsExpired
-	}
+	s.state.Store(st)
+	s.bound.Store(st.cfg)
 
-	// Update last_used.
-	if upErr := s.store.UpdateLastUsed(ctx, rec.ID, time.Now()); upErr != nil {
-		return nil, fmt.Errorf("%s: update last used: %w", s.Name(), upErr)
-	}
+	//nolint:contextcheck // the cleanup outlives Init's context; Close stops it.
+	s.cleanup.Start(svcutil.Task{
+		Name:     cleanupTaskName,
+		Interval: st.cfg.APIKey.CleanupInterval,
+		Timeout:  st.cfg.APIKey.CleanupTimeout,
+		Logger:   s.logger.With().Str("service", ServiceName).Logger(),
+		Run:      s.deleteExpired(st.store),
+	})
 
-	meta := gas.BasePrincipalMetadata(rec.Metadata)
-	meta[PrincipalMetadataKeyScopes] = rec.Scopes
+	s.logger.Info("service initialized").Str("service", ServiceName).Send()
 
-	return auth.NewPrincipal(rec.Subject, auth.SchemeAPIKey, rec.ID, meta), nil
-}
-
-// Revoke soft-deletes an API key by the principal's credential ID. The row
-// remains in the database with deleted_at set, but is excluded from
-// authentication and listing. Use Delete for permanent removal.
-func (s *Service) Revoke(ctx context.Context, principal gas.Principal) error {
-	if err := s.store.SoftDeleteKeyByID(ctx, principal.CredentialID(), time.Now()); err != nil {
-		return fmt.Errorf("%s: revoke: %w", s.Name(), err)
-	}
 	return nil
 }
 
-// RevokeAll soft-deletes all API keys for the given subject. Use DeleteAll
-// for permanent removal.
-func (s *Service) RevokeAll(ctx context.Context, subject string) error {
-	if err := s.store.SoftDeleteKeysBySubject(ctx, subject, time.Now()); err != nil {
-		return fmt.Errorf("%s: revoke all: %w", s.Name(), err)
-	}
+// Close stops the expired-key cleanup, waits for a run in progress to
+// return, and uninitializes the service: its methods, and those of the
+// Providers WithTx returned, fail with ErrNotInitialized until Init
+// succeeds again. The context is unused.
+func (s *Service) Close(context.Context) error {
+	s.lifecycle.Lock()
+	defer s.lifecycle.Unlock()
+
+	s.state.Store(nil)
+	s.cleanup.Stop()
+
 	return nil
 }
 
-// Delete permanently removes an API key row by the principal's credential ID.
-// Prefer Revoke for normal flows; use Delete only when the row must be purged
-// (e.g. GDPR erasure, test cleanup).
-func (s *Service) Delete(ctx context.Context, principal gas.Principal) error {
-	if err := s.store.HardDeleteKeyByID(ctx, principal.CredentialID()); err != nil {
-		return fmt.Errorf("%s: delete: %w", s.Name(), err)
+// Config returns a copy of the configuration the last successful Init
+// resolved, defaults included, or the zero Config before one. A failed
+// Init and Close leave it as it was. Config holds no slice, map or
+// pointer, so the copy shares nothing with the service. On a Provider WithTx returned, it is the
+// configuration of the service it came from.
+func (s *Service) Config() Config {
+	if s.root != nil {
+		return s.root.Config()
 	}
-	return nil
+
+	cfg := s.bound.Load()
+	if cfg == nil {
+		return Config{}
+	}
+
+	return *cfg
 }
 
-// DeleteAll permanently removes all API key rows for the given subject.
-// Prefer RevokeAll for normal flows.
-func (s *Service) DeleteAll(ctx context.Context, subject string) error {
-	if err := s.store.HardDeleteKeysBySubject(ctx, subject); err != nil {
-		return fmt.Errorf("%s: delete all: %w", s.Name(), err)
+// WithTx returns a Provider whose operations run in tx, as described in
+// the package documentation. The caller owns tx; the Provider must not
+// outlive it. The Provider uses what the service's last successful Init
+// set up, at each call, so its methods fail with ErrNotInitialized
+// whenever the service's do.
+func (s *Service) WithTx(tx *sql.Tx) Provider {
+	root := s
+	if s.root != nil {
+		root = s.root
 	}
-	return nil
+
+	return &Service{
+		db:          s.db,
+		logger:      s.logger,
+		migMgr:      s.migMgr,
+		cfgProvider: s.cfgProvider,
+		root:        root,
+		tx:          tx,
+	}
 }
 
-// RevokeAllByScheme delegates to RevokeAll if the scheme is "apikey",
-// otherwise it is a no-op.
-func (s *Service) RevokeAllByScheme(ctx context.Context, subject, scheme string) error {
-	if scheme != auth.SchemeAPIKey {
+// newState resolves the configuration and builds and initializes a store,
+// for Init to publish.
+func (s *Service) newState() (*state, error) {
+	cfg, err := s.cfgSource.Resolve(s.cfgProvider, DefaultConfig, checkRules)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", ServiceName, err)
+	}
+
+	store, err := apikeystore.New()(s.db, s.logger, s.migMgr)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", ServiceName, err)
+	}
+
+	err = store.Init(s)
+	if err != nil {
+		//nolint:wrapcheck // Store.Init starts its errors with the service's name.
+		return nil, err
+	}
+
+	return &state{cfg: cfg, store: store}, nil
+}
+
+// current returns the state the last successful Init set up, with the
+// store bound to the transaction of a Provider WithTx returned, or an
+// error wrapping ErrNotInitialized.
+func (s *Service) current() (*state, error) {
+	if s.root == nil {
+		st := s.state.Load()
+		if st == nil {
+			return nil, fmt.Errorf("%s: %w", ServiceName, ErrNotInitialized)
+		}
+
+		return st, nil
+	}
+
+	st, err := s.root.current()
+	if err != nil {
+		return nil, err
+	}
+
+	return &state{cfg: st.cfg, store: st.store.WithTx(s.tx)}, nil
+}
+
+// deleteExpired returns the cleanup task's run: it removes the keys of
+// store that have expired, and logs how many at debug level.
+func (s *Service) deleteExpired(store *apikeystore.Store) func(context.Context) error {
+	return func(ctx context.Context) error {
+		n, err := store.DeleteExpiredKeys(ctx, time.Now())
+		if err != nil {
+			//nolint:wrapcheck // the store prefixes its errors; the Loop logs them with the task's name.
+			return err
+		}
+
+		s.logger.Debug("expired api keys deleted").
+			Str("service", ServiceName).
+			Int64("count", n).
+			Send()
+
 		return nil
 	}
-	return s.RevokeAll(ctx, subject)
-}
-
-// GenerateOption customizes a call to Service.Generate.
-type GenerateOption func(*generateOptions)
-
-type generateOptions struct {
-	expiresAt *time.Time
-	metadata  map[string]any
-}
-
-// WithMetadata attaches a metadata map to the API key. It is stored as JSON
-// and returned when the key is authenticated. Passing a nil or empty map is
-// equivalent to not calling this option.
-func WithMetadata(md map[string]any) GenerateOption {
-	return func(o *generateOptions) { o.metadata = md }
-}
-
-// WithTTL sets the API key to expire after the given duration from now.
-// A non-positive duration is ignored. If both WithTTL and WithExpiresAt are
-// supplied, the last one wins.
-func WithTTL(ttl time.Duration) GenerateOption {
-	return func(o *generateOptions) {
-		if ttl <= 0 {
-			return
-		}
-		o.expiresAt = new(time.Now().Add(ttl))
-	}
-}
-
-// WithExpiresAt sets an explicit expiration time on the API key. A zero time
-// is ignored. If both WithTTL and WithExpiresAt are supplied, the last one wins.
-func WithExpiresAt(t time.Time) GenerateOption {
-	return func(o *generateOptions) {
-		if t.IsZero() {
-			return
-		}
-		o.expiresAt = new(t)
-	}
-}
-
-// Generate creates a new API key for the given subject, stores its hash in
-// the database, and returns the full key exactly once along with its record ID.
-func (s *Service) Generate(
-	ctx context.Context,
-	subject, name string,
-	scopes []string,
-	opts ...GenerateOption,
-) (key string, info *KeyInfo, err error) {
-	var o generateOptions
-	for _, opt := range opts {
-		opt(&o)
-	}
-
-	rawKey, randErr := cryptoutil.RandomString(s.cfg.APIKey.KeyLength)
-	if randErr != nil {
-		return "", nil, fmt.Errorf("%s: generate key: %w", s.Name(), randErr)
-	}
-
-	fullKey := s.cfg.APIKey.Prefix + rawKey
-	keyHash := cryptoutil.SHA256Hex(fullKey)
-	keyPrefix := fullKey[:len(s.cfg.APIKey.Prefix)+8]
-
-	id := uuid.New().String()
-
-	scopes, err = s.normalizeScopes(scopes)
-	if err != nil {
-		return "", nil, err
-	}
-
-	metadataJSON, err := s.marshalMetadata(o.metadata)
-	if err != nil {
-		return "", nil, err
-	}
-
-	createdAt := time.Now()
-	if insErr := s.store.InsertKey(ctx, db.InsertKeyParams{
-		ID:        id,
-		Subject:   subject,
-		Name:      name,
-		KeyHash:   keyHash,
-		KeyPrefix: keyPrefix,
-		Scopes:    scopes,
-		Metadata:  metadataJSON,
-		ExpiresAt: o.expiresAt,
-		CreatedAt: createdAt,
-	}); insErr != nil {
-		return "", nil, fmt.Errorf("%s: generate key: %w", s.Name(), insErr)
-	}
-
-	metadataCopy := make(map[string]any, len(o.metadata))
-	maps.Copy(metadataCopy, o.metadata)
-
-	return fullKey, &KeyInfo{
-		ID:        id,
-		Subject:   subject,
-		Name:      name,
-		KeyHash:   keyHash,
-		KeyPrefix: keyPrefix,
-		Scopes:    scopes,
-		Metadata:  metadataCopy,
-		ExpiresAt: o.expiresAt,
-		CreatedAt: createdAt,
-	}, nil
-}
-
-// normalizeScopes returns scopes with nil replaced by an empty slice, and
-// rejects any scope containing a comma.
-func (s *Service) normalizeScopes(scopes []string) ([]string, error) {
-	if scopes == nil {
-		return []string{}, nil
-	}
-	for _, scope := range scopes {
-		if strings.Contains(scope, ",") {
-			return nil, fmt.Errorf("%s: scope %q must not contain commas", s.Name(), scope)
-		}
-	}
-	return scopes, nil
-}
-
-// marshalMetadata encodes metadata as JSON, returning "{}" when it is empty.
-func (s *Service) marshalMetadata(metadata map[string]any) ([]byte, error) {
-	if len(metadata) == 0 {
-		return []byte("{}"), nil
-	}
-	b, err := json.Marshal(metadata)
-	if err != nil {
-		return nil, fmt.Errorf("%s: marshal metadata: %w", s.Name(), err)
-	}
-	return b, nil
-}
-
-// ListOption customizes a call to Service.List.
-type ListOption func(*listOptions)
-
-type listOptions struct {
-	includeRevoked bool
-}
-
-// WithIncludeRevoked causes List to also return soft-deleted (revoked) keys.
-// Revoked keys carry a non-nil KeyInfo.DeletedAt so callers can distinguish
-// them from active keys.
-func WithIncludeRevoked() ListOption {
-	return func(o *listOptions) { o.includeRevoked = true }
-}
-
-// WithTx returns a Provider whose operations execute against tx. The caller
-// owns tx lifecycle; the returned Provider is scoped to its lifetime and
-// must not be cached.
-func (s *Service) WithTx(tx *sql.Tx) Provider {
-	cp := *s
-	cp.store = s.store.WithTx(tx)
-	return &cp
-}
-
-// List returns non-sensitive information about API keys for a subject. By
-// default, only active (non-revoked) keys are returned; pass WithIncludeRevoked
-// to also include soft-deleted keys.
-func (s *Service) List(ctx context.Context, subject string, opts ...ListOption) ([]KeyInfo, error) {
-	var o listOptions
-	for _, opt := range opts {
-		opt(&o)
-	}
-	keys, err := s.store.ListKeysBySubject(ctx, subject, o.includeRevoked)
-	if err != nil {
-		return nil, fmt.Errorf("%s: list keys: %w", s.Name(), err)
-	}
-	return keys, nil
 }

@@ -1,30 +1,55 @@
-// Package queuetest provides MockQueue, a mock of core's gas.JobQueueProvider
-// for tests. It shows that a caller is wired to enqueue and consume jobs
-// correctly, not that a backend works; the sqs backend has its own tests.
+// Package queuetest holds a mock of gas.JobQueueProvider, [MockQueue],
+// for tests of code that uses a queue.
 //
-// # Role in the framework
+// # Usage
 //
-// MockQueue implements gas.JobQueueProvider. Each method records the call
-// and delegates to its function field (EnqueueFn, DequeueFn, AckFn, NackFn)
-// when set; otherwise it returns zero values (a nil error, and no jobs from
-// Dequeue).
+// The mock records each call, and returns what the function in the field
+// named after the method returns:
 //
-//	mock := &queuetest.MockQueue{}
-//	mock.EnqueueFn = func(ctx context.Context, queue string, payload []byte, opts ...gas.EnqueueOption) error {
-//	    return nil
+//	m := &queuetest.MockQueue{
+//		DequeueFn: func(context.Context, string, int, time.Duration) ([]gas.Job, error) {
+//			return []gas.Job{{ID: "1", ReceiptHandle: "r1", Body: []byte("hello")}}, nil
+//		},
 //	}
+//	jobs, err := m.Dequeue(ctx, "orders", 10, 20*time.Second)
+//	// jobs holds the one job, err is nil, and m.CallCount("Dequeue") is 1
 //
-// # Wiring, configuration and lifecycle
+// The mock keeps none of the queue package's rules: it checks no
+// argument, and holds no messages. To test against those rules without
+// a server, use gas/queue/memory.
 //
-// A test passes the mock wherever a gas.JobQueueProvider is expected, in
-// place of a real backend. The package reads no configuration, has no
-// lifecycle and starts no goroutines.
+// # Defaults
 //
-// # Invariants
+// With a field nil, its method behaves as an empty queue that accepts
+// everything:
 //
-// Recording and the CallCount and Reset methods are safe for concurrent
-// use. The Calls field is not guarded for readers: read it directly only
-// after the calls under test have finished, or use CallCount.
+//   - Dequeue returns no jobs and nil.
+//   - Enqueue, Ack and Nack return nil.
 //
-// SPDX-License-Identifier: MIT
+// # Calls
+//
+// Each method appends a [Call] with its name and its arguments after the
+// context, before it calls its field. The arguments:
+//
+//   - Enqueue: the queue, the payload, and the options, resolved into an
+//     [Options].
+//   - Dequeue: the queue, maxMessages and the wait.
+//   - Ack and Nack: the queue and the job.
+//
+// The payload, the attributes, and the job's body and attributes are
+// recorded as copies, nil for nil, so that a caller that reuses them does
+// not change a recorded call.
+//
+// To read the record:
+//
+//   - Calls returns a deep copy of the calls in the order they were made,
+//     so that changing what it returns does not change them either.
+//   - CallCount counts those of one method.
+//   - Reset forgets them all.
+//
+// # Concurrency
+//
+// The methods may be called from several goroutines at once, as the calls
+// are kept under a lock, which Calls, CallCount and Reset take too.
+// Setting a field while a method runs is a data race.
 package queuetest

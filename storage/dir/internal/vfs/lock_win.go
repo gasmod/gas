@@ -18,32 +18,43 @@ const lockLen = 1
 // tryLock takes an exclusive lock on f without blocking. It reports false
 // with a nil error when another holder has the lock.
 func tryLock(f *os.File) (bool, error) {
-	err := windows.LockFileEx(
-		windows.Handle(f.Fd()),
-		windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY,
-		0, lockLen, 0,
-		new(windows.Overlapped),
-	)
+	err := fault(OpFlock, f.Name())
+	if err == nil {
+		err = windows.LockFileEx(
+			windows.Handle(f.Fd()),
+			windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY,
+			0, lockLen, 0,
+			new(windows.Overlapped),
+		)
+	}
+
 	if errors.Is(err, windows.ERROR_LOCK_VIOLATION) {
 		return false, nil
 	}
+
 	if err != nil {
 		return false, fmt.Errorf("LockFileEx: %w", err)
 	}
+
 	return true, nil
 }
 
 // lockBlocking takes an exclusive lock on f, waiting for other holders.
 func lockBlocking(f *os.File) error {
-	err := windows.LockFileEx(
-		windows.Handle(f.Fd()),
-		windows.LOCKFILE_EXCLUSIVE_LOCK,
-		0, lockLen, 0,
-		new(windows.Overlapped),
-	)
+	err := fault(OpFlock, f.Name())
+	if err == nil {
+		err = windows.LockFileEx(
+			windows.Handle(f.Fd()),
+			windows.LOCKFILE_EXCLUSIVE_LOCK,
+			0, lockLen, 0,
+			new(windows.Overlapped),
+		)
+	}
+
 	if err != nil {
 		return fmt.Errorf("LockFileEx: %w", err)
 	}
+
 	return nil
 }
 
@@ -55,5 +66,6 @@ func unlock(f *os.File) error {
 	if err != nil {
 		return fmt.Errorf("UnlockFileEx: %w", err)
 	}
+
 	return nil
 }

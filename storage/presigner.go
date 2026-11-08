@@ -6,55 +6,75 @@ import (
 	"time"
 )
 
-// Presigner issues presigned URLs: time-limited URLs that let a client that
-// holds no credentials upload or download one object directly against the
-// backend. Implementations validate the input like Provider does and return
-// the same validation sentinels, and reject a TTL out of bounds with
-// ErrInvalidTTL. The s3 implementation signs locally without contacting S3,
-// so it never reports a missing key or bucket.
+// Presigner issues presigned URLs: URLs that let a client holding no
+// credentials upload or download one object, directly with the backend,
+// until they expire, as described in the package documentation.
 type Presigner interface {
-	// PresignUploadURL returns a URL that uploads the object described by
-	// input. The client must send the returned method and signed headers.
-	PresignUploadURL(
-		ctx context.Context,
-		input *PresignUploadURLInput,
-	) (*PresignURLResponse, error)
-
-	// PresignDownloadURL returns a URL that downloads the object described
-	// by input.
+	// PresignUploadURL returns a request that uploads the object in.
+	PresignUploadURL(ctx context.Context, in *PresignUploadURLInput) (*PresignURLResponse, error)
+	// PresignDownloadURL returns a request that downloads the object in.
 	PresignDownloadURL(
 		ctx context.Context,
-		input *PresignDownloadURLInput,
+		in *PresignDownloadURLInput,
 	) (*PresignURLResponse, error)
 }
 
-// PresignUploadURLInput describes the upload a presigned URL allows. The
-// embedded PutObjectInput's Body is ignored; the client sends the body.
+// PresignUploadURLInput describes the upload a presigned URL allows.
+//
+//nolint:govet // fieldalignment: the embedded fields come first, as embeddedstructfieldcheck wants.
 type PresignUploadURLInput struct {
-	// TTL is how long the URL stays valid. Nil or zero selects the backend's
-	// default (15 minutes on s3). A TTL that is negative, under one second,
-	// or over seven days fails with ErrInvalidTTL and nothing is signed. The
-	// s3 backend signs whole seconds, truncating any fraction: 1.9s signs as
-	// one second.
+	BaseObjectInput
+	ObjectHeaders
+	WriteCondition
+
+	// ContentLength is the length of the body the client must send, 0 to
+	// MaxPresignUploadSize. It is required.
+	ContentLength *int64
+	// TTL is how long the URL is valid, MinPresignTTL to MaxPresignTTL.
+	// Nil or 0 is DefaultPresignTTL.
 	TTL *time.Duration
-	PutObjectInput
 }
 
 // PresignDownloadURLInput describes the download a presigned URL allows.
 type PresignDownloadURLInput struct {
-	// TTL is how long the URL stays valid, with the same default, bounds,
-	// and rounding as PresignUploadURLInput.TTL.
-	TTL *time.Duration
 	GetObjectInput
+	// ResponseHeaders are the header fields the download's response
+	// carries instead of the object's.
+	ResponseHeaders
+
+	// TTL is how long the URL is valid, as in PresignUploadURLInput.
+	TTL *time.Duration
 }
 
-// PresignURLResponse is a presigned request: the URL, the HTTP method to use
-// with it, and the headers that were signed and must be sent unchanged.
+// ResponseHeaders override the header fields of a presigned download's
+// response, such as a ContentDisposition that names the file a browser
+// saves. A nil field keeps the object's. They follow the rules of
+// ObjectHeaders.
+type ResponseHeaders struct {
+	// ResponseCacheControl is the response's Cache-Control.
+	ResponseCacheControl *string
+	// ResponseContentDisposition is the response's Content-Disposition.
+	ResponseContentDisposition *string
+	// ResponseContentEncoding is the response's Content-Encoding.
+	ResponseContentEncoding *string
+	// ResponseContentLanguage is the response's Content-Language.
+	ResponseContentLanguage *string
+	// ResponseContentType is the response's Content-Type.
+	ResponseContentType *string
+	// ResponseExpires is the response's Expires, an IMF-fixdate.
+	ResponseExpires *string
+}
+
+// PresignURLResponse is a presigned request: the method, the URL and the
+// header fields the client must send with it, unchanged.
 type PresignURLResponse struct {
-	// SignedHeader holds the headers included in the signature.
+	// SignedHeader holds the header fields the signature covers, which the
+	// client sends as they are.
 	SignedHeader http.Header
-	// URL is the presigned URL.
+	// Expires is when the URL stops being valid, at the latest.
+	Expires time.Time
+	// URL is the presigned URL. It is a credential until it expires.
 	URL string
-	// Method is the HTTP method the URL was signed for.
+	// Method is the HTTP method the URL is signed for.
 	Method string
 }
