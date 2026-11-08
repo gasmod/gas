@@ -4,9 +4,11 @@
 import "github.com/gasmod/gas/log/zerolog"
 ```
 
-Package zerolog provides a gas.Logger over a zerolog.Logger. It is a
-package of its own so that only an app that uses it depends on zerolog.
-The events follow the contract of package github.com/gasmod/gas/log.
+Package zerolog provides a gas.Logger over a zerolog.Logger.
+
+It is a package of its own so that only an app that uses it depends on
+zerolog. The events follow the contract of package
+github.com/gasmod/gas/log.
 
 ## Usage
 
@@ -23,8 +25,10 @@ logger.Info("order placed").Str("order", "A-1").Int("items", 3).Send()
 
 Here zerolog is github.com/rs/zerolog and gaszerolog this package. The
 line written is the JSON object with `level` `info`, `order`, `items`,
-the time and `message` `order placed`. In an app, register the
-constructor with gas.WithSingletonService[gas.Logger].
+the time and `message` `order placed`.
+
+In an app, register the constructor with
+gas.WithSingletonService[gas.Logger].
 
 ## Levels
 
@@ -35,17 +39,23 @@ not enable is a shared no-op event, so its fields cost nothing.
 ## Events
 
 Each field is encoded when its method is called, on the caller's
-goroutine. An event is sent at most once: Send drops the zerolog event,
-which zerolog then reuses for another, so every method called after Send,
-Send included, does nothing and cannot reach that other event. With
-zerolog's Caller on the logger, the caller written is the line that
+goroutine.
+
+An event is sent at most once. Send drops the zerolog event, which
+zerolog then reuses for another. So every method called after Send, Send
+included, does nothing and cannot reach that other event.
+
+With zerolog's Caller on the logger, the caller written is the line that
 called Send.
 
-The encodings are zerolog's: Err with a nil error leaves the field out,
-and Err otherwise writes the Error text; Any with an error does the
-same as Err, and Any with another value writes zerolog's Interface
-encoding, its JSON; Duration writes zerolog's Dur, in
-zerolog.DurationFieldUnit, milliseconds unless changed.
+The encodings are zerolog's:
+
+- Err with a nil error leaves the field out, and Err otherwise writes
+the Error text.
+- Any with an error does the same as Err. Any with another value
+writes zerolog's Interface encoding, its JSON.
+- Duration writes zerolog's Dur, in zerolog.DurationFieldUnit,
+milliseconds unless changed.
 
 A logger from With carries the fields added to its context, before each
 event's own; its parent is unchanged. Calling Logger again on the same

@@ -18,10 +18,15 @@
 //
 // # Entries
 //
-// An [Entry] holds the level, one of `trace`, `debug`, `info`, `warn` and
-// `error`, the message, and the fields by key, the values as they were
-// given. A field given twice keeps the last value. Entries returns a copy,
-// with copies of the field maps, so changing it changes no later result.
+// An [Entry] holds:
+//
+//   - the level, one of `trace`, `debug`, `info`, `warn` and `error`;
+//   - the message;
+//   - the fields by key, the values as they were given. A field given twice
+//     keeps the last value.
+//
+// Entries returns a copy, with copies of the field maps, so changing it
+// changes no later result.
 //
 // An event is recorded by Send, and at most once: every method called
 // after Send, Send included, does nothing.

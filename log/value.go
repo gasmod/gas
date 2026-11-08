@@ -59,7 +59,7 @@ func join(prefix, key string) string {
 const unencodable = "!unencodable "
 
 // encodeAny returns the value a Record holds for v, as described in the
-// package documentation under Shipping: nil stays nil, a []byte is copied,
+// package documentation under Records: nil stays nil, a []byte is copied,
 // an error becomes its Error text, a fmt.Stringer its String, a value
 // encoding/json can encode its JSON text, and anything else unencodable
 // followed by the name of its type. It does not recover a panic of the

@@ -6,7 +6,7 @@ import (
 )
 
 // Record is one log record handed to a Marshaler, as described in the
-// package documentation under Shipping. A shipping handler builds it on
+// package documentation under Records. A shipping handler builds it on
 // the logging goroutine: its attributes are flat, with group names joined
 // by `.`, LogValuers are resolved, and every slog.KindAny value is a
 // string, a []byte the record owns, or nil.

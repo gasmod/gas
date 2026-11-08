@@ -1,10 +1,13 @@
 // Package log provides gas.Logger implementations over log/slog, and ships
 // log records in batches to an HTTP endpoint, encoded by a [Marshaler]
-// such as the OTLP/JSON [OTLPMarshaler]. It imports no third-party
-// package: only the standard library and github.com/gasmod/gas. Package
-// github.com/gasmod/gas/log/zerolog provides a gas.Logger
-// over zerolog, and package github.com/gasmod/gas/log/logtest a recording
-// gas.Logger for tests.
+// such as the OTLP/JSON [OTLPMarshaler].
+//
+// It imports no third-party package: only the standard library and
+// github.com/gasmod/gas. Two other packages complete it:
+//
+//   - github.com/gasmod/gas/log/zerolog provides a gas.Logger over zerolog.
+//   - github.com/gasmod/gas/log/logtest provides a recording gas.Logger for
+//     tests.
 //
 // # Usage
 //
@@ -26,41 +29,37 @@
 //
 //	logger.Info("order placed").Str("order", "A-1").Int("items", 3).Send()
 //
-// The event is written as JSON to standard error at once, and posted to
+// The event is written as JSON to standard error at once. It is posted to
 // the endpoint as an OTLP logs request with the `order` and `items`
 // attributes, at the latest by Close.
 //
 // # Backends
 //
-// [SlogLogger], from [NewSlogLogger], writes to a *slog.Logger,
-// slog.Default() unless [WithSlogLogger] gives one. Trace is
-// [LevelTrace], below slog.LevelDebug, so a handler can filter it apart
-// from Debug; Debug, Info, Warn and Error are slog's levels. Its Flush does
-// nothing, since it buffers nothing.
+// There are three backends:
 //
-// [ShippingLogger], from [NewShippingLogger], is a SlogLogger over a
-// [ShippingHandler], with the same levels; its Flush posts what is queued.
+//   - [SlogLogger], from [NewSlogLogger], writes to a *slog.Logger,
+//     slog.Default() unless [WithSlogLogger] gives one. Trace is
+//     [LevelTrace], below slog.LevelDebug, so a handler can filter it apart
+//     from Debug; Debug, Info, Warn and Error are slog's levels. Its Flush
+//     does nothing, since it buffers nothing.
+//   - [ShippingLogger], from [NewShippingLogger], is a SlogLogger over a
+//     [ShippingHandler], with the same levels. Its Flush posts what is
+//     queued.
+//   - The zerolog backend writes each event at zerolog's own level, Trace
+//     included.
+//
 // The ShippingHandler, from [NewShippingHandler], is the same pipeline as a
 // plain slog.Handler, for an app that logs with log/slog directly.
 //
-// The zerolog backend writes each event at zerolog's own level, Trace
-// included.
-//
 // The constructors of the loggers return a constructor in the shape the
 // gas container expects, func() (*T, error). Options only record their
-// value; the constructor checks them and fails with an error, never later.
+// value. The constructor checks them and fails with an error, never later.
 //
 // # Events
 //
-// A logger's Trace, Debug, Info, Warn and Error start an event; its field
-// methods add fields; Send writes it. An event belongs to the goroutine
-// that started it and is not safe for concurrent use. Field values are
-// taken on the caller's goroutine, by the time Send returns: a scalar when
-// its method is called; a value given to Any is held as it is until Send
-// by slog, and encoded at once by zerolog, so a map or a slice given to
-// Any must not change before Send returns. Nothing reads a field value
-// after Send returns: the shipping handler encodes the values it queues
-// before Handle returns, as described under Shipping.
+// A logger's Trace, Debug, Info, Warn and Error start an event. Its field
+// methods add fields, and Send writes it. An event belongs to the
+// goroutine that started it and is not safe for concurrent use.
 //
 // An event is sent at most once. Every method called after Send, Send
 // included, does nothing: it neither writes again nor reaches another
@@ -70,13 +69,31 @@
 // A source or caller that the backend adds is the line that called Send:
 // slog's AddSource reports it, as does zerolog's Caller.
 //
+// Field values are taken on the caller's goroutine, by the time Send
+// returns:
+//
+//   - A scalar is taken when its method is called.
+//   - A value given to Any is held as it is until Send by slog, and encoded
+//     at once by zerolog. So a map or a slice given to Any must not change
+//     before Send returns.
+//   - Nothing reads a field value after Send returns: the shipping handler
+//     encodes the values it queues before Handle returns, as described
+//     under Records.
+//
 // A logger from With carries the fields added to its context, before each
 // event's own; its parent is unchanged. Calling Logger again on the same
 // context, after adding more fields, gives a second logger with them all;
 // the first is unchanged. A key given twice is written twice, as the
 // backend writes duplicates.
 //
-// Encodings that differ by backend:
+// Send of a SlogLogger hands the record to the handler with the caller's
+// program counter. It discards the handler's error, as slog.Logger does:
+// gas.LogEvent's Send has no result. A ShippingHandler reports the error
+// of its local handler, as described under Error reports.
+//
+// # Encodings by backend
+//
+// Some fields are encoded differently by each backend:
 //
 //   - Err with a nil error: slog writes the key with a null value, zerolog
 //     leaves the field out, shipping sends the key with the empty value.
@@ -87,140 +104,200 @@
 //     zerolog.DurationFieldUnit, milliseconds unless changed; shipping
 //     sends its String text, such as `1.5s`.
 //   - Any with other values: slog writes them as the handler does; zerolog
-//     writes their JSON; shipping encodes them as described under
-//     Shipping.
-//
-// Send of a SlogLogger hands the record to the handler with the caller's
-// program counter, and discards the handler's error, as slog.Logger does:
-// gas.LogEvent's Send has no result. A ShippingHandler reports the error
-// of its local handler, as described under Shipping.
+//     writes their JSON; shipping encodes them as described under Records.
 //
 // # Shipping
 //
-// A ShippingHandler writes each record to its local handler, when that
-// enables the record's level, and then queues a [Record] of it for
-// shipping when the level is at least the shipping level, [WithLevel],
-// [DefaultShippingLevel] unless given. The local handler is
-// [WithLocalHandler]'s, or a slog.JSONHandler on standard error at the
-// shipping level; [WithoutLocalHandler] turns it off.
+// A ShippingHandler handles each record in two steps:
+//
+//  1. It writes the record to its local handler, when that enables the
+//     record's level.
+//  2. It queues a [Record] of it for shipping, when the level is at least
+//     the shipping level: [WithLevel], [DefaultShippingLevel] unless given.
+//
+// The local handler is [WithLocalHandler]'s, or a slog.JSONHandler on
+// standard error at the shipping level. [WithoutLocalHandler] turns it
+// off.
+//
+// # Records
 //
 // The Record is built in Handle, on the logging goroutine, so nothing the
 // caller holds is read later. Its attributes are the handler's, from
-// WithAttrs, then the record's, flattened: a group's attributes take its
-// key joined to theirs by `.`, a group with an empty key is inlined, an
-// empty group and an empty attribute are dropped, and LogValuers are
-// resolved. A value of kind slog.KindAny is encoded: nil stays nil, a
-// []byte is copied, an error becomes its Error text, a fmt.Stringer its
-// String text, a value encoding/json encodes its JSON text, and anything
-// else, such as a channel, a func or a map, slice or pointer that refers
-// to itself, `!unencodable ` and the name of its type, such as
-// `!unencodable map[string]interface {}`; such a value is never
-// formatted, so a cycle cannot overflow the stack. A method that panics
-// gives `<nil>` for a nil pointer and otherwise `!PANIC: ` and the panic
-// value, as slog's handlers write them. The time is kept as it is, zero
-// included.
+// WithAttrs, then the record's, flattened:
+//
+//   - A group's attributes take its key joined to theirs by `.`.
+//   - A group with an empty key is inlined.
+//   - An empty group and an empty attribute are dropped.
+//   - LogValuers are resolved.
+//
+// A value of kind slog.KindAny is encoded:
+//
+//   - nil stays nil.
+//   - A []byte is copied.
+//   - An error becomes its Error text, and a fmt.Stringer its String text.
+//   - A value encoding/json encodes becomes its JSON text.
+//   - Anything else, such as a channel, a func, or a map, slice or pointer
+//     that refers to itself, becomes `!unencodable ` and the name of its
+//     type, such as `!unencodable map[string]interface {}`. Such a value
+//     is never formatted, so a cycle cannot overflow the stack.
+//
+// A method that panics gives `<nil>` for a nil pointer, and otherwise
+// `!PANIC: ` and the panic value, as slog's handlers write them. The time
+// is kept as it is, zero included.
+//
+// # Batches
 //
 // Records wait in a queue of at most [WithQueueSize] records,
 // [DefaultQueueSize] unless given, and Handle never blocks on it. A
-// goroutine of the sender posts the oldest records as a batch of
-// [WithBatchSize] records, [DefaultBatchSize] unless given, as soon as the
-// queue holds that many, and every [WithFlushInterval],
-// [DefaultFlushInterval] unless given, posts all the records waiting, in
-// batches. The queue and the batches are bounded by their count of
-// records only: neither a record's size nor a request body's is bounded.
-// A batch is one request: the Marshaler encodes it, and the body is
-// posted to the endpoint with the Content-Type the Marshaler names, then
-// the headers given to [WithHeader], which can replace it. A post runs on
-// the sender goroutine, so a slow endpoint fills the queue. A post's
-// context ends with the Flush or Close it belongs to; the HTTP client's
-// timeout, [DefaultHTTPTimeout] for the default client, bounds it too. The
-// default client follows no redirect: a 3xx response is returned as it
-// is, so the headers and the body never reach another URL, and the post
-// fails with its status. A client given to [WithHTTPClient] is used as it
-// is, redirect policy included. The response body is read, up to 64 KiB,
-// and discarded, so the connection is reused. A status outside 2xx is a
-// failure. Delivery is best effort: a failed batch is not retried.
+// goroutine of the sender posts them:
+//
+//   - As soon as the queue holds [WithBatchSize] records,
+//     [DefaultBatchSize] unless given, it posts the oldest as a batch.
+//   - Every [WithFlushInterval], [DefaultFlushInterval] unless given, it
+//     posts all the records waiting, in batches.
+//
+// The queue and the batches are bounded by their count of records only:
+// neither a record's size nor a request body's is bounded.
+//
+// A batch is one request. The Marshaler encodes it, and the body is posted
+// to the endpoint with the Content-Type the Marshaler names, then the
+// headers given to [WithHeader], which can replace it.
 //
 // The Marshaler gets a batch it must not keep: the sender reuses its
 // memory for the next one, and clears it after each post, so no record
 // stays reachable from it.
 //
-// A record that is not delivered is dropped and counted: one logged when
-// the queue is full, or while the sender is not running, every record of
-// a batch the Marshaler fails or panics on, whose post fails, or whose
-// response is not 2xx, and the records Close gives up on, as described
-// below. [ShippingHandler.Dropped] and [ShippingLogger.Dropped] return the
-// count since the handler was made.
+// A post runs on the sender goroutine, so a slow endpoint fills the queue.
+// A post's context ends with the Flush or Close it belongs to. The HTTP
+// client's timeout, [DefaultHTTPTimeout] for the default client, bounds it
+// too.
+//
+// The default client follows no redirect: a 3xx response is returned as it
+// is, so the headers and the body never reach another URL, and the post
+// fails with its status. A client given to [WithHTTPClient] is used as it
+// is, redirect policy included.
+//
+// The response body is read, up to 64 KiB, and discarded, so the
+// connection is reused. A status outside 2xx is a failure. Delivery is
+// best effort: a failed batch is not retried.
+//
+// # Dropped records
+//
+// A record that is not delivered is dropped and counted. These are
+// dropped:
+//
+//   - A record logged when the queue is full, or while the sender is not
+//     running.
+//   - Every record of a batch the Marshaler fails or panics on, whose post
+//     fails, or whose response is not 2xx.
+//   - The records Close gives up on, as described under Flush and Close.
+//
+// [ShippingHandler.Dropped] and [ShippingLogger.Dropped] return the count
+// since the handler was made.
+//
+// # Flush and Close
 //
 // [ShippingHandler.Flush] posts the records queued when it is called, in
-// batches, and waits for them, within its context. When a post fails,
-// Flush returns an error wrapping [ErrNotDelivered] with the number of
-// records not delivered. When its context ends first, Flush returns an
-// error wrapping ErrNotDelivered, with the number of records still queued
-// or being posted, and the context's error, and drops nothing: the
-// records it did not post stay queued for the next batch, and a post its
-// context cancels puts its batch back at the front of the queue, unless
-// the queue has no room for it any more, in which case the batch is
-// dropped. A Flush whose context has already ended posts nothing.
+// batches, and waits for them, within its context. It returns an error
+// wrapping [ErrNotDelivered]:
+//
+//   - When a post fails, with the number of records not delivered.
+//   - When its context ends first, with the number of records still queued
+//     or being posted, and the context's error.
+//
+// When its context ends first, Flush drops nothing. The records it did not
+// post stay queued for the next batch. A post its context cancels puts its
+// batch back at the front of the queue, unless the queue has no room for
+// it any more, in which case the batch is dropped. A Flush whose context
+// has already ended posts nothing.
+//
 // [ShippingLogger.Flush], the Flush of gas.Logger, does the same within
-// [DefaultFlushTimeout], and reports its error. A logger from With
-// flushes the same sender.
+// [DefaultFlushTimeout], and reports its error. A logger from With flushes
+// the same sender.
 //
 // [ShippingHandler.Close] and [ShippingLogger.Close] stop accepting
 // records, so a record logged after them is written locally and dropped
-// for shipping, and post what is queued, in batches, within their context.
-// When a post fails, Close returns an error wrapping ErrNotDelivered with
-// the number of records not delivered. When the context ends first, Close
-// returns an error wrapping ErrNotDelivered, with the number of records
-// still queued or being posted, and the context's error; the post in
-// flight is canceled, and those records are dropped. Close returns
-// without waiting for a post that ignores the cancellation, such as one
-// whose Marshaler blocks. Close of a closed sender returns nil.
+// for shipping. They then post what is queued, in batches, within their
+// context. Close returns an error wrapping ErrNotDelivered:
+//
+//   - When a post fails, with the number of records not delivered.
+//   - When the context ends first, with the number of records still queued
+//     or being posted, and the context's error. The post in flight is
+//     canceled, and those records are dropped.
+//
+// Close returns without waiting for a post that ignores the cancellation,
+// such as one whose Marshaler blocks. Close of a closed sender returns
+// nil.
+//
+// # Starting the sender
 //
 // NewShippingHandler starts the sender. NewShippingLogger does not: its
-// Init starts it, and a record logged before the first Init is written
-// locally and dropped for shipping, as after Close. Init after Close
-// starts the sender again, so a ShippingLogger is restartable. When the
-// sender of the earlier Close still runs, because Close's context ended
-// while a post went on, or because Close has not returned, Init waits for
-// it to stop, so two senders never post at once and Marshal is never
-// called concurrently; when Init's context ends first, it returns an error
-// wrapping [ErrStillClosing] and the context's error, and the sender is
-// not started. Each ShippingLogger is a gas.Service named by [WithName],
-// [DefaultShippingName] unless given; two in one app need distinct names,
+// Init starts it. A record logged before the first Init is written locally
+// and dropped for shipping, as after Close.
+//
+// Init after Close starts the sender again, so a ShippingLogger is
+// restartable. The sender of the earlier Close may still run, because
+// Close's context ended while a post went on, or because Close has not
+// returned. Init then waits for it to stop, so two senders never post at
+// once and Marshal is never called concurrently. When Init's context ends
+// first, it returns an error wrapping [ErrStillClosing] and the context's
+// error, and the sender is not started.
+//
+// Each ShippingLogger is a gas.Service named by [WithName],
+// [DefaultShippingName] unless given. Two in one app need distinct names,
 // or the container closes only one.
 //
-// Failures are reported to the error handler, [WithErrorHandler], which
-// by default writes the error and a newline to standard error, as
-// os.Stderr was when the handler was made. The error
-// handler runs on a goroutine of its own, never on the logging goroutine
-// or the sender's, so it may log through the same logger, and call Flush
-// or Close, without a deadlock. Reports are coalesced by class, the
-// sentinel they wrap: at most one report of a class is delivered per flush
-// interval, the first at once; the reports made meanwhile become one, the
-// last error with the count, such as `(3 times)`, delivered when the
-// interval has passed. Reports made before the first is delivered join
-// it. An error handler that logs through the logger it
-// reports for therefore makes at most one record per class per interval.
-// A panic of the error handler is recovered and noted on standard error.
-// The reports are: a record dropped on a full queue ([ErrQueueFull]); the
-// local handler's error ([ErrLocalHandler]), which Handle also returns; a
-// Marshaler's error ([ErrMarshal]) or panic ([ErrMarshalPanic]); a failed
-// post ([ErrPost]); a status outside 2xx ([ErrStatus]); and the error of
-// ShippingLogger.Flush ([ErrNotDelivered]); and a record logged before the
-// first Init of a ShippingLogger ([ErrNotRunning]), so a logger that is
-// never started is not silent. Records dropped after Close, or because
-// the context of a Flush or Close ended, are counted but not reported, and
-// neither is a post that such a context canceled.
+// # Error reports
+//
+// Failures are reported to the error handler, [WithErrorHandler]. By
+// default it writes the error and a newline to standard error, as
+// os.Stderr was when the handler was made.
+//
+// The error handler runs on a goroutine of its own, never on the logging
+// goroutine or the sender's. So it may log through the same logger, and
+// call Flush or Close, without a deadlock. A panic of the error handler is
+// recovered and noted on standard error.
+//
+// Reports are coalesced by class, the sentinel they wrap:
+//
+//   - At most one report of a class is delivered per flush interval, the
+//     first at once.
+//   - The reports made meanwhile become one, the last error with the
+//     count, such as `(3 times)`, delivered when the interval has passed.
+//   - Reports made before the first is delivered join it.
+//
+// An error handler that logs through the logger it reports for therefore
+// makes at most one record per class per interval.
+//
+// The reports:
+//
+//   - [ErrQueueFull]: a record dropped on a full queue.
+//   - [ErrLocalHandler]: the local handler's error, which Handle also
+//     returns.
+//   - [ErrMarshal], [ErrMarshalPanic]: a Marshaler's error or panic.
+//   - [ErrPost]: a failed post.
+//   - [ErrStatus]: a status outside 2xx.
+//   - [ErrNotDelivered]: the error of ShippingLogger.Flush.
+//   - [ErrNotRunning]: a record logged before the first Init of a
+//     ShippingLogger, so a logger that is never started is not silent.
+//
+// Records dropped after Close, or because the context of a Flush or Close
+// ended, are counted but not reported. Neither is a post that such a
+// context canceled.
 //
 // # OTLP encoding
 //
 // [OTLPMarshaler] encodes a batch as one OTLP/HTTP JSON logs request
-// (Content-Type [OTLPContentType]): one resource, with the attributes
-// given to [WithServiceName], [WithServiceVersion] and
-// [WithResourceAttribute], each replacing an earlier value of its key; one
-// scope, named by [WithScopeName] or else the service name; and one log
-// record per Record, following the OTLP JSON Protobuf encoding:
+// (Content-Type [OTLPContentType]). The request holds:
+//
+//   - One resource, with the attributes given to [WithServiceName],
+//     [WithServiceVersion] and [WithResourceAttribute], each replacing an
+//     earlier value of its key.
+//   - One scope, named by [WithScopeName] or else the service name.
+//   - One log record per Record, following the OTLP JSON Protobuf
+//     encoding.
+//
+// A log record has these fields:
 //
 //   - `timeUnixNano`: the time in Unix nanoseconds, as a string, left out
 //     for a zero time, one before 1970, or one after 2262.
@@ -230,31 +307,42 @@
 //     level, such as `INFO` or `DEBUG-2`.
 //   - `body`: the message, as `stringValue`.
 //   - `attributes`: the Record's attributes, flattened and encoded as a
-//     ShippingHandler does when the Record was built elsewhere. A string
-//     is `stringValue`; an integer `intValue`, a string, except a uint64
-//     above the int64 range, which is the decimal `stringValue`; a float
-//     `doubleValue`, a number, or the string `NaN`, `Infinity` or
-//     `-Infinity`; a bool `boolValue`; a []byte `bytesValue`, in standard
-//     base64; a duration its String text and a time its RFC 3339 text
-//     with nanoseconds, as `stringValue`; nil the empty value `{}`.
+//     ShippingHandler does when the Record was built elsewhere.
+//
+// An attribute's value is encoded by its type:
+//
+//   - A string is `stringValue`.
+//   - An integer is `intValue`, a string, except a uint64 above the int64
+//     range, which is the decimal `stringValue`.
+//   - A float is `doubleValue`, a number, or the string `NaN`, `Infinity`
+//     or `-Infinity`.
+//   - A bool is `boolValue`.
+//   - A []byte is `bytesValue`, in standard base64.
+//   - A duration is its String text, and a time its RFC 3339 text with
+//     nanoseconds, as `stringValue`.
+//   - nil is the empty value `{}`.
 //
 // A record that fails to encode, because a method of one of its values
 // panics, is sent as a record with its time and level and the body
-// [OTLPReplacedBody], and counted by [OTLPMarshaler.Replaced], so one
+// [OTLPReplacedBody], and counted by [OTLPMarshaler.Replaced]. So one
 // record cannot fail its batch.
 //
 // # Concurrency
 //
 // The loggers, the ShippingHandler and the OTLPMarshaler are safe for
-// concurrent use; events and the contexts from With are not. A
-// ShippingHandler queues under a read lock; Close takes the write lock to
-// stop the sender, so no record enters a closing queue. One goroutine per
-// running sender posts the batches, and Marshal is called on it, one batch
-// at a time; Init waits for the goroutine of the last Close to end, so
-// there is never more than one. The error handler runs on a goroutine
-// that exists only while a report waits. A Close whose context ended
-// returns without waiting for the sender goroutine, which ends once its
-// canceled posts return.
+// concurrent use; events and the contexts from With are not.
+//
+// A ShippingHandler queues under a read lock. Close takes the write lock
+// to stop the sender, so no record enters a closing queue.
+//
+// One goroutine per running sender posts the batches, and Marshal is
+// called on it, one batch at a time. Init waits for the goroutine of the
+// last Close to end, so there is never more than one. A Close whose
+// context ended returns without waiting for the sender goroutine, which
+// ends once its canceled posts return.
+//
+// The error handler runs on a goroutine that exists only while a report
+// waits.
 //
 // # Errors
 //
@@ -268,24 +356,27 @@
 //     accept. The constructor checks WithBatchSize, WithQueueSize,
 //     WithFlushInterval, WithHTTPClient, WithLevel, WithLocalHandler,
 //     WithErrorHandler, WithName and WithHeader, in this order, after the
-//     Marshaler and the endpoint. A WithHeader name must be a token and
+//     Marshaler and the endpoint. A WithHeader name must be a token, and
 //     its value must hold no control character but a horizontal tab, as
 //     RFC 9110 says; the error names neither.
 //   - [ErrQueueFull], [ErrNotRunning], [ErrLocalHandler], [ErrMarshal],
 //     [ErrMarshalPanic], [ErrPost], [ErrStatus]: reported to the error
-//     handler, as described under Shipping. ErrLocalHandler, ErrMarshal
-//     and ErrPost wrap the cause.
+//     handler, as described under Error reports. ErrLocalHandler,
+//     ErrMarshal and ErrPost wrap the cause.
 //   - [ErrNotDelivered]: Flush or Close returned with records not
 //     delivered. It wraps the context's error when the context ended.
 //   - [ErrStillClosing]: Init's context ended while the sender of an
 //     earlier Close still ran. It wraps the context's error.
 //
-// Every error starts with `gas/log: `. No error names the endpoint's user
-// info, path, query or fragment, or a header name or value: an error
-// names the endpoint by its scheme and host only, such as
-// `https://collector.example:4318`, and a parse error of the endpoint is
-// replaced, not wrapped. The panic value of a Marshaler is left out of its report,
-// since it can hold the records. The errors, as returned or reported:
+// Every error starts with `gas/log: `.
+//
+// No error names the endpoint's user info, path, query or fragment, or a
+// header name or value. An error names the endpoint by its scheme and host
+// only, such as `https://collector.example:4318`, and a parse error of the
+// endpoint is replaced, not wrapped. The panic value of a Marshaler is
+// left out of its report, since it can hold the records.
+//
+// The errors, as returned or reported:
 //
 //	gas/log: logger is nil
 //	gas/log: marshaler is nil

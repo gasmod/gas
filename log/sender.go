@@ -15,7 +15,7 @@ import (
 )
 
 // sender queues records and posts them in batches from a goroutine of its
-// own, as described in the package documentation under Shipping. It is
+// own, as described in the package documentation under Batches. It is
 // shared by a ShippingHandler and every handler derived from it.
 type sender struct {
 	// marshaler encodes the batches.
