@@ -258,8 +258,8 @@ func TestRouterPostSealGroupedRouteTracked(t *testing.T) {
 	router.Handle(base, http.MethodGet, "/base", ok)
 	router.Seal()
 
-	router.Route("/api", func(sub *gas.Router) {
-		sub.Handle(svc, http.MethodGet, "/thing", ok)
+	router.Route(svc, "/api", func(sub *gas.RouteGroup) {
+		sub.Handle(http.MethodGet, "/thing", ok)
 	})
 
 	serve := func() int {

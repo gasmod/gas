@@ -121,6 +121,15 @@ the details.
   connections. A server shutdown error, which `Stop` used to log only, is
   returned as `gas: server shutdown: ...`, joined with the other shutdown
   errors; a clean `Stop` returns nil.
+- **BREAKING: `Router.Use`, `Group` and `Route` take an owner.** `Use`,
+  `UseMiddlewareFunc` and `UseMiddlewareByName` take the owning service
+  first, as `Handle` and `Register` do, nil for the router. `Group` and
+  `Route` take the owner once and pass a new `*RouteGroup`, whose `Use`,
+  `Handle`, `Get` and the other verbs, `NotFound`, `Group` and `Route`
+  take none: the whole group belongs to that service. When the kill
+  switch removes the owner of a `Use` call, its middleware answers 503 on
+  every route until the owner calls `Use` again, which takes the old
+  call's place.
 - **BREAKING: the kill switch tracks services by instance**, so two
   services with one name are both closed. `CloseService` and
   `RestartService` return `ErrNoBuiltInstance`,
@@ -237,12 +246,15 @@ the details.
   their dependencies and the order they were registered in, and
   captive-dependency and shape errors are reported in registration order,
   so the same broken setup reports the same error every time.
+- **A restarted service no longer applies its `Router.Use` middleware
+  twice.** A service that called `Use` in `Init` added the middleware
+  again on every restart, and the kill switch could not remove it.
 - **template**: on Linux, `dir`'s `List` of a directory that was removed
   or moved reports it as such, not as the walk's error.
 - **storage**: on Linux, `dir`'s `Init` no longer fails when another
   process deletes a bucket while Init sweeps it.
 - Known issues KI-010, KI-032 to KI-036, KI-038 to KI-058, KI-062,
-  KI-063, KI-071, KI-080 and KI-081.
+  KI-063, KI-071, KI-080, KI-081 and KI-083.
 
 ### Security
 

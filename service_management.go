@@ -415,6 +415,10 @@ func (w *Worker) RestartService[T Service](ctx context.Context) error {
 		return fmt.Errorf("gas: restart %s: %w", name, err)
 	}
 
+	if w.onServiceRestarted != nil {
+		w.onServiceRestarted(s)
+	}
+
 	w.mu.Lock()
 
 	if w.state == lifeShutDown {

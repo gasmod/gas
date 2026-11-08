@@ -71,18 +71,20 @@ type Worker struct {
 	eventBus         *EventBus
 	afterBuild       func(ctx context.Context) error
 	onServiceClose   func(s Service)
-	startDone        chan struct{}
-	shutdownDone     chan struct{}
-	services         []*trackedService
-	readyFuncs       []func(*ServiceContainer) error
-	ops              sync.WaitGroup
-	shutdownTimeout  time.Duration
-	mu               sync.Mutex
-	loggerMu         sync.Mutex
-	opsN             atomic.Int32
-	state            lifecycle
-	readyRan         bool
-	shutdownGaveUp   bool
+	// onServiceRestarted runs once a restart's Init succeeds.
+	onServiceRestarted func(s Service)
+	startDone          chan struct{}
+	shutdownDone       chan struct{}
+	services           []*trackedService
+	readyFuncs         []func(*ServiceContainer) error
+	ops                sync.WaitGroup
+	shutdownTimeout    time.Duration
+	mu                 sync.Mutex
+	loggerMu           sync.Mutex
+	opsN               atomic.Int32
+	state              lifecycle
+	readyRan           bool
+	shutdownGaveUp     bool
 }
 
 var (

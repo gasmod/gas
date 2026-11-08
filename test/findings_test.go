@@ -424,9 +424,9 @@ func (s *routedService) Init(context.Context) error {
 		return nil
 	}
 
-	s.router.Route("/api", func(sub *gas.Router) {
+	s.router.Route(s, "/api", func(sub *gas.RouteGroup) {
 		for _, p := range paths {
-			sub.Get(s, p, handler)
+			sub.Get(p, handler)
 		}
 	})
 
@@ -442,7 +442,7 @@ func TestFindings_MiddlewarePanicRecovered(t *testing.T) {
 	t.Parallel()
 
 	app := quietApp()
-	app.Router().UseMiddlewareFunc(func(http.Handler) http.Handler {
+	app.Router().UseMiddlewareFunc(nil, func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("mw boom") })
 	})
 	app.Router().Get(nil, "/x", func(gas.Context) error { return nil })
@@ -747,7 +747,7 @@ func TestFindings_OneLinePerFailedRequest(t *testing.T) {
 	buf := &lockedBuffer{}
 	app := gas.NewApp(gas.WithServiceInstance[gas.Logger](newJSONLogger(buf)))
 	app.Router().
-		UseMiddlewareFunc(gas.RequestLogger[gas.Logger](gas.WithRequestLoggerAppendRequestID(false)))
+		UseMiddlewareFunc(nil, gas.RequestLogger[gas.Logger](gas.WithRequestLoggerAppendRequestID(false)))
 	app.Router().Get(nil, "/missing", func(gas.Context) error { return gas.NotFound("nope") })
 	require.NoError(t, app.Start(t.Context()))
 
@@ -770,8 +770,8 @@ func TestFindings_KI035PanicLoggedWithRequestID(t *testing.T) {
 
 	buf := &lockedBuffer{}
 	app := gas.NewApp(gas.WithServiceInstance[gas.Logger](newJSONLogger(buf)))
-	app.Router().UseMiddlewareFunc(middleware.RequestID)
-	app.Router().UseMiddlewareFunc(gas.RequestLogger[gas.Logger]())
+	app.Router().UseMiddlewareFunc(nil, middleware.RequestID)
+	app.Router().UseMiddlewareFunc(nil, gas.RequestLogger[gas.Logger]())
 	app.Router().Get(nil, "/boom", func(gas.Context) error { panic("boom") })
 	require.NoError(t, app.Start(t.Context()))
 
@@ -813,8 +813,8 @@ func TestFindings_KI045SubRouterDecoder(t *testing.T) {
 	}
 
 	app := quietApp()
-	app.Router().Route("/api", func(sub *gas.Router) {
-		sub.Post(nil, "/form", func(c gas.Context) error {
+	app.Router().Route(nil, "/api", func(sub *gas.RouteGroup) {
+		sub.Post("/form", func(c gas.Context) error {
 			var f form
 
 			err := c.BindForm(&f)
@@ -854,7 +854,7 @@ func TestFindings_KI050ScopedTypeNotAssignable(t *testing.T) {
 			func(l gas.Logger) *wrappedLogger { return &wrappedLogger{l} },
 		),
 	)
-	app.Router().UseMiddlewareFunc(gas.RequestLogger[*wrappedLogger]())
+	app.Router().UseMiddlewareFunc(nil, gas.RequestLogger[*wrappedLogger]())
 	app.Router().
 		Get(nil, "/x", func(c gas.Context, _ *wrappedLogger) error { return c.NoContent() })
 	require.NoError(t, app.Start(t.Context()))
@@ -889,9 +889,10 @@ func TestFindings_KI056RoutesReportGlobalMiddleware(t *testing.T) {
 	r.Register(nil, "audit", func(next http.Handler) http.Handler { return next })
 	r.Get(nil, "/before", func(gas.Context) error { return nil })
 	r.Group(
-		func(sub *gas.Router) { sub.Get(nil, "/group-before", func(gas.Context) error { return nil }) },
+		nil,
+		func(sub *gas.RouteGroup) { sub.Get("/group-before", func(gas.Context) error { return nil }) },
 	)
-	r.UseMiddlewareByName("audit")
+	r.UseMiddlewareByName(nil, "audit")
 	r.Get(nil, "/after", func(gas.Context) error { return nil })
 	require.NoError(t, app.Start(t.Context()))
 

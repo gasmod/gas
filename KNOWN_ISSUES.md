@@ -34,22 +34,6 @@ Each entry has a stable ID (`KI-NNN`, never reused), and these fields:
 - **Next step**: report it upstream; until it is fixed, use TLS for a
   server outside the host or its private network.
 
-## KI-083: `Router.Use` has no owner, so a restart applies it again
-
-- **Status**: open
-- **Area**: core, `router.go`.
-- **Found**: 2026-10-31, v0.6.0 rewrite of the core package.
-- **Detail**: a top-level `Use` appends to `r.pendingMW`
-  (`router.go:328`) with no service attached, unlike named middleware,
-  which `Register` records with its service. A service that calls
-  `Router.Use` in Init calls it again when `RestartService` re-runs Init,
-  so the middleware is applied once more on every restart, and the kill
-  switch cannot remove it. The `Use` godoc (`router.go:302-306`) and the
-  package documentation (`doc.go:181-184`) state it; it is not fixed.
-- **Next step**: give `Use` an owner, as named middleware has, so a
-  restart replaces a service's middleware rather than adding to it; or
-  reject a `Use` from a service's Init and point to named middleware.
-
 ## KI-086: the transfer manager logs a failed completion outside the store's logger
 
 - **Status**: open

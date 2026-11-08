@@ -39,7 +39,7 @@ func principalRouter(t *testing.T, attach bool, principal gas.Principal) (*gas.R
 	}
 
 	if attach {
-		app.Router().UseMiddlewareFunc(func(next http.Handler) http.Handler {
+		app.Router().UseMiddlewareFunc(nil, func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				next.ServeHTTP(w, r.WithContext(gas.WithPrincipal(r.Context(), principal)))
 			})

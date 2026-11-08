@@ -42,9 +42,9 @@ func TestKillSwitchDisablesMiddlewareScopedInSubRouter(t *testing.T) {
 	router := gas.NewRouter()
 	router.Register(auth, "require-auth", ksPassthrough)
 
-	router.Route("/api", func(sub *gas.Router) {
+	router.Route(billing, "/api", func(sub *gas.RouteGroup) {
 		sub.Use(gas.MiddlewareByName("require-auth"))
-		sub.Handle(billing, http.MethodGet, "/invoices", ksHandler)
+		sub.Handle(http.MethodGet, "/invoices", ksHandler)
 	})
 	router.Handle(auth, http.MethodGet, "/login", ksHandler)
 	router.Handle(billing, http.MethodGet, "/plans", ksHandler)
@@ -83,9 +83,8 @@ func TestKillSwitchDisablesMiddlewareOnSubRouterRoute(t *testing.T) {
 
 	router := gas.NewRouter()
 	router.Register(auth, "require-auth", ksPassthrough)
-	router.Group(func(sub *gas.Router) {
+	router.Group(billing, func(sub *gas.RouteGroup) {
 		sub.Handle(
-			billing,
 			http.MethodGet,
 			"/invoices",
 			ksHandler,
@@ -157,7 +156,7 @@ func TestKillSwitchDisablesGlobalMiddleware(t *testing.T) {
 
 	router := gas.NewRouter()
 	router.Register(auth, "require-auth", ksPassthrough)
-	router.Use(gas.MiddlewareByName("require-auth"))
+	router.Use(nil, gas.MiddlewareByName("require-auth"))
 	router.Handle(billing, http.MethodGet, "/invoices", ksHandler)
 	router.Seal()
 
@@ -182,9 +181,9 @@ func TestKillSwitchLeavesRouterUsable(t *testing.T) {
 
 	router := gas.NewRouter()
 	router.Register(auth, "require-auth", ksPassthrough)
-	router.Route("/api", func(sub *gas.Router) {
+	router.Route(billing, "/api", func(sub *gas.RouteGroup) {
 		sub.Use(gas.MiddlewareByName("require-auth"))
-		sub.Handle(billing, http.MethodGet, "/invoices", ksHandler)
+		sub.Handle(http.MethodGet, "/invoices", ksHandler)
 	})
 	router.Seal()
 	router.RemoveByService(auth)
@@ -211,9 +210,9 @@ func TestRestartServiceRestoresMiddlewareAndRoutes(t *testing.T) {
 
 	router := gas.NewRouter()
 	router.Register(auth, "require-auth", ksPassthrough)
-	router.Route("/api", func(sub *gas.Router) {
+	router.Route(billing, "/api", func(sub *gas.RouteGroup) {
 		sub.Use(gas.MiddlewareByName("require-auth"))
-		sub.Handle(billing, http.MethodGet, "/invoices", ksHandler)
+		sub.Handle(http.MethodGet, "/invoices", ksHandler)
 	})
 	router.Handle(auth, http.MethodGet, "/login", ksHandler)
 	router.Seal()
@@ -247,7 +246,7 @@ func TestKillSwitchLeavesAnonymousMiddlewareAlone(t *testing.T) {
 	ran := 0
 	router := gas.NewRouter()
 	router.Register(auth, "require-auth", ksPassthrough)
-	router.Use(gas.MiddlewareFunc(func(next http.Handler) http.Handler {
+	router.Use(nil, gas.MiddlewareFunc(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ran++
 
@@ -285,16 +284,16 @@ func TestKillSwitchOnSharedRoutePrefix(t *testing.T) {
 	}
 	mountNotes := func(router *gas.Router) {
 		router.Register(notes, "notes-only", notesOnly)
-		router.Route("/api", func(sub *gas.Router) {
+		router.Route(notes, "/api", func(sub *gas.RouteGroup) {
 			sub.Use(gas.MiddlewareByName("notes-only"))
-			sub.Handle(notes, http.MethodGet, "/notes", ksHandler)
+			sub.Handle(http.MethodGet, "/notes", ksHandler)
 		})
 	}
 
 	router := gas.NewRouter()
 	mountNotes(router)
-	router.Route("/api", func(sub *gas.Router) {
-		sub.Handle(billing, http.MethodGet, "/plans", ksHandler)
+	router.Route(billing, "/api", func(sub *gas.RouteGroup) {
+		sub.Handle(http.MethodGet, "/plans", ksHandler)
 	})
 	router.Seal()
 

@@ -22,7 +22,7 @@ func limitedApp(t *testing.T, mw func(http.Handler) http.Handler) *gas.App {
 	t.Helper()
 
 	app := quietApp()
-	app.Router().UseMiddlewareFunc(mw)
+	app.Router().UseMiddlewareFunc(nil, mw)
 	app.Router().Post(nil, "/json", func(c gas.Context) error {
 		var v struct {
 			A string `json:"a"`
@@ -121,7 +121,7 @@ func TestTimeout(t *testing.T) {
 
 	app := quietApp()
 	r := app.Router()
-	r.UseMiddlewareFunc(gas.Timeout(50 * time.Millisecond))
+	r.UseMiddlewareFunc(nil, gas.Timeout(50*time.Millisecond))
 
 	wrote := make(chan error, 1)
 
@@ -165,14 +165,14 @@ func TestTimeout_CanceledAndPanic(t *testing.T) {
 	t.Parallel()
 
 	app := quietApp()
-	app.Router().UseMiddlewareFunc(gas.Timeout(time.Minute))
+	app.Router().UseMiddlewareFunc(nil, gas.Timeout(time.Minute))
 	app.Router().Get(nil, "/wait", func(c gas.Context) error {
 		<-c.Done()
 
 		return nil
 	})
 	app.Router().Get(nil, "/panic", func(http.ResponseWriter, *http.Request) { panic("boom") })
-	app.Router().UseMiddlewareFunc(func(next http.Handler) http.Handler {
+	app.Router().UseMiddlewareFunc(nil, func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/mwpanic" {
 				panic("mw boom")

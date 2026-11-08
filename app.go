@@ -185,6 +185,7 @@ func NewApp(opts ...Option) *App {
 
 	w.afterBuild = a.afterBuild
 	w.onServiceClose = func(s Service) { a.router.RemoveByService(s) }
+	w.onServiceRestarted = func(s Service) { a.router.settleUse(s) }
 
 	for _, opt := range opts {
 		switch o := opt.(type) {
@@ -196,7 +197,7 @@ func NewApp(opts ...Option) *App {
 	}
 
 	// Every request gets its own scope.
-	a.router.Use(MiddlewareFunc(requestScopeMiddleware(w.serviceContainer, w.getLogger)))
+	a.router.Use(nil, MiddlewareFunc(requestScopeMiddleware(w.serviceContainer, w.getLogger)))
 
 	return a
 }

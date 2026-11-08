@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -85,18 +86,25 @@ type pendingHandler struct {
 }
 
 // routeOp is a recorded Handle, Group or Route call of the top-level
-// router. Every build of the routing tree runs every op again.
+// router. Every build of the routing tree runs every op again, until
+// RemoveByService removes its owner.
 type routeOp struct {
 	// run registers the op's routes on the tree being built.
 	run func()
-	// owners are the services whose routes the op registered on its first
-	// build; skip those whose routes it no longer registers, because
-	// RemoveByService removed them.
-	owners map[string]struct{}
-	skip   map[string]struct{}
+	// owner is the name of the service that owns the op's routes.
+	owner string
 	// booked is set once the op has been built, so the routes it
 	// registers are recorded once.
 	booked bool
+}
+
+// useSlot is a top-level Use call: its middleware, in order, and its
+// owner's name. A slot whose owner RemoveByService removed is retired: it
+// answers 503 until the owner calls Use again, which refills it in place.
+type useSlot struct {
+	owner   string
+	specs   []Middleware
+	retired bool
 }
 
 // muxSnapshot wraps a chi.Router so it can be stored in an
@@ -168,14 +176,13 @@ type Router struct {
 	// prefix is the path prefix of Route nesting.
 	prefix string
 	// scopeMiddleware are the names of the named middleware this
-	// sub-router and its sub-router ancestors Use. The top-level router's
-	// are its global ones.
+	// sub-router and its sub-router ancestors Use (sub-routers only).
 	scopeMiddleware []string
 
-	// pendingMW are the top-level Use calls and ops the recorded Handle,
+	// useSlots are the top-level Use calls and ops the recorded Handle,
 	// Group and Route calls, replayed on every build.
-	pendingMW []Middleware
-	ops       []*routeOp
+	useSlots []useSlot
+	ops      []*routeOp
 
 	// mu guards the fields above. A sub-router's mu guards its own
 	// scopeMiddleware.
@@ -184,9 +191,22 @@ type Router struct {
 	// sealed is set by Seal, and checked once handlersToCheck has run.
 	sealed  bool
 	checked bool
-	// isSub marks sub-routers made by Group and Route. They build
+	// isSub marks the sub-routers behind a RouteGroup. They build
 	// straight into their sub-mux and never queue, build or serve.
 	isSub bool
+}
+
+// RouteGroup registers routes in a group made by Router.Group or
+// Router.Route, as described under Routing in the package documentation.
+// Everything registered through it, and through the groups made from it,
+// is owned by the service the group was made for. It is valid only during
+// the call of the function it is passed to, which runs again on every
+// build of the routing tree.
+type RouteGroup struct {
+	// r is the sub-router the group builds into.
+	r *Router
+	// owner is the owning service's name.
+	owner string
 }
 
 var _ Service = (*Router)(nil)
@@ -224,15 +244,8 @@ func NewRouter() *Router {
 	return r
 }
 
-// Name returns `gas/router`, followed by the prefix in parentheses for a
-// sub-router made by Route.
-func (r *Router) Name() string {
-	if r.prefix != "" {
-		return fmt.Sprintf("%s(%s)", routerName, r.prefix)
-	}
-
-	return routerName
-}
+// Name returns `gas/router`.
+func (*Router) Name() string { return routerName }
 
 // Init does nothing. It exists so the Router is a Service and can own
 // routes.
@@ -300,96 +313,77 @@ func (r *Router) Register(service Service, name string, mw func(http.Handler) ht
 	}
 }
 
-// Use applies middleware to every route of the router, in order. A
-// top-level Use applies to every route, registered before or after it.
-// Use is not owned by a service, so a service that calls it in Init
-// applies it again when it restarts. A MiddlewareByName whose name is not
-// registered panics with an error wrapping ErrUnknownMiddleware.
-func (r *Router) Use(middleware ...Middleware) {
+// Use applies middleware to every route, registered before or after it,
+// in order, outermost first, owned by service, or by the router when
+// service is nil. When RemoveByService removes the owner, the call's
+// middleware answers 503 in the unified error shape on every route, so no
+// route runs without it, until the owner calls Use again: each of its
+// later calls takes the place of its earliest retired one, so a restarted
+// service's middleware keeps its position and is not applied twice. A
+// successful restart drops the calls its Init no longer makes. A
+// MiddlewareByName whose name is not registered panics with an error
+// wrapping ErrUnknownMiddleware.
+func (r *Router) Use(service Service, middleware ...Middleware) {
+	if len(middleware) == 0 {
+		return
+	}
+
+	owner := ownerName(service)
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	for _, m := range middleware {
-		if r.isSub {
-			// A sub-router runs inside an op being built, so this call is
-			// the build: resolve now, honoring any retirement.
-			fn, err := r.buildMiddleware(m)
-			if err != nil {
-				panic(err)
-			}
-
-			r.mux.Use(fn)
-		} else {
-			err := r.validateMiddleware(m)
-			if err != nil {
-				panic(err)
-			}
-
-			r.pendingMW = append(r.pendingMW, m)
-		}
-
-		if m.name != "" {
-			r.scopeMiddleware = append(r.scopeMiddleware, m.name)
+		err := r.validateMiddleware(m)
+		if err != nil {
+			panic(err)
 		}
 	}
 
-	if !r.isSub && r.sealed {
+	slot := useSlot{owner: owner, specs: slices.Clone(middleware)}
+
+	i := slices.IndexFunc(r.useSlots, func(s useSlot) bool { return s.retired && s.owner == owner })
+	if i >= 0 {
+		r.useSlots[i] = slot
+	} else {
+		r.useSlots = append(r.useSlots, slot)
+	}
+
+	if r.sealed {
 		r.publish()
 	}
 }
 
 // UseMiddlewareFunc is Use with MiddlewareFunc(middleware).
-func (r *Router) UseMiddlewareFunc(middleware func(http.Handler) http.Handler) {
-	r.Use(MiddlewareFunc(middleware))
+func (r *Router) UseMiddlewareFunc(service Service, middleware func(http.Handler) http.Handler) {
+	r.Use(service, MiddlewareFunc(middleware))
 }
 
 // UseMiddlewareByName is Use with MiddlewareByName(middleware).
-func (r *Router) UseMiddlewareByName(middleware string) {
-	r.Use(MiddlewareByName(middleware))
+func (r *Router) UseMiddlewareByName(service Service, middleware string) {
+	r.Use(service, MiddlewareByName(middleware))
 }
 
-// Group registers an inline group: fn gets a sub-router whose Use applies
-// to the routes fn registers on it only. A top-level Group runs fn on
-// every build of the tree.
-func (r *Router) Group(fn func(sub *Router)) {
+// Group registers an inline group owned by service, or by the router when
+// service is nil: fn gets a RouteGroup whose Use applies to the routes fn
+// registers on it only. fn runs on every build of the tree.
+func (r *Router) Group(service Service, fn func(g *RouteGroup)) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	r.applyOp(func() {
-		r.mux.Group(func(cr chi.Router) {
-			sub := newSubRouter(cr, r, "")
-			// A group routes into its parent's tree, so Route calls inside
-			// it dedupe against the parent's mounts.
-			sub.subroutes = r.subroutes
-			fn(sub)
-		})
-	})
+	r.group(ownerName(service), fn)
 }
 
-// Route registers a group under pattern: fn gets a sub-router whose paths
-// are relative to it. Route with a pattern already used on the same
-// parent attaches to that mount; each call's body runs in a group of its
-// own, so its Use applies to its own routes only.
-func (r *Router) Route(pattern string, fn func(sub *Router)) {
+// Route registers a group under pattern, owned by service, or by the
+// router when service is nil: fn gets a RouteGroup whose paths are
+// relative to pattern. Route with a pattern already used attaches to that
+// mount; each call's body runs in a group of its own, so its Use applies
+// to its own routes only. fn runs on every build of the tree.
+func (r *Router) Route(service Service, pattern string, fn func(g *RouteGroup)) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	r.applyOp(func() {
-		entry, ok := r.subroutes[pattern]
-		if !ok {
-			r.mux.Route(pattern, func(cr chi.Router) {
-				entry = &subrouteEntry{mux: cr, nested: make(map[string]*subrouteEntry)}
-				r.subroutes[pattern] = entry
-			})
-		}
-
-		entry.mux.Group(func(grp chi.Router) {
-			sub := newSubRouter(grp, r, pattern)
-
-			sub.subroutes = entry.nested
-			fn(sub)
-		})
-	})
+	r.route(ownerName(service), pattern, fn)
 }
 
 // Handle registers a route owned by service, or by the router when
@@ -408,59 +402,10 @@ func (r *Router) Handle(
 	handler any,
 	middleware ...Middleware,
 ) {
-	if service == nil {
-		service = r.root
-	}
-
-	owner := service.Name()
-
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// Names are checked now, so a typo panics at the call site, and
-	// resolved on every build, so a retirement reaches the route.
-	names := r.middlewareNames(middleware, method, path)
-	specs := append([]Middleware(nil), middleware...)
-
-	httpHandler, depTypes := r.adapt(handler)
-
-	register := func() {
-		fns := make([]func(http.Handler) http.Handler, 0, len(specs))
-		for _, m := range specs {
-			fn, err := r.buildMiddleware(m)
-			if err != nil {
-				panic(fmt.Errorf("%w (route %s %s)", err, method, path))
-			}
-
-			fns = append(fns, fn)
-		}
-
-		chained := r.mux.With(fns...)
-		chained.Method(method, path, httpHandler)
-
-		if method == http.MethodGet {
-			chained.Method(http.MethodHead, path, httpHandler)
-		}
-	}
-
-	if r.isSub {
-		op := r.root.building
-		if _, skipped := op.skip[owner]; skipped {
-			return
-		}
-
-		if !op.booked {
-			op.owners[owner] = struct{}{}
-			r.book(owner, method, path, names, depTypes)
-		}
-
-		register()
-
-		return
-	}
-
-	r.book(owner, method, path, names, depTypes)
-	r.applyOp(register, owner)
+	r.handle(ownerName(service), method, path, handler, middleware)
 }
 
 // Get registers a GET route, which also serves HEAD, via Handle.
@@ -500,32 +445,12 @@ func (r *Router) Delete(service Service, path string, handler any, middleware ..
 // when it restarts; another service setting it panics with an error
 // wrapping ErrNotFoundHandlerSet. RemoveByService of the owner removes it.
 func (r *Router) NotFound(service Service, handler any) {
-	if service == nil {
-		service = r.root
-	}
-
-	owner := service.Name()
+	owner := ownerName(service)
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	httpHandler, depTypes := r.adapt(handler)
-
-	if r.isSub {
-		op := r.root.building
-		if _, skipped := op.skip[owner]; skipped {
-			return
-		}
-
-		if !op.booked {
-			op.owners[owner] = struct{}{}
-			r.bookNotFound(owner, depTypes)
-		}
-
-		r.mux.NotFound(httpHandler)
-
-		return
-	}
 
 	if r.notFoundOwner != "" && r.notFoundOwner != owner {
 		panic(fmt.Errorf("%w by service %q", ErrNotFoundHandlerSet, r.notFoundOwner))
@@ -544,8 +469,8 @@ func (r *Router) NotFound(service Service, handler any) {
 // RemoveByService takes down what service registered, as described under
 // Services in the package documentation: its routes answer 503 in the
 // unified error shape, its named middleware answers 503 wherever it is
-// used, so a route guarded by it never runs unguarded, and its NotFound
-// handler is removed. Its registrations are dropped, so when it registers
+// used and its Use calls on every route, so a route guarded by it never
+// runs unguarded, and its NotFound handler is removed. Its registrations are dropped, so when it registers
 // again, such as on restart, only what it registers then is served. The
 // new tree is published atomically.
 func (r *Router) RemoveByService(service Service) {
@@ -570,23 +495,13 @@ func (r *Router) RemoveByService(service Service) {
 		}
 	}
 
-	kept := r.ops[:0]
+	r.ops = slices.DeleteFunc(r.ops, func(op *routeOp) bool { return op.owner == name })
 
-	for _, op := range r.ops {
-		if _, owned := op.owners[name]; owned {
-			op.skip[name] = struct{}{}
-
-			if len(op.skip) == len(op.owners) {
-				continue
-			}
+	for i := range r.useSlots {
+		if r.useSlots[i].owner == name {
+			r.useSlots[i].retired = true
 		}
-
-		kept = append(kept, op)
 	}
-
-	clear(r.ops[len(kept):])
-
-	r.ops = kept
 
 	if r.notFoundOwner == name {
 		r.notFoundOwner = ""
@@ -605,6 +520,7 @@ func (r *Router) Routes() map[string][]RegisteredRoute {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
+	global := r.globalMiddleware()
 	out := make(map[string][]RegisteredRoute, len(r.routes))
 
 	for svc, routes := range r.routes {
@@ -615,9 +531,9 @@ func (r *Router) Routes() map[string][]RegisteredRoute {
 				continue
 			}
 
-			mw := make([]string, 0, len(r.scopeMiddleware)+len(rt.middleware))
+			mw := make([]string, 0, len(global)+len(rt.middleware))
 
-			mw = append(mw, r.scopeMiddleware...)
+			mw = append(mw, global...)
 			mw = append(mw, rt.middleware...)
 			exported = append(
 				exported,
@@ -661,6 +577,117 @@ func (r *Router) Seal() {
 
 	r.sealed = true
 	r.publish()
+}
+
+// Use applies middleware to the group's routes, in order, outermost first,
+// including those registered on the group before the call. A
+// MiddlewareByName whose name is not registered panics with an error
+// wrapping ErrUnknownMiddleware.
+func (g *RouteGroup) Use(middleware ...Middleware) {
+	r := g.r
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, m := range middleware {
+		// The group runs inside an op being built, so this call is the
+		// build: resolve now, honoring any retirement.
+		fn, err := r.buildMiddleware(m)
+		if err != nil {
+			panic(err)
+		}
+
+		r.mux.Use(fn)
+
+		if m.name != "" {
+			r.scopeMiddleware = append(r.scopeMiddleware, m.name)
+		}
+	}
+}
+
+// UseMiddlewareFunc is Use with MiddlewareFunc(middleware).
+func (g *RouteGroup) UseMiddlewareFunc(middleware func(http.Handler) http.Handler) {
+	g.Use(MiddlewareFunc(middleware))
+}
+
+// UseMiddlewareByName is Use with MiddlewareByName(middleware).
+func (g *RouteGroup) UseMiddlewareByName(middleware string) {
+	g.Use(MiddlewareByName(middleware))
+}
+
+// Group registers an inline group inside g, as Router.Group does, owned by
+// g's owner.
+func (g *RouteGroup) Group(fn func(g *RouteGroup)) {
+	g.r.mu.Lock()
+	defer g.r.mu.Unlock()
+
+	g.r.group(g.owner, fn)
+}
+
+// Route registers a group under pattern inside g, as Router.Route does,
+// owned by g's owner.
+func (g *RouteGroup) Route(pattern string, fn func(g *RouteGroup)) {
+	g.r.mu.Lock()
+	defer g.r.mu.Unlock()
+
+	g.r.route(g.owner, pattern, fn)
+}
+
+// Handle registers a route on g, owned by g's owner, as Router.Handle
+// does. Its path is relative to the patterns of the enclosing Route
+// calls.
+func (g *RouteGroup) Handle(method, path string, handler any, middleware ...Middleware) {
+	g.r.mu.Lock()
+	defer g.r.mu.Unlock()
+
+	g.r.handle(g.owner, method, path, handler, middleware)
+}
+
+// Get registers a GET route, which also serves HEAD, via Handle.
+func (g *RouteGroup) Get(path string, handler any, middleware ...Middleware) {
+	g.Handle(http.MethodGet, path, handler, middleware...)
+}
+
+// Head registers a HEAD route via Handle.
+func (g *RouteGroup) Head(path string, handler any, middleware ...Middleware) {
+	g.Handle(http.MethodHead, path, handler, middleware...)
+}
+
+// Post registers a POST route via Handle.
+func (g *RouteGroup) Post(path string, handler any, middleware ...Middleware) {
+	g.Handle(http.MethodPost, path, handler, middleware...)
+}
+
+// Put registers a PUT route via Handle.
+func (g *RouteGroup) Put(path string, handler any, middleware ...Middleware) {
+	g.Handle(http.MethodPut, path, handler, middleware...)
+}
+
+// Patch registers a PATCH route via Handle.
+func (g *RouteGroup) Patch(path string, handler any, middleware ...Middleware) {
+	g.Handle(http.MethodPatch, path, handler, middleware...)
+}
+
+// Delete registers a DELETE route via Handle.
+func (g *RouteGroup) Delete(path string, handler any, middleware ...Middleware) {
+	g.Handle(http.MethodDelete, path, handler, middleware...)
+}
+
+// NotFound sets the handler for a path under g that no route matches,
+// owned by g's owner. handler takes the shapes Router.Handle takes.
+func (g *RouteGroup) NotFound(handler any) {
+	r := g.r
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	httpHandler, depTypes := r.adapt(handler)
+
+	if !r.root.building.booked {
+		r.bookNotFound(g.owner, depTypes)
+	}
+
+	r.mux.NotFound(httpHandler)
 }
 
 // writeNotFound answers a path no route matches with a 404 in the unified
@@ -838,21 +865,16 @@ func (r *Router) bookNotFound(owner string, depTypes []reflect.Type) {
 }
 
 // applyOp records a Handle, Group or Route call of the top-level router,
-// owned by owners when they are known, and publishes a new tree when the
-// router is sealed. A sub-router runs it at once. Must hold r.mu.
-func (r *Router) applyOp(run func(), owners ...string) {
+// owned by owner, and publishes a new tree when the router is sealed. A
+// sub-router runs it at once. Must hold r.mu.
+func (r *Router) applyOp(run func(), owner string) {
 	if r.isSub {
 		run()
 
 		return
 	}
 
-	op := &routeOp{run: run, owners: make(map[string]struct{}), skip: make(map[string]struct{})}
-	for _, o := range owners {
-		op.owners[o] = struct{}{}
-	}
-
-	r.ops = append(r.ops, op)
+	r.ops = append(r.ops, &routeOp{run: run, owner: owner})
 	if r.sealed {
 		r.publish()
 	}
@@ -875,14 +897,7 @@ func (r *Router) buildMux() chi.Router {
 	// Route ops mount their sub-muxes again on the fresh tree.
 	r.subroutes = make(map[string]*subrouteEntry)
 
-	for _, spec := range r.pendingMW {
-		fn, err := r.buildMiddleware(spec)
-		if err != nil {
-			panic(err)
-		}
-
-		m.Use(fn)
-	}
+	r.applyUseSlots(m)
 
 	for _, op := range r.ops {
 		r.building = op
@@ -921,10 +936,166 @@ func (r *Router) buildMux() chi.Router {
 	return m
 }
 
+// applyUseSlots applies the top-level Use calls to m, in order: a retired
+// one as a 503 answer. Must hold r.mu.
+func (r *Router) applyUseSlots(m chi.Router) {
+	for _, slot := range r.useSlots {
+		if slot.retired {
+			m.Use(unavailableMiddleware)
+
+			continue
+		}
+
+		for _, spec := range slot.specs {
+			fn, err := r.buildMiddleware(spec)
+			if err != nil {
+				panic(err)
+			}
+
+			m.Use(fn)
+		}
+	}
+}
+
 // handleUnavailable answers a route whose owner was removed with a 503 in
 // the unified error shape, which does not name the owner.
 func handleUnavailable(w http.ResponseWriter, req *http.Request) {
 	_ = WriteError(w, req, ServiceUnavailable("service unavailable"))
+}
+
+// unavailableMiddleware stands in for middleware whose owner was removed:
+// it answers 503 and never calls the next handler.
+func unavailableMiddleware(http.Handler) http.Handler {
+	return http.HandlerFunc(handleUnavailable)
+}
+
+// settleUse drops the Use calls of service that are still retired: the
+// calls its Init no longer made when it restarted. The Worker calls it
+// once a restart's Init succeeds.
+func (r *Router) settleUse(service Service) {
+	name := ownerName(service)
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	n := len(r.useSlots)
+
+	r.useSlots = slices.DeleteFunc(r.useSlots, func(s useSlot) bool {
+		return s.retired && s.owner == name
+	})
+	if len(r.useSlots) != n && r.sealed {
+		r.publish()
+	}
+}
+
+// ownerName returns the name registrations of service are owned by: the
+// router's for a nil service.
+func ownerName(service Service) string {
+	if service == nil {
+		return routerName
+	}
+
+	return service.Name()
+}
+
+// globalMiddleware returns the names of the named middleware of the live
+// top-level Use calls, in order. Must hold r.mu.
+func (r *Router) globalMiddleware() []string {
+	var names []string
+
+	for _, slot := range r.useSlots {
+		if slot.retired {
+			continue
+		}
+
+		for _, m := range slot.specs {
+			if m.name != "" {
+				names = append(names, m.name)
+			}
+		}
+	}
+
+	return names
+}
+
+// handle registers a route owned by owner, as Handle describes. Must hold
+// r.mu.
+func (r *Router) handle(owner, method, path string, handler any, middleware []Middleware) {
+	// Names are checked now, so a typo panics at the call site, and
+	// resolved on every build, so a retirement reaches the route.
+	names := r.middlewareNames(middleware, method, path)
+	specs := slices.Clone(middleware)
+
+	httpHandler, depTypes := r.adapt(handler)
+
+	register := func() {
+		fns := make([]func(http.Handler) http.Handler, 0, len(specs))
+		for _, m := range specs {
+			fn, err := r.buildMiddleware(m)
+			if err != nil {
+				panic(fmt.Errorf("%w (route %s %s)", err, method, path))
+			}
+
+			fns = append(fns, fn)
+		}
+
+		chained := r.mux.With(fns...)
+		chained.Method(method, path, httpHandler)
+
+		if method == http.MethodGet {
+			chained.Method(http.MethodHead, path, httpHandler)
+		}
+	}
+
+	if r.isSub {
+		// Inside a group the op is being built: its routes are recorded on
+		// its first build only.
+		if !r.root.building.booked {
+			r.book(owner, method, path, names, depTypes)
+		}
+
+		register()
+
+		return
+	}
+
+	r.book(owner, method, path, names, depTypes)
+	r.applyOp(register, owner)
+}
+
+// group registers an inline group owned by owner, as Group describes.
+// Must hold r.mu.
+func (r *Router) group(owner string, fn func(g *RouteGroup)) {
+	r.applyOp(func() {
+		r.mux.Group(func(cr chi.Router) {
+			sub := newSubRouter(cr, r, "")
+			// A group routes into its parent's tree, so Route calls inside
+			// it dedupe against the parent's mounts.
+			sub.subroutes = r.subroutes
+			fn(&RouteGroup{r: sub, owner: owner})
+		})
+	}, owner)
+}
+
+// route registers a group under pattern owned by owner, as Route
+// describes. Must hold r.mu.
+func (r *Router) route(owner, pattern string, fn func(g *RouteGroup)) {
+	r.applyOp(func() {
+		entry, ok := r.subroutes[pattern]
+		if !ok {
+			r.mux.Route(pattern, func(cr chi.Router) {
+				entry = &subrouteEntry{mux: cr, nested: make(map[string]*subrouteEntry)}
+				r.subroutes[pattern] = entry
+			})
+		}
+
+		entry.mux.Group(func(grp chi.Router) {
+			sub := newSubRouter(grp, r, pattern)
+
+			sub.subroutes = entry.nested
+			fn(&RouteGroup{r: sub, owner: owner})
+		})
+	}, owner)
 }
 
 // validateMiddleware checks that m can be resolved against the registry,
@@ -956,9 +1127,7 @@ func (r *Router) buildMiddleware(m Middleware) (func(http.Handler) http.Handler,
 	}
 
 	if _, ok := r.retired[m.name]; ok {
-		return func(http.Handler) http.Handler {
-			return http.HandlerFunc(handleUnavailable)
-		}, nil
+		return unavailableMiddleware, nil
 	}
 
 	return nil, fmt.Errorf("%w %q", ErrUnknownMiddleware, m.name)

@@ -87,13 +87,13 @@ func TestFindings_S2CacheControlOnlyOnSuccess(t *testing.T) {
 
 	app := quietApp()
 	r := app.Router()
-	r.UseMiddlewareFunc(
+	r.UseMiddlewareFunc(nil,
 		gas.CacheControl(gas.WithCacheControlPublic(), gas.WithCacheControlMaxAge(time.Hour)),
 	)
-	r.UseMiddlewareFunc(gas.BodyLimit(1 << 10))
-	r.Group(func(sub *gas.Router) {
+	r.UseMiddlewareFunc(nil, gas.BodyLimit(1<<10))
+	r.Group(nil, func(sub *gas.RouteGroup) {
 		sub.UseMiddlewareFunc(gas.Timeout(20 * time.Millisecond))
-		sub.Get(nil, "/app.js", func(c gas.Context) error {
+		sub.Get("/app.js", func(c gas.Context) error {
 			if c.Query("slow") != "" {
 				<-c.Done()
 			}
@@ -349,9 +349,9 @@ func TestFindings_KI035MiddlewarePanicLoggedWithRequestID(t *testing.T) {
 
 	buf := &lockedBuffer{}
 	app := gas.NewApp(gas.WithServiceInstance[gas.Logger](newJSONLogger(buf)))
-	app.Router().UseMiddlewareFunc(middleware.RequestID)
-	app.Router().UseMiddlewareFunc(gas.RequestLogger[gas.Logger]())
-	app.Router().UseMiddlewareFunc(func(http.Handler) http.Handler {
+	app.Router().UseMiddlewareFunc(nil, middleware.RequestID)
+	app.Router().UseMiddlewareFunc(nil, gas.RequestLogger[gas.Logger]())
+	app.Router().UseMiddlewareFunc(nil, func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("mw boom") })
 	})
 	app.Router().Get(nil, "/x", func(gas.Context) error { return nil })

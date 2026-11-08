@@ -115,9 +115,9 @@
 // removes the routes, named middleware, NotFound handler and event
 // subscriptions the service registered, then calls its Close and returns
 // its error, wrapped; the service counts as closed either way. Its routes
-// then answer 503 in the unified error shape, and its named middleware
-// answers 503 wherever it is used, so a route it guarded never runs
-// unguarded. [Worker.RestartService] calls Init again on the same
+// then answer 503 in the unified error shape, its named middleware answers
+// 503 wherever it is used, and its [Router.Use] middleware on every route,
+// so a route it guarded never runs unguarded. [Worker.RestartService] calls Init again on the same
 // instance, which registers its routes, middleware and subscriptions anew;
 // only what that Init registers is served, so a route the restarted
 // service no longer registers answers 404. A restart whose Init fails
@@ -175,16 +175,23 @@
 //
 // # Routing
 //
-// A [Router] wraps chi. Every route, named middleware and NotFound handler
-// is owned by a service, or by the router when the service is nil, which
-// is what the kill switch removes. A top-level router defers every
-// registration until Start seals it, so services register middleware and
-// routes in any order; until then every path answers 404. Once sealed,
-// every change builds a new routing tree and publishes it atomically, and
-// requests in flight keep the tree they started on. A top-level [Router.Use]
-// applies to every route, registered before or after it. Use is not owned
-// by a service, so a service that calls it in Init applies it again when
-// it restarts.
+// A [Router] wraps chi. Every route, middleware and NotFound handler is
+// owned by a service, or by the router when the service is nil, which is
+// what the kill switch removes. [Router.Group] and [Router.Route] take the
+// owner once and pass a [RouteGroup], whose registrations take none:
+// everything in the group, nested groups included, belongs to that
+// service. The router defers every registration until Start seals it, so
+// services register middleware and routes in any order; until then every
+// path answers 404. Once sealed, every change builds a new routing tree
+// and publishes it atomically, and requests in flight keep the tree they
+// started on.
+//
+// [Router.Use] applies middleware to every route, registered before or
+// after it. When the kill switch removes its owner, it answers 503 on
+// every route until the owner calls Use again, as a restarted service
+// does: the new call takes the place of the old one, so the middleware
+// keeps its position and runs once per request. A restart drops the calls
+// its Init no longer makes.
 //
 // A path no route matches answers 404 with code [CodeNotFound], and a path
 // routed for other methods only answers 405 with code
@@ -194,8 +201,8 @@
 // that applies to each, the top-level ones first. A MiddlewareByName whose
 // name is not registered panics with [ErrUnknownMiddleware], and a
 // NotFound handler set by a second service with [ErrNotFoundHandlerSet].
-// Sub-routers made by [Router.Group] and [Router.Route] share the
-// top-level router's validator, form decoder and JSON body limit.
+// A [RouteGroup] uses the router's validator, form decoder and JSON body
+// limit.
 //
 // # Handlers and errors
 //

@@ -274,7 +274,7 @@ func TestRouter_MultipleModules(t *testing.T) {
 func TestRouter_Use(t *testing.T) {
 	router := gas.NewRouter()
 
-	router.UseMiddlewareFunc(func(next http.Handler) http.Handler {
+	router.UseMiddlewareFunc(nil, func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("X-Global", "yes")
 			next.ServeHTTP(w, r)
@@ -298,14 +298,14 @@ func TestRouter_Use(t *testing.T) {
 func TestRouter_UseMiddlewareOverride(t *testing.T) {
 	router := gas.NewRouter()
 
-	router.UseMiddlewareFunc(func(next http.Handler) http.Handler {
+	router.UseMiddlewareFunc(nil, func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("X-Global", "yes")
 			next.ServeHTTP(w, r)
 		})
 	})
 
-	router.UseMiddlewareFunc(func(next http.Handler) http.Handler {
+	router.UseMiddlewareFunc(nil, func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("X-Global", "no") // override the middleware above
 			next.ServeHTTP(w, r)
@@ -367,7 +367,7 @@ func TestRouter_Use_Named(t *testing.T) {
 		})
 	})
 
-	router.UseMiddlewareByName("add-global")
+	router.UseMiddlewareByName(nil, "add-global")
 
 	router.Handle(nil, "GET", "/hello", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -387,21 +387,21 @@ func TestRouter_Use_UnknownNamed(t *testing.T) {
 	router := gas.NewRouter()
 
 	assertPanics(t, "unknown named middleware in Use", func() {
-		router.UseMiddlewareByName("nonexistent")
+		router.UseMiddlewareByName(nil, "nonexistent")
 	})
 }
 
 func TestRouter_Group(t *testing.T) {
 	router := gas.NewRouter()
 
-	router.Group(func(sub *gas.Router) {
+	router.Group(nil, func(sub *gas.RouteGroup) {
 		sub.UseMiddlewareFunc(func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("X-Group", "yes")
 				next.ServeHTTP(w, r)
 			})
 		})
-		sub.Handle(nil, "GET", "/grouped", func(w http.ResponseWriter, _ *http.Request) {
+		sub.Handle("GET", "/grouped", func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		})
 	})
@@ -435,12 +435,12 @@ func TestRouter_Group(t *testing.T) {
 func TestRouter_Route(t *testing.T) {
 	router := gas.NewRouter()
 
-	router.Route("/api", func(sub *gas.Router) {
-		sub.Handle(nil, "GET", "/users", func(w http.ResponseWriter, _ *http.Request) {
+	router.Route(nil, "/api", func(sub *gas.RouteGroup) {
+		sub.Handle("GET", "/users", func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte("users"))
 		})
 
-		sub.Handle(nil, "GET", "/items", func(w http.ResponseWriter, _ *http.Request) {
+		sub.Handle("GET", "/items", func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte("items"))
 		})
 	})
@@ -467,13 +467,13 @@ func TestRouter_Route(t *testing.T) {
 func TestRouter_Route_DuplicatePattern_Idempotent(t *testing.T) {
 	router := gas.NewRouter()
 
-	router.Route("/documents", func(sub *gas.Router) {
-		sub.Handle(nil, "GET", "/", func(w http.ResponseWriter, _ *http.Request) {
+	router.Route(nil, "/documents", func(sub *gas.RouteGroup) {
+		sub.Handle("GET", "/", func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte("list"))
 		})
 	})
-	router.Route("/documents", func(sub *gas.Router) {
-		sub.Handle(nil, "POST", "/upload", func(w http.ResponseWriter, _ *http.Request) {
+	router.Route(nil, "/documents", func(sub *gas.RouteGroup) {
+		sub.Handle("POST", "/upload", func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte("upload"))
 		})
 	})
@@ -505,25 +505,25 @@ func TestRouter_Route_DuplicatePattern_Idempotent(t *testing.T) {
 func TestRouter_Route_DuplicatePattern_MiddlewareIsolated(t *testing.T) {
 	router := gas.NewRouter()
 
-	router.Route("/documents", func(sub *gas.Router) {
+	router.Route(nil, "/documents", func(sub *gas.RouteGroup) {
 		sub.UseMiddlewareFunc(func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("X-A", "1")
 				next.ServeHTTP(w, r)
 			})
 		})
-		sub.Handle(nil, "GET", "/a", func(w http.ResponseWriter, _ *http.Request) {
+		sub.Handle("GET", "/a", func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		})
 	})
-	router.Route("/documents", func(sub *gas.Router) {
+	router.Route(nil, "/documents", func(sub *gas.RouteGroup) {
 		sub.UseMiddlewareFunc(func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("X-B", "1")
 				next.ServeHTTP(w, r)
 			})
 		})
-		sub.Handle(nil, "GET", "/b", func(w http.ResponseWriter, _ *http.Request) {
+		sub.Handle("GET", "/b", func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		})
 	})
@@ -558,19 +558,19 @@ func TestRouter_Route_DuplicatePattern_MiddlewareIsolated(t *testing.T) {
 func TestRouter_Route_DuplicatePattern_ParentMiddlewareApplies(t *testing.T) {
 	router := gas.NewRouter()
 
-	router.UseMiddlewareFunc(func(next http.Handler) http.Handler {
+	router.UseMiddlewareFunc(nil, func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("X-Global", "1")
 			next.ServeHTTP(w, r)
 		})
 	})
-	router.Route("/documents", func(sub *gas.Router) {
-		sub.Handle(nil, "GET", "/a", func(w http.ResponseWriter, _ *http.Request) {
+	router.Route(nil, "/documents", func(sub *gas.RouteGroup) {
+		sub.Handle("GET", "/a", func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		})
 	})
-	router.Route("/documents", func(sub *gas.Router) {
-		sub.Handle(nil, "GET", "/b", func(w http.ResponseWriter, _ *http.Request) {
+	router.Route(nil, "/documents", func(sub *gas.RouteGroup) {
+		sub.Handle("GET", "/b", func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		})
 	})
@@ -591,16 +591,16 @@ func TestRouter_Route_DuplicatePattern_ParentMiddlewareApplies(t *testing.T) {
 func TestRouter_Route_DuplicatePattern_NestedRoute(t *testing.T) {
 	router := gas.NewRouter()
 
-	router.Route("/api", func(sub *gas.Router) {
-		sub.Route("/v1", func(inner *gas.Router) {
-			inner.Handle(nil, "GET", "/users", func(w http.ResponseWriter, _ *http.Request) {
+	router.Route(nil, "/api", func(sub *gas.RouteGroup) {
+		sub.Route("/v1", func(inner *gas.RouteGroup) {
+			inner.Handle("GET", "/users", func(w http.ResponseWriter, _ *http.Request) {
 				_, _ = w.Write([]byte("users"))
 			})
 		})
 	})
-	router.Route("/api", func(sub *gas.Router) {
-		sub.Route("/v1", func(inner *gas.Router) {
-			inner.Handle(nil, "GET", "/items", func(w http.ResponseWriter, _ *http.Request) {
+	router.Route(nil, "/api", func(sub *gas.RouteGroup) {
+		sub.Route("/v1", func(inner *gas.RouteGroup) {
+			inner.Handle("GET", "/items", func(w http.ResponseWriter, _ *http.Request) {
 				_, _ = w.Write([]byte("items"))
 			})
 		})
@@ -818,8 +818,8 @@ func TestRouter_HeadExplicitOverride(t *testing.T) {
 func TestRouter_HeadInSubRoute(t *testing.T) {
 	router := gas.NewRouter()
 
-	router.Route("/api", func(sub *gas.Router) {
-		sub.Handle(nil, "GET", "/users", func(w http.ResponseWriter, _ *http.Request) {
+	router.Route(nil, "/api", func(sub *gas.RouteGroup) {
+		sub.Handle("GET", "/users", func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		})
 	})

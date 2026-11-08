@@ -708,12 +708,12 @@ func (s *mountService[K]) Init(context.Context) error {
 		})
 	}
 
-	s.router.Route("/api", func(sub *gas.Router) {
+	s.router.Route(s, "/api", func(sub *gas.RouteGroup) {
 		if s.middleware != "" {
 			sub.Use(gas.MiddlewareByName(s.middleware))
 		}
 
-		sub.Handle(s, http.MethodGet, s.path, func(w http.ResponseWriter, _ *http.Request) {
+		sub.Handle(http.MethodGet, s.path, func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		})
 	})

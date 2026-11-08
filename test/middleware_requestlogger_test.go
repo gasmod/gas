@@ -35,8 +35,8 @@ func newRequestLoggerApp(t *testing.T, buf *lockedBuffer) *gas.App {
 		t.Fatal(err)
 	}
 
-	app.Router().UseMiddlewareFunc(middleware.RequestID)
-	app.Router().UseMiddlewareFunc(gas.RequestLogger[gas.Logger]())
+	app.Router().UseMiddlewareFunc(nil, middleware.RequestID)
+	app.Router().UseMiddlewareFunc(nil, gas.RequestLogger[gas.Logger]())
 	app.Router().Handle(nil, http.MethodGet, "/hi", func(w http.ResponseWriter, r *http.Request) {
 		l := gas.LoggerFromContext(r.Context())
 		if l == nil {
@@ -148,8 +148,8 @@ func newScopedPatternApp(t *testing.T, buf *lockedBuffer) *gas.App {
 		t.Fatal(err)
 	}
 
-	app.Router().UseMiddlewareFunc(middleware.RequestID)
-	app.Router().UseMiddlewareFunc(gas.RequestLogger[scopedRequestLogger]())
+	app.Router().UseMiddlewareFunc(nil, middleware.RequestID)
+	app.Router().UseMiddlewareFunc(nil, gas.RequestLogger[scopedRequestLogger]())
 
 	return app
 }
@@ -245,8 +245,8 @@ func TestRequestLogger_SingletonTypeIsNotShadowed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	app.Router().UseMiddlewareFunc(middleware.RequestID)
-	app.Router().UseMiddlewareFunc(gas.RequestLogger[gas.Logger]())
+	app.Router().UseMiddlewareFunc(nil, middleware.RequestID)
+	app.Router().UseMiddlewareFunc(nil, gas.RequestLogger[gas.Logger]())
 	app.Router().Get(nil, "/hi", func(_ gas.Context, l gas.Logger) error {
 		if l != shared {
 			return gas.NewError(http.StatusInternalServerError, "shadowed", "singleton shadowed")
@@ -302,7 +302,7 @@ func TestRequestLogger_ScopedServiceIsNotReplaced(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	app.Router().UseMiddlewareFunc(gas.RequestLogger[scopedRequestLogger]())
+	app.Router().UseMiddlewareFunc(nil, gas.RequestLogger[scopedRequestLogger]())
 	app.Router().Get(nil, "/hi", func(_ gas.Context, l scopedRequestLogger) error {
 		if _, ok := l.(*closingRequestLogger); !ok {
 			return gas.NewError(http.StatusInternalServerError, "replaced", "service replaced")
@@ -338,8 +338,8 @@ func newStatusLoggerApp(t *testing.T, buf *lockedBuffer, opts ...gas.RequestLogg
 		t.Fatal(err)
 	}
 
-	app.Router().UseMiddlewareFunc(middleware.RequestID)
-	app.Router().UseMiddlewareFunc(gas.RequestLogger[gas.Logger](opts...))
+	app.Router().UseMiddlewareFunc(nil, middleware.RequestID)
+	app.Router().UseMiddlewareFunc(nil, gas.RequestLogger[gas.Logger](opts...))
 	app.Router().
 		Handle(nil, http.MethodGet, "/status/{code}", func(w http.ResponseWriter, r *http.Request) {
 			code, err := strconv.Atoi(r.PathValue("code"))

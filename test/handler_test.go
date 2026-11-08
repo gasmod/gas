@@ -65,8 +65,8 @@ func TestDIHandler_BootValidation_NotFound(t *testing.T) {
 func TestDIHandler_BootValidation_NotFoundInRoute(t *testing.T) {
 	app := gas.NewApp()
 
-	app.Router().Route("/api", func(sub *gas.Router) {
-		sub.NotFound(nil, func(_ gas.Context, _ *testDep) error {
+	app.Router().Route(nil, "/api", func(sub *gas.RouteGroup) {
+		sub.NotFound(func(_ gas.Context, _ *testDep) error {
 			return nil
 		})
 	})
@@ -329,8 +329,8 @@ func TestDIHandler_BootValidation_MissingDep(t *testing.T) {
 func TestDIHandler_BootValidation_Group(t *testing.T) {
 	app := gas.NewApp()
 
-	app.Router().Group(func(sub *gas.Router) {
-		sub.Handle(nil, "GET", "/grouped", func(_ gas.Context, _ *testDep) error {
+	app.Router().Group(nil, func(sub *gas.RouteGroup) {
+		sub.Handle("GET", "/grouped", func(_ gas.Context, _ *testDep) error {
 			return nil
 		})
 	})
@@ -348,8 +348,8 @@ func TestDIHandler_BootValidation_Group(t *testing.T) {
 func TestDIHandler_BootValidation_Route(t *testing.T) {
 	app := gas.NewApp()
 
-	app.Router().Route("/api", func(sub *gas.Router) {
-		sub.Handle(nil, "GET", "/users", func(_ gas.Context, _ *testDep) error {
+	app.Router().Route(nil, "/api", func(sub *gas.RouteGroup) {
+		sub.Handle("GET", "/users", func(_ gas.Context, _ *testDep) error {
 			return nil
 		})
 	})
