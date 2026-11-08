@@ -8,7 +8,7 @@ import (
 	"sync"
 )
 
-// Errors of the kill switch, as described under Services in the package
+// Errors of the kill switch, as described under Kill switch in the package
 // documentation.
 var (
 	// ErrNoBuiltInstance indicates that CloseService or RestartService
@@ -323,7 +323,7 @@ func (w *Worker) teardown(s Service) {
 }
 
 // CloseService runs the kill switch on the service registered under T, as
-// described under Services in the package documentation:
+// described under Kill switch in the package documentation:
 //
 //	err := w.CloseService[*auth.Service](ctx)
 //
@@ -371,7 +371,7 @@ func (w *Worker) CloseService[T Service](ctx context.Context) error {
 
 // RestartService runs Init again on the closed service registered under
 // T, so it registers its routes, middleware and subscriptions anew, as
-// described under Services in the package documentation:
+// described under Kill switch in the package documentation:
 //
 //	err := w.RestartService[*auth.Service](ctx)
 //

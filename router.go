@@ -410,7 +410,7 @@ func (r *Router) Route(service Service, pattern string, fn func(g *RouteGroup)) 
 }
 
 // Handle registers a route owned by service, or by the router when
-// service is nil, as described under Routing and Handlers and errors in
+// service is nil, as described under Routing and Handlers in
 // the package documentation. handler is an http.HandlerFunc, a
 // func(http.ResponseWriter, *http.Request), or a DI-aware func(Context,
 // Deps...) error. A GET route also serves HEAD. middleware applies in
@@ -745,7 +745,7 @@ func methodNotAllowed(m chi.Router) http.HandlerFunc {
 
 // ServeHTTP serves req from the published tree, read without a lock. It
 // recovers a panic anywhere in the middleware or handlers, as described
-// under Handlers and errors in the package documentation.
+// under Handlers in the package documentation.
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	tw := &responseTracker{ResponseWriter: w}
 

@@ -533,13 +533,23 @@ func (r *renderer) list(l *comment.List, level int, indent string) {
 func (r *renderer) inline(ts []comment.Text) string {
 	var b strings.Builder
 
+	// inCode tracks the backtick code spans across the pieces of the text:
+	// go/doc makes a URL a link even inside one.
+	inCode := false
+
 	for _, t := range ts {
 		switch t := t.(type) {
 		case comment.Plain:
-			b.WriteString(r.escape(string(t)))
+			b.WriteString(r.escape(string(t), &inCode))
 		case comment.Italic:
-			fmt.Fprintf(&b, "*%s*", r.escape(string(t)))
+			fmt.Fprintf(&b, "*%s*", r.escape(string(t), &inCode))
 		case *comment.Link:
+			if inCode {
+				b.WriteString(plainText(t.Text))
+
+				continue
+			}
+
 			fmt.Fprintf(&b, "[%s](%s)", r.inline(t.Text), t.URL)
 		case *comment.DocLink:
 			if r.skill {
@@ -602,33 +612,34 @@ func plainText(ts []comment.Text) string {
 }
 
 // escape escapes s for the site, and leaves it as it is for the skill,
-// which an agent reads as raw text.
-func (r *renderer) escape(s string) string {
+// which an agent reads as raw text. inCode is whether s starts inside a
+// backtick code span, and is left as whether it ends inside one.
+func (r *renderer) escape(s string, inCode *bool) string {
+	out := escape(s, inCode)
 	if r.skill {
 		return s
 	}
 
-	return escape(s)
+	return out
 }
 
 // escape keeps Markdown from reading text as markup: outside backtick code
 // spans, which Gas's doc comments use for literal text, it escapes the
-// characters that start emphasis, HTML or links.
-func escape(s string) string {
+// characters that start emphasis, HTML or links. inCode is whether s
+// starts inside a code span, and is left as whether it ends inside one.
+func escape(s string, inCode *bool) string {
 	var b strings.Builder
-
-	inCode := false
 
 	for _, c := range s {
 		if c == '`' {
-			inCode = !inCode
+			*inCode = !*inCode
 
 			b.WriteRune(c)
 
 			continue
 		}
 
-		if !inCode && strings.ContainsRune(`*_<>[]\`, c) {
+		if !*inCode && strings.ContainsRune(`*_<>[]\`, c) {
 			b.WriteRune('\\')
 		}
 

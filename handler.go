@@ -16,7 +16,7 @@ import (
 	"github.com/gorilla/schema"
 )
 
-// Errors of handlers, as described under Handlers and errors in the
+// Errors of handlers, as described under Handlers in the
 // package documentation.
 var (
 	// ErrInvalidHandler indicates a handler passed to Handle or NotFound

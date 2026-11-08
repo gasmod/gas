@@ -157,7 +157,7 @@ INFO server started environment=development addr=0.0.0.0:8080
 
 ### core
 
-- [`github.com/gasmod/gas`](references/gas.md): Package gas is the core of the Gas framework: a Worker that runs services with dependency injection and an event bus, and an App that adds a router and an HTTP server.
+- [`github.com/gasmod/gas`](references/gas.md): Package gas is the core of the Gas framework: a Worker runs services with dependency injection and an event bus, and an App embeds a Worker and adds a router and an HTTP server.
 
 ### auth
 

@@ -291,7 +291,7 @@ earlier Close still ran. It wraps the context's error.
 Every error starts with `gas/log: `. No error names the endpoint's user
 info, path, query or fragment, or a header name or value: an error
 names the endpoint by its scheme and host only, such as
-`[https://collector.example:4318](https://collector.example:4318)`, and a parse error of the endpoint is
+`https://collector.example:4318`, and a parse error of the endpoint is
 replaced, not wrapped. The panic value of a Marshaler is left out of its report,
 since it can hold the records. The errors, as returned or reported:
 

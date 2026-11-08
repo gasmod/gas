@@ -46,7 +46,7 @@ or fragment), such as an emulator's. Default: none, the region's
 SQS endpoint. An `http` endpoint sends every request in clear text,
 the access key ID, the session token and the payloads included; use
 it only for an emulator on a network of its own, such as
-`[http://elasticmq:9324](http://elasticmq:9324)` in a compose file.
+`http://elasticmq:9324` in a compose file.
 - `queue.accesskeyid`, `queue.secretaccesskey`, `queue.sessiontoken`:
 static credentials, as under Credentials. The access key ID is not
 a secret, but it maps to the AWS account ID, and the store never

@@ -28,7 +28,7 @@ func LoggerFromContext(ctx context.Context) Logger {
 //
 // Call Flush to ensure all buffered log entries are written, such as
 // before shutdown. A Worker flushes its Logger at the end of Shutdown, as
-// described under Lifecycle in the package documentation.
+// described under Shutting down in the package documentation.
 type Logger interface {
 	// Trace starts a log event at the TRACE level.
 	Trace(msg string) LogEvent

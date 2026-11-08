@@ -85,7 +85,7 @@ type ServerSettings struct {
 	// open forever.
 	IdleTimeout time.Duration
 
-	// ShutdownTimeout bounds App.Stop, as described under Lifecycle in the
+	// ShutdownTimeout bounds App.Stop, as described under Shutting down in the
 	// package documentation: Stop returns within ShutdownTimeout plus up to
 	// three times ShutdownGracePeriod. It must be positive.
 	ShutdownTimeout time.Duration
