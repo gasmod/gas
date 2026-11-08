@@ -17,7 +17,7 @@ type Migration struct {
 // MigrationManager registers and runs database migrations. Services call
 // Register during Init to declare their migrations, and Start runs the
 // pending ones once every service is initialized, as described under
-// Lifecycle in the package documentation. The gas/migrate module
+// Starting in the package documentation. The gas/migrate module
 // implements it.
 type MigrationManager interface {
 	Service
