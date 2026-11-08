@@ -1,9 +1,16 @@
 // Command gen renders the Go doc of every public package of the Gas
-// repository as the reference pages of the docs site: the package overview
-// from its doc comment, then its constants, variables, functions and types,
-// each with its declaration and doc comment.
+// repository, the single source of the docs site's reference and of the
+// gas agent skill.
 //
 //	go run . <repo root> <output dir>
+//	go run . -skill <repo root> <skill dir>
+//
+// The first form writes the reference pages of the docs site: the package
+// overview from its doc comment, then its constants, variables, functions
+// and types, each with its declaration and doc comment. The second writes
+// the gas skill: SKILL.md, from skill.md.tmpl and the site's installation
+// page, and a reference per package holding its overview alone, leaving
+// the API to go doc.
 //
 // It replaces the output directory's contents. It parses source files only,
 // so it needs no dependencies and runs outside the workspace (GOWORK=off).
@@ -12,6 +19,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"flag"
 	"fmt"
 	"go/ast"
 	"go/doc"
@@ -28,8 +36,10 @@ import (
 
 const (
 	modulePath = "github.com/gasmod/gas"
-	editBase   = "https://github.com/gasmod/gas/edit/main/"
-	siteBase   = "/gas/reference/"
+	// coreName is the name the core package's page and reference go by.
+	coreName = "gas"
+	editBase = "https://github.com/gasmod/gas/edit/main/"
+	siteBase = "/gas/reference/"
 
 	// Heading levels: a package's sections, a declaration's doc and a
 	// function's doc.
@@ -54,10 +64,19 @@ func main() {
 		usageExit = 2
 	)
 
-	args := os.Args[1:]
+	skill := flag.Bool("skill", false, "write the gas skill instead of the site's reference")
+
+	flag.Parse()
+
+	args := flag.Args()
 	if len(args) != wantArgs {
-		fmt.Fprintln(os.Stderr, "usage: gen <repo root> <output dir>")
+		fmt.Fprintln(os.Stderr, "usage: gen [-skill] <repo root> <output dir>")
 		os.Exit(usageExit)
+	}
+
+	run := runSite
+	if *skill {
+		run = runSkill
 	}
 
 	err := run(args[0], args[1])
@@ -67,28 +86,33 @@ func main() {
 	}
 }
 
-func run(root, out string) error {
-	dirs, err := packageDirs(root)
+// runSite writes the site's reference pages to out.
+func runSite(root, out string) error {
+	dirs, known, err := prepare(root, out)
 	if err != nil {
 		return err
 	}
 
-	if len(dirs) == 0 {
-		return fmt.Errorf("%w under %s", errNoPackages, root)
-	}
-
-	known := map[string]bool{}
 	for _, d := range dirs {
-		known[importPath(root, d)] = true
-	}
+		pkg, docFile, err := readPackage(root, d)
+		if err != nil {
+			return fmt.Errorf("%s: %w", d, err)
+		}
 
-	err = os.RemoveAll(out) //nolint:gosec // out is the caller's own output directory.
-	if err != nil {
-		return fmt.Errorf("clear output: %w", err)
-	}
+		editURL := ""
 
-	for _, d := range dirs {
-		err = renderPackage(root, d, out, known)
+		if docFile != "" {
+			rel, _ := filepath.Rel(root, docFile)
+
+			editURL = editBase + filepath.ToSlash(rel)
+		}
+
+		r := &renderer{pkg: pkg.doc, path: pkg.path, known: known, fset: pkg.fset}
+
+		err = writeFile(
+			filepath.Join(out, filepath.FromSlash(pagePath(pkg.path, known))+".md"),
+			r.page(editURL),
+		)
 		if err != nil {
 			return fmt.Errorf("%s: %w", d, err)
 		}
@@ -99,13 +123,54 @@ func run(root, out string) error {
 	return nil
 }
 
+// prepare finds the public packages under root, and empties out.
+func prepare(root, out string) ([]string, map[string]bool, error) {
+	dirs, err := packageDirs(root)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if len(dirs) == 0 {
+		return nil, nil, fmt.Errorf("%w under %s", errNoPackages, root)
+	}
+
+	known := map[string]bool{}
+	for _, d := range dirs {
+		known[importPath(root, d)] = true
+	}
+
+	err = os.RemoveAll(out)
+	if err != nil {
+		return nil, nil, fmt.Errorf("clear output: %w", err)
+	}
+
+	return dirs, known, nil
+}
+
+// writeFile writes data to path, creating its directory.
+func writeFile(path string, data []byte) error {
+	err := os.MkdirAll(
+		filepath.Dir(path),
+		dirPerm,
+	)
+	if err != nil {
+		return fmt.Errorf("create dir: %w", err)
+	}
+
+	err = os.WriteFile(path, data, filePerm)
+	if err != nil {
+		return fmt.Errorf("write: %w", err)
+	}
+
+	return nil
+}
+
 // packageDirs returns the directories of the public packages: they hold a
 // non-test Go file, and no element of their path below root is hidden or
 // one of skipDirs.
 func packageDirs(root string) ([]string, error) {
 	var dirs []string
 
-	//nolint:gosec // root is the caller's own repo root.
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || !d.IsDir() {
 			return err
@@ -169,7 +234,7 @@ func importPath(root, dir string) string {
 func pagePath(path string, known map[string]bool) string {
 	rel := strings.TrimPrefix(strings.TrimPrefix(path, modulePath), "/")
 	if rel == "" {
-		return "gas"
+		return coreName
 	}
 
 	for k := range known {
@@ -181,46 +246,31 @@ func pagePath(path string, known map[string]bool) string {
 	return rel
 }
 
-func renderPackage(root, dir, out string, known map[string]bool) error {
+// parsedPackage is a package read for rendering.
+type parsedPackage struct {
+	doc  *doc.Package
+	fset *token.FileSet
+	path string
+}
+
+// readPackage reads the package in dir and returns it with the path of the
+// file that holds its doc comment, or "".
+func readPackage(root, dir string) (parsedPackage, string, error) {
 	fset := token.NewFileSet()
 
 	files, docFile, err := parseDir(fset, dir)
 	if err != nil {
-		return err
+		return parsedPackage{}, "", err
 	}
 
 	path := importPath(root, dir)
 
 	pkg, err := doc.NewFromFiles(fset, files, path)
 	if err != nil {
-		return fmt.Errorf("read package doc: %w", err)
+		return parsedPackage{}, "", fmt.Errorf("read package doc: %w", err)
 	}
 
-	editURL := ""
-
-	if docFile != "" {
-		rel, _ := filepath.Rel(root, docFile)
-
-		editURL = editBase + filepath.ToSlash(rel)
-	}
-
-	r := &renderer{pkg: pkg, path: path, known: known, fset: fset}
-
-	dst := filepath.Join(out, filepath.FromSlash(pagePath(path, known))+".md")
-
-	err = os.MkdirAll(filepath.Dir(dst), dirPerm) //nolint:gosec // dst is under the caller's out.
-	if err != nil {
-		return fmt.Errorf("create page dir: %w", err)
-	}
-
-	page := r.page(editURL)
-
-	err = os.WriteFile(dst, page, filePerm) //nolint:gosec // dst is under the caller's out.
-	if err != nil {
-		return fmt.Errorf("write page: %w", err)
-	}
-
-	return nil
+	return parsedPackage{doc: pkg, fset: fset, path: path}, docFile, nil
 }
 
 // parseDir parses the non-test Go files of dir and returns them with the
@@ -256,16 +306,19 @@ func parseDir(fset *token.FileSet, dir string) ([]*ast.File, string, error) {
 
 type renderer struct {
 	pkg   *doc.Package
-	path  string
 	known map[string]bool
 	fset  *token.FileSet
+	path  string
 	buf   bytes.Buffer
+	// skill renders for the skill: doc links as Go names, and no
+	// Markdown escapes.
+	skill bool
 }
 
 func (r *renderer) page(editURL string) []byte {
 	rel := strings.TrimPrefix(strings.TrimPrefix(r.path, modulePath), "/")
 
-	title := "gas"
+	title := coreName
 	if rel != "" {
 		title = rel
 	}
@@ -483,12 +536,19 @@ func (r *renderer) inline(ts []comment.Text) string {
 	for _, t := range ts {
 		switch t := t.(type) {
 		case comment.Plain:
-			b.WriteString(escape(string(t)))
+			b.WriteString(r.escape(string(t)))
 		case comment.Italic:
-			fmt.Fprintf(&b, "*%s*", escape(string(t)))
+			fmt.Fprintf(&b, "*%s*", r.escape(string(t)))
 		case *comment.Link:
 			fmt.Fprintf(&b, "[%s](%s)", r.inline(t.Text), t.URL)
 		case *comment.DocLink:
+			if r.skill {
+				// A name to look up with go doc.
+				fmt.Fprintf(&b, "`%s`", plainText(t.Text))
+
+				continue
+			}
+
 			fmt.Fprintf(&b, "[%s](%s)", r.inline(t.Text), r.linkURL(t))
 		}
 	}
@@ -523,6 +583,32 @@ func (r *renderer) linkURL(l *comment.DocLink) string {
 	}
 
 	return target + "#" + frag
+}
+
+// plainText returns the text of ts without markup.
+func plainText(ts []comment.Text) string {
+	var b strings.Builder
+
+	for _, t := range ts {
+		switch t := t.(type) {
+		case comment.Plain:
+			b.WriteString(string(t))
+		case comment.Italic:
+			b.WriteString(string(t))
+		}
+	}
+
+	return b.String()
+}
+
+// escape escapes s for the site, and leaves it as it is for the skill,
+// which an agent reads as raw text.
+func (r *renderer) escape(s string) string {
+	if r.skill {
+		return s
+	}
+
+	return escape(s)
 }
 
 // escape keeps Markdown from reading text as markup: outside backtick code

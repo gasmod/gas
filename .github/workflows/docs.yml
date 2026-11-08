@@ -9,6 +9,7 @@ on:
       # The reference pages are generated from the Go doc, so a Go change
       # can change the site.
       - '**/*.go'
+      - 'skills/**'
       - '.github/workflows/docs.yml'
   # Pull requests build and check the site but never deploy it.
   pull_request:
@@ -17,6 +18,7 @@ on:
       # The reference pages are generated from the Go doc, so a Go change
       # can change the site.
       - '**/*.go'
+      - 'skills/**'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
 
@@ -34,6 +36,13 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
+      - name: Check the skill is current
+        # skills/gas is generated from the Go doc and committed; run
+        # `make skill` after changing a doc comment or the template.
+        run: |
+          GOWORK=off go run . -skill ../.. "$RUNNER_TEMP/skill"
+          diff -r "$RUNNER_TEMP/skill" ../../skills/gas
+        working-directory: docs/gen
       - uses: pnpm/action-setup@v6
         with:
           # Installs the pnpm version pinned by packageManager.

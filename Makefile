@@ -6,7 +6,7 @@
 # The *-all targets run the matching target in every directory under this one
 # that contains a Makefile (see MODS), including this directory itself.
 
-.PHONY: help test test-coverage build lint fmt vulncheck verify mod-update \
+.PHONY: help test test-coverage build lint fmt vulncheck verify mod-update skill \
 	test-all build-all lint-all fmt-all vulncheck-all verify-all mod-update-all
 
 # Repository root, used to locate helper scripts regardless of the directory
@@ -67,6 +67,14 @@ mod-update: ## Upgrade all dependencies to their latest minor/patch versions
 	go mod tidy
 	go get -u all
 	go mod tidy
+
+##@ Docs
+
+# The skill is generated from the Go doc, like the docs site's reference, and
+# committed so it can be copied from the repository; CI fails when it is
+# stale.
+skill: ## Generate the gas agent skill in skills/gas from the Go doc
+	cd $(REPO_ROOT)/docs/gen && GOWORK=off go run . -skill $(REPO_ROOT) $(REPO_ROOT)/skills/gas
 
 ##@ Bulk operations
 

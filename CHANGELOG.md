@@ -222,6 +222,12 @@ the details.
   and the s3 backend's `API` interface gains `CopyObject`. Each backend
   gains `Config()`. Bucket names are no longer refused for S3's reserved
   starts and ends, such as `xn--` and `-s3alias`; S3 refuses them itself.
+- **The agent skills are one `gas` skill, generated from the Go doc.**
+  `skills/gas` replaces the twelve hand-written skills (`gas`,
+  `gas-auth`, `gas-cache` and the others): a `SKILL.md` with the
+  installation guide and a package index, and a reference per package
+  holding its doc overview, with `go doc` for the API. `make skill`
+  regenerates it, and the docs workflow fails when it is stale.
 
 ### Removed
 
