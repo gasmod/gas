@@ -1,8 +1,8 @@
 # TODO
 
 Planned changes that are not defects. Defects go in
-[`KNOWN_ISSUES.md`](KNOWN_ISSUES.md). An entry is removed by the change that
-does it.
+[GitHub issues](https://github.com/gasmod/gas/issues). An entry is removed by
+the change that does it.
 
 ## Error responses as RFC 9457 problem details
 
