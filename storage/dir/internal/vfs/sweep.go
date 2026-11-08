@@ -100,7 +100,7 @@ func (v *VFS) sweepAll(ctx context.Context, s *sweeper) error {
 		return err
 	}
 
-	entries, err := fs.ReadDir(v.root.FS(), ".")
+	entries, err := readDirIn(v.root, ".")
 	if err != nil {
 		return ioErr("read root dir", err)
 	}
@@ -122,12 +122,12 @@ func (v *VFS) sweepAll(ctx context.Context, s *sweeper) error {
 // sweepNameRecords removes the temp files of name records, each under the
 // lifecycle lock of its bucket.
 func (v *VFS) sweepNameRecords(ctx context.Context, s *sweeper) error {
-	entries, err := fs.ReadDir(v.root.FS(), bucketsPath)
+	entries, err := readDirIn(v.root, bucketsPath)
 	if err != nil {
 		return ioErr("read buckets dir", err)
 	}
 
-	locksRoot, err := v.root.OpenRoot(locksPath)
+	locksRoot, err := openRootIn(v.root, locksPath)
 	if err != nil {
 		return ioErr("open locks dir", err)
 	}
@@ -159,7 +159,7 @@ func (s *sweeper) removeFree(locksRoot *os.Root, lockName string, r *os.Root, pa
 	removed := false
 
 	_, err := withFreeLock(locksRoot, lockName, func() error {
-		_, sErr := r.Lstat(path)
+		_, sErr := lstatIn(r, path)
 		if errors.Is(sErr, os.ErrNotExist) {
 			// Renamed away by a write that ended since the read.
 			return nil
@@ -240,7 +240,7 @@ func (v *VFS) openBucketByHash(h string) (*Bucket, error) {
 // sweepMeta removes the temp metadata files of crashed writes, and makes
 // again the index entry of each object that has none.
 func (b *Bucket) sweepMeta(ctx context.Context, s *sweeper) error {
-	entries, err := fs.ReadDir(b.metaRoot.FS(), ".")
+	entries, err := readDirIn(b.metaRoot, ".")
 	if err != nil {
 		return ioErr("read meta dir", err)
 	}
@@ -276,7 +276,7 @@ func (s *sweeper) removeTemp(b *Bucket, name, file string) error {
 	removed := false
 
 	_, err := withFreeLock(b.lock.locksRoot, name, func() error {
-		_, sErr := b.metaRoot.Lstat(file)
+		_, sErr := lstatIn(b.metaRoot, file)
 		if errors.Is(sErr, os.ErrNotExist) {
 			// Renamed away by a write that ended since the read.
 			return nil
@@ -353,7 +353,7 @@ func (b *Bucket) indexed(name string) (bool, error) {
 
 	entry, _ := indexPath(meta.Key)
 
-	_, err = b.keysRoot.Lstat(entry)
+	_, err = lstatIn(b.keysRoot, entry)
 
 	switch {
 	case err == nil:
@@ -370,7 +370,7 @@ func (b *Bucket) indexed(name string) (bool, error) {
 // A key whose metadata is corrupt keeps its data files, which DeleteBucket
 // removes with the bucket.
 func (b *Bucket) sweepData(ctx context.Context, s *sweeper) error {
-	entries, err := fs.ReadDir(b.objRoot.FS(), ".")
+	entries, err := readDirIn(b.objRoot, ".")
 	if err != nil {
 		return ioErr("read objects dir", err)
 	}
@@ -479,7 +479,7 @@ func (b *Bucket) sweepIndex(ctx context.Context, s *sweeper) error {
 			return false
 		}
 
-		_, sErr := b.metaRoot.Lstat(hash(key) + metaFileExt)
+		_, sErr := lstatIn(b.metaRoot, hash(key)+metaFileExt)
 
 		switch {
 		case errors.Is(sErr, os.ErrNotExist):
@@ -551,7 +551,7 @@ func (b *Bucket) sweepIndexDirs(ctx context.Context, s *sweeper, dir string) err
 // its directory dir, as sweepIndexDirs walks them: none for a directory
 // below the keys directory that is gone.
 func (b *Bucket) indexSubdirs(dir string) ([]string, error) {
-	des, err := fs.ReadDir(b.keysRoot.FS(), dir)
+	des, err := readDirIn(b.keysRoot, dir)
 
 	switch {
 	case dir != "." && errors.Is(err, os.ErrNotExist):
@@ -594,7 +594,7 @@ func (s *sweeper) removeStale(b *Bucket, key string) error {
 	removed := false
 
 	_, err := withFreeLock(b.lock.locksRoot, name, func() error {
-		_, sErr := b.metaRoot.Lstat(name + metaFileExt)
+		_, sErr := lstatIn(b.metaRoot, name+metaFileExt)
 		if !errors.Is(sErr, os.ErrNotExist) {
 			return nil
 		}

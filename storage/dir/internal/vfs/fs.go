@@ -99,7 +99,7 @@ func discard(r *os.Root, name string, err error) error {
 // close error.
 func closeAll(err error, closers ...io.Closer) error {
 	for _, c := range closers {
-		cErr := c.Close()
+		cErr := closeOne(c)
 		if cErr != nil {
 			err = joinErrs(err, ioErr("close", cErr))
 		}
@@ -116,17 +116,17 @@ func writeSynced(r *os.Root, name string, data []byte) error {
 		return ioErr("create", err)
 	}
 
-	_, err = f.Write(data)
+	err = writeFile(f, data)
 	if err != nil {
 		return discard(r, name, closeAll(ioErr("write", err), f))
 	}
 
-	err = f.Sync()
+	err = syncFile(f)
 	if err != nil {
 		return discard(r, name, closeAll(ioErr("sync", err), f))
 	}
 
-	err = f.Close()
+	err = closeOne(f)
 	if err != nil {
 		return discard(r, name, ioErr("close", err))
 	}

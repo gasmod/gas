@@ -3,7 +3,6 @@ package vfs
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 )
 
@@ -38,7 +37,7 @@ func openRegular(r *os.Root, name string) (*os.File, os.FileInfo, error) {
 		return nil, nil, err //nolint:wrapcheck // the caller classifies and wraps it.
 	}
 
-	fi, err := f.Stat()
+	fi, err := statFile(f)
 	if err != nil {
 		return nil, nil, closeAll(ioErr("stat", err), f)
 	}
@@ -47,7 +46,7 @@ func openRegular(r *os.Root, name string) (*os.File, os.FileInfo, error) {
 		return nil, nil, closeAll(errNotRegular, f)
 	}
 
-	li, err := r.Lstat(name)
+	li, err := lstatIn(r, name)
 	if err != nil {
 		return nil, nil, closeAll(ioErr("stat", err), f)
 	}
@@ -72,12 +71,12 @@ func readCapped(r *os.Root, name string, limit int64) ([]byte, error) {
 		return nil, err
 	}
 
-	data, err := io.ReadAll(io.LimitReader(f, limit+1))
+	data, err := readAll(f, limit+1)
 	if err != nil {
 		return nil, closeAll(ioErr("read", err), f)
 	}
 
-	err = f.Close()
+	err = closeOne(f)
 	if err != nil {
 		return nil, ioErr("close", err)
 	}

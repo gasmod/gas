@@ -130,7 +130,7 @@ func (l *ObjectsLock) Close() error {
 		close(l.closed) // wakes in-process waiters with os.ErrClosed
 
 		for name, f := range l.held {
-			err = joinErrs(err, unlock(f), f.Close())
+			err = joinErrs(err, unlock(f), closeOne(f))
 			// The slots are shared with the other locks of the VFS, so
 			// they are given back; a waiter of this lock that gets one
 			// still fails with os.ErrClosed (see acquireSlot).
@@ -141,7 +141,7 @@ func (l *ObjectsLock) Close() error {
 	}
 
 	// os.Root.Close is idempotent.
-	return joinErrs(err, l.locksRoot.Close())
+	return joinErrs(err, closeOne(l.locksRoot))
 }
 
 // Release gives up name and removes its lock file. A name this lock does not
@@ -276,12 +276,12 @@ func (l *ObjectsLock) openFile(ctx context.Context, name string) (*os.File, erro
 
 // isCurrent reports whether f is still the file at name in locksRoot.
 func isCurrent(locksRoot *os.Root, f *os.File, name string) (bool, error) {
-	held, err := f.Stat()
+	held, err := statFile(f)
 	if err != nil {
 		return false, ioErr("stat held lock file", err)
 	}
 
-	current, err := locksRoot.Lstat(name)
+	current, err := lstatIn(locksRoot, name)
 	// A name being removed is not f's to keep: only a holder removes, so it
 	// is f, which its last holder released, or a newer file. Do not wait for
 	// the removal to end: where it ends only once every handle is closed (see

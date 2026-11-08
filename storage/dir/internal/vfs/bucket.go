@@ -241,7 +241,7 @@ func (b *Bucket) writeDataFile(name string, w *Write) (Written, error) {
 
 	n, err := copyBody(f, sum, w)
 	if err == nil {
-		err = f.Sync()
+		err = syncFile(f)
 		if err != nil {
 			err = ioErr("sync data file", err)
 		}
@@ -302,7 +302,7 @@ func (b *Bucket) writeMetaFile(name string, meta *Metadata) (bool, error) {
 		return false, fmt.Errorf("write meta file: %w", err)
 	}
 
-	err = b.metaRoot.Rename(tmp, file)
+	err = renameIn(b.metaRoot, tmp, file)
 	if err != nil {
 		return false, discard(b.metaRoot, tmp, ioErr("commit meta file", err))
 	}
@@ -426,7 +426,7 @@ func copyBody(f *os.File, sum gohash.Hash, w *Write) (int64, error) {
 
 		m, rErr := w.Body.Read(buf)
 		if m > 0 {
-			_, err = f.Write(buf[:m])
+			err = writeFile(f, buf[:m])
 			if err != nil {
 				return n, ioErr("write data file", err)
 			}

@@ -55,7 +55,7 @@ func Open(root *os.Root) (*VFS, error) {
 // Check returns nil when the layout marker is still in the root, and else
 // why not, such as a root whose directory was removed.
 func (v *VFS) Check() error {
-	_, err := v.root.Lstat(layoutPath)
+	_, err := lstatIn(v.root, layoutPath)
 	if err != nil {
 		return ioErr("stat layout marker", err)
 	}
@@ -101,7 +101,7 @@ func (v *VFS) CreateBucket(ctx context.Context, name string) (err error) {
 	case errors.Is(err, os.ErrExist):
 		// Only a directory is the bucket; anything else at its name is an
 		// I/O error.
-		fi, sErr := v.root.Lstat(meta)
+		fi, sErr := lstatIn(v.root, meta)
 		if sErr == nil && fi.IsDir() {
 			return nil
 		}
@@ -123,7 +123,7 @@ func (v *VFS) CreateBucket(ctx context.Context, name string) (err error) {
 // ErrBucketNotFound when it does not, and else why it cannot tell. The
 // bucket exists when its metadata directory does.
 func (v *VFS) HeadBucket(name string) error {
-	fi, err := v.root.Lstat(hash(name))
+	fi, err := lstatIn(v.root, hash(name))
 
 	switch {
 	case errors.Is(err, os.ErrNotExist):
@@ -143,7 +143,7 @@ func (v *VFS) HeadBucket(name string) error {
 // want of its files then failed because the bucket was deleted under it.
 // An error comparing the two counts as not removed.
 func (v *VFS) Removed(b *Bucket) bool {
-	cur, err := v.root.Lstat(b.dir)
+	cur, err := lstatIn(v.root, b.dir)
 	// A directory being removed is removed; b's own handle may be what
 	// keeps it from being gone yet (see isDeletePending).
 	if errors.Is(err, os.ErrNotExist) || isDeletePending(err) {
@@ -154,7 +154,7 @@ func (v *VFS) Removed(b *Bucket) bool {
 		return false
 	}
 
-	opened, err := b.metaRoot.Stat(".")
+	opened, err := statIn(b.metaRoot, ".")
 	if err != nil {
 		// On Windows a removed directory can be delete-pending under the
 		// open handle; see IsMissing.
@@ -185,7 +185,7 @@ func (v *VFS) checkLayout() error {
 		return ioErr("read layout marker", err)
 	}
 
-	entries, err := fs.ReadDir(v.root.FS(), ".")
+	entries, err := readDirIn(v.root, ".")
 	if err != nil {
 		return ioErr("read root dir", err)
 	}
@@ -202,7 +202,7 @@ func (v *VFS) checkLayout() error {
 
 // writeLayout writes the layout marker unless it is there, and syncs it.
 func (v *VFS) writeLayout() error {
-	fi, err := v.root.Lstat(layoutPath)
+	fi, err := lstatIn(v.root, layoutPath)
 
 	switch {
 	case err == nil && !fi.Mode().IsRegular():
@@ -220,7 +220,7 @@ func (v *VFS) writeLayout() error {
 		return fmt.Errorf("write layout marker: %w", err)
 	}
 
-	err = v.root.Rename(tmp, layoutPath)
+	err = renameIn(v.root, tmp, layoutPath)
 	if err != nil {
 		return discard(v.root, tmp, ioErr("commit layout marker", err))
 	}
@@ -236,7 +236,7 @@ func (v *VFS) writeLayout() error {
 // or a data file, of the bucket created in its place. Object operations do
 // not take it; the per-key locks order them against DeleteBucket.
 func (v *VFS) lockBucket(ctx context.Context, name string) (func() error, error) {
-	root, err := v.root.OpenRoot(locksPath)
+	root, err := openRootIn(v.root, locksPath)
 	if err != nil {
 		return nil, ioErr("open locks dir", err)
 	}
@@ -296,11 +296,11 @@ func (v *VFS) openBucketDirs(meta, objects, locks, keys string) (*Bucket, error)
 // openBucketDir opens the bucket directory name as a root. what names the
 // directory in the error.
 func (v *VFS) openBucketDir(name, what string) (*os.Root, error) {
-	r, err := retryPending(func() (*os.Root, error) { return v.root.OpenRoot(name) })
+	r, err := retryPending(func() (*os.Root, error) { return openRootIn(v.root, name) })
 	if errors.Is(err, os.ErrNotExist) {
 		// Windows reports a file in place of the directory as a missing
 		// path.
-		fi, sErr := v.root.Lstat(name)
+		fi, sErr := lstatIn(v.root, name)
 		if sErr == nil && !fi.IsDir() {
 			return nil, fmt.Errorf("open %s dir: %w", what, errNotDir)
 		}

@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -100,7 +99,7 @@ func (b *Bucket) createIndexEntry(entry, parent string) (bool, error) {
 		return false, ioErr("create index entry", err)
 	}
 
-	err = f.Close()
+	err = closeOne(f)
 	if err != nil {
 		return true, ioErr("close index entry", err)
 	}
@@ -307,7 +306,7 @@ func (b *Bucket) walkEntry(
 // directory that is gone holds no entry: a Sweep removed it as empty
 // since its parent was read.
 func (b *Bucket) readIndexDir(dir string, report func(Skipped)) ([]indexEntry, error) {
-	des, err := fs.ReadDir(b.keysRoot.FS(), dir)
+	des, err := readDirIn(b.keysRoot, dir)
 
 	switch {
 	case dir != "." && errors.Is(err, os.ErrNotExist):

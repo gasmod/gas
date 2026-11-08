@@ -29,7 +29,7 @@ func (b *Bucket) ListKeys(
 		}
 
 		_, sErr := retryPending(func() (os.FileInfo, error) {
-			return b.metaRoot.Lstat(hash(key) + metaFileExt)
+			return lstatIn(b.metaRoot, hash(key)+metaFileExt)
 		})
 
 		switch {
@@ -90,7 +90,9 @@ func (b *Bucket) statUnlocked(name string) (ObjectStat, error) {
 		return ObjectStat{}, err
 	}
 
-	fi, err := retryPending(func() (os.FileInfo, error) { return b.objRoot.Lstat(meta.DataFile) })
+	fi, err := retryPending(
+		func() (os.FileInfo, error) { return lstatIn(b.objRoot, meta.DataFile) },
+	)
 
 	switch {
 	case errors.Is(err, os.ErrNotExist):

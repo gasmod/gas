@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"time"
 
@@ -46,7 +45,7 @@ func bucketNameFile(name string) string {
 func (v *VFS) writeBucketName(name string) error {
 	file := bucketNameFile(name)
 
-	fi, err := v.root.Lstat(file)
+	fi, err := lstatIn(v.root, file)
 
 	switch {
 	case err == nil && !fi.Mode().IsRegular():
@@ -73,7 +72,7 @@ func (v *VFS) writeBucketName(name string) error {
 		return fmt.Errorf("write bucket name record: %w", err)
 	}
 
-	err = v.root.Rename(tmp, file)
+	err = renameIn(v.root, tmp, file)
 	if err != nil {
 		return discard(v.root, tmp, ioErr("commit bucket name record", err))
 	}
@@ -95,7 +94,7 @@ func (v *VFS) writeBucketName(name string) error {
 // of that bucket rewrites the record. A record that cannot be read at
 // all, or that is not a regular file, fails the call instead.
 func (v *VFS) ListBuckets(ctx context.Context) ([]BucketEntry, []Skipped, error) {
-	entries, err := fs.ReadDir(v.root.FS(), ".")
+	entries, err := readDirIn(v.root, ".")
 	if err != nil {
 		return nil, nil, ioErr("read root dir", err)
 	}
@@ -132,7 +131,7 @@ func (v *VFS) ListBuckets(ctx context.Context) ([]BucketEntry, []Skipped, error)
 			continue
 		}
 
-		_, sErr := retryPending(func() (os.FileInfo, error) { return v.root.Lstat(e.Name()) })
+		_, sErr := retryPending(func() (os.FileInfo, error) { return lstatIn(v.root, e.Name()) })
 		if errors.Is(sErr, os.ErrNotExist) {
 			// Deleted since the root was read: gone, not unnamed.
 			continue
@@ -155,7 +154,7 @@ func (v *VFS) ListBuckets(ctx context.Context) ([]BucketEntry, []Skipped, error)
 func (v *VFS) bucketEntry(h string) (BucketEntry, bool, error) {
 	file := join(bucketsPath, h)
 
-	fi, err := retryPending(func() (os.FileInfo, error) { return v.root.Lstat(file) })
+	fi, err := retryPending(func() (os.FileInfo, error) { return lstatIn(v.root, file) })
 
 	switch {
 	case errors.Is(err, os.ErrNotExist):

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -108,7 +107,7 @@ func (v *VFS) DeleteBucket(ctx context.Context, name string, report func(Skipped
 // it remove the debris, each piece again under its key's lock and only if
 // it is still debris. See DeleteBucket.
 func (b *Bucket) sweep(ctx context.Context, report func(Skipped)) error {
-	entries, err := fs.ReadDir(b.metaRoot.FS(), ".")
+	entries, err := readDirIn(b.metaRoot, ".")
 	if err != nil {
 		return ioErr("read meta dir", err)
 	}
@@ -213,7 +212,9 @@ func (b *Bucket) entryState(name, file string, temp bool) (entry, error) {
 		return entry{}, err
 	}
 
-	fi, err := retryPending(func() (os.FileInfo, error) { return b.objRoot.Lstat(meta.DataFile) })
+	fi, err := retryPending(
+		func() (os.FileInfo, error) { return lstatIn(b.objRoot, meta.DataFile) },
+	)
 
 	switch {
 	case err == nil && fi.Mode().IsRegular():
@@ -238,7 +239,7 @@ var errCrashedTemp = errors.New("temp file of a crashed write")
 // crashed write left, or gone when the write renamed it away while the
 // caller waited for the key's lock.
 func (b *Bucket) tempState(file string) (entry, error) {
-	_, err := retryPending(func() (os.FileInfo, error) { return b.metaRoot.Lstat(file) })
+	_, err := retryPending(func() (os.FileInfo, error) { return lstatIn(b.metaRoot, file) })
 
 	switch {
 	case errors.Is(err, os.ErrNotExist):
@@ -311,7 +312,7 @@ func (v *VFS) removeLeftovers(objects, locks, keys string, report func(Skipped))
 		report(Skipped{Path: keys, Err: ioErr("keys dir left in place", err)})
 	}
 
-	locksRoot, err := v.root.OpenRoot(locks)
+	locksRoot, err := openRootIn(v.root, locks)
 	if err != nil {
 		report(Skipped{Path: locks, Err: ioErr("open locks dir, left in place", err)})
 
@@ -319,7 +320,7 @@ func (v *VFS) removeLeftovers(objects, locks, keys string, report func(Skipped))
 	}
 
 	defer func() {
-		cErr := locksRoot.Close()
+		cErr := closeOne(locksRoot)
 		if cErr != nil {
 			report(Skipped{Path: locks, Err: ioErr("close locks dir", cErr)})
 		}
@@ -347,7 +348,7 @@ func (v *VFS) removeLeftovers(objects, locks, keys string, report func(Skipped))
 // directory locks of a deleted bucket, reports those it leaves, and
 // reports whether it could read the directory.
 func removeLocks(locksRoot *os.Root, locks string, report func(Skipped)) bool {
-	entries, err := fs.ReadDir(locksRoot.FS(), ".")
+	entries, err := readDirIn(locksRoot, ".")
 	if err != nil {
 		report(Skipped{Path: locks, Err: ioErr("read locks dir", err)})
 
@@ -381,12 +382,12 @@ var (
 // and reports those it leaves. It returns an error only when it cannot
 // read the directory at all.
 func (v *VFS) removeDataFiles(objects string, locksRoot *os.Root, report func(Skipped)) error {
-	objRoot, err := v.root.OpenRoot(objects)
+	objRoot, err := openRootIn(v.root, objects)
 	if err != nil {
 		return ioErr("open objects dir, left in place", err)
 	}
 
-	entries, err := fs.ReadDir(objRoot.FS(), ".")
+	entries, err := readDirIn(objRoot, ".")
 	if err != nil {
 		return closeAll(ioErr("read objects dir, left in place", err), objRoot)
 	}

@@ -11,10 +11,10 @@ func syncDirFile(r *os.Root, name string) error {
 		return err //nolint:wrapcheck // syncDir wraps it.
 	}
 
-	err = f.Sync()
+	err = syncFile(f)
 	if err != nil {
 		return closeAll(err, f)
 	}
 
-	return f.Close() //nolint:wrapcheck // syncDir wraps it.
+	return closeOne(f)
 }
