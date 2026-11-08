@@ -36,6 +36,7 @@
 	--gas-line: rgb(255 255 255 / 0.1);
 	--gas-accent: #8b9cff;
 	--gas-accent-wash: rgb(139 156 255 / 0.12);
+	--gas-icon: rgb(255 255 255 / 0.32);
 	--gas-chevrons: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='14'%3E%3Cpath d='M4 10 10 4l6 6' fill='none' stroke='rgba(255,255,255,0.13)' stroke-width='1.1' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 	--gas-pill-bg: #ffffff;
 	--gas-pill-ink: #030712;
@@ -84,6 +85,7 @@
 	--gas-line: rgb(3 7 18 / 0.08);
 	--gas-accent: #3d5afe;
 	--gas-accent-wash: rgb(61 90 254 / 0.08);
+	--gas-icon: rgb(3 7 18 / 0.28);
 	--gas-chevrons: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='14'%3E%3Cpath d='M4 10 10 4l6 6' fill='none' stroke='rgba(3,7,18,0.1)' stroke-width='1.1' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 	--gas-pill-bg: #030712;
 	--gas-pill-ink: #ffffff;
@@ -256,7 +258,7 @@ header.header {
 	width: 1rem;
 	height: 1rem;
 	margin-inline-end: 0.55rem;
-	background: var(--gas-muted);
+	background: var(--gas-icon);
 	content: '';
 	mask: var(--gas-group-icon) center / contain no-repeat;
 	vertical-align: -0.2em;
