@@ -39,7 +39,7 @@ func main() {
 
 ```bash
 go run .
-# listening on 0.0.0.0:8080
+# ... INFO server started environment=development addr=0.0.0.0:8080
 ```
 
 That is a complete Gas app. From there you write [services](https://gasmod.github.io/gas/core/services/)
@@ -56,12 +56,12 @@ beside it as a separate Go module, so `go get` pulls in only what you use.
 | [**auth**](auth/README.md) | `github.com/gasmod/gas/auth` | JWT, server-side sessions, API keys, and single-use tokens |
 | [**cache**](cache/README.md) | `github.com/gasmod/gas/cache` | Key-value caching, in-memory or Valkey (Redis-compatible) |
 | [**config**](config/README.md) | `github.com/gasmod/gas/config` | Config from env vars, JSON, `.env`, and AWS Secrets Manager, bound to structs |
-| [**database**](database/README.md) | `github.com/gasmod/gas/database` | `database/sql` and native pgx pools, transaction helpers, sqlc-friendly |
-| [**email**](email/README.md) | `github.com/gasmod/gas/email` | Transactional email over AWS SES, including templated sends |
-| [**log**](log/README.md) | `github.com/gasmod/gas/log` | Structured logging (zerolog or slog) and HTTP/OTLP log shipping |
-| [**migrate**](migrate/README.md) | `github.com/gasmod/gas/migrate` | Service-owned database migrations with dirty-state detection and rollback |
-| [**queue**](queue/README.md) | `github.com/gasmod/gas/queue` | Job queues backed by AWS SQS |
-| [**storage**](storage/README.md) | `github.com/gasmod/gas/storage` | Object storage on S3, S3-compatible services, or a local directory |
+| [**database**](database/README.md) | `github.com/gasmod/gas/database` | PostgreSQL, MySQL, and SQLite over `database/sql`, or a native pgx pool, with transaction helpers |
+| [**email**](email/README.md) | `github.com/gasmod/gas/email` | Transactional email over Amazon SES or an in-memory outbox, including templated sends |
+| [**log**](log/README.md) | `github.com/gasmod/gas/log` | Structured logging over slog or zerolog, and log shipping over HTTP, such as OTLP/JSON |
+| [**migrate**](migrate/README.md) | `github.com/gasmod/gas/migrate` | Service-owned database migrations with checksums, dirty-state detection, and rollback |
+| [**queue**](queue/README.md) | `github.com/gasmod/gas/queue` | Job queues on Amazon SQS or in memory |
+| [**storage**](storage/README.md) | `github.com/gasmod/gas/storage` | Object storage on S3, S3-compatible services, a local directory, or memory |
 | [**template**](template/README.md) | `github.com/gasmod/gas/template` | Template storage: memory, directory, embedded FS, database, or composite |
 | [**ui**](ui/README.md) | `github.com/gasmod/gas/ui` | HTML rendering with layouts and partials, static files, HTMX fragments |
 
@@ -76,26 +76,16 @@ versions across modules is not supported, so upgrade them together.
 
 Gas is pre-1.0: minor versions may contain breaking changes. See the [CHANGELOG](CHANGELOG.md).
 
-## Examples
-
-Five runnable applications live in [`example/`](example/README.md), from a bare hello world up to a full API
-server using auth, database, storage, queue, email, and cache together.
-
-```bash
-cd example/hello-world && go run ./cmd
-```
-
 ## Documentation
 
 | Where | What |
 |---|---|
 | [gasmod.github.io/gas](https://gasmod.github.io/gas) | Getting started, tutorial, core concepts, and module guides |
 | [pkg.go.dev](https://pkg.go.dev/github.com/gasmod/gas) | API reference for every package |
-| [`example/`](example/README.md) | Runnable applications |
 
 Documentation lives in one place per kind, on purpose. Guides and concepts are on the site, API reference comes
-from doc comments on pkg.go.dev, and each module's README is a signpost to both. Code blocks on the site are
-imported from a Go module that compiles in CI, so they cannot drift from the framework.
+from doc comments on pkg.go.dev, and each module's README is a signpost to both. Each package's `doc.go` is its
+behavioral contract: what it promises, its defaults, and its errors, verbatim.
 
 ## Contributing
 

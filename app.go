@@ -160,8 +160,8 @@ func WithAllowedEnvironments(envs ...Environment) AppOption {
 	}
 }
 
-// NewApp returns an App with opts applied. It registers the Router, and
-// at Start the bound *Config, in the container.
+// NewApp returns an App with opts applied. It registers the Router in the
+// container.
 func NewApp(opts ...Option) *App {
 	w := NewWorker()
 

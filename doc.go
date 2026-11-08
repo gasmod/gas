@@ -40,8 +40,9 @@
 // dependency order, calling Init on each [Service] with Start's ctx under
 // the service's init deadline (see [ServiceInitTimeout]). Pre-registered
 // instances are initialized first, in registration order. An App then
-// seals its router, checks that every DI-aware handler's dependencies are
-// registered, and emits [AppConfigUpdated]. Start then emits
+// binds and validates its Config (see Configuration), seals its router,
+// checks that every DI-aware handler's dependencies are registered, and
+// emits [AppConfigUpdated]. Start then emits
 // [SystemAllServicesInitialized], runs the pending migrations of the
 // [MigrationManager], when one is registered, with ctx, and runs the ready
 // hooks in registration order. A second Start returns [ErrAlreadyStarted]
@@ -167,9 +168,10 @@
 // Service ([ErrInvalidLifetime]).
 //
 // An App registers its [*Router], so a service can take it as a
-// dependency; a service reads the App's configuration through its own
-// [ConfigProvider] dependency, not from the container. Every Worker registers its
-// [*EventBus], and itself as [HealthProvider] and [ReadyProvider].
+// dependency. It does not register its [Config]: a service binds the
+// settings it needs through its own [ConfigProvider] dependency. Every
+// Worker registers its [*EventBus], and itself as [HealthProvider] and
+// [ReadyProvider].
 //
 // # Routing
 //
@@ -223,8 +225,9 @@
 // [FieldError] per violation when validation fails. [Context.BindForm]
 // reads at most the Config's MaxFormBodyBytes, and answers 413 past it or
 // past a [BodyLimit], 400 with code [CodeInvalidForm], and 422 the same
-// way. Every error response carries `Cache-Control: no-store`. [Context.Principal] returns 401 with code
-// [CodeUnauthorized] when the request has no [Principal].
+// way. Every error response carries `Cache-Control: no-store`.
+// [Context.Principal] returns 401 with code [CodeUnauthorized] when the
+// request has no [Principal].
 //
 // # Middleware
 //
@@ -267,9 +270,9 @@
 // # Configuration
 //
 // An App's [Config] starts as [DefaultConfig], or as the base config set
-// with [WithBaseConfig]. At Start a copy of it is bound from the
-// [ConfigProvider], when one is registered, whose values override the
-// base config's, and validated: Env, from
+// with [WithBaseConfig]. Once every service is built and initialized,
+// Start copies it, binds the [ConfigProvider]'s values over the copy,
+// when one is registered, and validates the copy: Env, from
 // the key `gasenv` where the config module's EnvExtension stores the
 // environment it resolved from `GAS_ENV`, must be one of the allowed
 // environments ([WithAllowedEnvironments]), which always include
@@ -282,13 +285,13 @@
 // connection by neither; ReadHeaderTimeout and ShutdownTimeout must be
 // positive, so no configuration leaves a connection open to a client that
 // trickles its headers; MaxJSONBodyBytes and MaxFormBodyBytes must be
-// positive. The Config is bound once every service is built and
-// initialized, so a service's Init sees the base config through
-// [App.Config]. A Config that breaks a rule fails Start, closing the
+// positive. A Config that breaks a rule fails Start, closing the
 // services, with an error wrapping [ErrInvalidConfig] that names the key
-// and the rule, never the value.
-// [App.Config] returns a copy of the base config before Start and of the
-// bound one after.
+// and the rule, never the value. A failing Bind of the provider fails
+// Start the same way, with its error after `gas: invalid config: bind: `.
+// Start keeps the copy only once it is valid. [App.Config] returns a copy
+// of the base config until then, so a service's Init sees the base
+// config, and of the bound one after.
 //
 // [App.Server] builds the [http.Server] from the Config, with its handler,
 // [App.Handler]. A server built before Start, such as by a service's Init,
@@ -304,9 +307,9 @@
 // are safe for concurrent use. Goroutines that resolve one singleton, or
 // one scoped type of a Scope, share one build. No lock is held while a
 // service's Init or Close, a constructor, a subscriber or a check runs.
-// [App.Config] may be called concurrently with Start. Do not change the
-// server's fields once it serves. A [LogEvent] is used by
-// one goroutine and sent once.
+// [App.Config] may be called concurrently with Start; [App.Server] may
+// not. Do not change the server's fields once it serves. A [LogEvent] is
+// used by one goroutine and sent once.
 //
 // # Errors
 //
