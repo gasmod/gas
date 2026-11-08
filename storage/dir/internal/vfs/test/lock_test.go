@@ -267,9 +267,9 @@ func TestLock_OpenFails(t *testing.T) {
 // os.ErrPermission.
 func TestLock_UnopenableLockFile(t *testing.T) {
 	t.Parallel()
-	skipIfModesIgnored(t)
 	// On Windows a read-only lock file gives access denied, which reads as
 	// delete-pending and is retried, so the failure does not come at once.
+	skipIfModesIgnored(t)
 
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "n"), nil, 0o000))

@@ -27,12 +27,15 @@ func tryLock(f *os.File) (bool, error) {
 			new(windows.Overlapped),
 		)
 	}
+
 	if errors.Is(err, windows.ERROR_LOCK_VIOLATION) {
 		return false, nil
 	}
+
 	if err != nil {
 		return false, fmt.Errorf("LockFileEx: %w", err)
 	}
+
 	return true, nil
 }
 
@@ -47,9 +50,11 @@ func lockBlocking(f *os.File) error {
 			new(windows.Overlapped),
 		)
 	}
+
 	if err != nil {
 		return fmt.Errorf("LockFileEx: %w", err)
 	}
+
 	return nil
 }
 
@@ -61,5 +66,6 @@ func unlock(f *os.File) error {
 	if err != nil {
 		return fmt.Errorf("UnlockFileEx: %w", err)
 	}
+
 	return nil
 }
