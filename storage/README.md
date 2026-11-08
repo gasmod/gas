@@ -21,13 +21,13 @@ gas.WithSingletonService[storage.Provider](memory.New()),
 Each backend is a `gas.Service`, needs `gas.ConfigProvider` and `gas.Logger`, and reads the
 `storage` section.
 
-| Package               | Provides                                                                          |
-|-----------------------|-----------------------------------------------------------------------------------|
+| Package               | Provides                                                                             |
+|-----------------------|--------------------------------------------------------------------------------------|
 | `storage`             | The `Provider` and `Presigner` contract, its input rules, limits and sentinel errors |
-| `storage/s3`          | Amazon S3 and S3-compatible services                                              |
-| `storage/dir`         | A directory on local disk, through an `os.Root`                                   |
-| `storage/memory`      | In-process store with S3's rules, for tests and local development                 |
-| `storage/storagetest` | Recording mocks of `storage.Provider` and `storage.Presigner`                     |
+| `storage/s3`          | Amazon S3 and S3-compatible services                                                 |
+| `storage/dir`         | A directory on local disk, through an `os.Root`                                      |
+| `storage/memory`      | In-process store with S3's rules, for tests and local development                    |
+| `storage/storagetest` | Recording mocks of `storage.Provider` and `storage.Presigner`                        |
 
 ## Documentation
 

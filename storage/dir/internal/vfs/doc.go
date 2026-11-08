@@ -73,11 +73,11 @@
 // waits in the blocking lock call. The locks of every Bucket handle of a
 // VFS, and its lifecycle locks, share one table of slots, keyed by the
 // path of the lock file below `.gas/locks`, so this holds however many
-// handles wait for a key. A wait honors its context; the
-// goroutine in the lock call stays until it gets the lock, then gives it
-// up. Release removes the file while it holds the lock, and a waiter that
-// then gets the removed file sees that it is no longer the one at the name
-// and tries again. Each key has a lock file in the bucket's locks
+// handles wait for a key. A wait honors its context; the goroutine in
+// the lock call stays until it gets the lock, then gives it up. Release
+// removes the file while it holds the lock, and a waiter that then gets
+// the removed file sees that it is no longer the one at the name and
+// tries again. Each key has a lock file in the bucket's locks
 // directory; each bucket a lifecycle lock `<bucket hash>.bucket` in
 // `.gas/locks`, which CreateBucket and DeleteBucket hold.
 //
@@ -91,7 +91,10 @@
 // waiting: it opens the lock file, creating it when it is missing, locks
 // it and checks that it is still the file at the name; a file released
 // meanwhile counts as held. It removes an index directory without a lock,
-// as the removal fails while the directory holds an entry.
+// as the removal fails while the directory holds an entry. A bucket
+// deleted while it is swept, whose open directories then fail to read
+// with a not-exist error, as on Linux, is passed over without an error
+// once it no longer opens.
 //
 // # Errors
 //

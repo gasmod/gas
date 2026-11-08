@@ -154,12 +154,12 @@
 // with CreateMultipartUpload, UploadPart and CompleteMultipartUpload,
 // whose ETag then is not an MD5 of the contents. The transfer manager
 // then holds up to six parts in memory at once, beside the first 16 MiB
-// it read. The transfer manager sends a
-// CRC32 checksum of each request's body, which S3 checks. A WriteCondition
-// is sent as If-None-Match or If-Match, the ETag quoted: with parts, S3
-// evaluates it when the upload completes, after every part was sent. The
-// condition holds as S3 decides it; S3 may also refuse a write racing
-// another conditional one with ConditionalRequestConflict ([ErrConflict]).
+// it read. The transfer manager sends a CRC32 checksum of each request's
+// body, which S3 checks. A WriteCondition is sent as If-None-Match or
+// If-Match, the ETag quoted: with parts, S3 evaluates it when the upload
+// completes, after every part was sent. The condition holds as S3
+// decides it; S3 may also refuse a write racing another conditional one
+// with ConditionalRequestConflict ([ErrConflict]).
 // An If-Match of a key that holds no object is storage.ErrObjectNotFound,
 // as S3 answers it with NoSuchKey. Expires is sent as S3 stores it, an
 // IMF-fixdate.
@@ -274,10 +274,9 @@
 // NoSuchVersion storage.ErrVersionNotFound; BucketAlreadyExists
 // storage.ErrBucketExists; BucketNotEmpty storage.ErrBucketNotEmpty;
 // PreconditionFailed storage.ErrPreconditionFailed, but from CopyObject,
-// as under Requests; InvalidRange
-// storage.ErrRangeNotSatisfiable. The bodiless 404 of a HEAD is
-// storage.ErrObjectNotFound from HeadObject, and storage.ErrBucketNotFound
-// from HeadBucket and CheckReady.
+// as under Requests; InvalidRange storage.ErrRangeNotSatisfiable. The
+// bodiless 404 of a HEAD is storage.ErrObjectNotFound from HeadObject,
+// and storage.ErrBucketNotFound from HeadBucket and CheckReady.
 //
 // Any other failure returns an error with a reason, told by the AWS error
 // code, and the code, in parentheses, when it is one S3 documents; the
@@ -286,9 +285,10 @@
 // which holds the URL, and so the bucket and the key. The reasons, in the
 // order they are told:
 //
-//   - `access denied`: AccessDenied, a 403 without a body, InvalidAccessKeyId,
-//     SignatureDoesNotMatch, ExpiredToken and the other codes of refused
-//     credentials or permissions, wrapping storage.ErrAccessDenied.
+//   - `access denied`: AccessDenied, a 403 without a body,
+//     InvalidAccessKeyId, SignatureDoesNotMatch, ExpiredToken and the
+//     other codes of refused credentials or permissions, wrapping
+//     storage.ErrAccessDenied.
 //   - `throttled`: SlowDown and the other throttles, past the retries,
 //     wrapping [ErrThrottled] and storage.ErrBackend.
 //   - `wrong region`: PermanentRedirect, a 301 without a body,
@@ -317,8 +317,9 @@
 //     builds stops reading at; a page of ListObjects whose IsTruncated
 //     and continuation token disagree, or whose keys are not valid URL
 //     encoding; a page of ListObjects or ListBuckets whose continuation
-//     token is longer than 1536 bytes, too long to seal; a presigned URL without its signing time; or a client of
-//     WithClient that returns neither an output nor an error.
+//     token is longer than 1536 bytes, too long to seal; a presigned URL
+//     without its signing time; or a client of WithClient that returns
+//     neither an output nor an error.
 //   - `unexpected EOF`: a reply whose body ended before its length, also
 //     wrapping io.ErrUnexpectedEOF.
 //   - `failed`: anything else.

@@ -48,12 +48,12 @@
 //
 // [Provider.Init] resolves the configuration each time it runs. Without
 // [WithConfig], it binds [DefaultConfig] from the gas.ConfigProvider,
-// which checks the `validate` tags; a nil ConfigProvider is the error storage.ErrNoConfigProvider. With
-// WithConfig, it takes a copy of the given Config, never changing the
-// caller's struct, and checks the same tags. Then `bucket`, when set, must be a valid bucket name,
-// and the directory must come from `dir` or WithRoot, one of them. A
-// failure wraps storage.ErrInvalidConfig and names the setting, never its
-// value.
+// which checks the `validate` tags; a nil ConfigProvider is the error
+// storage.ErrNoConfigProvider. With WithConfig, it takes a copy of the
+// given Config, never changing the caller's struct, and checks the same
+// tags. Then `bucket`, when set, must be a valid bucket name, and the
+// directory must come from `dir` or WithRoot, one of them. A failure
+// wraps storage.ErrInvalidConfig and names the setting, never its value.
 //
 // [Provider.Config] returns a copy of the configuration the last
 // successful Init bound, defaults included: the zero Config before the
@@ -100,20 +100,21 @@
 //
 // PutObject takes the key's lock, adds the key to the index, syncing
 // each directory it creates for the entry and the directory each is
-// created in, writes the body to a new data file, checking its context between reads, and syncs
-// the file and its directory. It then evaluates the condition against
-// the object stored, writes a new metadata file to a temp file, syncs
-// it, and renames it over the old one, which is the commit, and syncs the
-// directory; last it removes the data file of the object replaced. A
-// reader sees the old object or the new one, never a mix, and a failed
-// PutObject removes what it wrote and leaves the object stored, if any,
-// as it was. Once PutObject returns, the object survives a crash of the
-// process and a loss of power, on a file system that honors fsync; on
-// darwin a sync is F_FULLFSYNC. A sync of the directory that fails after
-// the commit fails PutObject with storage.ErrBackend, though the object is
-// written: it may not survive a loss of power. A data file of the object replaced that
-// cannot be removed does not fail the write: it is logged at warn level
-// and passed to the skip handler, and the next Init removes it.
+// created in, writes the body to a new data file, checking its context
+// between reads, and syncs the file and its directory. It then evaluates
+// the condition against the object stored, writes a new metadata file to
+// a temp file, syncs it, and renames it over the old one, which is the
+// commit, and syncs the directory; last it removes the data file of the
+// object replaced. A reader sees the old object or the new one, never a
+// mix, and a failed PutObject removes what it wrote and leaves the object
+// stored, if any, as it was. Once PutObject returns, the object survives
+// a crash of the process and a loss of power, on a file system that
+// honors fsync; on darwin a sync is F_FULLFSYNC. A sync of the directory
+// that fails after the commit fails PutObject with storage.ErrBackend,
+// though the object is written: it may not survive a loss of power. A
+// data file of the object replaced that cannot be removed does not fail
+// the write: it is logged at warn level and passed to the skip handler,
+// and the next Init removes it.
 //
 // DeleteObject takes the key's lock, removes the metadata file, which is
 // the commit, syncs the directory, and removes the data file and the
@@ -219,12 +220,14 @@
 // touches a write in progress in another process, and an index directory
 // only while it is empty; and it makes again the index entry of an object
 // that has none, under the key's lock likewise. It looks at no more than
-// `storage.sweeplimit` entries of the directory, then stops. Each
-// leftover removed and each object indexed again is passed to the skip
-// handler; Init logs `leftovers of crashed writes removed` at info level
-// with `removed`, their count, `objects with no index entry re-indexed`
-// at info level with `reindexed`, their count, and `leftover sweep
-// stopped at its limit` at warn level, with `limit`, when it stopped.
+// `storage.sweeplimit` entries of the directory, then stops. A bucket
+// that another Provider or process deletes while Init sweeps it is passed
+// over rather than failing Init. Each leftover removed and each object
+// indexed again is passed to the skip handler; Init logs `leftovers of
+// crashed writes removed` at info level with `removed`, their count,
+// `objects with no index entry re-indexed` at info level with
+// `reindexed`, their count, and `leftover sweep stopped at its limit` at
+// warn level, with `limit`, when it stopped.
 //
 // # Skip handler
 //
@@ -233,15 +236,15 @@
 // behind, and why: an object a listing leaves out (ErrCorrupt), a bucket
 // ListBuckets leaves out (ErrUnnamedBucket), the debris and the leftovers
 // of DeleteBucket, the leftovers Init removes, the objects it indexes
-// again, a data file PutObject could not remove, and a file of the key
-// index the store did not write. The path names hashes, never a key or a
-// bucket name; they are SHA-256 hashes with no salt, though, so one who
-// can guess a key or a bucket name can confirm it from a path: keep the
-// paths as private as the keys. It is called on the
-// goroutine of the call, after the call gave up every lock it took, so it
-// may call the store, though a call during Init fails with
-// storage.ErrNotInitialized or storage.ErrClosed; calls in flight on several goroutines call
-// it concurrently. A listing reports an entry each time it passes over it.
+// again, a data file PutObject or CopyObject could not remove, and a file
+// of the key index the store did not write. The path names hashes, never
+// a key or a bucket name; they are SHA-256 hashes with no salt, though,
+// so one who can guess a key or a bucket name can confirm it from a path:
+// keep the paths as private as the keys. It is called on the goroutine of
+// the call, after the call gave up every lock it took, so it may call the
+// store, though a call during Init fails with storage.ErrNotInitialized
+// or storage.ErrClosed; calls in flight on several goroutines call it
+// concurrently. A listing reports an entry each time it passes over it.
 //
 // # Lifecycle
 //
@@ -273,14 +276,15 @@
 // on Windows, on the key's lock file, which excludes other processes, and
 // an in-process slot, shared by every call of the Provider, so that at
 // most one goroutine per key waits in the blocking lock call however many
-// calls wait for the key. A wait honors the call's context: when the context
-// ends, the call returns, and the goroutine that waits in the lock call
-// stays until the holder gives the lock up, then gives it up itself. The
-// conditions of PutObject are evaluated under the key's lock, so they hold
-// across processes. CopyObject takes the source's lock, then the
-// destination's, never both at once. A PutObject holds its key's lock while it reads its
-// body, so a slow body holds the other calls on its key, and a
-// DeleteBucket of its bucket, until it ends or its context does.
+// calls wait for the key. A wait honors the call's context: when the
+// context ends, the call returns, and the goroutine that waits in the lock
+// call stays until the holder gives the lock up, then gives it up itself.
+// The conditions of PutObject are evaluated under the key's lock, so they
+// hold across processes. CopyObject takes the source's lock, then the
+// destination's, never both at once. A PutObject holds its key's lock
+// while it reads its body, and a CopyObject the destination's while it
+// reads the source, so a slow body holds the other calls on its key, and
+// a DeleteBucket of its bucket, until it ends or its context does.
 //
 // # Security
 //
@@ -297,9 +301,9 @@
 // Everything else it holds must keep the rules a write keeps: the key
 // rules, an ETag of 32 lower case hex digits, the header rules and the
 // metadata rules, with the names in lower case. A key in the key index
-// must keep the key rules, and a name record a valid bucket name. The directory, and every directory in it, must
-// not be writable by anyone the app does not trust: a hard link in it
-// cannot be told from a file.
+// must keep the key rules, and a name record a valid bucket name. The
+// directory, and every directory in it, must not be writable by anyone
+// the app does not trust: a hard link in it cannot be told from a file.
 //
 // # Errors
 //

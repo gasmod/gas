@@ -82,10 +82,10 @@
 // thus needs room for both until it is stored. The store keeps a copy of
 // the body as long as the body, so it holds the bytes it counts. The
 // ETag is the hex MD5 of the contents. The store keeps no versions and no
-// parts: a Version or a PartNumber is storage.ErrNotSupported. HeadObject and GetObject of an object in a
-// missing bucket are storage.ErrObjectNotFound and
-// storage.ErrBucketNotFound. HeadBucket returns the name, and the region
-// is always empty.
+// parts: a Version or a PartNumber is storage.ErrNotSupported. HeadObject
+// and GetObject of an object in a missing bucket are
+// storage.ErrObjectNotFound and storage.ErrBucketNotFound. HeadBucket
+// returns the name, and the region is always empty.
 //
 // CopyObject looks up the source, then the destination's bucket, and
 // stores the copy, all under the store's lock, so that it sees the source

@@ -41,10 +41,13 @@
 // parts; the key, bucket, metadata, header, range, argument and condition
 // rules, each before any I/O; buckets, their listing and its arguments;
 // listings with prefixes, delimiters, StartAfter and pages, their
-// arguments and their tokens; and, with a presigner, uploads, downloads,
-// wrong lengths, expiry, TTLs, missing objects, arguments, the lifecycle
-// and an ended context. Every error is checked with errors.Is, and its
-// full text where every backend makes it the same; the text starts with
-// the Subject's Name, or PresignerName. No error may hold a key, a bucket
-// name, metadata or a header value.
+// arguments and their tokens; copies within a bucket and across buckets,
+// of odd keys, with and without Replace, over an object, onto
+// themselves, of missing objects, their rules, the caller's input left
+// unchanged, concurrent copies and errors that hold no data; and, with a
+// presigner, uploads, downloads, wrong lengths, expiry, TTLs, missing
+// objects, arguments, the lifecycle and an ended context. Every error is
+// checked with errors.Is, and its full text where every backend makes it
+// the same; the text starts with the Subject's Name, or PresignerName. No
+// error may hold a key, a bucket name, metadata or a header value.
 package conformance
