@@ -1,10 +1,15 @@
 // Package database connects a Gas app to PostgreSQL, MySQL or SQLite and
-// provides the connection as a gas.DatabaseProvider. In [ModeSQL] it opens
-// a database/sql handle with the dialect's driver, or a connector given to
-// [WithConnector]. In [ModePgx] it opens a native pgxpool.Pool for
-// PostgreSQL and derives the database/sql handle from it. [Service]
-// implements gas.Service, gas.DatabaseProvider, gas.HealthReporter and
-// gas.ReadyReporter.
+// provides the connection as a gas.DatabaseProvider.
+//
+// It runs in one of two modes:
+//
+//   - In [ModeSQL] it opens a database/sql handle with the dialect's
+//     driver, or a connector given to [WithConnector].
+//   - In [ModePgx] it opens a native pgxpool.Pool for PostgreSQL and
+//     derives the database/sql handle from it.
+//
+// [Service] implements gas.Service, gas.DatabaseProvider, gas.HealthReporter
+// and gas.ReadyReporter.
 //
 // # Usage
 //
@@ -68,13 +73,19 @@
 // for a driver default. In ModePgx the settings replace the `pool_*`
 // parameters of the DSN that they match.
 //
-// [Service.Init] resolves the configuration each time it runs. Without
-// [WithConfig], it binds [DefaultConfig] from the gas.ConfigProvider,
-// which checks the `validate` tags; a nil ConfigProvider is the error
-// [ErrNoConfigProvider]. With WithConfig, it takes a copy of the given
-// Config, never changing the caller's struct, and checks the same tags; a
-// nil Config is the error [ErrNilConfig]. Either way, these rules then
-// run, in this order, and the first that fails is the error:
+// # Resolving the configuration
+//
+// [Service.Init] resolves the configuration each time it runs:
+//
+//   - Without [WithConfig], it binds [DefaultConfig] from the
+//     gas.ConfigProvider, which checks the `validate` tags. A nil
+//     ConfigProvider is the error [ErrNoConfigProvider].
+//   - With WithConfig, it takes a copy of the given Config, never changing
+//     the caller's struct, and checks the same tags. A nil Config is the
+//     error [ErrNilConfig].
+//
+// Either way, these rules then run, in this order, and the first that
+// fails is the error:
 //
 //  1. With a connector: WithConnector was given one, with one of the
 //     three dialects; the mode is ModeSQL; the dialect setting is empty
@@ -90,20 +101,26 @@
 // [Service.Config] returns a copy of the configuration the last
 // successful Init resolved, defaults included, with DSN still a
 // gas.Secret, or the zero Config before one. A failed Init and Close
-// leave it as it was. It holds the settings as resolved: the DSN without
-// the busy timeout the dialect sqlite may add, and with a connector the
-// Dialect setting as given, which may be empty; Driver reports the
-// dialect in use.
+// leave it as it was.
+//
+// It holds the settings as resolved:
+//
+//   - The DSN is without the busy timeout the dialect sqlite may add.
+//   - With a connector, the Dialect setting is as given, which may be
+//     empty; Driver reports the dialect in use.
 //
 // # Modes
 //
-// ModeSQL opens a *sql.DB and applies the four limits to it. ModePgx
-// opens a *pgxpool.Pool, with `maxopenconns` as its MaxConns and the
-// lifetime and idle time as its own; [Service.DB] is then derived from
-// the pool with pgx's stdlib.OpenDBFromPool, keeps no idle connections
-// of its own, and borrows the pool's. [Service.Pool] and [PoolFrom]
-// return the pool in ModePgx, and nil in ModeSQL. ModePgx requires the
-// dialect postgres and takes no connector.
+// The mode picks what the service opens:
+//
+//   - ModeSQL opens a *sql.DB and applies the four limits to it.
+//   - ModePgx opens a *pgxpool.Pool, with `maxopenconns` as its MaxConns
+//     and the lifetime and idle time as its own. [Service.DB] is then
+//     derived from the pool with pgx's stdlib.OpenDBFromPool, keeps no
+//     idle connections of its own, and borrows the pool's.
+//
+// [Service.Pool] and [PoolFrom] return the pool in ModePgx, and nil in
+// ModeSQL. ModePgx requires the dialect postgres and takes no connector.
 //
 // # Dialects
 //
@@ -114,62 +131,85 @@
 //   - postgres: pgx's database/sql adapter, on the DSN parsed by
 //     pgx.ParseConfig. The module imports it; no registration is needed.
 //   - mysql: github.com/go-sql-driver/mysql, on the DSN parsed by
-//     mysql.ParseDSN. The module imports it. ParseTime is always turned
-//     on, so DATETIME and TIMESTAMP columns scan into time.Time.
-//     MultiStatements stays as the DSN sets it, off unless it says
-//     `multiStatements=true`, since it widens what an injected statement
-//     can do. The driver's own log, which by default writes its messages
-//     to stderr with network errors that name the server's address,
-//     goes to the service's logger instead, as one warn event
-//     `mysql driver reported an error` per message, without the
-//     driver's text. A connector given to WithConnector keeps its own
-//     logger.
+//     mysql.ParseDSN. The module imports it. See MySQL.
 //   - sqlite: the database/sql driver registered as `sqlite`, opened with
-//     the DSN as it is, except for the busy timeout. The module does not
-//     import one: the app imports modernc.org/sqlite, or another driver
-//     registered under that name. Without one, Init fails with
-//     [ErrDriverNotRegistered], naming the import. When the DSN sets no
-//     busy timeout, the service adds [DefaultSQLiteBusyTimeout], 5
-//     seconds, as modernc.org/sqlite reads it: `_pragma=busy_timeout(5000)`
-//     is appended to the DSN's query. Without a busy timeout SQLite fails
-//     at once, with SQLITE_BUSY, a statement that meets another
-//     connection's lock, so two connections of one pool writing, or one
-//     reading while another commits, fail; with it the statement waits up
-//     to that long. A DSN sets one with `_busy_timeout`, `_timeout`, or a
-//     `_pragma` value starting with `busy_timeout`, such as
-//     `_pragma=busy_timeout(0)`, which turns the wait off. A DSN whose
-//     query does not parse is left as it is, for the driver to reject.
-//     Another driver registered as `sqlite` must accept that parameter.
+//     the DSN as it is, except for the busy timeout (see SQLite). The
+//     module does not import one: the app imports modernc.org/sqlite, or
+//     another driver registered under that name. Without one, Init fails
+//     with [ErrDriverNotRegistered], naming the import.
+//
+// # MySQL
+//
+// The service sets up the mysql driver this way:
+//
+//   - ParseTime is always turned on, so DATETIME and TIMESTAMP columns
+//     scan into time.Time.
+//   - MultiStatements stays as the DSN sets it, off unless it says
+//     `multiStatements=true`, since it widens what an injected statement
+//     can do.
+//   - The driver's own log by default writes its messages to stderr, with
+//     network errors that name the server's address. It goes to the
+//     service's logger instead, as one warn event
+//     `mysql driver reported an error` per message, without the driver's
+//     text. A connector given to WithConnector keeps its own logger.
+//
+// # SQLite
+//
+// Without a busy timeout, SQLite fails a statement that meets another
+// connection's lock at once, with SQLITE_BUSY. So two connections of one
+// pool writing, or one reading while another commits, fail. With a busy
+// timeout the statement waits up to that long.
+//
+// When the DSN sets no busy timeout, the service adds
+// [DefaultSQLiteBusyTimeout], 5 seconds, as modernc.org/sqlite reads it:
+// `_pragma=busy_timeout(5000)` is appended to the DSN's query.
+//
+//   - A DSN sets one with `_busy_timeout`, `_timeout`, or a `_pragma`
+//     value starting with `busy_timeout`, such as
+//     `_pragma=busy_timeout(0)`, which turns the wait off.
+//   - A DSN whose query does not parse is left as it is, for the driver
+//     to reject.
+//   - Another driver registered as `sqlite` must accept that parameter.
 //
 // # Connectors
 //
 // [WithConnector] gives ModeSQL a driver.Connector to open the handle
 // with, for what a DSN cannot express, such as a custom TLS setup or IAM
-// authentication, and the dialect it speaks, which Driver returns. The
-// connector is reused by every connect attempt and every Init, and never
-// closed by the service: closing the handle does not reach it. The
+// authentication. It also takes the dialect the connector speaks, which
+// Driver returns.
+//
+// The connector is reused by every connect attempt and every Init, and
+// never closed by the service: closing the handle does not reach it. The
 // caller owns it.
 //
 // # Connecting
 //
-// Init first does what fails the same way every time: it parses the DSN
-// and finds the driver. A DSN the driver cannot parse is [ErrInvalidDSN],
-// and a missing driver ErrDriverNotRegistered; neither is retried. It
-// then makes connect attempts. Each attempt opens the handle, or the
-// pool, and pings it, within Init's context and `connecttimeout`, and
-// closes what it opened when the ping fails.
+// Init first does what fails the same way every time, and retries neither:
+//
+//   - It parses the DSN. A DSN the driver cannot parse is [ErrInvalidDSN].
+//   - It finds the driver. A missing driver is ErrDriverNotRegistered.
+//
+// It then makes connect attempts. Each attempt opens the handle, or the
+// pool, and pings it, within Init's context and `connecttimeout`. When the
+// ping fails, the attempt closes what it opened.
 //
 // A failed attempt is retried up to `connretries` times. Before each
-// retry, Init logs `database connection failed, retrying` at warn level
-// with `attempt` (from 1), `retries`, `wait` and `reason`, and waits:
-// `connretryinterval` before the first retry, then twice the previous
-// wait, up to [MaxConnRetryInterval]. The wait ends early when Init's
-// context ends, and Init then fails at once.
+// retry, Init:
+//
+//  1. Logs `database connection failed, retrying` at warn level, with
+//     `attempt` (from 1), `retries`, `wait` and `reason`.
+//  2. Waits: `connretryinterval` before the first retry, then twice the
+//     previous wait, up to [MaxConnRetryInterval].
+//
+// The wait ends early when Init's context ends, and Init then fails at
+// once.
+//
+// # Connect failures
 //
 // When the attempts run out, Init fails with an error wrapping
-// [ErrConnect], `connect: ` and a reason, and, when Init's context ended,
-// the context's error too. The reason is the first of these that holds
-// for the driver's error:
+// [ErrConnect], `connect: ` and a reason. When Init's context ended, the
+// error wraps the context's error too. The reason is the first of these
+// that holds for the driver's error:
 //
 //   - `authentication failed`: PostgreSQL's SQLSTATE 28P01 or 28000, or
 //     MySQL's error 1045.
@@ -189,105 +229,140 @@
 // configuration. The reason and the database server's own logs are what
 // an operator diagnoses with.
 //
+// # Connection failures after Init
+//
 // The same holds after Init. The handle and the pool open connections
-// whenever they need one, after a server restart, a credential rotation
-// or when `connmaxlifetime` ends one, and the call that needed it gets
-// the failure. So Query, Exec, BeginTx, BeginPgxTx, WithTx, WithPgxTx,
-// their commit and rollback, and Close replace a connection-level
-// failure with `<op>: <reason>`, `<op>` as in the error's usual text and
-// the reason as above, wrapping ErrConnect and, when the call's context
-// ended, the context's error, never the driver's. A failure is
-// connection-level when it comes from opening a connection with the
-// dialect postgres or mysql or with a connector (in pgx, a
-// *pgconn.ConnectError); a sqlite driver's errors are not told apart
-// that way. It is also connection-level, unless a context ended the
-// call, when it is a network error (a net.Error), driver.ErrBadConn,
-// MySQL's mysql.ErrInvalidConn or pgx's pgconn.ErrConnClosed. Calls made on
-// [Service.DB] or [Service.Pool] directly get the driver's errors as
-// they are.
+// whenever they need one: after a server restart, a credential rotation,
+// or when `connmaxlifetime` ends one. The call that needed it gets the
+// failure.
+//
+// So these calls replace a connection-level failure: Query, Exec,
+// BeginTx, BeginPgxTx, WithTx, WithPgxTx, their commit and rollback, and
+// Close. The replacement is `<op>: <reason>`, `<op>` as in the error's
+// usual text and the reason as above. It wraps ErrConnect and, when the
+// call's context ended, the context's error, never the driver's.
+//
+// A failure is connection-level when:
+//
+//   - It comes from opening a connection with the dialect postgres or
+//     mysql or with a connector (in pgx, a *pgconn.ConnectError). A sqlite
+//     driver's errors are not told apart that way.
+//   - Unless a context ended the call, it is a network error (a
+//     net.Error), driver.ErrBadConn, MySQL's mysql.ErrInvalidConn or pgx's
+//     pgconn.ErrConnClosed.
+//
+// Calls made on [Service.DB] or [Service.Pool] directly get the driver's
+// errors as they are.
 //
 // [Service.SafeError] gives code that runs statements on DB itself, such
-// as migrate, the same replacement: it returns a connection-level failure
+// as migrate, the same replacement. It returns a connection-level failure
 // as `connection: ` and a reason, wrapping ErrConnect and not the
 // driver's error, and any other error unchanged. Having no context, it
 // wraps no context error. It works in any state of the service.
 //
-// # Lifecycle
+// # Initializing
 //
-// A successful Init publishes the handle, logs `service initialized` at
-// info level with `mode` and `dialect`, and only then do the methods
-// below use it. Init on an initialized service returns
-// [ErrAlreadyInitialized] and changes nothing: the running handle stays
-// open. A failed Init closes what it opened and leaves the service
-// uninitialized.
+// A successful Init publishes the handle and logs `service initialized` at
+// info level, with `mode` and `dialect`. Only then do the methods below
+// use it.
 //
-// [Service.Close] makes the service uninitialized, then closes the
-// handle and, in ModePgx, the pool, which waits for the connections the
-// caller holds, such as a transaction from BeginPgxTx, to be released.
-// The pool is closed even when closing the handle fails, and that
-// failure is returned. When the closing finishes, Close returns, having
-// logged `service closed` at info level if it succeeded and nothing if
-// it failed. When Close's context ends first, Close returns an error
-// wrapping [ErrCloseTimeout] and the context's error, and the closing
-// goes on: when it finishes, it logs `service closed` at info level, or
-// `service close failed` at warn level with `reason`. Close on a service
-// that is not initialized returns nil and logs nothing. After Close,
-// even one that timed out, Init may run again, and resolves the
-// configuration afresh.
+// Init on an initialized service returns [ErrAlreadyInitialized] and
+// changes nothing: the running handle stays open. A failed Init closes
+// what it opened and leaves the service uninitialized.
+//
+// Until Init succeeds, after a failed Init and after Close:
+//
+//   - DB and Pool return nil, PoolFrom returns nil and false, and Driver
+//     returns an empty string.
+//   - [Service.Ping], [Service.Query], [Service.Exec], [Service.BeginTx],
+//     [Service.WithTx], [Service.BeginPgxTx], [Service.WithPgxTx],
+//     [Service.CheckHealth] and [Service.CheckReady] return an error
+//     wrapping [ErrNotInitialized].
+//
+// [New]'s constructor fails with [ErrNilLogger] for a nil logger. A nil
+// ConfigProvider is accepted, and Init then requires WithConfig.
+//
+// # Closing
+//
+// [Service.Close] runs these steps, in order:
+//
+//  1. It makes the service uninitialized.
+//  2. It closes the handle and, in ModePgx, the pool, which waits for the
+//     connections the caller holds, such as a transaction from
+//     BeginPgxTx, to be released. The pool is closed even when closing
+//     the handle fails, and that failure is returned.
+//
+// When the closing finishes, Close returns, having logged `service closed`
+// at info level if it succeeded and nothing if it failed.
+//
+// When Close's context ends first, Close returns an error wrapping
+// [ErrCloseTimeout] and the context's error, and the closing goes on. When
+// it finishes, it logs `service closed` at info level, or
+// `service close failed` at warn level with `reason`.
+//
+// Close on a service that is not initialized returns nil and logs nothing.
+// After Close, even one that timed out, Init may run again, and resolves
+// the configuration afresh.
+//
+// # Restarting
 //
 // Restarting the service makes a new handle; the old one is closed. The
 // services that take [Service.DB] in their own Init, such as migrate and
-// the auth stores, keep the old one, so restarting the database means
+// the auth stores, keep the old one. So restarting the database means
 // restarting them too.
-//
-// Until Init succeeds, after a failed Init and after Close, DB and Pool
-// return nil, PoolFrom returns nil and false, Driver returns an empty
-// string, and [Service.Ping], [Service.Query], [Service.Exec],
-// [Service.BeginTx], [Service.WithTx], [Service.BeginPgxTx],
-// [Service.WithPgxTx], [Service.CheckHealth] and [Service.CheckReady]
-// return an error wrapping [ErrNotInitialized]. [New]'s constructor fails
-// with [ErrNilLogger] for a nil logger; a nil ConfigProvider is accepted,
-// and Init then requires WithConfig.
 //
 // # Transactions
 //
 // [Service.WithTx] begins a transaction on DB, runs the function with it,
-// and commits only when the function returned nil. When it returned an
-// error, panicked or called runtime.Goexit, as t.FailNow does, the
-// transaction is rolled back. A panic or Goexit then goes on, and a
-// failed rollback is logged at warn level as `transaction rollback
-// failed`, with `reason`, a reason as for a failed connect, and not the
-// driver's error. After an error return, WithTx returns the function's
-// error unchanged, joined with the rollback's error when the rollback
-// failed. A rollback that finds the transaction already ended is not a
-// failure. A function that commits or rolls back the transaction itself
-// and returns nil gets an error wrapping sql.ErrTxDone from the commit.
-// database/sql takes no context for a rollback, and rolls the
-// transaction back itself when the context of WithTx ends.
+// and commits only when the function returned nil. When the function
+// returned an error, panicked or called runtime.Goexit, as t.FailNow does,
+// the transaction is rolled back:
+//
+//   - After an error return, WithTx returns the function's error
+//     unchanged, joined with the rollback's error when the rollback
+//     failed.
+//   - After a panic or Goexit, the panic or Goexit goes on. A failed
+//     rollback is logged at warn level as `transaction rollback failed`,
+//     with `reason`, a reason as for a failed connect, and not the
+//     driver's error.
+//
+// A rollback that finds the transaction already ended is not a failure. A
+// function that commits or rolls back the transaction itself and returns
+// nil gets an error wrapping sql.ErrTxDone from the commit.
+//
+// database/sql takes no context for a rollback, and rolls the transaction
+// back itself when the context of WithTx ends.
 //
 // [Service.WithPgxTx] is the same for a pgx.Tx on the pool, in ModePgx
-// only; elsewhere it returns [ErrModeNotPgx]. It commits with its
-// context, so a context that has ended fails the commit rather than
-// persisting work the caller gave up on. It rolls back with that context
-// without its cancellation, bounded by `connecttimeout`, so the rollback
-// runs when the context has ended and cannot hang on a dead connection.
-// A function that ends the transaction itself and returns nil gets an
-// error wrapping pgx.ErrTxClosed. A nil function is [ErrNilFunc] for
-// both, checked before the transaction begins.
+// only; elsewhere it returns [ErrModeNotPgx]:
+//
+//   - It commits with its context, so a context that has ended fails the
+//     commit rather than persisting work the caller gave up on.
+//   - It rolls back with that context without its cancellation, bounded by
+//     `connecttimeout`, so the rollback runs when the context has ended
+//     and cannot hang on a dead connection.
+//   - A function that ends the transaction itself and returns nil gets an
+//     error wrapping pgx.ErrTxClosed.
+//
+// A nil function is [ErrNilFunc] for both, checked before the transaction
+// begins.
 //
 // [Service.BeginTx] and [Service.BeginPgxTx] begin a transaction that
-// the caller ends. Errors from the driver in Query, Exec and the
-// transaction methods that describe the statement come back wrapped;
-// connection-level failures are replaced, as described under Connecting.
+// the caller ends.
+//
+// Errors from the driver in Query, Exec and the transaction methods that
+// describe the statement come back wrapped. Connection-level failures are
+// replaced, as described under Connection failures after Init.
 //
 // # Health
 //
 // [Service.CheckHealth] does no I/O: it fails only when the service is
-// not initialized, which a restart fixes. [Service.CheckReady] and
-// [Service.Ping] ping the database, within their context and
-// `connecttimeout`. A failed ping wraps ErrConnect, after `ping: `, with
-// a reason as a failed connect has, and the context's error when the
-// caller's context ended.
+// not initialized, which a restart fixes.
+//
+// [Service.CheckReady] and [Service.Ping] ping the database, within their
+// context and `connecttimeout`. A failed ping wraps ErrConnect, after
+// `ping: `, with a reason as a failed connect has, and the context's error
+// when the caller's context ended.
 //
 // # Concurrency
 //
@@ -295,13 +370,16 @@
 // a Close waits for a running Init, connect retries included, and then
 // closes what it opened. Close holds its lock only to make the service
 // uninitialized, so an Init can run while an earlier Close is still
-// closing. Init swaps in what it opened at once, so the other methods,
-// which take no lock, use one Init's handle throughout a call. A call
-// that runs beside Close may find its handle closed and return the
-// driver's error. Close closes in a goroutine of its own, which outlives
-// a Close whose context ended until the closing finishes; the service
-// starts no other goroutines. In ModePgx, the pool runs pgx's health
-// check, and opens connections up to its minimum, until it is closed.
+// closing.
+//
+// Init swaps in what it opened at once, so the other methods, which take
+// no lock, use one Init's handle throughout a call. A call that runs
+// beside Close may find its handle closed and return the driver's error.
+//
+// Close closes in a goroutine of its own, which outlives a Close whose
+// context ended until the closing finishes. The service starts no other
+// goroutines. In ModePgx, the pool runs pgx's health check, and opens
+// connections up to its minimum, until it is closed.
 //
 // # Errors
 //
@@ -316,7 +394,8 @@
 //   - [ErrInvalidDSN]: the dialect's driver could not parse the DSN.
 //   - [ErrConnect]: connecting or pinging failed, or a call after Init
 //     failed at the connection level, or SafeError replaced such a
-//     failure, as described under Connecting.
+//     failure, as described under Connect failures and Connection
+//     failures after Init.
 //   - [ErrNotInitialized]: a method ran before Init succeeded, after a
 //     failed Init, or after Close.
 //   - [ErrModeNotPgx]: a pgx transaction was asked for in ModeSQL.
@@ -347,10 +426,12 @@
 // DSN, the password, the user, the host, the port, the database name or
 // TLS material; errors name the setting instead. The logs carry the
 // mode, the dialect, the retry `attempt`, `retries` and `wait`, and fixed
-// reasons. The driver's errors that Query, Exec, the transaction methods
-// and Close pass on are the driver's own text: they describe the
-// statement, and can name what it touched, such as a table or, in an
-// access error, a database or the user.
+// reasons.
+//
+// The driver's errors that Query, Exec, the transaction methods and Close
+// pass on are the driver's own text. They describe the statement, and can
+// name what it touched, such as a table or, in an access error, a database
+// or the user.
 //
 // A configuration that fails its tags gets the validator's error after
 // `gas/database: invalid config: validate config: `, such as:
