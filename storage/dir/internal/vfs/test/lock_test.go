@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"runtime/pprof"
 	"sync"
 	"sync/atomic"
@@ -294,8 +295,16 @@ func (g *gatedReader) Read([]byte) (int, error) {
 // waves of waiters from handles of their own that give up while a write
 // holds the key leave no thread parked in the blocking lock call.
 //
-// Not parallel: it counts the threads the process creates.
+// A waiter parked in the call holds a thread until the write ends, so 1000
+// of them would create about 1000 threads. The runtime also starts threads
+// in proportion to GOMAXPROCS when 250 waiters wake at once, so the test
+// pins it, and the bound sits well below one wave.
+//
+// Not parallel: it counts the threads the process creates and sets
+// GOMAXPROCS.
 func TestLock_HandlesShareSlots(t *testing.T) {
+	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(4))
+
 	v, _ := newVFS(t)
 	writer := newBucket(t, v)
 	body := &gatedReader{gate: make(chan struct{}), entered: make(chan struct{})}
@@ -348,7 +357,7 @@ func TestLock_HandlesShareSlots(t *testing.T) {
 
 	close(body.gate)
 	require.NoError(t, <-written)
-	assert.Less(t, grown, 50, "threads created while 1000 waiters gave up")
+	assert.Less(t, grown, 150, "threads created while 1000 waiters gave up")
 }
 
 // A waiter on the in-process slot of a lock that Close then closes fails
