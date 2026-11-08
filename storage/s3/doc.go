@@ -220,7 +220,7 @@
 // The transfer manager logs a completion that failed with the standard
 // library's log package, outside the store's logger. It logs the error's
 // text, which is this package's, never the AWS SDK's, and the upload's ID
-// as a pointer address (transfermanager v0.4.19 formats the *string with
+// as a pointer address (transfermanager v0.5.5 formats the *string with
 // %v), not the ID itself. A version of the transfer manager that printed
 // the ID would write it to standard error, so the version is pinned and
 // must be checked when it changes.
