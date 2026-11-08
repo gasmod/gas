@@ -173,17 +173,6 @@ func CheckKey(key string) error {
 // isControl reports whether r is a C0 control character or DEL.
 func isControl(r rune) bool { return r < 0x20 || r == 0x7f }
 
-// The reserved starts and ends of bucket names, which S3 refuses for a
-// general purpose bucket.
-var (
-	// reservedBucketPrefixes are the reserved starts.
-	reservedBucketPrefixes = []string{"xn--", "sthree-", "amzn-s3-demo-"}
-	// reservedBucketSuffixes are the reserved ends.
-	reservedBucketSuffixes = []string{
-		"-s3alias", "--ol-s3", ".mrap", "--x-s3", "--table-s3", "-an",
-	}
-)
-
 // CheckBucket returns an error wrapping ErrInvalidBucket when name breaks
 // the bucket rules of the package documentation, and nil otherwise. The
 // error never quotes the name.
@@ -202,8 +191,6 @@ func CheckBucket(name string) error {
 		return fmt.Errorf("%w: does not start and end with a letter or a digit", ErrInvalidBucket)
 	case strings.Contains(name, ".."):
 		return fmt.Errorf("%w: holds two dots in a row", ErrInvalidBucket)
-	case hasReservedAffix(name):
-		return fmt.Errorf("%w: starts or ends as a reserved name does", ErrInvalidBucket)
 	case isIPv4Shaped(name):
 		return fmt.Errorf("%w: shaped like an IPv4 address", ErrInvalidBucket)
 	}
@@ -218,16 +205,6 @@ func isBucketChar(r rune) bool {
 
 // isLowerAlnum reports whether c is a lower case ASCII letter or a digit.
 func isLowerAlnum(c byte) bool { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') }
-
-// hasReservedAffix reports whether name starts with a reserved prefix or
-// ends with a reserved suffix.
-func hasReservedAffix(name string) bool {
-	return slices.ContainsFunc(reservedBucketPrefixes, func(p string) bool {
-		return strings.HasPrefix(name, p)
-	}) || slices.ContainsFunc(reservedBucketSuffixes, func(s string) bool {
-		return strings.HasSuffix(name, s)
-	})
-}
 
 // isIPv4Shaped reports whether name is four runs of digits joined by
 // dots, such as `192.168.5.4`.

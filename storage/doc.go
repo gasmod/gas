@@ -90,10 +90,10 @@
 // [CheckBucket] checks them, in this order: [MinBucketLength], 3, to
 // [MaxBucketLength], 63, bytes; only lower case letters, digits, dots
 // and hyphens; a letter or a digit first and last; no two dots in a row;
-// none of the reserved starts `xn--`, `sthree-` and `amzn-s3-demo-`, nor
-// the reserved ends `-s3alias`, `--ol-s3`, `.mrap`, `--x-s3`,
-// `--table-s3` and `-an`; and not four runs of digits joined by dots, as
-// an IPv4 address is. A broken rule is [ErrInvalidBucket].
+// and not four runs of digits joined by dots, as an IPv4 address is. A
+// broken rule is [ErrInvalidBucket]. S3's reserved starts and ends, such
+// as `xn--` and `-s3alias`, are not checked: S3 refuses them itself, and
+// the other backends accept them.
 //
 // An object's input names its bucket in BaseObjectInput.Bucket. A nil
 // Bucket is the backend's configured bucket, the `storage.bucket`
@@ -346,7 +346,6 @@
 //	invalid bucket: holds a character other than a-z, 0-9, . and -
 //	invalid bucket: does not start and end with a letter or a digit
 //	invalid bucket: holds two dots in a row
-//	invalid bucket: starts or ends as a reserved name does
 //	invalid bucket: shaped like an IPv4 address
 //	invalid argument: ContentLength is negative
 //	invalid argument: ContentLength is required

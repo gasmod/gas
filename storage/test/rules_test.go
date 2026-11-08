@@ -40,14 +40,16 @@ func TestCheckBucket(t *testing.T) {
 
 	for _, name := range []string{
 		"abc", "a.b-c", "1bucket", strings.Repeat("a", storage.MaxBucketLength), "10.0.0", "1.2.3.4.5", "a.1.2.3",
+		// S3's reserved starts and ends are left to the backend.
+		"xn--ab", "sthree-ab", "amzn-s3-demo-ab", "ab-s3alias", "ab--ol-s3", "ab.mrap", "ab--x-s3", "ab--table-s3",
+		"ab-an",
 	} {
 		require.NoError(t, storage.CheckBucket(name), name)
 	}
 
 	for _, name := range []string{
 		"", "ab", strings.Repeat("a", storage.MaxBucketLength+1), "ABC", "a_b", "a b", "ébc", ".ab", "ab.",
-		"-ab", "ab-", "a..b", "xn--ab", "sthree-ab", "amzn-s3-demo-ab", "ab-s3alias", "ab--ol-s3",
-		"ab.mrap", "ab--x-s3", "ab--table-s3", "ab-an", "1.2.3.4",
+		"-ab", "ab-", "a..b", "1.2.3.4",
 	} {
 		require.ErrorIs(t, storage.CheckBucket(name), storage.ErrInvalidBucket, name)
 	}

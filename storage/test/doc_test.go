@@ -214,7 +214,6 @@ func TestDoc_Errors(t *testing.T) {
 		"invalid bucket: not 3 to 63 bytes":                               bucket("ab"),
 		"invalid bucket: holds two dots in a row":                         bucket("a..b"),
 		"invalid bucket: shaped like an IPv4 address":                     bucket("10.0.0.1"),
-		"invalid bucket: starts or ends as a reserved name does":          bucket("sthree-a"),
 		"invalid bucket: holds a character other than a-z, 0-9, . and -":  bucket("a_b"),
 		"invalid bucket: does not start and end with a letter or a digit": bucket("ab-"),
 		"invalid bucket: none given and none configured": func() error {

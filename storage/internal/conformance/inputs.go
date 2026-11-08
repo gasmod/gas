@@ -103,8 +103,6 @@ func invalidBucket(t *testing.T, s Subject) {
 		"-photos":               "does not start and end with a letter or a digit",
 		"photos.":               "does not start and end with a letter or a digit",
 		"pho..tos":              "holds two dots in a row",
-		"xn--photos":            "starts or ends as a reserved name does",
-		"photos-s3alias":        "starts or ends as a reserved name does",
 		"192.168.5.4":           "shaped like an IPv4 address",
 	} {
 		want = "invalid bucket: " + want
