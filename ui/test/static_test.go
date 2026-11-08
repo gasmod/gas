@@ -249,6 +249,10 @@ func TestStatic_DotfileSymlink(t *testing.T) {
 func TestStatic_UnreadableFile(t *testing.T) {
 	t.Parallel()
 
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores file permissions")
+	}
+
 	dir := staticTree(t)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "locked.txt"), []byte("L"), 0o000))
 

@@ -171,7 +171,9 @@ func TestTTL_RoundsUpOnServer(t *testing.T) {
 	} {
 		var checked bool
 
-		for range 50 {
+		// Under load a round trip can take more than a millisecond, so the
+		// test tries for a while rather than a set number of times.
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
 			before := serverMillis()
 
 			require.NoError(t, s.Set(ctx, "k", []byte("v"), tc.ttl))

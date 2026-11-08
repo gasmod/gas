@@ -167,8 +167,10 @@ func tlsFiles(caPEM, certPEM, keyPEM []byte) []testcontainers.ContainerFile {
 }
 
 // certificates returns, in PEM, a new certificate authority, a server
-// certificate it signed for `localhost` and 127.0.0.1, and the server's
-// key, with a pool holding the authority.
+// certificate it signed for `localhost`, 127.0.0.1 and
+// `host.docker.internal`, the host the test container script points
+// testcontainers at, and the server's key, with a pool holding the
+// authority.
 func certificates() (caPEM, certPEM, keyPEM []byte, roots *x509.CertPool, err error) {
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -203,7 +205,7 @@ func certificates() (caPEM, certPEM, keyPEM []byte, roots *x509.CertPool, err er
 	leaf := &x509.Certificate{
 		SerialNumber: big.NewInt(2),
 		Subject:      pkix.Name{CommonName: "localhost"},
-		DNSNames:     []string{"localhost"},
+		DNSNames:     []string{"localhost", "host.docker.internal"},
 		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1)},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(24 * time.Hour),
