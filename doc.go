@@ -265,8 +265,10 @@
 //
 // # Configuration
 //
-// An App's [Config] starts as [DefaultConfig]. At Start it is bound from
-// the [ConfigProvider], when one is registered, and validated: Env, from
+// An App's [Config] starts as [DefaultConfig], or as the base config set
+// with [WithBaseConfig]. At Start a copy of it is bound from the
+// [ConfigProvider], when one is registered, whose values override the
+// base config's, and validated: Env, from
 // the key `gasenv` where the config module's EnvExtension stores the
 // environment it resolved from `GAS_ENV`, must be one of the allowed
 // environments ([WithAllowedEnvironments]), which always include
@@ -281,6 +283,8 @@
 // trickles its headers; MaxJSONBodyBytes and MaxFormBodyBytes must be
 // positive. A Config that breaks a rule fails Start with an error wrapping
 // [ErrInvalidConfig] that names the key and the rule, never the value.
+// [App.Config] returns a copy of the base config before Start and of the
+// bound one after.
 //
 // [App.Server] builds the [http.Server] from the Config, with its handler,
 // [App.Handler]. A server built before Start, such as by a service's Init,
@@ -296,8 +300,8 @@
 // are safe for concurrent use. Goroutines that resolve one singleton, or
 // one scoped type of a Scope, share one build. No lock is held while a
 // service's Init or Close, a constructor, a subscriber or a check runs.
-// Change an App's Config only before Start, from one goroutine, and do
-// not change the server's fields once it serves. A [LogEvent] is used by
+// [App.Config] may be called concurrently with Start. Do not change the
+// server's fields once it serves. A [LogEvent] is used by
 // one goroutine and sent once.
 //
 // # Errors

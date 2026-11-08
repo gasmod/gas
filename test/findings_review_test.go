@@ -35,10 +35,12 @@ func TestFindings_S1StopDropsStuckConnections(t *testing.T) {
 		return nil
 	}}
 
-	app := quietApp(gas.WithServiceInstance(dep))
+	cfg := gas.DefaultConfig()
 
-	app.Config().Server.WriteTimeout = 0
-	app.Config().Server.ShutdownTimeout = 100 * time.Millisecond
+	cfg.Server.WriteTimeout = 0
+	cfg.Server.ShutdownTimeout = 100 * time.Millisecond
+
+	app := quietApp(gas.WithServiceInstance(dep), gas.WithBaseConfig(*cfg))
 
 	big := make([]byte, 64<<20)
 	entered := make(chan struct{})
@@ -219,9 +221,11 @@ func TestFindings_S6StopBoundsSubscribers(t *testing.T) {
 
 	t.Cleanup(func() { close(release) })
 
-	app := quietApp()
+	cfg := gas.DefaultConfig()
 
-	app.Config().Server.ShutdownTimeout = 100 * time.Millisecond
+	cfg.Server.ShutdownTimeout = 100 * time.Millisecond
+
+	app := quietApp(gas.WithBaseConfig(*cfg))
 	app.EventBus().Subscribe[gas.SystemServerShuttingDown](
 		func(gas.SystemServerShuttingDownPayload) { <-release },
 	)
@@ -819,9 +823,11 @@ func TestFindings_R6StopWaitsHonorCtx(t *testing.T) {
 	release := make(chan struct{})
 	entered := make(chan struct{})
 
-	app := quietApp()
+	cfg := gas.DefaultConfig()
 
-	app.Config().Server.ShutdownTimeout = time.Minute
+	cfg.Server.ShutdownTimeout = time.Minute
+
+	app := quietApp(gas.WithBaseConfig(*cfg))
 	app.Router().Get(nil, "/stuck", func(c gas.Context) error {
 		close(entered)
 		<-release

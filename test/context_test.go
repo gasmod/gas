@@ -55,8 +55,10 @@ func postJSON(t *testing.T, h http.Handler, body string) *httptest.ResponseRecor
 func startApp(t *testing.T, configure func(*gas.Config)) *gas.App {
 	t.Helper()
 
-	app := gas.NewApp()
-	configure(app.Config())
+	cfg := gas.DefaultConfig()
+	configure(cfg)
+
+	app := gas.NewApp(gas.WithBaseConfig(*cfg))
 	app.Router().Handle(nil, http.MethodPost, "/bind", bindHandler)
 
 	err := app.Start(context.Background())

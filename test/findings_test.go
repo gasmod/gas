@@ -295,9 +295,11 @@ func TestFindings_StopCancelsRequestsBeforeClose(t *testing.T) {
 		return nil
 	}}
 
-	app := quietApp(gas.WithServiceInstance(dep))
+	cfg := gas.DefaultConfig()
 
-	app.Config().Server.ShutdownTimeout = 100 * time.Millisecond
+	cfg.Server.ShutdownTimeout = 100 * time.Millisecond
+
+	app := quietApp(gas.WithServiceInstance(dep), gas.WithBaseConfig(*cfg))
 
 	entered := make(chan struct{})
 

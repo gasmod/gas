@@ -288,10 +288,138 @@ func TestApp_ConfigInjected(t *testing.T) {
 	require.NoError(t, app.Start(t.Context()))
 	t.Cleanup(func() { _ = app.Stop(context.WithoutCancel(t.Context())) })
 
-	require.Same(t, app.Config(), got)
+	require.Equal(t, app.Config(), *got)
 	assert.Equal(t, gas.EnvStaging, got.Env)
 	assert.Equal(t, 9090, got.Server.Port)
 	assert.Equal(t, gas.DefaultHost, got.Server.Host)
+}
+
+// Config returns a copy: changing it changes the App's Config neither
+// before Start nor after.
+func TestApp_ConfigReturnsCopy(t *testing.T) {
+	t.Parallel()
+
+	app := quietApp()
+
+	before := app.Config()
+
+	before.Server.Port = 1
+
+	require.Equal(t, gas.DefaultPort, app.Config().Server.Port)
+	require.NoError(t, app.Start(t.Context()))
+	t.Cleanup(func() { _ = app.Stop(context.WithoutCancel(t.Context())) })
+
+	after := app.Config()
+
+	after.Server.Host = "example.com"
+
+	assert.Equal(t, gas.DefaultHost, app.Config().Server.Host)
+	assert.Equal(t, gas.DefaultPort, app.Config().Server.Port)
+}
+
+// WithBaseConfig sets the Config Start binds over: its values reach the
+// bound Config, and the ConfigProvider's override them.
+func TestApp_WithBaseConfig(t *testing.T) {
+	t.Parallel()
+
+	base := gas.DefaultConfig()
+
+	base.Server.Host = "127.0.0.1"
+	base.Server.Port = 1234
+	base.Server.ShutdownTimeout = 3 * time.Second
+
+	app := quietApp(
+		gas.WithBaseConfig(*base),
+		gas.WithServiceInstance[gas.ConfigProvider](&mapConfig{values: map[string]any{
+			"server": map[string]any{"port": 9090},
+		}}),
+	)
+
+	require.Equal(t, *base, app.Config())
+	require.NoError(t, app.Start(t.Context()))
+	t.Cleanup(func() { _ = app.Stop(context.WithoutCancel(t.Context())) })
+
+	got := app.Config()
+	assert.Equal(t, "127.0.0.1", got.Server.Host)
+	assert.Equal(t, 9090, got.Server.Port)
+	assert.Equal(t, 3*time.Second, got.Server.ShutdownTimeout)
+	assert.Equal(t, 1234, base.Server.Port, "Start changed the caller's base config")
+}
+
+// Start validates the base config even without a ConfigProvider.
+func TestApp_WithBaseConfigValidated(t *testing.T) {
+	t.Parallel()
+
+	base := gas.DefaultConfig()
+
+	base.Server.Port = -1
+
+	err := quietApp(gas.WithBaseConfig(*base)).Start(t.Context())
+	require.EqualError(
+		t,
+		err,
+		"building *gas.Config: gas: invalid config: server.port must be 0 to 65535",
+	)
+}
+
+// gatedConfig is a ConfigProvider whose Bind closes binding and waits for
+// read before it binds, so a test can read the Config while Start binds.
+type gatedConfig struct {
+	mapConfig
+
+	binding chan struct{}
+	read    chan struct{}
+}
+
+// Bind closes p.binding, waits for p.read, then binds like mapConfig.
+func (p *gatedConfig) Bind(dest any) error {
+	close(p.binding)
+	<-p.read
+
+	return p.mapConfig.Bind(dest)
+}
+
+// Config may be called while Start binds the Config; under -race the
+// reads and the bind must not race.
+func TestApp_ConfigDuringStart(t *testing.T) {
+	t.Parallel()
+
+	p := &gatedConfig{
+		values:  map[string]any{"server": map[string]any{"port": 9090}},
+		binding: make(chan struct{}),
+		read:    make(chan struct{}),
+	}
+	app := quietApp(gas.WithServiceInstance[gas.ConfigProvider](p))
+
+	done := make(chan struct{})
+
+	var wg sync.WaitGroup
+
+	for range 4 {
+		wg.Go(func() {
+			<-p.binding
+
+			for {
+				_ = app.Config()
+
+				select {
+				case p.read <- struct{}{}:
+				case <-done:
+					return
+				default:
+				}
+			}
+		})
+	}
+
+	err := app.Start(t.Context())
+
+	close(done)
+	wg.Wait()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = app.Stop(context.WithoutCancel(t.Context())) })
+
+	assert.Equal(t, 9090, app.Config().Server.Port)
 }
 
 // A ConfigProvider whose Bind fails Start with ErrInvalidConfig.
@@ -454,12 +582,15 @@ func TestApp_StopGraceExpires(t *testing.T) {
 
 	buf := &lockedBuffer{}
 	dep := &fakeService{name: "dep"}
+	cfg := gas.DefaultConfig()
+
+	cfg.Server.ShutdownTimeout = 20 * time.Millisecond
+
 	app := gas.NewApp(
 		gas.WithServiceInstance[gas.Logger](newJSONLogger(buf)),
 		gas.WithServiceInstance(dep),
+		gas.WithBaseConfig(*cfg),
 	)
-
-	app.Config().Server.ShutdownTimeout = 20 * time.Millisecond
 
 	entered := make(chan struct{})
 	release := make(chan struct{})

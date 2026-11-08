@@ -146,12 +146,14 @@ func TestServer_AppConfigUpdatedRunsAfterTheBoundConfig(t *testing.T) {
 func TestHandler_DoesNotBuildTheServer(t *testing.T) {
 	t.Parallel()
 
-	app := gas.NewApp()
+	cfg := gas.DefaultConfig()
+
+	cfg.Server.ReadTimeout = 7 * time.Second
+
+	app := gas.NewApp(gas.WithBaseConfig(*cfg))
 	if app.Handler() == nil {
 		t.Fatal("Handler() = nil")
 	}
-
-	app.Config().Server.ReadTimeout = 7 * time.Second
 
 	err := app.Start(context.Background())
 	if err != nil {
@@ -189,10 +191,12 @@ func TestServer_SecondStartLeavesALiveServerAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	app := gas.NewApp()
+	cfg := gas.DefaultConfig()
 
-	app.Config().Server.Host = "127.0.0.1"
-	app.Config().Server.Port = port
+	cfg.Server.Host = "127.0.0.1"
+	cfg.Server.Port = port
+
+	app := gas.NewApp(gas.WithBaseConfig(*cfg))
 
 	err = app.Start(context.Background())
 	if err != nil {
@@ -236,7 +240,6 @@ func TestServer_SecondStartLeavesALiveServerAlone(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	app.Config().Server.ReadTimeout = 9 * time.Second
 	_ = app.Start(context.Background())
 
 	get()
@@ -280,8 +283,10 @@ func TestServer_ReadHeaderTimeout(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			app := gas.NewApp()
-			tt.configure(app.Config())
+			cfg := gas.DefaultConfig()
+			tt.configure(cfg)
+
+			app := gas.NewApp(gas.WithBaseConfig(*cfg))
 
 			err := app.Start(context.Background())
 			if err != nil {

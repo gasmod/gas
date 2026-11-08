@@ -318,9 +318,11 @@ func TestDoc_Errors(t *testing.T) {
 			release := make(chan struct{})
 			defer close(release)
 
-			app := quietApp()
+			cfg := gas.DefaultConfig()
 
-			app.Config().Server.ShutdownTimeout = 20 * time.Millisecond
+			cfg.Server.ShutdownTimeout = 20 * time.Millisecond
+
+			app := quietApp(gas.WithBaseConfig(*cfg))
 			app.EventBus().Subscribe[gas.SystemServerShuttingDown](
 				func(gas.SystemServerShuttingDownPayload) {
 					<-release
@@ -540,9 +542,11 @@ func expired(t *testing.T) context.Context {
 func stopWithHangingRequest(t *testing.T) error {
 	t.Helper()
 
-	app := quietApp()
+	cfg := gas.DefaultConfig()
 
-	app.Config().Server.ShutdownTimeout = 50 * time.Millisecond
+	cfg.Server.ShutdownTimeout = 50 * time.Millisecond
+
+	app := quietApp(gas.WithBaseConfig(*cfg))
 
 	entered := make(chan struct{})
 

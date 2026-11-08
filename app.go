@@ -35,7 +35,8 @@ type App struct {
 	handler http.Handler
 	// router is the App's router, registered in the container.
 	router *Router
-	// cfg is the App's configuration, bound and validated by Start.
+	// cfg is the App's configuration: the base config until Start binds
+	// and validates a copy of it, then the bound one.
 	cfg *Config
 	// csrfProtection guards the router against cross-origin requests.
 	csrfProtection *http.CrossOriginProtection
@@ -56,6 +57,8 @@ type App struct {
 	handlerOnce sync.Once
 	// srvMu guards srv, srvCopied and srvSettled.
 	srvMu sync.Mutex
+	// cfgMu guards cfg.
+	cfgMu sync.Mutex
 	// srvSettled is set once the server's fields are final: the bound
 	// config was applied to it, or Serve has begun and net/http reads
 	// them.
@@ -121,6 +124,15 @@ func WithCSRFInsecureBypassPattern(pattern string) AppOption {
 // CodeForbidden in the unified error shape.
 func WithCSRFDenyHandler(h http.Handler) AppOption {
 	return func(a *App) { a.csrfProtection.SetDenyHandler(h) }
+}
+
+// WithBaseConfig sets the Config that Start binds the ConfigProvider's
+// values over and validates, in place of DefaultConfig. Start validates
+// it even when no ConfigProvider is registered.
+//
+// Default: DefaultConfig().
+func WithBaseConfig(cfg Config) AppOption {
+	return func(a *App) { a.cfg = &cfg }
 }
 
 // WithAllowedEnvironments sets the environments Start accepts in
@@ -190,10 +202,16 @@ func NewApp(opts ...Option) *App {
 	return a
 }
 
-// Config returns the App's Config. Start binds and validates it, and
-// nothing changes it after; change it only before Start, from one
-// goroutine.
-func (a *App) Config() *Config { return a.cfg }
+// Config returns a copy of the App's Config: before Start, the base
+// config (WithBaseConfig); once Start has bound and validated it, the
+// bound one. Changing the copy does not change the App. It is safe to
+// call concurrently with Start.
+func (a *App) Config() Config {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
+
+	return *a.cfg
+}
 
 // Router returns the App's router.
 func (a *App) Router() *Router { return a.router }
@@ -210,7 +228,8 @@ func (a *App) Server() *http.Server {
 		a.srvMu.Lock()
 		defer a.srvMu.Unlock()
 
-		f := serverFieldsOf(&a.cfg.Server)
+		cfg := a.Config()
+		f := serverFieldsOf(&cfg.Server)
 
 		a.srv = &http.Server{
 			Addr:              f.addr,
@@ -274,7 +293,7 @@ func (a *App) Serve() error {
 	a.srvMu.Unlock()
 
 	a.getLogger().Info("server started").
-		Str("environment", a.cfg.Env.String()).
+		Str("environment", a.Config().Env.String()).
 		Str("addr", srv.Addr).
 		Send()
 
@@ -296,7 +315,7 @@ func (a *App) Stop(ctx context.Context) error {
 	a.mu.Lock()
 
 	started := a.state == lifeStarted
-	timeout := a.cfg.Server.ShutdownTimeout
+	timeout := a.Config().Server.ShutdownTimeout
 	a.mu.Unlock()
 
 	if !started {
@@ -357,7 +376,7 @@ func (a *App) Run() error {
 		return err
 	}
 
-	a.logRouteMap(a.cfg.Env.IsDevelopment())
+	a.logRouteMap(a.Config().Env.IsDevelopment())
 
 	srvErr := make(chan error, 1)
 
@@ -411,24 +430,32 @@ func (a *App) registerConfig() error {
 	return nil
 }
 
-// bindConfig binds the Config from p, when there is one, and validates it.
+// bindConfig binds a copy of the base Config from p, when there is one,
+// validates it, and makes it the App's Config.
 func (a *App) bindConfig(p ConfigProvider) (*Config, error) {
+	cfg := a.Config()
+
 	if p != nil {
-		err := p.Bind(a.cfg)
+		err := p.Bind(&cfg)
 		if err != nil {
 			return nil, fmt.Errorf("%w: bind: %w", ErrInvalidConfig, err)
 		}
 	}
 
-	err := a.cfg.validate(a.allowedEnvs)
+	err := cfg.validate(a.allowedEnvs)
 	if err != nil {
 		return nil, err
 	}
 
-	a.router.maxJSONBody.Store(a.cfg.Server.MaxJSONBodyBytes)
-	a.router.maxFormBody.Store(a.cfg.Server.MaxFormBodyBytes)
+	a.router.maxJSONBody.Store(cfg.Server.MaxJSONBodyBytes)
+	a.router.maxFormBody.Store(cfg.Server.MaxFormBodyBytes)
 
-	return a.cfg, nil
+	a.cfgMu.Lock()
+
+	a.cfg = &cfg
+	a.cfgMu.Unlock()
+
+	return &cfg, nil
 }
 
 // afterBuild seals the router, checks that every DI-aware handler's
@@ -455,7 +482,7 @@ func (a *App) afterBuild() error {
 	// Before the event, so a subscriber that sets a server field wins.
 	a.applyBoundServer()
 
-	a.eventBus.Emit[AppConfigUpdated](AppConfigUpdatedPayload{Config: *a.cfg}).Wait()
+	a.eventBus.Emit[AppConfigUpdated](AppConfigUpdatedPayload{Config: a.Config()}).Wait()
 
 	return nil
 }
@@ -473,7 +500,8 @@ func (a *App) applyBoundServer() {
 
 	a.srvSettled = true
 
-	bound, was := serverFieldsOf(&a.cfg.Server), a.srvCopied
+	cfg := a.Config()
+	bound, was := serverFieldsOf(&cfg.Server), a.srvCopied
 
 	if a.srv.Addr == was.addr {
 		a.srv.Addr = bound.addr

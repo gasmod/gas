@@ -39,10 +39,12 @@ func TestApp_Run_ServeErrorStopsApp(t *testing.T) {
 	defer func() { _ = ln.Close() }()
 
 	svc := &runCloser{}
-	app := gas.NewApp(gas.WithServiceInstance[*runCloser](svc))
+	cfg := gas.DefaultConfig()
 
-	app.Config().Server.Host = "127.0.0.1"
-	app.Config().Server.Port = ln.Addr().(*net.TCPAddr).Port
+	cfg.Server.Host = "127.0.0.1"
+	cfg.Server.Port = ln.Addr().(*net.TCPAddr).Port
+
+	app := gas.NewApp(gas.WithServiceInstance[*runCloser](svc), gas.WithBaseConfig(*cfg))
 
 	err = app.Run()
 	if err == nil {
@@ -86,11 +88,13 @@ func servingApp(t *testing.T, timeout time.Duration, stuck bool, opts ...gas.Opt
 		t.Fatal(err)
 	}
 
-	app := gas.NewApp(opts...)
+	cfg := gas.DefaultConfig()
 
-	app.Config().Server.Host = "127.0.0.1"
-	app.Config().Server.Port = port
-	app.Config().Server.ShutdownTimeout = timeout
+	cfg.Server.Host = "127.0.0.1"
+	cfg.Server.Port = port
+	cfg.Server.ShutdownTimeout = timeout
+
+	app := gas.NewApp(append([]gas.Option{gas.WithBaseConfig(*cfg)}, opts...)...)
 
 	entered := make(chan struct{})
 	release := make(chan struct{})
