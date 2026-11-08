@@ -28,8 +28,8 @@
 //	}
 //
 // A GET of `/hello/gas` then answers 200 with the body `hello, gas`, and a
-// GET of `/nope` answers 404 with the body
-// `{"error":{"status":404,"code":"not_found","message":"not found"}}`.
+// GET of `/nope` answers 404 with the RFC 9457 problem details
+// `{"title":"Not Found","status":404,"detail":"not found","code":"not_found"}`.
 //
 // # Lifecycle
 //
@@ -210,11 +210,19 @@
 // Deps...) error whose dependencies are resolved from the request's Scope
 // on each call; another shape panics with [ErrInvalidHandler]. An error a
 // DI-aware handler returns goes to the [ErrorHandler], which by default
-// logs it and writes it with [WriteError]: an [*Error] as its status,
-// code, message, fields and details, and anything else as a 500 with code
-// [CodeInternal]. A cause never reaches the client. The error is JSON
-// unless the client asks for text/html without application/json
-// ([WantsJSON]). A status outside 100 to 599 is written as 500.
+// logs it and writes it with [WriteError]: an [*Error] as a [Problem],
+// and anything else as a 500 with code [CodeInternal]. A cause never
+// reaches the client. The response is an RFC 9457 problem details object,
+// [ProblemContentType], unless the client asks for text/html without
+// application/json or application/problem+json, which gets the message as
+// plain text ([WantsJSON]). The problem's title is the HTTP status phrase,
+// its detail the message, and its extension members the code, the field
+// errors as `errors`, each with an RFC 6901 `pointer` to its field, and
+// the [Error.WithDetail] values as `details`. Its type is the error's code
+// under the base [Router.SetProblemTypeBase] or [WithProblemTypeBase]
+// sets, such as `https://api.example.com/problems/not_found`, and is left
+// out, meaning `about:blank`, without one. A status outside 100 to 599 is
+// written as 500.
 //
 // The Router recovers a panic anywhere in its middleware and handlers. It
 // logs the panic with its stack, through the request's logger, the one

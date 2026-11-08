@@ -142,6 +142,9 @@ type Router struct {
 	// errorHandler is the top-level router's ErrorHandler.
 	errorHandler atomic.Pointer[ErrorHandler]
 
+	// problemBase is the top-level router's problem type base, or "".
+	problemBase atomic.Pointer[string]
+
 	// logger returns the logger for a panic the router recovers outside a
 	// request scope, or is nil. App sets it.
 	logger func() Logger
@@ -291,6 +294,26 @@ func (r *Router) SetErrorHandler(h ErrorHandler) {
 	}
 
 	r.root.errorHandler.Store(&h)
+}
+
+// SetProblemTypeBase sets the base URL of the problem types of the error
+// responses written while the router serves a request: a Problem's type
+// is base joined with the error's code, such as
+// `https://api.example.com/problems/not_found`. An empty base, the
+// default, leaves the type out, which means `about:blank`. A base that is
+// not an absolute URL with a host, or that has a query or a fragment,
+// returns an error wrapping ErrInvalidProblemTypeBase and changes nothing.
+func (r *Router) SetProblemTypeBase(base string) error {
+	if base != "" {
+		err := checkProblemTypeBase(base)
+		if err != nil {
+			return err
+		}
+	}
+
+	r.root.problemBase.Store(&base)
+
+	return nil
 }
 
 // Register adds named middleware to the registry, owned by service, or by
@@ -726,6 +749,8 @@ func methodNotAllowed(m chi.Router) http.HandlerFunc {
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	tw := &responseTracker{ResponseWriter: w}
 
+	req = withProblemTypeBase(req, r.getProblemTypeBase())
+
 	//nolint:contextcheck // the Context is built from the request's own context
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -1131,6 +1156,15 @@ func (r *Router) buildMiddleware(m Middleware) (func(http.Handler) http.Handler,
 	}
 
 	return nil, fmt.Errorf("%w %q", ErrUnknownMiddleware, m.name)
+}
+
+// getProblemTypeBase returns the top-level router's problem type base.
+func (r *Router) getProblemTypeBase() string {
+	if base := r.root.problemBase.Load(); base != nil {
+		return *base
+	}
+
+	return ""
 }
 
 // getErrorHandler returns the top-level router's ErrorHandler.

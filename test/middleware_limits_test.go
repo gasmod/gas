@@ -90,7 +90,8 @@ func TestBodyLimit(t *testing.T) {
 	t.Parallel()
 
 	h := limitedApp(t, gas.BodyLimit(16)).Handler()
-	tooLarge := `{"error":{"status":413,"code":"payload_too_large","message":"request body is too large"}}`
+	tooLarge := `{"title":"Request Entity Too Large","status":413,` +
+		`"detail":"request body is too large","code":"payload_too_large"}`
 
 	rr := post(h, "/json", "application/json", `{"a":"0123456789abcdef"}`, false)
 	assert.Equal(t, http.StatusRequestEntityTooLarge, rr.Code)
@@ -145,9 +146,11 @@ func TestTimeout(t *testing.T) {
 
 	rr := serve(app.Handler(), http.MethodGet, "/slow", nil)
 	assert.Equal(t, http.StatusServiceUnavailable, rr.Code)
-	assert.JSONEq(t,
-		`{"error":{"status":503,"code":"request_timeout","message":"request timed out"}}`,
-		rr.Body.String())
+	assert.JSONEq(
+		t,
+		`{"title":"Service Unavailable","status":503,"detail":"request timed out","code":"request_timeout"}`,
+		rr.Body.String(),
+	)
 	require.ErrorIs(t, <-wrote, http.ErrHandlerTimeout)
 
 	rr = serve(app.Handler(), http.MethodGet, "/fast", nil)

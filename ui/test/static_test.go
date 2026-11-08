@@ -290,7 +290,7 @@ func TestStatic_RouterMethodNotAllowed(t *testing.T) {
 		assert.Equal(t, http.StatusMethodNotAllowed, w.Code, m)
 		assert.JSONEq(
 			t,
-			`{"error":{"status":405,"code":"method_not_allowed","message":"method not allowed"}}`,
+			`{"title":"Method Not Allowed","status":405,"detail":"method not allowed","code":"method_not_allowed"}`,
 			w.Body.String(),
 			m,
 		)

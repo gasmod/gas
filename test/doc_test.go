@@ -51,7 +51,7 @@ func TestDoc_Usage(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rr.Code)
 	assert.JSONEq(
 		t,
-		`{"error":{"status":404,"code":"not_found","message":"not found"}}`,
+		`{"title":"Not Found","status":404,"detail":"not found","code":"not_found"}`,
 		rr.Body.String(),
 	)
 }

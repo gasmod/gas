@@ -33,7 +33,8 @@ func newValidator() *validator.Validate {
 }
 
 // validationFieldErrors converts a validator.ValidationErrors into the unified
-// FieldError slice. It reports false when err is not a validation error.
+// FieldError slice, each pointing at its field by its full path. It
+// reports false when err is not a validation error.
 func validationFieldErrors(err error) ([]FieldError, bool) {
 	var ve validator.ValidationErrors
 
@@ -44,13 +45,44 @@ func validationFieldErrors(err error) ([]FieldError, bool) {
 	fields := make([]FieldError, 0, len(ve))
 	for _, fe := range ve {
 		fields = append(fields, FieldError{
-			Field:   fe.Field(),
-			Rule:    fe.Tag(),
 			Message: validationMessage(fe.Tag(), fe.Param()),
+			Pointer: fieldPointer(fe.Namespace()),
+			Rule:    fe.Tag(),
 		})
 	}
 
 	return fields, true
+}
+
+// fieldPointer returns the JSON pointer of the field at namespace, a
+// validator namespace of client names such as `Req.items[0].name`: below
+// the root struct, each name and each index or map key is a reference
+// token.
+func fieldPointer(namespace string) string {
+	_, path, ok := strings.Cut(namespace, ".")
+	if !ok {
+		path = namespace
+	}
+
+	var b strings.Builder
+
+	b.WriteString("#")
+
+	for part := range strings.SplitSeq(path, ".") {
+		name, keys, _ := strings.Cut(part, "[")
+
+		b.WriteString("/" + escapePointer(name))
+
+		for keys != "" {
+			key, rest, _ := strings.Cut(keys, "]")
+
+			b.WriteString("/" + escapePointer(key))
+
+			keys = strings.TrimPrefix(rest, "[")
+		}
+	}
+
+	return b.String()
 }
 
 // validationMessage renders a human-readable message for a failed validation

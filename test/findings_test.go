@@ -450,9 +450,11 @@ func TestFindings_MiddlewarePanicRecovered(t *testing.T) {
 
 	rr := serve(app.Handler(), http.MethodGet, "/x", nil)
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
-	assert.JSONEq(t,
-		`{"error":{"status":500,"code":"internal_error","message":"internal server error"}}`,
-		rr.Body.String())
+	assert.JSONEq(
+		t,
+		`{"title":"Internal Server Error","status":500,"detail":"internal server error","code":"internal_error"}`,
+		rr.Body.String(),
+	)
 }
 
 // P14: an error or a panic after the handler wrote appended an error body
@@ -509,22 +511,26 @@ func TestFindings_ErrorShapes(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rr.Code)
 	assert.JSONEq(
 		t,
-		`{"error":{"status":404,"code":"not_found","message":"not found"}}`,
+		`{"title":"Not Found","status":404,"detail":"not found","code":"not_found"}`,
 		rr.Body.String(),
 	)
 
 	rr = serve(h, http.MethodGet, "/only-post", nil)
 	assert.Equal(t, http.StatusMethodNotAllowed, rr.Code)
 	assert.Equal(t, []string{http.MethodPost, http.MethodPut}, rr.Header().Values("Allow"))
-	assert.JSONEq(t,
-		`{"error":{"status":405,"code":"method_not_allowed","message":"method not allowed"}}`,
-		rr.Body.String())
+	assert.JSONEq(
+		t,
+		`{"title":"Method Not Allowed","status":405,"detail":"method not allowed","code":"method_not_allowed"}`,
+		rr.Body.String(),
+	)
 
 	rr = serve(h, http.MethodPost, "/only-post", http.Header{"Sec-Fetch-Site": {"cross-site"}})
 	assert.Equal(t, http.StatusForbidden, rr.Code)
-	assert.JSONEq(t,
-		`{"error":{"status":403,"code":"forbidden","message":"cross-origin request denied"}}`,
-		rr.Body.String())
+	assert.JSONEq(
+		t,
+		`{"title":"Forbidden","status":403,"detail":"cross-origin request denied","code":"forbidden"}`,
+		rr.Body.String(),
+	)
 }
 
 // P15: a cause never reaches the client.
@@ -935,7 +941,7 @@ func TestFindings_KI058FieldNames(t *testing.T) {
 	app.Handler().ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusUnprocessableEntity, rr.Code)
-	assert.Contains(t, rr.Body.String(), `"field":"a_json"`)
-	assert.Contains(t, rr.Body.String(), `"field":"b_form"`)
-	assert.Contains(t, rr.Body.String(), `"field":"C"`)
+	assert.Contains(t, rr.Body.String(), `"pointer":"#/a_json"`)
+	assert.Contains(t, rr.Body.String(), `"pointer":"#/b_form"`)
+	assert.Contains(t, rr.Body.String(), `"pointer":"#/C"`)
 }

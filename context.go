@@ -45,9 +45,9 @@ type Context interface { //nolint:interfacebloat // the whole request API of a h
 	// plain text the same way the default ErrorHandler does. Values that are
 	// not, and do not wrap, an *Error render as a canonical 500.
 	WriteError(err error) error
-	// WriteErrorJSON writes the JSON error envelope regardless of the Accept
-	// header. Use it for JSON API routes in an app whose ErrorHandler renders
-	// HTML.
+	// WriteErrorJSON writes err as a Problem regardless of the Accept
+	// header. Use it for JSON API routes in an app whose ErrorHandler
+	// renders HTML.
 	WriteErrorJSON(err error) error
 
 	// Redirect sends an HTTP redirect to the given URL with the given status code.
@@ -236,11 +236,11 @@ func (c *reqContext) WriteError(err error) error {
 	return WriteError(c.w, c.r, err)
 }
 
-// WriteErrorJSON writes the JSON error envelope regardless of the Accept
-// header, so a route can serve JSON errors under an ErrorHandler that
-// otherwise renders HTML.
+// WriteErrorJSON writes err as a Problem regardless of the Accept header,
+// so a route can serve JSON errors under an ErrorHandler that otherwise
+// renders HTML.
 func (c *reqContext) WriteErrorJSON(err error) error {
-	return writeErrorResponse(c.w, coerceError(err), true)
+	return writeErrorResponse(c.w, coerceError(err), true, problemTypeBase(c.r.Context()))
 }
 
 func (c *reqContext) Redirect(status int, url string) {

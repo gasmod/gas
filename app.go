@@ -126,6 +126,19 @@ func WithCSRFDenyHandler(h http.Handler) AppOption {
 	return func(a *App) { a.csrfProtection.SetDenyHandler(h) }
 }
 
+// WithProblemTypeBase sets the base URL of the problem types of the App's
+// error responses, as Router.SetProblemTypeBase does. A base it refuses
+// makes Start fail with an error wrapping ErrInvalidOption and
+// ErrInvalidProblemTypeBase.
+func WithProblemTypeBase(base string) AppOption {
+	return func(a *App) {
+		err := a.router.SetProblemTypeBase(base)
+		if err != nil {
+			a.recordOptionError(fmt.Errorf("%w: WithProblemTypeBase: %w", ErrInvalidOption, err))
+		}
+	}
+}
+
 // WithBaseConfig sets the Config that Start binds the ConfigProvider's
 // values over and validates, in place of DefaultConfig. Start validates
 // it even when no ConfigProvider is registered.
@@ -259,7 +272,9 @@ func (a *App) Handler() http.Handler {
 			a.inflight.Add(1)
 			defer a.inflight.Add(-1)
 
-			protected.ServeHTTP(w, r)
+			// The base reaches the errors written before the router, such
+			// as a cross-origin denial.
+			protected.ServeHTTP(w, withProblemTypeBase(r, a.router.getProblemTypeBase()))
 		})
 	})
 

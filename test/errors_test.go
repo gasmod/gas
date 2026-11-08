@@ -166,7 +166,7 @@ func TestError_Builders(t *testing.T) {
 		t.Fatalf("len(Fields) = %d, want 2", len(err.Fields))
 	}
 
-	if err.Fields[0].Field != "email" || err.Fields[1].Rule != "min" {
+	if err.Fields[0].Pointer != "#/email" || err.Fields[1].Rule != "min" {
 		t.Fatalf("fields did not accumulate in order: %+v", err.Fields)
 	}
 
@@ -181,10 +181,18 @@ func TestError_CauseIsNeverSerialized(t *testing.T) {
 	err := gas.Internal("internal server error").
 		WithCause(errPqPasswordAuthenticationFailed)
 
-	buf, marshalErr := json.Marshal(err)
-	if marshalErr != nil {
-		t.Fatal(marshalErr)
+	rr := httptest.NewRecorder()
+
+	writeErr := gas.WriteError(
+		rr,
+		httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil),
+		err,
+	)
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
+
+	buf := rr.Body.Bytes()
 
 	if strings.Contains(string(buf), "password authentication failed") {
 		t.Fatalf("cause leaked into JSON: %s", buf)
@@ -277,27 +285,27 @@ func TestWriteError_JSONEnvelope(t *testing.T) {
 		t.Fatalf("status = %d, want 422", rr.Code)
 	}
 
-	if ct := rr.Header().Get("Content-Type"); ct != "application/json" {
+	if ct := rr.Header().Get("Content-Type"); ct != gas.ProblemContentType {
 		t.Fatalf("Content-Type = %q", ct)
 	}
 
-	var got gas.ErrorResponse
+	var got gas.Problem
 
 	decErr := json.NewDecoder(rr.Body).Decode(&got)
 	if decErr != nil {
 		t.Fatal(decErr)
 	}
 
-	if got.Error == nil {
-		t.Fatal("envelope has no error member")
+	if got.Title != "Unprocessable Entity" || got.Status != http.StatusUnprocessableEntity {
+		t.Fatalf("title, status = %q, %d", got.Title, got.Status)
 	}
 
-	if got.Error.Code != gas.CodeValidationFailed {
-		t.Fatalf("code = %q", got.Error.Code)
+	if got.Code != gas.CodeValidationFailed {
+		t.Fatalf("code = %q", got.Code)
 	}
 
-	if len(got.Error.Fields) != 1 || got.Error.Fields[0].Field != "email" {
-		t.Fatalf("fields = %+v", got.Error.Fields)
+	if len(got.Errors) != 1 || got.Errors[0].Pointer != "#/email" {
+		t.Fatalf("fields = %+v", got.Errors)
 	}
 }
 
@@ -345,15 +353,15 @@ func TestWriteError_CollapsesUnknownErrors(t *testing.T) {
 		t.Fatalf("internal error leaked: %q", rr.Body.String())
 	}
 
-	var got gas.ErrorResponse
+	var got gas.Problem
 
 	decErr := json.NewDecoder(rr.Body).Decode(&got)
 	if decErr != nil {
 		t.Fatal(decErr)
 	}
 
-	if got.Error.Code != gas.CodeInternal {
-		t.Fatalf("code = %q, want %q", got.Error.Code, gas.CodeInternal)
+	if got.Code != gas.CodeInternal {
+		t.Fatalf("code = %q, want %q", got.Code, gas.CodeInternal)
 	}
 }
 
@@ -401,15 +409,15 @@ func TestWriteError_CoercesInvalidStatus(t *testing.T) {
 				t.Fatalf("status = %d, want %d", rr.Code, tt.want)
 			}
 
-			var got gas.ErrorResponse
+			var got gas.Problem
 
 			decErr := json.NewDecoder(rr.Body).Decode(&got)
 			if decErr != nil {
 				t.Fatal(decErr)
 			}
 
-			if got.Error.Status != tt.want {
-				t.Fatalf("body status = %d, want %d", got.Error.Status, tt.want)
+			if got.Status != tt.want {
+				t.Fatalf("body status = %d, want %d", got.Status, tt.want)
 			}
 		})
 	}
@@ -464,15 +472,15 @@ func TestDefaultErrorHandler_RendersGasError(t *testing.T) {
 		t.Fatalf("cause leaked to client: %q", rr.Body.String())
 	}
 
-	var got gas.ErrorResponse
+	var got gas.Problem
 
 	err = json.NewDecoder(rr.Body).Decode(&got)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if got.Error.Code != gas.CodeNotFound || got.Error.Message != "user not found" {
-		t.Fatalf("body = %+v", got.Error)
+	if got.Code != gas.CodeNotFound || got.Detail != "user not found" {
+		t.Fatalf("body = %+v", got)
 	}
 }
 
@@ -502,15 +510,15 @@ func TestDefaultErrorHandler_CollapsesPanic(t *testing.T) {
 		t.Fatalf("panic value leaked to client: %q", rr.Body.String())
 	}
 
-	var got gas.ErrorResponse
+	var got gas.Problem
 
 	err = json.NewDecoder(rr.Body).Decode(&got)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if got.Error.Code != gas.CodeInternal {
-		t.Fatalf("code = %q, want %q", got.Error.Code, gas.CodeInternal)
+	if got.Code != gas.CodeInternal {
+		t.Fatalf("code = %q, want %q", got.Code, gas.CodeInternal)
 	}
 }
 
@@ -545,15 +553,15 @@ func TestDefaultErrorHandler_CollapsesResolutionFailure(t *testing.T) {
 		t.Fatalf("resolution detail leaked to client: %q", rr.Body.String())
 	}
 
-	var got gas.ErrorResponse
+	var got gas.Problem
 
 	err = json.NewDecoder(rr.Body).Decode(&got)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if got.Error.Code != gas.CodeInternal {
-		t.Fatalf("code = %q, want %q", got.Error.Code, gas.CodeInternal)
+	if got.Code != gas.CodeInternal {
+		t.Fatalf("code = %q, want %q", got.Code, gas.CodeInternal)
 	}
 }
 
@@ -676,19 +684,19 @@ func TestContext_ErrorJSON_IgnoresAccept(t *testing.T) {
 		t.Fatalf("status = %d, want 409", rr.Code)
 	}
 
-	if ct := rr.Header().Get("Content-Type"); ct != "application/json" {
-		t.Fatalf("Content-Type = %q, want application/json", ct)
+	if ct := rr.Header().Get("Content-Type"); ct != gas.ProblemContentType {
+		t.Fatalf("Content-Type = %q, want %q", ct, gas.ProblemContentType)
 	}
 
-	var got gas.ErrorResponse
+	var got gas.Problem
 
 	err = json.NewDecoder(rr.Body).Decode(&got)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if got.Error.Code != gas.CodeConflict {
-		t.Fatalf("code = %q", got.Error.Code)
+	if got.Code != gas.CodeConflict {
+		t.Fatalf("code = %q", got.Code)
 	}
 }
 
@@ -755,7 +763,7 @@ func TestBindJSON_ProducesUnifiedError(t *testing.T) {
 
 		byField := map[string]gas.FieldError{}
 		for _, f := range e.Fields {
-			byField[f.Field] = f
+			byField[strings.TrimPrefix(f.Pointer, "#/")] = f
 		}
 
 		// json tag names, not Go field names Email/Age.
@@ -810,7 +818,8 @@ func TestBindForm_ProducesUnifiedError(t *testing.T) {
 		t.Fatalf("got %d/%q", e.Status, e.Code)
 	}
 
-	if len(e.Fields) != 1 || e.Fields[0].Field != "name" || e.Fields[0].Message != "is required" {
+	if len(e.Fields) != 1 || e.Fields[0].Pointer != "#/name" ||
+		e.Fields[0].Message != "is required" {
 		t.Fatalf("fields = %+v", e.Fields)
 	}
 }
@@ -839,7 +848,7 @@ func TestValidationMessages(t *testing.T) {
 
 	byField := map[string]gas.FieldError{}
 	for _, f := range e.Fields {
-		byField[f.Field] = f
+		byField[strings.TrimPrefix(f.Pointer, "#/")] = f
 	}
 
 	want := map[string]string{
@@ -889,15 +898,15 @@ func TestTornDownRoute_UsesUnifiedShape(t *testing.T) {
 			t.Fatalf("status = %d, want 503", rr.Code)
 		}
 
-		var got gas.ErrorResponse
+		var got gas.Problem
 
 		err := json.NewDecoder(rr.Body).Decode(&got)
 		if err != nil {
 			t.Fatalf("expected a JSON error envelope, got %q: %v", rr.Body.String(), err)
 		}
 
-		if got.Error.Code != gas.CodeUnavailable {
-			t.Fatalf("code = %q, want %q", got.Error.Code, gas.CodeUnavailable)
+		if got.Code != gas.CodeUnavailable {
+			t.Fatalf("code = %q, want %q", got.Code, gas.CodeUnavailable)
 		}
 	})
 
@@ -922,11 +931,13 @@ func TestTornDownRoute_UsesUnifiedShape(t *testing.T) {
 
 // FuzzWantsJSON checks that WantsJSON never panics, is deterministic, and
 // answers JSON exactly when the Accept header, lowercased, is empty, names
-// application/json, or does not name text/html.
+// application/json or application/problem+json, or does not name
+// text/html.
 func FuzzWantsJSON(f *testing.F) {
 	for _, seed := range []string{
 		"", "*/*", "text/html", "TEXT/HTML", "application/json", "text/html, application/json;q=0.1",
 		"text/html;q=0.9, */*", "image/png", "\x00text/html", "text/htm", "application/jsonx",
+		"text/html, application/problem+json",
 	} {
 		f.Add(seed)
 	}
@@ -940,7 +951,10 @@ func FuzzWantsJSON(f *testing.F) {
 
 		lower := strings.ToLower(req.Header.Get("Accept"))
 		want := lower == "" || strings.Contains(lower, "application/json") ||
-			!strings.Contains(lower, "text/html")
+			strings.Contains(
+				lower,
+				"application/problem+json",
+			) || !strings.Contains(lower, "text/html")
 		assert.Equal(t, want, got, accept)
 	})
 }

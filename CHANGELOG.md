@@ -121,6 +121,17 @@ the details.
   connections. A server shutdown error, which `Stop` used to log only, is
   returned as `gas: server shutdown: ...`, joined with the other shutdown
   errors; a clean `Stop` returns nil.
+- **BREAKING: error responses are RFC 9457 problem details.** A JSON
+  error is now `application/problem+json`:
+  `{"type","title","status","detail","code","errors","details"}` in place
+  of `{"error":{"status","code","message","fields","details"}}`. `title`
+  is the HTTP status phrase and `detail` the message. Field errors are
+  `errors` items of `detail`, an RFC 6901 `pointer` such as
+  `#/items/0/name`, and `rule`. `type` is the error's code under the base
+  that the new `WithProblemTypeBase` option or `Router.SetProblemTypeBase`
+  sets, and is left out (`about:blank`) without one. `Problem` replaces
+  `ErrorResponse` for decoding; `FieldError` has `Pointer` in place of
+  `Field`; `WantsJSON` also accepts `application/problem+json`.
 - **BREAKING: `Router.Use`, `Group` and `Route` take an owner.** `Use`,
   `UseMiddlewareFunc` and `UseMiddlewareByName` take the owning service
   first, as `Handle` and `Register` do, nil for the router. `Group` and

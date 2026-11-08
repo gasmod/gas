@@ -215,7 +215,7 @@ func TestService_ClosedRenderWritesOnce(t *testing.T) {
 	assert.NotContains(t, w.Body.String(), "unavailable")
 	assert.JSONEq(
 		t,
-		`{"error":{"status":500,"code":"internal_error","message":"internal server error"}}`,
+		`{"title":"Internal Server Error","status":500,"detail":"internal server error","code":"internal_error"}`,
 		w.Body.String(),
 	)
 }

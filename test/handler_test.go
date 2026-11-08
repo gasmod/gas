@@ -387,15 +387,15 @@ func TestDIHandler_ErrorHandling_Default(t *testing.T) {
 	// Read the body once: decoding drains the recorder's buffer.
 	raw := rr.Body.String()
 
-	var body gas.ErrorResponse
+	var body gas.Problem
 
 	err = json.Unmarshal([]byte(raw), &body)
 	if err != nil {
 		t.Fatalf("expected a JSON error envelope, got %q: %v", raw, err)
 	}
 
-	if body.Error.Code != gas.CodeInternal {
-		t.Fatalf("expected code %q, got %q", gas.CodeInternal, body.Error.Code)
+	if body.Code != gas.CodeInternal {
+		t.Fatalf("expected code %q, got %q", gas.CodeInternal, body.Code)
 	}
 
 	if strings.Contains(raw, "something went wrong") {
