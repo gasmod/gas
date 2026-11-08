@@ -33,12 +33,12 @@
 //   - `queue.region`: the AWS region. Default: none; the AWS SDK's
 //     default chain decides, as under Credentials.
 //   - `queue.endpoint`: the URL requests go to, `http` or `https`, with a
-//     host and nothing after it but `/` (no user information, path,
-//     query or fragment), such as an emulator's. Default:
-//     none, the region's SQS endpoint. An `http` endpoint sends every
-//     request in clear text, the session token and the payloads
-//     included; use it only for an emulator on a network of its own, such
-//     as `http://elasticmq:9324` in a compose file.
+//     host and nothing after it but `/` (no user information, path, query
+//     or fragment), such as an emulator's. Default: none, the region's
+//     SQS endpoint. An `http` endpoint sends every request in clear text,
+//     the access key ID, the session token and the payloads included; use
+//     it only for an emulator on a network of its own, such as
+//     `http://elasticmq:9324` in a compose file.
 //   - `queue.accesskeyid`, `queue.secretaccesskey`, `queue.sessiontoken`:
 //     static credentials, as under Credentials. The access key ID is not
 //     a secret, but it maps to the AWS account ID, and the store never
@@ -209,8 +209,8 @@
 // info level with `region`, whether an `endpoint` and a `client` were
 // given, `credentials`, where the client Init built takes them from,
 // `static` or `default chain`, left out with [WithClient], and
-// `op_timeout`, and only then do the methods use it. Init on
-// an initialized store returns queue.ErrAlreadyInitialized and changes
+// `op_timeout`, and only then do the methods use it. Init on an
+// initialized store returns queue.ErrAlreadyInitialized and changes
 // nothing. A failed Init leaves the store as it was.
 //
 // [Service.Close] makes the store closed, so that every later call
@@ -276,9 +276,11 @@
 // credentials in configuration are a secret of the app's; prefer a role,
 // which the default chain finds. An `http` endpoint sends the access key
 // ID, the session token and the payloads in clear text, as under
-// Configuration; the secret key only signs requests and is never sent. The client Init builds
-// reads no reply past 64 MiB, so an endpoint cannot make it read without
-// bound.
+// Configuration; the secret key only signs requests and is never sent.
+// The client Init builds reads no reply past 64 MiB, so an endpoint
+// cannot make it read without bound, and logs nothing: the AWS SDK's
+// default logger, which writes raw transport errors holding the
+// endpoint, is replaced with one that discards them.
 //
 // # Concurrency
 //

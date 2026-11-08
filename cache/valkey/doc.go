@@ -38,8 +38,7 @@
 //     the server's default user.
 //   - `cache.password`: the password to authenticate with, a [Secret],
 //     which fmt, encoding/json, YAML encoders and log/slog write as
-//     `[redacted]`. Default: none; no password is
-//     sent.
+//     `[redacted]`. Default: none; no password is sent.
 //   - `cache.db`: the database number to select, 0 or more; the server
 //     decides how many there are. Default: [DefaultDB], 0.
 //   - `cache.keyprefix`: prepended to every key the store's methods
@@ -103,14 +102,14 @@
 // valkey-go also bounds the handshake, HELLO and SELECT, and the PING,
 // each by `optimeout`, as it does every command, so with an `optimeout`
 // shorter than `dialtimeout` a server that accepts and never answers
-// fails the attempt after `optimeout`.
-// valkey-go dials without a context while it builds a client, so the
-// store gives it a dial function that cancels the dial, and closes a
-// connection it made, when the attempt's context ends before the attempt
-// does; an attempt never outlives Init's context. The connections
-// valkey-go dials after Init, when it reconnects, are bounded by
-// `dialtimeout`, their handshake by `optimeout` too, and both by the
-// context of the command that needed them.
+// fails the attempt after `optimeout`. valkey-go dials without a context
+// while it builds a client, so the store gives it a dial function that
+// cancels the dial, and closes a connection it made, when the attempt's
+// context ends before the attempt does; an attempt never outlives Init's
+// context. The connections valkey-go dials after Init, when it
+// reconnects, are bounded by `dialtimeout`, their handshake by
+// `optimeout` too, and both by the context of the command that needed
+// them.
 //
 // A failed attempt is retried up to `connretries` times. Before each
 // retry, Init logs `valkey connection failed, retrying` at warn level
@@ -197,9 +196,10 @@
 // database number, whether TLS is on, the retry `attempt`, `retries` and
 // `wait`, and fixed reasons. Server replies kept in errors hold no key,
 // as under Timeouts. fmt, encoding/json, YAML encoders and log/slog write
-// the password of a [Settings] or a [Config] as `[redacted]`. Without TLS, the password and every value
-// cross the network in plain text; turn TLS on for a server outside the
-// host or its private network.
+// the password of a [Settings] or a [Config] as `[redacted]`, and
+// encoding/gob fails on it rather than encode it. Without TLS, the
+// password and every value cross the network in plain text; turn TLS on
+// for a server outside the host or its private network.
 //
 // The store trusts the server's replies. A hostile server, or a
 // man-in-the-middle on a plain-text connection, can crash the process:
@@ -241,9 +241,10 @@
 // # Health
 //
 // [Service.CheckHealth] does no I/O: it fails only when the store is not
-// initialized, which a restart fixes, since valkey-go reconnects by
-// itself. [Service.CheckReady] sends PING within its context and
-// `optimeout`, with errors as a command's, after `ping: `.
+// initialized or its context has ended, since valkey-go reconnects by
+// itself after a network failure. [Service.CheckReady] sends PING within
+// its context and `optimeout`, with errors as a command's, after `ping:
+// `.
 //
 // # Client
 //
@@ -260,8 +261,8 @@
 // Close that runs at the same time as another returns only once the
 // client is closed and its goroutines have stopped. Init swaps in what it
 // connected at once, so the other methods, which take no lock, use one
-// Init's client throughout a call.
-// valkey-go pipelines concurrent commands on its connections.
+// Init's client throughout a call. valkey-go pipelines concurrent
+// commands on its connections.
 //
 // # Errors
 //

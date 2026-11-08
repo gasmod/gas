@@ -80,8 +80,9 @@
 //
 // [Service.Config] returns a copy of the configuration the last successful
 // Init resolved, defaults included, or the zero Config before one; a
-// failed Init and Close leave it as it was. Its `secretaccesskey` and
-// `sessiontoken` stay a [Secret], which prints as `[redacted]`.
+// failed Init and Close leave it as it was. Its `fromemail` is the
+// normalized address, and its `secretaccesskey` and `sessiontoken` stay
+// a [Secret], which prints as `[redacted]`.
 //
 // # Credentials
 //
@@ -122,10 +123,10 @@
 // The subject and each body that is not empty are sent with the `UTF-8`
 // character set; an empty body is left out. A subject that is not ASCII
 // is sent as RFC 2047 encoded words, base64 of its UTF-8, which the
-// sender encodes itself, so that SES sends it as it is. The headers are sent in the
-// sorted order of their names. No configuration set, tag, list
-// management option or attachment is sent. The message ID SES returns is
-// not kept: the interface returns only an error.
+// sender encodes itself, so that SES sends it as it is. The headers are
+// sent in the sorted order of their names. No configuration set, tag,
+// list management option or attachment is sent. The message ID SES
+// returns is not kept: the interface returns only an error.
 //
 // # Timeouts
 //
@@ -247,9 +248,10 @@
 // credentials in configuration are a secret of the app's; prefer a role,
 // which the default chain finds. An `http` endpoint sends the access key
 // ID, the session token and the messages in clear text, as under
-// Configuration. The client Init builds
-// reads no reply past 1 MiB, so an endpoint cannot make it read without
-// bound.
+// Configuration. The client Init builds reads no reply past 1 MiB, so an
+// endpoint cannot make it read without bound, and logs nothing: the AWS
+// SDK's default logger, which writes raw transport errors holding the
+// endpoint, is replaced with one that discards them.
 //
 // # Concurrency
 //

@@ -19,9 +19,12 @@ go get github.com/gasmod/gas/email
 gas.WithSingletonService[gas.EmailProvider](ses.New()),
 ```
 
-Both senders need `gas.TemplateProvider`, `gas.ConfigProvider` and `gas.Logger`, even if you only
-ever call `Send`, and read the `email` section; the SES sender takes its region and credentials
-from `email.region` and the static keys, or else from the AWS SDK's default chain.
+Both senders take `gas.TemplateProvider`, `gas.ConfigProvider` and `gas.Logger` from the
+container, and refuse a nil `gas.TemplateProvider` even if you only ever call `Send`. They read
+the `email` section, or take their configuration from `WithConfig`; the SES sender takes its
+region and credentials from `email.region` and the static keys, or else from the AWS SDK's
+default chain. Each sender's `Config()` returns the configuration its last successful `Init`
+resolved.
 
 | Package | Provides |
 |---|---|

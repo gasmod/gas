@@ -18,8 +18,9 @@ go get github.com/gasmod/gas/cache
 gas.WithSingletonService[gas.CacheProvider](cachemem.New()),
 ```
 
-Both stores need `gas.ConfigProvider` and `gas.Logger`, and read the `cache` section; the Valkey
-store requires `cache.addr`.
+Both stores take `gas.ConfigProvider` and `gas.Logger` from the container and read the `cache`
+section, or take their configuration from `WithConfig`; the Valkey store requires `cache.addr`.
+Each store's `Config()` returns the configuration its last successful `Init` resolved.
 
 | Package | Provides |
 |---|---|

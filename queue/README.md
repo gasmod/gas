@@ -19,9 +19,10 @@ go get github.com/gasmod/gas/queue
 gas.WithSingletonService[gas.JobQueueProvider](sqs.New()),
 ```
 
-Both stores need `gas.ConfigProvider` and `gas.Logger`, and read the `queue` section; the SQS
-store takes its region and credentials from `queue.region` and the static keys, or else from
-the AWS SDK's default chain.
+Both stores take `gas.ConfigProvider` and `gas.Logger` from the container and read the `queue`
+section, or take their configuration from `WithConfig`; the SQS store takes its region and
+credentials from `queue.region` and the static keys, or else from the AWS SDK's default chain.
+Each store's `Config()` returns the configuration its last successful `Init` resolved.
 
 | Package | Provides |
 |---|---|

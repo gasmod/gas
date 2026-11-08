@@ -117,15 +117,15 @@
 // # Lifecycle
 //
 // A successful Init opens the store and logs `service initialized` at
-// info level, with `max_messages`, `max_bytes` and `visibility_timeout`. Init on an
-// initialized store returns queue.ErrAlreadyInitialized and changes
-// nothing. [Service.Close] makes the store closed, ends every waiting
-// Dequeue at once, which returns queue.ErrClosed, waits for them to
-// return, and logs `service closed` at info level. A Dequeue never holds
-// a message it has not returned, so none is left hidden. Close on a store
-// that is not initialized returns nil and logs nothing. Close ignores its
-// context. Init after Close opens the store again, with a configuration
-// resolved afresh.
+// info level, with `max_messages`, `max_bytes` and `visibility_timeout`.
+// Init on an initialized store returns queue.ErrAlreadyInitialized and
+// changes nothing. [Service.Close] makes the store closed, ends every
+// waiting Dequeue at once, which returns queue.ErrClosed, waits for them
+// to return, and logs `service closed` at info level. A Dequeue never
+// holds a message it has not returned, so none is left hidden. Close on a
+// store that is not initialized returns nil and logs nothing. Close
+// ignores its context. Init after Close opens the store again, with a
+// configuration resolved afresh.
 //
 // Before the first successful Init, every method but Init, Close, Name and
 // Config returns an error wrapping queue.ErrNotInitialized; after Close,

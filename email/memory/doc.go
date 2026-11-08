@@ -56,7 +56,8 @@
 //
 // [Service.Config] returns a copy of the configuration the last successful
 // Init resolved, defaults included, or the zero Config before one; a
-// failed Init and Close leave it as it was.
+// failed Init and Close leave it as it was. Its `fromemail` is the
+// normalized address.
 //
 // # Outbox
 //
@@ -76,14 +77,13 @@
 //
 // # Lifecycle
 //
-// A successful Init logs `service initialized` at info level with
-// `from`, whether a default sender is set, `max_messages` and
-// `max_bytes`. Init on an
-// initialized sender returns email.ErrAlreadyInitialized and changes
-// nothing; a failed Init leaves the sender as it was. [Service.Close]
-// makes the sender closed, waits for the sends in flight, such as a
-// SendFromTemplate that waits on its gas.TemplateProvider, and logs
-// `service closed` at info level. When its context ends first, it
+// A successful Init logs `service initialized` at info level with `from`,
+// whether a default sender is set, `max_messages` and `max_bytes`. Init
+// on an initialized sender returns email.ErrAlreadyInitialized and
+// changes nothing; a failed Init leaves the sender as it was.
+// [Service.Close] makes the sender closed, waits for the sends in flight,
+// such as a SendFromTemplate that waits on its gas.TemplateProvider, and
+// logs `service closed` at info level. When its context ends first, it
 // cancels them, logs `service closed, sends in flight canceled` at warn
 // level, and returns an error wrapping the context's error. Close on a
 // sender that is not initialized returns nil and logs nothing.

@@ -110,10 +110,10 @@
 //     compared with strings.ToLower, so a domain holding a capital dotted
 //     I (U+0130), which the profile maps to `i` and a combining dot, is
 //     refused; write it in lower case. An ASCII domain other than a
-//     domain literal is sent in lower case, and each of its Punycode (`xn--`) labels must decode and
-//     encode back to itself, so one mailbox has one normalized form. A
-//     domain literal holds an IP address, such as
-//     `[192.0.2.1]`, so never an `@` or `=?`.
+//     domain literal is sent in lower case, and each of its Punycode
+//     (`xn--`) labels must decode and encode back to itself, so one
+//     mailbox has one normalized form. A domain literal holds an IP
+//     address, such as `[192.0.2.1]`, so never an `@` or `=?`.
 //   - A local part that is not ASCII is refused: SES does not support
 //     SMTPUTF8, and Punycode does not apply to it. One holding an `@`,
 //     even quoted, or the `=?` that starts an encoded word is refused.
@@ -144,15 +144,15 @@
 // CR, an LF or a NUL, which would let it end the header it is sent in,
 // DEL, a C1 control, or the line and paragraph separators U+2028 and
 // U+2029. Display names are held to the same rule, and so is a subject
-// rendered from template data. At least one of TextBody and HTMLBody is required
-// ([ErrEmptyBody]); a body that is empty is left out of the message, not
-// sent as an empty part, so a message with one body is sent as a
-// single-part message. Each body must be valid UTF-8 ([ErrInvalidBody]).
-// The bodies are sent with the UTF-8 character set, which SES encodes
-// as MIME requires. The SES sender sends a subject that is not ASCII as
-// RFC 2047 encoded words, base64 of its UTF-8, which it encodes itself;
-// the memory sender keeps the subject as given. These rules run after
-// the addresses.
+// rendered from template data. At least one of TextBody and HTMLBody is
+// required ([ErrEmptyBody]); a body that is empty is left out of the
+// message, not sent as an empty part, so a message with one body is sent
+// as a single-part message. Each body must be valid UTF-8
+// ([ErrInvalidBody]). The bodies are sent with the UTF-8 character set,
+// which SES encodes as MIME requires. The SES sender sends a subject that
+// is not ASCII as RFC 2047 encoded words, base64 of its UTF-8, which it
+// encodes itself; the memory sender keeps the subject as given. These
+// rules run after the addresses.
 //
 // # Headers
 //
@@ -160,8 +160,8 @@
 // content sends as they are. The rules are SES's: at most [MaxHeaders],
 // 15; a name is 1 to [MaxHeaderNameLength], 126, printable ASCII
 // characters but `:`; a value is 1 to [MaxHeaderValueLength], 995,
-// printable ASCII characters, space included, so a value cannot hold a
-// CR or an LF; a name and its value are at most [MaxHeaderLength], 996,
+// printable ASCII characters, space included, so a value cannot hold a CR
+// or an LF; a name and its value are at most [MaxHeaderLength], 996,
 // together. A name the module or SES sets is refused, in any case, as
 // [IsReservedHeader] reports, so that a header can never override an
 // address, the subject or the MIME structure, nor redirect replies,
@@ -169,29 +169,27 @@
 // `Date`, `Message-ID`, `MIME-Version`, `Return-Path`, `Sender`,
 // `Disposition-Notification-To`, `Return-Receipt-To`, `Errors-To`,
 // `Bounces-To`, and any name starting with `Content-`, `Resent-` or
-// `X-SES-`. Two
-// names that differ only in case are refused, as a header map cannot
-// order them. Non-ASCII text in a value must be encoded by the caller,
-// such as with mime.QEncoding. A broken rule is [ErrInvalidHeader], and
-// the error quotes neither the name nor the value, but for the usual
-// name of a reserved header. The count is checked first, then each
-// header in the sorted order of its name, which is also the order they
-// are sent in. These rules run after the content.
+// `X-SES-`. Two names that differ only in case are refused, as a header
+// map cannot order them. Non-ASCII text in a value must be encoded by the
+// caller, such as with mime.QEncoding. A broken rule is
+// [ErrInvalidHeader], and the error quotes neither the name nor the
+// value, but for the usual name of a reserved header. The count is
+// checked first, then each header in the sorted order of its name, which
+// is also the order they are sent in. These rules run after the content.
 //
 // # Limits
 //
 // SES refuses a message above 40 MB after base64 encoding. Before it
-// sends anything, and after every other rule, a sender estimates the
-// size of the message, as [MessageSize] does: the subject, as RFC 2047
-// encoded words when it is not ASCII, each body base64-encoded in lines
-// of 76 characters, the headers, and the addresses, each with the length
-// of its header line. An estimate above [MaxMessageSize], 40,000,000
-// bytes, SES's 40 MB read as decimal megabytes, is
-// [ErrMessageTooLarge], so that a message
-// SES would refuse is not uploaded, and retried, first. The estimate
-// leaves out the parts of the MIME structure SES adds, so SES's own
-// count is the one that holds: a message just under the limit can still
-// be refused by SES.
+// sends anything, and after every other rule, a sender estimates the size
+// of the message, as [MessageSize] does: the subject, as RFC 2047 encoded
+// words when it is not ASCII, each body base64-encoded in lines of 76
+// characters, the headers, and the addresses, each with the length of its
+// header line. An estimate above [MaxMessageSize], 40,000,000 bytes,
+// SES's 40 MB read as decimal megabytes, is [ErrMessageTooLarge], so that
+// a message SES would refuse is not uploaded, and retried, first. The
+// estimate leaves out the parts of the MIME structure SES adds, so SES's
+// own count is the one that holds: a message just under the limit can
+// still be refused by SES.
 //
 // # Templates
 //

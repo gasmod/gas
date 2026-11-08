@@ -43,10 +43,11 @@
 //     reads it. A name is 1 to 80 ASCII letters, digits, hyphens and
 //     underscores, and a FIFO queue's ends with `.fifo`. A URL is `http`
 //     or `https`, has a host and no user information, query or fragment,
-//     and its path ends with a queue name. Anything else is [ErrInvalidQueue], from every method,
-//     and the error never quotes it. A queue that does not exist is
-//     [ErrQueueNotFound]. Errors name a queue by its name, never by its
-//     URL, which holds the AWS account ID.
+//     and its path ends with a queue name. Anything else is
+//     [ErrInvalidQueue], from every method, and the error never quotes
+//     it. A queue that does not exist is [ErrQueueNotFound]. Errors name
+//     a queue by its name, never by its URL, which holds the AWS account
+//     ID.
 //   - Delivery is at least once. A message is leased, not removed, when
 //     Dequeue returns it: it stays hidden for a visibility timeout and
 //     then becomes visible again, unless Ack deletes it first. A send
