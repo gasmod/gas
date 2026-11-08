@@ -1,8 +1,8 @@
 ---
 // The home page, laid out on full-width hairlines like a sheet of grid
-// paper, with hatched margins outside the frame: the headline, a complete
-// app beside what it does when run, and a grid of the modules with the
-// interface each plugs in through.
+// paper, with chevron margins outside the frame: the headline beside the
+// core wired to its modules, a complete app beside what it does when run,
+// and a grid of the modules with the interface each plugs in through.
 import { Code } from '@astrojs/starlight/components';
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
@@ -59,11 +59,44 @@ const modules = [
 	<div class="gas-row">
 		<div class="gas-frame gas-home-hero">
 			<h1 id="_top" class="gas-home-title">Build SaaS backends in Go without rebuilding the wiring.</h1>
-			<svg class="gas-home-mark" viewBox="190 200 650 640" aria-hidden="true">
-				<circle class="dot" cx="512" cy="235.31" r="17.5"></circle>
-				<polyline class="top" points="343.74 520.68 512.12 352.55 680.26 520.93"></polyline>
-				<polyline class="mid" points="276.03 665.45 512.17 429.65 747.97 665.8"></polyline>
-				<polyline class="low" points="217.27 805.75 512.22 511.23 806.73 806.19"></polyline>
+			<svg class="gas-wiring" viewBox="0 0 280 280" role="img" aria-label="The gas core wired to the config, log, database, auth, cache and queue modules">
+				<path class="gas-wire" style="--i:0" d="M140 140 L140.0 35.0" pathLength="1"></path>
+				<path class="gas-wire" style="--i:1" d="M140 140 L230.9 87.5" pathLength="1"></path>
+				<path class="gas-wire" style="--i:2" d="M140 140 L230.9 192.5" pathLength="1"></path>
+				<path class="gas-wire" style="--i:3" d="M140 140 L140.0 245.0" pathLength="1"></path>
+				<path class="gas-wire" style="--i:4" d="M140 140 L49.1 192.5" pathLength="1"></path>
+				<path class="gas-wire" style="--i:5" d="M140 140 L49.1 87.5" pathLength="1"></path>
+				<circle class="gas-pulse" r="3.5" opacity="0">
+					<animateMotion dur="6.0s" begin="1.4s" repeatCount="indefinite" path="M140.0 35.0 L140 140" keyPoints="0;1;1" keyTimes="0;0.2;1" calcMode="linear"></animateMotion>
+					<animate attributeName="opacity" dur="6.0s" begin="1.4s" repeatCount="indefinite" values="0;1;1;0;0" keyTimes="0;0.03;0.17;0.22;1"></animate>
+				</circle>
+				<circle class="gas-pulse" r="3.5" opacity="0">
+					<animateMotion dur="6.0s" begin="2.4s" repeatCount="indefinite" path="M230.9 87.5 L140 140" keyPoints="0;1;1" keyTimes="0;0.2;1" calcMode="linear"></animateMotion>
+					<animate attributeName="opacity" dur="6.0s" begin="2.4s" repeatCount="indefinite" values="0;1;1;0;0" keyTimes="0;0.03;0.17;0.22;1"></animate>
+				</circle>
+				<circle class="gas-pulse" r="3.5" opacity="0">
+					<animateMotion dur="6.0s" begin="3.4s" repeatCount="indefinite" path="M230.9 192.5 L140 140" keyPoints="0;1;1" keyTimes="0;0.2;1" calcMode="linear"></animateMotion>
+					<animate attributeName="opacity" dur="6.0s" begin="3.4s" repeatCount="indefinite" values="0;1;1;0;0" keyTimes="0;0.03;0.17;0.22;1"></animate>
+				</circle>
+				<circle class="gas-pulse" r="3.5" opacity="0">
+					<animateMotion dur="6.0s" begin="4.4s" repeatCount="indefinite" path="M140.0 245.0 L140 140" keyPoints="0;1;1" keyTimes="0;0.2;1" calcMode="linear"></animateMotion>
+					<animate attributeName="opacity" dur="6.0s" begin="4.4s" repeatCount="indefinite" values="0;1;1;0;0" keyTimes="0;0.03;0.17;0.22;1"></animate>
+				</circle>
+				<circle class="gas-pulse" r="3.5" opacity="0">
+					<animateMotion dur="6.0s" begin="5.4s" repeatCount="indefinite" path="M49.1 192.5 L140 140" keyPoints="0;1;1" keyTimes="0;0.2;1" calcMode="linear"></animateMotion>
+					<animate attributeName="opacity" dur="6.0s" begin="5.4s" repeatCount="indefinite" values="0;1;1;0;0" keyTimes="0;0.03;0.17;0.22;1"></animate>
+				</circle>
+				<circle class="gas-pulse" r="3.5" opacity="0">
+					<animateMotion dur="6.0s" begin="6.4s" repeatCount="indefinite" path="M49.1 87.5 L140 140" keyPoints="0;1;1" keyTimes="0;0.2;1" calcMode="linear"></animateMotion>
+					<animate attributeName="opacity" dur="6.0s" begin="6.4s" repeatCount="indefinite" values="0;1;1;0;0" keyTimes="0;0.03;0.17;0.22;1"></animate>
+				</circle>
+				<g class="gas-node" style="--i:0"><rect x="111.0" y="23.0" width="58" height="24" rx="6"></rect><text x="140.0" y="39.0">config</text></g>
+				<g class="gas-node" style="--i:1"><rect x="204.9" y="75.5" width="52" height="24" rx="6"></rect><text x="230.9" y="91.5">log</text></g>
+				<g class="gas-node" style="--i:2"><rect x="194.9" y="180.5" width="72" height="24" rx="6"></rect><text x="230.9" y="196.5">database</text></g>
+				<g class="gas-node" style="--i:3"><rect x="114.0" y="233.0" width="52" height="24" rx="6"></rect><text x="140.0" y="249.0">auth</text></g>
+				<g class="gas-node" style="--i:4"><rect x="23.1" y="180.5" width="52" height="24" rx="6"></rect><text x="49.1" y="196.5">cache</text></g>
+				<g class="gas-node" style="--i:5"><rect x="23.1" y="75.5" width="52" height="24" rx="6"></rect><text x="49.1" y="91.5">queue</text></g>
+				<g class="gas-node gas-node-core"><rect x="106" y="123" width="68" height="34" rx="8"></rect><text x="140" y="145">gas</text></g>
 			</svg>
 		</div>
 	</div>
