@@ -1,8 +1,9 @@
 /*
- * Gas docs theme, after the Tailwind CSS docs: white-first greyscale with
- * tight, medium-weight headings, hatched margins around the content, flat
- * sidebar groups under small labels, and code in dark frames in both
- * themes. One accent, a Go cyan, marks Go identifiers on the home page.
+ * Gas docs theme: white-first greyscale with tight, medium-weight
+ * headings, margins textured with the chevrons of the Gas mark, labels
+ * that read as Go package paths, and code in dark frames in both themes.
+ * One accent, the indigo of a gas flame, marks what you can act on and
+ * the Go identifiers of the home page.
  */
 
 @font-face {
@@ -33,8 +34,9 @@
 	--gas-body: #9ca3af;
 	--gas-muted: #6b7280;
 	--gas-line: rgb(255 255 255 / 0.1);
-	--gas-hatch-line: rgb(255 255 255 / 0.1);
-	--gas-accent: #38bdf8;
+	--gas-accent: #8b9cff;
+	--gas-accent-wash: rgb(139 156 255 / 0.12);
+	--gas-chevrons: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='14'%3E%3Cpath d='M4 10 10 4l6 6' fill='none' stroke='rgba(255,255,255,0.13)' stroke-width='1.1' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 	--gas-pill-bg: #ffffff;
 	--gas-pill-ink: #030712;
 
@@ -46,9 +48,9 @@
 	--sl-color-gray-5: #1f2937;
 	--sl-color-gray-6: var(--gas-surface);
 	--sl-color-black: var(--gas-paper);
-	--sl-color-accent-low: #0c2a3d;
+	--sl-color-accent-low: #1b2150;
 	--sl-color-accent: var(--gas-accent);
-	--sl-color-accent-high: #bae6fd;
+	--sl-color-accent-high: #c7cfff;
 	--sl-color-text-accent: var(--gas-ink);
 	--sl-color-bg: var(--gas-paper);
 	--sl-color-bg-nav: var(--gas-paper);
@@ -69,8 +71,6 @@
 	--sl-text-h2: 1.25rem;
 	--sl-text-h3: 1.0625rem;
 	--sl-text-h4: 1rem;
-
-	--gas-hatch: repeating-linear-gradient(315deg, var(--gas-hatch-line) 0 1px, transparent 0 50%);
 }
 
 :root[data-theme='light'] {
@@ -82,8 +82,9 @@
 	--gas-body: #4b5563;
 	--gas-muted: #6b7280;
 	--gas-line: rgb(3 7 18 / 0.08);
-	--gas-hatch-line: rgb(3 7 18 / 0.08);
-	--gas-accent: #0284c7;
+	--gas-accent: #3d5afe;
+	--gas-accent-wash: rgb(61 90 254 / 0.08);
+	--gas-chevrons: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='14'%3E%3Cpath d='M4 10 10 4l6 6' fill='none' stroke='rgba(3,7,18,0.1)' stroke-width='1.1' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 	--gas-pill-bg: #030712;
 	--gas-pill-ink: #ffffff;
 
@@ -91,8 +92,8 @@
 	--sl-color-gray-2: #374151;
 	--sl-color-gray-5: #e5e7eb;
 	--sl-color-gray-7: #f9fafb;
-	--sl-color-accent-low: #e0f2fe;
-	--sl-color-accent-high: #075985;
+	--sl-color-accent-low: #eef0ff;
+	--sl-color-accent-high: #2a3fd1;
 }
 
 html,
@@ -229,13 +230,13 @@ header.header {
 	display: none;
 }
 
+/* Group labels read as the package paths they stand for. */
 .sidebar-content .group-label .large {
-	color: var(--gas-muted);
+	color: var(--gas-ink);
 	font-family: var(--sl-font-mono);
-	font-size: 0.75rem;
-	font-weight: 500;
-	letter-spacing: 0.1em;
-	text-transform: uppercase;
+	font-size: 0.8125rem;
+	font-weight: 600;
+	text-transform: lowercase;
 }
 
 /* Under the label, items hang off a rail; the current one marks it in ink. */
@@ -271,15 +272,15 @@ header.header {
 
 .sidebar-content details > ul a[aria-current='page'],
 .sidebar-content details > ul a[aria-current='page']:hover {
-	border-inline-start-color: var(--gas-ink);
+	border-inline-start-color: var(--gas-accent);
 	background: none;
-	color: var(--gas-ink);
+	color: var(--gas-accent);
 	font-weight: 600;
 }
 
-/* ---- Hatched margin --------------------------------------------------- */
+/* ---- Chevron margin --------------------------------------------------- */
 
-/* Between the sidebar and the content, a hatched strip, as on paper. */
+/* Between the sidebar and the content, a strip of the Gas mark's chevrons. */
 @media (min-width: 50rem) {
 	[data-has-sidebar] .main-pane {
 		position: relative;
@@ -292,8 +293,8 @@ header.header {
 		inset-inline-start: 0;
 		width: 2.5rem;
 		border-inline: 1px solid var(--gas-line);
-		background-image: var(--gas-hatch);
-		background-size: 10px 10px;
+		background-image: var(--gas-chevrons);
+		background-position: center top;
 		content: '';
 	}
 }
@@ -312,14 +313,19 @@ header.header {
 	padding-top: 1.5rem;
 }
 
+/* Above the title, the page's place as a package path, its mark in the accent. */
 .gas-eyebrow {
 	margin: 0 0 0.5rem;
 	color: var(--gas-muted);
 	font-family: var(--sl-font-mono);
 	font-size: 0.8125rem;
 	font-weight: 500;
-	letter-spacing: 0.08em;
-	text-transform: uppercase;
+}
+
+.gas-eyebrow::before {
+	margin-inline-end: 0.5rem;
+	color: var(--gas-accent);
+	content: '^';
 }
 
 .gas-page-heading h1 {
@@ -417,19 +423,20 @@ header.header {
 	text-decoration-thickness: 2px;
 }
 
-/* Inline code reads as code: bold mono between backticks, no box. */
+/* Inline code sits on a soft wash of the accent. */
 .sl-markdown-content :not(pre) > code {
-	padding: 0;
+	padding: 0.1em 0.35em;
 	border: 0;
-	background: none;
+	border-radius: 0.3rem;
+	background: var(--gas-accent-wash);
 	color: var(--gas-ink);
 	font-size: 0.875em;
-	font-weight: 600;
+	font-weight: 500;
 }
 
-.sl-markdown-content :not(pre, a) > code::before,
-.sl-markdown-content :not(pre, a) > code::after {
-	content: '`';
+.sl-markdown-content a > code {
+	background: none;
+	padding: 0;
 }
 
 /* API declarations of the reference pages are set as the code they name. */
@@ -557,8 +564,8 @@ html:has(.gas-home) body {
 	--frame: 80rem;
 	width: 100vw;
 	margin-inline: calc(50% - 50vw);
-	background-image: var(--gas-hatch);
-	background-size: 10px 10px;
+	background-image: var(--gas-chevrons);
+	background-position: center top;
 }
 
 .gas-row {
@@ -581,12 +588,39 @@ html:has(.gas-home) body {
 	height: clamp(2.5rem, 6vw, 4.5rem);
 }
 
-.gas-home-note {
-	margin: 0;
-	padding-block: 0.4rem;
-	color: var(--gas-muted);
-	font-family: var(--sl-font-mono);
-	font-size: 0.75rem;
+/* The headline shares its row with the Gas mark, drawn as line work. */
+.gas-home-hero {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 2rem;
+}
+
+.gas-home-mark {
+	width: clamp(9rem, 15vw, 13rem);
+	height: auto;
+	margin-inline-end: clamp(0rem, 3vw, 3rem);
+	fill: none;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+	stroke-width: 9;
+}
+
+.gas-home-mark .top {
+	stroke: var(--gas-accent);
+}
+
+.gas-home-mark .mid {
+	stroke: var(--gas-body);
+}
+
+.gas-home-mark .low {
+	stroke: var(--gas-muted);
+	opacity: 0.6;
+}
+
+.gas-home-mark .dot {
+	fill: var(--gas-accent);
 }
 
 .gas-home-title {
@@ -594,7 +628,7 @@ html:has(.gas-home) body {
 	margin: 0;
 	padding-block: 0.25rem 0.75rem;
 	color: var(--gas-ink);
-	font-size: clamp(2.75rem, 7.5vw, 6rem);
+	font-size: clamp(2.75rem, 6.4vw, 5.25rem);
 	font-weight: 500;
 	letter-spacing: -0.05em;
 	line-height: 1;
@@ -693,7 +727,7 @@ html:has(.gas-home) body {
 	font-size: 0.85rem;
 }
 
-.gas-home-heading {
+.gas-home .gas-home-heading {
 	margin: 0;
 	padding-top: 1.5rem;
 	color: var(--gas-ink);
@@ -757,6 +791,14 @@ html:has(.gas-home) body {
 /* ---- Small screens --------------------------------------------------- */
 
 @media (max-width: 64rem) {
+	.gas-home-hero {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.gas-home-mark {
+		display: none;
+	}
+
 	.gas-home-showcase {
 		grid-template-columns: minmax(0, 1fr);
 	}

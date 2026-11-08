@@ -1,7 +1,7 @@
 ---
 // Replaces Starlight's PageTitle. The landing page draws its own heading, so
 // a splash page gets none here. Above the title, a small label names the
-// part of the site the page belongs to: Start, Core, or its module. A
+// part of the site the page belongs to: start, gas, or its module. A
 // reference page is marked, so its API declaration headings can be set as
 // code.
 const { entry, id } = Astro.locals.starlightRoute;
@@ -9,10 +9,12 @@ const { title, template } = entry.data;
 const pageTitleId = '_top';
 const isReference = id.startsWith('reference/');
 
-let section = 'Docs';
-if (id.startsWith('start/')) section = 'Start';
-else if (id === 'reference/gas') section = 'Core';
-else if (isReference) section = id.split('/')[1];
+// The page's place, named as Go names it: the module's package path for a
+// reference page, else the part of the site.
+let section = 'docs';
+if (id.startsWith('start/')) section = 'start';
+else if (id === 'reference/gas') section = 'gas';
+else if (isReference) section = `gas/${id.split('/')[1]}`;
 ---
 
 {
