@@ -183,7 +183,6 @@ func NewApp(opts ...Option) *App {
 
 	w.serviceContainer.RegisterServiceInstance[*Router](a.router)
 
-	w.beforeBuild = a.registerConfig
 	w.afterBuild = a.afterBuild
 	w.onServiceClose = func(s Service) { a.router.RemoveByService(s) }
 
@@ -407,44 +406,27 @@ func (a *App) denyCrossOrigin(w http.ResponseWriter, r *http.Request) {
 	_ = WriteError(w, r, Forbidden("cross-origin request denied"))
 }
 
-// registerConfig registers the constructor of *Config, which binds and
-// validates the configuration, so services built after it can take the
-// bound *Config. It depends on the ConfigProvider when one is registered.
-func (a *App) registerConfig() error {
-	c := a.serviceContainer
-
-	if c.CanResolve[*Config]() {
-		return fmt.Errorf("%w: *gas.Config is registered by the App", ErrInvalidOption)
-	}
-
-	if c.CanResolve[ConfigProvider]() {
-		c.RegisterSingletonService[*Config](func(p ConfigProvider) (*Config, error) {
-			return a.bindConfig(p)
-		})
-
-		return nil
-	}
-
-	c.RegisterSingletonService[*Config](func() (*Config, error) { return a.bindConfig(nil) })
-
-	return nil
-}
-
-// bindConfig binds a copy of the base Config from p, when there is one,
-// validates it, and makes it the App's Config.
-func (a *App) bindConfig(p ConfigProvider) (*Config, error) {
+// bindConfig binds a copy of the base Config from the ConfigProvider,
+// when one is registered, validates it, and makes it the App's Config.
+// Every singleton is built, so resolving the provider runs no Init.
+func (a *App) bindConfig(ctx context.Context) error {
 	cfg := a.Config()
 
-	if p != nil {
-		err := p.Bind(&cfg)
+	if a.serviceContainer.CanResolve[ConfigProvider]() {
+		p, err := resolveFrom[ConfigProvider](ctx, a.serviceContainer)
 		if err != nil {
-			return nil, fmt.Errorf("%w: bind: %w", ErrInvalidConfig, err)
+			return fmt.Errorf("%w: bind: %w", ErrInvalidConfig, err)
+		}
+
+		err = p.Bind(&cfg)
+		if err != nil {
+			return fmt.Errorf("%w: bind: %w", ErrInvalidConfig, err)
 		}
 	}
 
 	err := cfg.validate(a.allowedEnvs)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	a.router.maxJSONBody.Store(cfg.Server.MaxJSONBodyBytes)
@@ -455,13 +437,18 @@ func (a *App) bindConfig(p ConfigProvider) (*Config, error) {
 	a.cfg = &cfg
 	a.cfgMu.Unlock()
 
-	return &cfg, nil
+	return nil
 }
 
-// afterBuild seals the router, checks that every DI-aware handler's
-// dependencies are registered, applies the bound Config to a server built
-// early, and emits AppConfigUpdated.
-func (a *App) afterBuild() error {
+// afterBuild binds and validates the Config, seals the router, checks that
+// every DI-aware handler's dependencies are registered, applies the bound
+// Config to a server built early, and emits AppConfigUpdated.
+func (a *App) afterBuild(ctx context.Context) error {
+	err := a.bindConfig(ctx)
+	if err != nil {
+		return err
+	}
+
 	a.router.Seal()
 
 	for _, ph := range a.router.handlersToCheck() {

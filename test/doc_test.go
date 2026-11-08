@@ -197,37 +197,34 @@ func TestDoc_Errors(t *testing.T) {
 		"gas: invalid option: WithAllowedEnvironments needs an environment": func() error {
 			return quietApp(gas.WithAllowedEnvironments()).Start(t.Context())
 		},
-		"gas: invalid option: *gas.Config is registered by the App": func() error {
-			return quietApp(gas.WithServiceInstance(gas.DefaultConfig())).Start(t.Context())
-		},
-		"building *gas.Config: gas: invalid config: " +
+		"gas: invalid config: " +
 			"gasenv must be one of development, testing, staging, production": configErr(
 			t,
 			map[string]any{"gasenv": "prod"},
 		),
-		"building *gas.Config: gas: invalid config: server.host must be an IP address or an RFC 1123 hostname": configErr(
+		"gas: invalid config: server.host must be an IP address or an RFC 1123 hostname": configErr(
 			t,
 			map[string]any{"server": map[string]any{"host": "not a host"}},
 		),
-		"building *gas.Config: gas: invalid config: server.port must be 0 to 65535": configErr(
+		"gas: invalid config: server.port must be 0 to 65535": configErr(
 			t, map[string]any{"server": map[string]any{"port": 70000}}),
-		"building *gas.Config: gas: invalid config: server.readtimeout must not be negative": configErr(
+		"gas: invalid config: server.readtimeout must not be negative": configErr(
 			t,
 			map[string]any{"server": map[string]any{"readtimeout": -1}},
 		),
-		"building *gas.Config: gas: invalid config: server.readheadertimeout must be positive": configErr(
+		"gas: invalid config: server.readheadertimeout must be positive": configErr(
 			t,
 			map[string]any{"server": map[string]any{"readheadertimeout": 0}},
 		),
-		"building *gas.Config: gas: invalid config: server.writetimeout must not be negative": configErr(
+		"gas: invalid config: server.writetimeout must not be negative": configErr(
 			t,
 			map[string]any{"server": map[string]any{"writetimeout": -1}},
 		),
-		"building *gas.Config: gas: invalid config: server.idletimeout must not be negative": configErr(
+		"gas: invalid config: server.idletimeout must not be negative": configErr(
 			t,
 			map[string]any{"server": map[string]any{"idletimeout": -1}},
 		),
-		"building *gas.Config: gas: invalid config: server.shutdowntimeout must be positive": configErr(
+		"gas: invalid config: server.shutdowntimeout must be positive": configErr(
 			t,
 			map[string]any{"server": map[string]any{"shutdowntimeout": 0}},
 		),
@@ -411,14 +408,14 @@ func TestDoc_Errors(t *testing.T) {
 		"gas: invalid option: WithTimeoutMaxBuffer must be positive": func() error {
 			return panicErr(func() { gas.Timeout(time.Second, gas.WithTimeoutMaxBuffer(0)) })
 		},
-		"building *gas.Config: gas: invalid config: " +
+		"gas: invalid config: " +
 			"server.idletimeout must be positive when server.readtimeout is 0": configErr(
 			t, map[string]any{"server": map[string]any{"readtimeout": 0, "idletimeout": 0}}),
-		"building *gas.Config: gas: invalid config: server.maxjsonbodybytes must be positive": configErr(
+		"gas: invalid config: server.maxjsonbodybytes must be positive": configErr(
 			t,
 			map[string]any{"server": map[string]any{"maxjsonbodybytes": 0}},
 		),
-		"building *gas.Config: gas: invalid config: server.maxformbodybytes must be positive": configErr(
+		"gas: invalid config: server.maxformbodybytes must be positive": configErr(
 			t,
 			map[string]any{"server": map[string]any{"maxformbodybytes": -1}},
 		),

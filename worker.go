@@ -69,8 +69,7 @@ type Worker struct {
 	optErr           error
 	serviceContainer *ServiceContainer
 	eventBus         *EventBus
-	beforeBuild      func() error
-	afterBuild       func() error
+	afterBuild       func(ctx context.Context) error
 	onServiceClose   func(s Service)
 	startDone        chan struct{}
 	shutdownDone     chan struct{}
@@ -606,13 +605,6 @@ func (w *Worker) recordOptionError(err error) {
 
 // start is the work of Start.
 func (w *Worker) start(ctx context.Context) error {
-	if w.beforeBuild != nil {
-		err := w.beforeBuild()
-		if err != nil {
-			return err
-		}
-	}
-
 	err := w.serviceContainer.BuildAll(ctx)
 	if err != nil {
 		// Nothing is tracked yet, so close what the container had
@@ -636,7 +628,7 @@ func (w *Worker) start(ctx context.Context) error {
 	}
 
 	if w.afterBuild != nil {
-		err = w.afterBuild()
+		err = w.afterBuild(ctx)
 		if err != nil {
 			return cleanup(err)
 		}

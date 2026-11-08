@@ -166,8 +166,9 @@
 // ([ErrNilInstance]), a bad alias ([ErrInvalidAlias]), and a transient
 // Service ([ErrInvalidLifetime]).
 //
-// An App registers its [*Router] and, at Start, its bound [*Config], so a
-// service can take either as a dependency. Every Worker registers its
+// An App registers its [*Router], so a service can take it as a
+// dependency; a service reads the App's configuration through its own
+// [ConfigProvider] dependency, not from the container. Every Worker registers its
 // [*EventBus], and itself as [HealthProvider] and [ReadyProvider].
 //
 // # Routing
@@ -281,8 +282,11 @@
 // connection by neither; ReadHeaderTimeout and ShutdownTimeout must be
 // positive, so no configuration leaves a connection open to a client that
 // trickles its headers; MaxJSONBodyBytes and MaxFormBodyBytes must be
-// positive. A Config that breaks a rule fails Start with an error wrapping
-// [ErrInvalidConfig] that names the key and the rule, never the value.
+// positive. The Config is bound once every service is built and
+// initialized, so a service's Init sees the base config through
+// [App.Config]. A Config that breaks a rule fails Start, closing the
+// services, with an error wrapping [ErrInvalidConfig] that names the key
+// and the rule, never the value.
 // [App.Config] returns a copy of the base config before Start and of the
 // bound one after.
 //
@@ -328,8 +332,7 @@
 //   - [ErrResponseTooLarge]: a write past the buffer cap of [Timeout].
 //
 // Errors name services, types, keys, methods and paths, never a
-// configuration value. The bound Config's errors come out of Start
-// through the build of [*Config]. Sample errors, as returned:
+// configuration value. Sample errors, as returned:
 //
 //	gas: already started
 //	gas: not started
@@ -338,18 +341,17 @@
 //	gas: invalid option: WithShutdownTimeout must be positive
 //	gas: invalid option: WithTrustedOrigin needs an absolute URL with a scheme and a host
 //	gas: invalid option: WithAllowedEnvironments needs an environment
-//	gas: invalid option: *gas.Config is registered by the App
-//	building *gas.Config: gas: invalid config: gasenv must be one of development, testing, staging, production
-//	building *gas.Config: gas: invalid config: server.host must be an IP address or an RFC 1123 hostname
-//	building *gas.Config: gas: invalid config: server.port must be 0 to 65535
-//	building *gas.Config: gas: invalid config: server.readtimeout must not be negative
-//	building *gas.Config: gas: invalid config: server.readheadertimeout must be positive
-//	building *gas.Config: gas: invalid config: server.writetimeout must not be negative
-//	building *gas.Config: gas: invalid config: server.idletimeout must not be negative
-//	building *gas.Config: gas: invalid config: server.idletimeout must be positive when server.readtimeout is 0
-//	building *gas.Config: gas: invalid config: server.maxjsonbodybytes must be positive
-//	building *gas.Config: gas: invalid config: server.maxformbodybytes must be positive
-//	building *gas.Config: gas: invalid config: server.shutdowntimeout must be positive
+//	gas: invalid config: gasenv must be one of development, testing, staging, production
+//	gas: invalid config: server.host must be an IP address or an RFC 1123 hostname
+//	gas: invalid config: server.port must be 0 to 65535
+//	gas: invalid config: server.readtimeout must not be negative
+//	gas: invalid config: server.readheadertimeout must be positive
+//	gas: invalid config: server.writetimeout must not be negative
+//	gas: invalid config: server.idletimeout must not be negative
+//	gas: invalid config: server.idletimeout must be positive when server.readtimeout is 0
+//	gas: invalid config: server.maxjsonbodybytes must be positive
+//	gas: invalid config: server.maxformbodybytes must be positive
+//	gas: invalid config: server.shutdowntimeout must be positive
 //	gas: run migrations: dirty migration
 //	gas: ready hook: cache cold
 //	gas: handler GET /x (service "gas/router"): dependency *bytes.Buffer is not registered

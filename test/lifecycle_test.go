@@ -269,29 +269,29 @@ func TestWorker_OptionalProviders(t *testing.T) {
 	assert.Same(t, p, w.ConfigProvider())
 }
 
-// A service can take the bound *gas.Config.
-func TestApp_ConfigInjected(t *testing.T) {
+// The App does not register its Config in the container: a service that
+// takes *gas.Config fails Start, and the bound Config is read with
+// App.Config.
+func TestApp_ConfigNotInjected(t *testing.T) {
 	t.Parallel()
-
-	var got *gas.Config
 
 	app := quietApp(
 		gas.WithServiceInstance[gas.ConfigProvider](&mapConfig{values: map[string]any{
 			"gasenv": "staging", "server": map[string]any{"port": 9090},
 		}}),
-		gas.WithSingletonService[*fakeService](func(cfg *gas.Config) *fakeService {
-			got = cfg
-
-			return &fakeService{name: "uses-config"}
-		}),
 	)
 	require.NoError(t, app.Start(t.Context()))
 	t.Cleanup(func() { _ = app.Stop(context.WithoutCancel(t.Context())) })
 
-	require.Equal(t, app.Config(), *got)
-	assert.Equal(t, gas.EnvStaging, got.Env)
-	assert.Equal(t, 9090, got.Server.Port)
-	assert.Equal(t, gas.DefaultHost, got.Server.Host)
+	assert.False(t, app.ServiceContainer().CanResolve[*gas.Config]())
+	assert.Equal(t, gas.EnvStaging, app.Config().Env)
+	assert.Equal(t, 9090, app.Config().Server.Port)
+	assert.Equal(t, gas.DefaultHost, app.Config().Server.Host)
+
+	app = quietApp(gas.WithSingletonService[*fakeService](func(*gas.Config) *fakeService {
+		return &fakeService{name: "uses-config"}
+	}))
+	require.ErrorIs(t, app.Start(t.Context()), gas.ErrNotRegistered)
 }
 
 // Config returns a copy: changing it changes the App's Config neither
@@ -358,7 +358,7 @@ func TestApp_WithBaseConfigValidated(t *testing.T) {
 	require.EqualError(
 		t,
 		err,
-		"building *gas.Config: gas: invalid config: server.port must be 0 to 65535",
+		"gas: invalid config: server.port must be 0 to 65535",
 	)
 }
 
@@ -432,7 +432,7 @@ func TestApp_BindFails(t *testing.T) {
 
 	err := app.Start(t.Context())
 	require.ErrorIs(t, err, gas.ErrInvalidConfig)
-	require.EqualError(t, err, "building *gas.Config: gas: invalid config: bind: bad key")
+	require.EqualError(t, err, "gas: invalid config: bind: bad key")
 }
 
 // WithAllowedEnvironments replaces the environments Start accepts.
@@ -456,7 +456,7 @@ func TestApp_AllowedEnvironments(t *testing.T) {
 	require.EqualError(
 		t,
 		err,
-		"building *gas.Config: gas: invalid config: gasenv must be one of qa, development",
+		"gas: invalid config: gasenv must be one of qa, development",
 	)
 }
 

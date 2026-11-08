@@ -279,7 +279,7 @@ func TestFindings_HeaderDeadline(t *testing.T) {
 	err := app.Start(t.Context())
 	require.ErrorIs(t, err, gas.ErrInvalidConfig)
 	require.EqualError(t, err,
-		"building *gas.Config: gas: invalid config: server.readheadertimeout must be positive")
+		"gas: invalid config: server.readheadertimeout must be positive")
 }
 
 // P11: Stop closed services while handlers that outlived ShutdownTimeout
