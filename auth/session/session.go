@@ -87,6 +87,9 @@ type Service struct {
 	// after a failed Init and after Close. It is atomic so that methods
 	// may load it while Init or Close runs.
 	state atomic.Pointer[state]
+	// bound is the configuration the last successful Init resolved, or
+	// nil before one. Close keeps it. Config returns a copy of it.
+	bound atomic.Pointer[Config]
 	// cfgSource records the configuration given to WithConfig.
 	cfgSource svcutil.ConfigSource[Config]
 	// cleanup deletes expired sessions in the background.
@@ -160,6 +163,7 @@ func (s *Service) Init(context.Context) error {
 
 	s.warnInsecureCookie(st.cfg)
 	s.state.Store(st)
+	s.bound.Store(st.cfg)
 
 	store := st.store
 	maxLifetime := st.cfg.Session.MaxLifetime
@@ -191,6 +195,19 @@ func (s *Service) Close(context.Context) error {
 	s.cleanup.Stop()
 
 	return nil
+}
+
+// Config returns a copy of the configuration the last successful Init
+// resolved, defaults included, or the zero Config before one. A failed
+// Init and Close leave it as it was. Config holds no slice, map or
+// pointer, so the copy shares nothing with the service.
+func (s *Service) Config() Config {
+	cfg := s.bound.Load()
+	if cfg == nil {
+		return Config{}
+	}
+
+	return *cfg
 }
 
 // Authenticate returns the principal of the session the request's cookie

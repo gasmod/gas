@@ -49,6 +49,10 @@
 // makes Init fail with [ErrNilConfig]. Without WithConfig and without a
 // ConfigProvider, Init fails with [ErrNoConfigProvider].
 //
+// [Service.Config] returns a copy of the configuration the last
+// successful Init resolved, defaults included, or the zero Config before
+// one. A failed Init and Close leave it as it was.
+//
 // # Lifecycle
 //
 // [New] returns the constructor the dependency injection container

@@ -66,6 +66,9 @@ type Service struct {
 	// succeeds, after an Init that failed, and after Close. The methods
 	// load it once per call.
 	state atomic.Pointer[state]
+	// bound is the configuration the last successful Init resolved, or
+	// nil before one. Close keeps it. Config returns a copy of it.
+	bound atomic.Pointer[Config]
 	// cfgSource records the configuration given to WithConfig.
 	cfgSource svcutil.ConfigSource[Config]
 	// cleanup deletes expired tokens in the background between Init and
@@ -145,6 +148,7 @@ func (s *Service) Init(context.Context) error {
 	}
 
 	s.state.Store(st)
+	s.bound.Store(st.cfg)
 
 	//nolint:contextcheck // the cleanup outlives Init's context; Close stops it.
 	s.cleanup.Start(svcutil.Task{
@@ -172,6 +176,19 @@ func (s *Service) Close(context.Context) error {
 	s.cleanup.Stop()
 
 	return nil
+}
+
+// Config returns a copy of the configuration the last successful Init
+// resolved, defaults included, or the zero Config before one. A failed
+// Init and Close leave it as it was. Config holds no slice, map or
+// pointer, so the copy shares nothing with the service.
+func (s *Service) Config() Config {
+	cfg := s.bound.Load()
+	if cfg == nil {
+		return Config{}
+	}
+
+	return *cfg
 }
 
 // Issue stores a new token for subject and purpose that expires ttl from

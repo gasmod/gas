@@ -212,6 +212,10 @@
 // CleanupInterval [DefaultCleanupInterval] (1 hour) and CleanupTimeout
 // [DefaultCleanupTimeout] (30 seconds).
 //
+// [Service.Config] returns a copy of the configuration the last
+// successful Init resolved, defaults included, or the zero Config before
+// one. A failed Init and Close leave it as it was.
+//
 // # Lifecycle
 //
 // [New] returns the constructor the dependency injection container calls,
@@ -225,7 +229,7 @@
 // Init may run again after Close, or again without it, and picks up a
 // changed configuration. A failed Init stops the cleanup and leaves the
 // service uninitialized. Before Init, after a failed Init and after
-// Close, every method but Name, Init and Close returns
+// Close, every method but Name, Init, Close and Config returns
 // [ErrNotInitialized].
 //
 // The database dialects, picked by the name the database provider's Driver

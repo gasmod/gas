@@ -2,6 +2,7 @@ package token_test
 
 import (
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -258,4 +259,84 @@ func TestInit_CopiesConfig(t *testing.T) {
 	raw, err = svc.Issue(t.Context(), "s", "p", 0)
 	require.NoError(t, err)
 	assert.Len(t, raw, 22)
+}
+
+// Config returns the zero Config before Init, and after Init a copy of
+// the configuration it bound, defaults included. Changing a result does
+// not reach the service, and Close leaves it as it was.
+func TestService_Config(t *testing.T) {
+	t.Parallel()
+
+	provider, err := configtest.NewMockConfigWithValues(map[string]any{"token": map[string]any{
+		"tokenlength":     48,
+		"cleanupinterval": "0s",
+	}})
+	require.NoError(t, err)
+
+	b := sqliteBackend(t)
+
+	svc, err := token.New()(b.DB, testutil.NewNopLogger(), b.Migrations, provider)
+	require.NoError(t, err)
+	assert.Equal(t, token.Config{}, svc.Config(), "before Init")
+
+	require.NoError(t, svc.Init(t.Context()))
+
+	want := *token.DefaultConfig()
+
+	want.Token.TokenLength = 48
+	want.Token.CleanupInterval = 0
+
+	got := svc.Config()
+	assert.Equal(t, want, got)
+
+	got.Token.TokenLength = 16
+	got.Token.DefaultTTL = time.Second
+
+	assert.Equal(t, want, svc.Config(), "a changed result does not reach the service")
+
+	require.NoError(t, svc.Close(t.Context()))
+	assert.Equal(t, want, svc.Config(), "after Close")
+}
+
+// A failed Init leaves Config on the configuration of the last Init that
+// succeeded.
+func TestService_ConfigAfterFailedInit(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig()
+	svc := newService(t, sqliteBackend(t), cfg, testutil.NewNopLogger())
+
+	cfg.Token.TokenLength = 1
+
+	require.ErrorIs(t, svc.Init(t.Context()), token.ErrInvalidConfig)
+	assert.Equal(t, *testConfig(), svc.Config())
+}
+
+// Config may run while Init and Close do, and returns the configuration
+// of one Init throughout. Run with -race.
+func TestService_ConfigConcurrentWithRestart(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig()
+	svc := newService(t, sqliteBackend(t), cfg, testutil.NewNopLogger())
+	ctx := t.Context()
+
+	var wg sync.WaitGroup
+
+	wg.Go(func() {
+		for range 50 {
+			assert.NoError(t, svc.Init(ctx))
+			assert.NoError(t, svc.Close(ctx))
+		}
+	})
+
+	for range 4 {
+		wg.Go(func() {
+			for range 200 {
+				assert.Equal(t, *testConfig(), svc.Config())
+			}
+		})
+	}
+
+	wg.Wait()
 }

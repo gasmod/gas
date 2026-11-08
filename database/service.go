@@ -70,6 +70,9 @@ type Service struct {
 	// failed Init and after Close. It is swapped whole, so a method sees
 	// one Init's state.
 	state atomic.Pointer[state]
+	// bound is the configuration the last successful Init resolved, or
+	// nil before one. Close keeps it. Config returns a copy of it.
+	bound atomic.Pointer[Config]
 	// cfgSource records the configuration given to WithConfig.
 	cfgSource configSource
 	// connectorSpec records what WithConnector was given.
@@ -149,6 +152,7 @@ func (s *Service) Init(ctx context.Context) error {
 	}
 
 	s.state.Store(st)
+	s.bound.Store(&Config{Database: st.settings})
 
 	s.logger.Info("service initialized").
 		Str("mode", string(st.settings.Mode)).
@@ -199,6 +203,20 @@ func (st *state) close() error {
 	}
 
 	return err //nolint:wrapcheck // Close and closedLate classify it.
+}
+
+// Config returns a copy of the configuration the last successful Init
+// resolved, defaults included, or the zero Config before one. A failed
+// Init and Close leave it as it was. Config holds no slice, map or
+// pointer, so the copy shares nothing with the service, and DSN stays a
+// gas.Secret.
+func (s *Service) Config() Config {
+	cfg := s.bound.Load()
+	if cfg == nil {
+		return Config{}
+	}
+
+	return *cfg
 }
 
 // DB returns the database/sql handle, or nil when the service is not

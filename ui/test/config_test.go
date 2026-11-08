@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -307,4 +308,98 @@ func TestConfig_BindError(t *testing.T) {
 	err = s.Init(t.Context())
 	require.ErrorIs(t, err, ui.ErrInvalidConfig)
 	assert.Contains(t, err.Error(), "gas/ui: init: invalid config: ")
+}
+
+// Config returns the zero Config before Init, and after Init a copy of
+// the configuration it bound, defaults included. Changing a result, its
+// slices' elements included, does not reach the service, and Close and a
+// failed Init leave it as it was.
+func TestService_Config(t *testing.T) {
+	t.Parallel()
+
+	s, err := ui.New[gas.TemplateProvider]()(newStore(t, nil), nil, provider(t, map[string]any{
+		"ui.extensions":  []any{".tmpl", ".html"},
+		"ui.staticpaths": []any{"/css/*"},
+		"ui.reload":      true,
+	}), newRecorder())
+	require.NoError(t, err)
+	assert.Equal(t, ui.Config{}, s.Config(), "before Init")
+
+	require.NoError(t, s.Init(t.Context()))
+
+	want := *ui.DefaultConfig()
+
+	want.UI.Extensions = []string{".tmpl", ".html"}
+	want.UI.StaticPaths = []string{"/css/*"}
+	want.UI.Reload = true
+
+	got := s.Config()
+	assert.Equal(t, want, got)
+
+	got.UI.Extensions[0] = ".txt"
+	got.UI.StaticPaths[0] = "/js/*"
+	got.UI.Extensions = append(got.UI.Extensions, ".md")
+	got.UI.LayoutName = "changed"
+
+	assert.Equal(t, want, s.Config(), "a changed result does not reach the service")
+
+	require.NoError(t, s.Close(t.Context()))
+	assert.Equal(t, want, s.Config(), "after Close")
+}
+
+// A failed Init leaves Config on the configuration of the last Init that
+// succeeded.
+func TestService_ConfigAfterFailedInit(t *testing.T) {
+	t.Parallel()
+
+	cfg := cfgWith(nil)
+	s, _ := build(t, newStore(t, nil), ui.WithConfig(cfg))
+
+	require.NoError(t, s.Init(t.Context()))
+	require.NoError(t, s.Close(t.Context()))
+
+	cfg.UI.LayoutName = ""
+
+	require.ErrorIs(t, s.Init(t.Context()), ui.ErrInvalidConfig)
+	assert.Equal(t, *cfgWith(nil), s.Config())
+}
+
+// Config may run while Init and Close do, and returns the zero Config or
+// the configuration of one Init throughout. Run with -race.
+func TestService_ConfigConcurrentWithRestart(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	want := *cfgWith(func(set *ui.Settings) { set.StaticPaths = []string{"/css/*"} })
+	s, _ := build(t, newStore(t, nil), ui.WithConfig(&want))
+
+	var wg sync.WaitGroup
+
+	wg.Go(func() {
+		for range 50 {
+			assert.NoError(t, s.Init(ctx))
+			assert.NoError(t, s.Close(ctx))
+		}
+	})
+
+	for range 4 {
+		wg.Go(func() {
+			for range 200 {
+				got := s.Config()
+				if got.UI.LayoutName == "" {
+					assert.Equal(t, ui.Config{}, got)
+
+					continue
+				}
+
+				assert.Equal(t, want, got)
+
+				got.UI.Extensions[0] = ".txt"
+				got.UI.StaticPaths[0] = "/js/*"
+			}
+		})
+	}
+
+	wg.Wait()
+	assert.Equal(t, want, s.Config())
 }

@@ -76,6 +76,9 @@ type Service struct {
 	// state is what Init loaded, or nil before Init succeeds and after
 	// Close. It is swapped whole, so a method sees one Init's state.
 	state atomic.Pointer[state]
+	// bound is the configuration the last successful Init resolved, or
+	// nil before one. Close keeps it. Config returns a copy of it.
+	bound atomic.Pointer[Config]
 	// cfgSource records the configuration given to WithConfig.
 	cfgSource svcutil.ConfigSource[Config]
 }
@@ -138,6 +141,7 @@ func (s *Service) Init(context.Context) error {
 	}
 
 	s.state.Store(st)
+	s.bound.Store(&Config{JWT: st.settings})
 
 	s.logger.Info("service initialized").
 		Str("service", ServiceName).
@@ -155,6 +159,20 @@ func (s *Service) Close(context.Context) error {
 	s.state.Store(nil)
 
 	return nil
+}
+
+// Config returns a copy of the configuration the last successful Init
+// resolved, defaults included, or the zero Config before one. A failed
+// Init and Close leave it as it was. Config holds no slice, map or
+// pointer, so the copy shares nothing with the service, and SigningKey
+// stays a gas.Secret.
+func (s *Service) Config() Config {
+	cfg := s.bound.Load()
+	if cfg == nil {
+		return Config{}
+	}
+
+	return *cfg
 }
 
 // load resolves the configuration and builds the state from it.

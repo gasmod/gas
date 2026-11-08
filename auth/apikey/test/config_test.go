@@ -1,6 +1,7 @@
 package apikey_test
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -222,4 +223,91 @@ func TestInit_BindsFromProvider(t *testing.T) {
 	svc, err = apikey.New()(b.DB, testutil.NewNopLogger(), b.Migrations, bad)
 	require.NoError(t, err)
 	require.ErrorIs(t, svc.Init(t.Context()), apikey.ErrInvalidConfig)
+}
+
+// Config returns the zero Config before Init, and after Init a copy of
+// the configuration it bound, defaults included. Changing a result does
+// not reach the service, Close leaves it as it was, and a Provider
+// WithTx returned reports the service's.
+func TestService_Config(t *testing.T) {
+	t.Parallel()
+
+	provider, err := configtest.NewMockConfigWithValues(map[string]any{
+		"apikey": map[string]any{"prefix": "bound_"},
+	})
+	require.NoError(t, err)
+
+	b := sqliteBackend(t)
+
+	svc, err := apikey.New()(b.DB, testutil.NewNopLogger(), b.Migrations, provider)
+	require.NoError(t, err)
+	assert.Equal(t, apikey.Config{}, svc.Config(), "before Init")
+
+	require.NoError(t, svc.Init(t.Context()))
+
+	want := *apikey.DefaultConfig()
+
+	want.APIKey.Prefix = "bound_"
+
+	got := svc.Config()
+	assert.Equal(t, want, got)
+
+	got.APIKey.Prefix = "changed_"
+	got.APIKey.KeyLength = 64
+
+	assert.Equal(t, want, svc.Config(), "a changed result does not reach the service")
+
+	tx, err := b.DB.BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+
+	t.Cleanup(func() { _ = tx.Rollback() })
+
+	txSvc, ok := svc.WithTx(tx).(*apikey.Service)
+	require.True(t, ok)
+	assert.Equal(t, want, txSvc.Config(), "a Provider WithTx returned")
+
+	require.NoError(t, svc.Close(t.Context()))
+	assert.Equal(t, want, svc.Config(), "after Close")
+}
+
+// A failed Init leaves Config on the configuration of the last Init that
+// succeeded.
+func TestService_ConfigAfterFailedInit(t *testing.T) {
+	t.Parallel()
+
+	cfg := apikey.DefaultConfig()
+	svc := newService(t, sqliteBackend(t), cfg, nil)
+
+	cfg.APIKey.KeyLength = 1
+
+	require.ErrorIs(t, svc.Init(t.Context()), apikey.ErrInvalidConfig)
+	assert.Equal(t, *apikey.DefaultConfig(), svc.Config())
+}
+
+// Config may run while Init and Close do, and returns the configuration
+// of one Init throughout. Run with -race.
+func TestService_ConfigConcurrentWithRestart(t *testing.T) {
+	t.Parallel()
+
+	svc := newService(t, sqliteBackend(t), nil, nil)
+	ctx := t.Context()
+
+	var wg sync.WaitGroup
+
+	wg.Go(func() {
+		for range 50 {
+			assert.NoError(t, svc.Init(ctx))
+			assert.NoError(t, svc.Close(ctx))
+		}
+	})
+
+	for range 4 {
+		wg.Go(func() {
+			for range 200 {
+				assert.Equal(t, *apikey.DefaultConfig(), svc.Config())
+			}
+		})
+	}
+
+	wg.Wait()
 }

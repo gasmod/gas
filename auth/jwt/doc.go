@@ -65,6 +65,11 @@
 // wrapping [ErrInvalidConfig], [ErrNoConfigProvider] or
 // [ErrKeyLoadFailed], unless all of it succeeds.
 //
+// [Service.Config] returns a copy of the configuration the last
+// successful Init resolved, defaults included, with SigningKey still a
+// gas.Secret, or the zero Config before one. A failed Init and Close
+// leave it as it was.
+//
 // # Keys
 //
 // An HS256 key is the signing key's bytes, used to both sign and verify.
@@ -167,9 +172,9 @@
 //
 // # Lifecycle
 //
-// Until Init succeeds, every method other than Name, Init and Close
-// returns an error wrapping ErrNotInitialized, which auth.Middleware
-// answers with a 500, not a 401. A successful Init logs `service
+// Until Init succeeds, every method other than Name, Init, Close and
+// Config returns an error wrapping ErrNotInitialized, which
+// auth.Middleware answers with a 500, not a 401. A successful Init logs `service
 // initialized` at info level with `service` set to [ServiceName], the
 // signing method and whether the service only verifies. It is the only
 // event the service logs. Init may run again, after Close or not, and

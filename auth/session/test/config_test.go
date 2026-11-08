@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -258,4 +259,90 @@ func TestInit_BindErrors(t *testing.T) {
 	err = svc.Init(t.Context())
 	require.ErrorIs(t, err, session.ErrNoConfigProvider)
 	require.EqualError(t, err, "gas/auth/session: no config provider")
+}
+
+// testConfig returns the configuration sqliteEnv gives the service when
+// mutate is nil: the defaults with the cleanup off.
+func testConfig() session.Config {
+	cfg := *session.DefaultConfig()
+
+	cfg.Session.CleanupInterval = 0
+
+	return cfg
+}
+
+// Config returns the zero Config before Init, and after Init a copy of
+// the configuration it bound, defaults included. Changing a result does
+// not reach the service, and Close leaves it as it was.
+func TestService_Config(t *testing.T) {
+	t.Parallel()
+
+	provider, err := configtest.NewMockConfigWithValues(map[string]any{
+		"Session": map[string]any{"CookieName": "sid", "CleanupInterval": "0s"},
+	})
+	require.NoError(t, err)
+
+	_, db, migrations := testutil.SetupSQLite(t)
+
+	svc, err := session.New()(db, testutil.NewNopLogger(), migrations, provider)
+	require.NoError(t, err)
+	assert.Equal(t, session.Config{}, svc.Config(), "before Init")
+
+	require.NoError(t, svc.Init(t.Context()))
+
+	want := testConfig()
+
+	want.Session.CookieName = "sid"
+
+	got := svc.Config()
+	assert.Equal(t, want, got)
+
+	got.Session.CookieName = "changed"
+	got.Session.CookieSecure = false
+
+	assert.Equal(t, want, svc.Config(), "a changed result does not reach the service")
+
+	require.NoError(t, svc.Close(t.Context()))
+	assert.Equal(t, want, svc.Config(), "after Close")
+}
+
+// A failed Init leaves Config on the configuration of the last Init that
+// succeeded.
+func TestService_ConfigAfterFailedInit(t *testing.T) {
+	t.Parallel()
+
+	e := sqliteEnv(t, nil)
+
+	e.cfg.Session.SessionTTL = 0
+
+	require.ErrorIs(t, e.svc.Init(t.Context()), session.ErrInvalidConfig)
+	assert.Equal(t, testConfig(), e.svc.Config())
+}
+
+// Config may run while Init and Close do, and returns the configuration
+// of one Init throughout. Run with -race.
+func TestService_ConfigConcurrentWithRestart(t *testing.T) {
+	t.Parallel()
+
+	e := sqliteEnv(t, nil)
+	ctx := t.Context()
+
+	var wg sync.WaitGroup
+
+	wg.Go(func() {
+		for range 50 {
+			assert.NoError(t, e.svc.Init(ctx))
+			assert.NoError(t, e.svc.Close(ctx))
+		}
+	})
+
+	for range 4 {
+		wg.Go(func() {
+			for range 200 {
+				assert.Equal(t, testConfig(), e.svc.Config())
+			}
+		})
+	}
+
+	wg.Wait()
 }

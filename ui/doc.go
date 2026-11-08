@@ -303,6 +303,10 @@
 // run. A failure wraps [ErrInvalidConfig] and names the setting, never
 // its value.
 //
+// [Service.Config] returns a copy of the configuration the last
+// successful Init resolved, defaults and slices included, or the zero
+// Config before one. A failed Init and Close leave it as it was.
+//
 // # Lifecycle
 //
 // A successful Init resolves the configuration, checks the functions of
@@ -318,8 +322,8 @@
 // through an app, core answers 503 on the static routes while the
 // service is closed.
 //
-// Before the first successful Init, every method but Init, Close and Name
-// returns an error wrapping [ErrNotInitialized]; after Close, until Init
+// Before the first successful Init, every method but Init, Close, Name
+// and Config returns an error wrapping [ErrNotInitialized]; after Close, until Init
 // succeeds, [ErrClosed]; and a static route answers 503. [New]'s
 // constructor fails with [ErrNilLogger] for a nil logger and
 // [ErrNilTemplateProvider] for a nil store; a nil ConfigProvider is

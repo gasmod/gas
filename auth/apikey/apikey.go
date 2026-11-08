@@ -93,6 +93,9 @@ type Service struct {
 	// state is what the last successful Init set up, or nil before it,
 	// after a failed Init, and after Close.
 	state atomic.Pointer[state]
+	// bound is the configuration the last successful Init resolved, or
+	// nil before one. Close keeps it. Config returns a copy of it.
+	bound atomic.Pointer[Config]
 	// cfgSource records the configuration given to WithConfig.
 	cfgSource svcutil.ConfigSource[Config]
 	// cleanup runs the expired-key cleanup between Init and Close.
@@ -172,6 +175,7 @@ func (s *Service) Init(context.Context) error {
 	}
 
 	s.state.Store(st)
+	s.bound.Store(st.cfg)
 
 	//nolint:contextcheck // the cleanup outlives Init's context; Close stops it.
 	s.cleanup.Start(svcutil.Task{
@@ -199,6 +203,24 @@ func (s *Service) Close(context.Context) error {
 	s.cleanup.Stop()
 
 	return nil
+}
+
+// Config returns a copy of the configuration the last successful Init
+// resolved, defaults included, or the zero Config before one. A failed
+// Init and Close leave it as it was. Config holds no slice, map or
+// pointer, so the copy shares nothing with the service. On a Provider WithTx returned, it is the
+// configuration of the service it came from.
+func (s *Service) Config() Config {
+	if s.root != nil {
+		return s.root.Config()
+	}
+
+	cfg := s.bound.Load()
+	if cfg == nil {
+		return Config{}
+	}
+
+	return *cfg
 }
 
 // WithTx returns a Provider whose operations run in tx, as described in

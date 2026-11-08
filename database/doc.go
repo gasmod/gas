@@ -87,6 +87,11 @@
 // A failure wraps [ErrInvalidConfig] and names the setting, never its
 // value.
 //
+// [Service.Config] returns a copy of the configuration the last
+// successful Init resolved, defaults included, with DSN still a
+// gas.Secret, or the zero Config before one. A failed Init and Close
+// leave it as it was.
+//
 // # Modes
 //
 // ModeSQL opens a *sql.DB and applies the four limits to it. ModePgx

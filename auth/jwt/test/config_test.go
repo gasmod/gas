@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -283,4 +284,77 @@ func TestConfig_SigningKeyRedacted(t *testing.T) {
 
 	_, err = svc.Sign("user-42", nil)
 	require.NoError(t, err)
+}
+
+// Config returns the zero Config before Init, and after Init a copy of
+// the configuration it bound, defaults included, with the signing key
+// still redacted. Changing a result does not reach the service, and Close
+// leaves it as it was.
+func TestService_Config(t *testing.T) {
+	t.Parallel()
+
+	svc := bound(t, m{"signingkey": testKey, "issuer": "api"})
+	assert.Equal(t, jwt.Config{}, svc.Config(), "before Init")
+
+	require.NoError(t, svc.Init(t.Context()))
+
+	want := *jwt.DefaultConfig()
+
+	want.JWT.SigningKey = testKey
+	want.JWT.Issuer = "api"
+
+	got := svc.Config()
+	assert.Equal(t, want, got)
+	assert.Equal(t, "[redacted]", fmt.Sprint(got.JWT.SigningKey))
+	assert.NotContains(t, fmt.Sprintf("%+v", got), testKey)
+
+	got.JWT.Issuer = "changed"
+	got.JWT.SigningKey = otherKey
+
+	assert.Equal(t, want, svc.Config(), "a changed result does not reach the service")
+
+	require.NoError(t, svc.Close(t.Context()))
+	assert.Equal(t, want, svc.Config(), "after Close")
+}
+
+// A failed Init leaves Config on the configuration of the last Init that
+// succeeded.
+func TestService_ConfigAfterFailedInit(t *testing.T) {
+	t.Parallel()
+
+	cfg := hsConfig()
+	svc := newService(t, cfg)
+
+	cfg.JWT.SigningKey = short
+
+	require.ErrorIs(t, svc.Init(t.Context()), jwt.ErrInvalidConfig)
+	assert.Equal(t, *hsConfig(), svc.Config())
+}
+
+// Config may run while Init and Close do, and returns the configuration
+// of one Init throughout. Run with -race.
+func TestService_ConfigConcurrentWithRestart(t *testing.T) {
+	t.Parallel()
+
+	svc := newService(t, hsConfig())
+	ctx := t.Context()
+
+	var wg sync.WaitGroup
+
+	wg.Go(func() {
+		for range 50 {
+			assert.NoError(t, svc.Init(ctx))
+			assert.NoError(t, svc.Close(ctx))
+		}
+	})
+
+	for range 4 {
+		wg.Go(func() {
+			for range 200 {
+				assert.Equal(t, *hsConfig(), svc.Config())
+			}
+		})
+	}
+
+	wg.Wait()
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -535,4 +536,95 @@ func TestConfig_DSNRedacted(t *testing.T) {
 	require.NoError(t, s.Init(t.Context()))
 	t.Cleanup(func() { require.NoError(t, s.Close(context.Background())) })
 	require.NoError(t, s.DB().PingContext(t.Context()))
+}
+
+// Config returns the zero Config before Init, and after Init a copy of
+// the configuration it bound, defaults included, with the DSN still
+// redacted. Changing a result does not reach the service, and Close and
+// a failed Init leave it as it was.
+func TestService_Config(t *testing.T) {
+	t.Parallel()
+
+	dsn := sqliteConfig(t).Database.DSN
+
+	p, err := configtest.NewMockConfigWithValues(map[string]any{
+		"database": map[string]any{"dialect": "sqlite", "dsn": string(dsn), "maxopenconns": 30},
+	})
+	require.NoError(t, err)
+
+	s, err := database.New()(p, &gas.NopLogger{})
+	require.NoError(t, err)
+	assert.Equal(t, database.Config{}, s.Config(), "before Init")
+
+	require.NoError(t, s.Init(t.Context()))
+
+	want := *database.DefaultConfig()
+
+	want.Database.Dialect = database.DialectSQLite
+	want.Database.DSN = dsn
+	want.Database.MaxOpenConns = 30
+
+	got := s.Config()
+	assert.Equal(t, want, got)
+	assert.Equal(t, "[redacted]", fmt.Sprint(got.Database.DSN))
+	assert.NotContains(t, fmt.Sprintf("%+v", got), string(dsn))
+
+	got.Database.DSN = "changed"
+	got.Database.MaxOpenConns = 9
+
+	assert.Equal(t, want, s.Config(), "a changed result does not reach the service")
+
+	require.NoError(t, s.Close(t.Context()))
+	assert.Equal(t, want, s.Config(), "after Close")
+}
+
+// A failed Init leaves Config on the configuration of the last Init that
+// succeeded.
+func TestService_ConfigAfterFailedInit(t *testing.T) {
+	t.Parallel()
+
+	cfg := sqliteConfig(t)
+	want := *cfg
+	s, _ := build(t, database.WithConfig(cfg))
+
+	require.NoError(t, s.Init(t.Context()))
+	require.NoError(t, s.Close(t.Context()))
+
+	cfg.Database.DSN = ""
+
+	require.ErrorIs(t, s.Init(t.Context()), database.ErrInvalidConfig)
+	assert.Equal(t, want, s.Config())
+}
+
+// Config may run while Init and Close do, and returns the zero Config or
+// the configuration of one Init throughout. Run with -race.
+func TestService_ConfigConcurrentWithRestart(t *testing.T) {
+	t.Parallel()
+
+	cfg := sqliteConfig(t)
+	want := *cfg
+	s, _ := build(t, database.WithConfig(cfg))
+	ctx := t.Context()
+
+	var wg sync.WaitGroup
+
+	wg.Go(func() {
+		for range 20 {
+			assert.NoError(t, s.Init(ctx))
+			assert.NoError(t, s.Close(ctx))
+		}
+	})
+
+	for range 4 {
+		wg.Go(func() {
+			for range 200 {
+				if got := s.Config(); got != (database.Config{}) {
+					assert.Equal(t, want, got)
+				}
+			}
+		})
+	}
+
+	wg.Wait()
+	assert.Equal(t, want, s.Config())
 }

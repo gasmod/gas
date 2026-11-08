@@ -178,6 +178,11 @@
 // Config given to WithConfig fails Init with [ErrNilConfig], and the lack
 // of both a Config and a ConfigProvider with [ErrNoConfigProvider].
 //
+// [Service.Config] returns a copy of the configuration the last
+// successful Init resolved, defaults included, or the zero Config before
+// one. A failed Init and Close leave it as it was. On a Provider WithTx
+// returned, it is the configuration of the service it came from.
+//
 // # Lifecycle
 //
 // [New] returns the constructor the dependency injection container calls;
@@ -196,10 +201,10 @@
 // the cleanup, waits for a run in progress, and uninitializes the
 // service.
 //
-// Every method other than Name, Init, Close and WithTx checks first that
-// the service is initialized, and fails with [ErrNotInitialized] before
-// Init has succeeded, after a failed Init, and after Close, until Init
-// succeeds again. The methods of a Provider WithTx returned check the
+// Every method other than Name, Init, Close, Config and WithTx checks
+// first that the service is initialized, and fails with
+// [ErrNotInitialized] before Init has succeeded, after a failed Init, and
+// after Close, until Init succeeds again. The methods of a Provider WithTx returned check the
 // service they came from at each call, and fail the same way.
 //
 // # Storage

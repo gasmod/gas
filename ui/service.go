@@ -51,6 +51,10 @@ type Service struct {
 	// st is what Init opened, or nil before Init succeeds and after
 	// Close. It is swapped whole, so a call sees one Init's state.
 	st atomic.Pointer[state]
+	// bound is the configuration the last successful Init resolved, or
+	// nil before one. Close keeps it. Its slices are the state's, which
+	// nothing changes; Config returns a copy of it with its own.
+	bound atomic.Pointer[Config]
 	// cfgSource records the configuration given to WithConfig.
 	cfgSource configsrc.Source[Config]
 	// funcsGen counts the calls of RegisterFuncs that added functions, so
@@ -208,6 +212,7 @@ func (s *Service) Init(ctx context.Context) error {
 	}
 
 	s.st.Store(st)
+	s.bound.Store(&Config{UI: st.set})
 
 	s.logger.Info("service initialized").
 		Bool("reload", set.Reload).
@@ -243,6 +248,24 @@ func (s *Service) Close(context.Context) error {
 	}
 
 	return nil
+}
+
+// Config returns a copy of the configuration the last successful Init
+// resolved, defaults included, or the zero Config before one. A failed
+// Init and Close leave it as it was. Its slices are copies too, so
+// nothing done to the result reaches the service.
+func (s *Service) Config() Config {
+	cfg := s.bound.Load()
+	if cfg == nil {
+		return Config{}
+	}
+
+	c := *cfg
+
+	c.UI.Extensions = slices.Clone(c.UI.Extensions)
+	c.UI.StaticPaths = slices.Clone(c.UI.StaticPaths)
+
+	return c
 }
 
 // RegisterFuncs adds funcs to the functions every page can call, as
