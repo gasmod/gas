@@ -21,26 +21,32 @@
 // A Store starts empty and holds what is registered until the process
 // ends; it has no lifecycle. Names and extensions are as the template
 // package describes, [template.DefaultExtension] unless [WithExtensions]
-// gives others. Register keeps a copy of the content and Get returns a
-// copy, so neither the caller's slice nor the returned one shares memory
-// with the store. RegisterFS reads every file first and stores them all
-// under one hold of the lock, so a reader sees all of them or none.
-// Register and RegisterFS refuse content over the store's maximum size,
-// [template.DefaultMaxSize] unless [WithMaxSize] gives another, with an
-// error wrapping template.ErrTooLarge.
+// gives others.
+//
+//   - Register keeps a copy of the content and Get returns a copy, so
+//     neither the caller's slice nor the returned one shares memory with
+//     the store.
+//   - RegisterFS reads every file first and stores them all under one hold
+//     of the lock, so a reader sees all of them or none.
+//   - Register and RegisterFS refuse content over the store's maximum
+//     size, [template.DefaultMaxSize] unless [WithMaxSize] gives another,
+//     with an error wrapping template.ErrTooLarge.
 //
 // # Concurrency
 //
-// A Store is safe for concurrent use: a read-write lock guards the map,
-// held for reading by Get and List and for writing by Register and
-// RegisterFS, and never while RegisterFS reads its files.
+// A Store is safe for concurrent use. A read-write lock guards the map:
+//
+//   - Get and List hold it for reading.
+//   - Register and RegisterFS hold it for writing.
+//   - RegisterFS never holds it while it reads its files.
 //
 // # Errors
 //
 // The constructor returns an error wrapping template.ErrInvalidExtension
-// or template.ErrInvalidMaxSize for a bad option. The methods return
-// errors wrapping template.ErrInvalidName, template.ErrTemplateNotFound,
-// template.ErrTooLarge and, from RegisterFS, template.ErrNilFS,
-// template.ErrRead and the context's error, with the texts the template
-// package lists.
+// or template.ErrInvalidMaxSize for a bad option.
+//
+// The methods return errors wrapping template.ErrInvalidName,
+// template.ErrTemplateNotFound and template.ErrTooLarge. RegisterFS also
+// returns template.ErrNilFS, template.ErrRead and the context's error.
+// The texts are those the template package lists.
 package memory

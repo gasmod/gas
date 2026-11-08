@@ -16,20 +16,30 @@
 //
 // # Defaults
 //
-// With a field nil, its method behaves as an empty store: Get returns an
-// error wrapping template.ErrTemplateNotFound, `template: not found:`
-// and the quoted name; List returns an empty, non-nil list; Register and
-// RegisterFS return nil.
+// With a field nil, its method behaves as an empty store:
+//
+//   - Get returns an error wrapping template.ErrTemplateNotFound,
+//     `template: not found:` and the quoted name.
+//   - List returns an empty, non-nil list.
+//   - Register and RegisterFS return nil.
 //
 // # Calls
 //
 // Each method appends a [Call] with its name and its arguments after the
-// context, before it calls its field: the name for Get, none for List, the
-// name and the content for Register, the fs.FS for RegisterFS. The content
-// is recorded as a copy, nil for nil, so that a caller that reuses its
-// slice does not change a recorded call. Calls returns a copy of the calls
-// in the order they were made, CallCount counts those of one method, and
-// Reset forgets them all.
+// context, before it calls its field. The arguments recorded:
+//
+//   - Get: the name.
+//   - List: none.
+//   - Register: the name and the content. The content is recorded as a
+//     copy, nil for nil, so that a caller that reuses its slice does not
+//     change a recorded call.
+//   - RegisterFS: the fs.FS.
+//
+// To read the record:
+//
+//   - Calls returns a copy of the calls in the order they were made.
+//   - CallCount counts those of one method.
+//   - Reset forgets them all.
 //
 // The methods may be called from several goroutines at once, as the calls
 // are kept under a lock, which Calls, CallCount and Reset take too.
