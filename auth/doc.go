@@ -1,10 +1,11 @@
 // Package auth defines how a Gas app authenticates and authorizes HTTP
 // requests: the [Authenticator], [Authorizer] and [PrincipalRevoker]
 // interfaces, the error contract they share, [Chain] to try several
-// authenticators, and the middleware that runs them. Packages jwt,
-// session, apikey and token implement the credentials; the gas.Principal
-// they produce, and gas.WithPrincipal and gas.PrincipalFromContext, live
-// in core.
+// authenticators, and the middleware that runs them.
+//
+// Packages jwt, session, apikey and token implement the credentials. The
+// gas.Principal they produce, and gas.WithPrincipal and
+// gas.PrincipalFromContext, live in core.
 //
 // # Usage
 //
@@ -19,11 +20,14 @@
 //
 //	mux.Handle("/reports", authn(reports(reportsHandler)))
 //
-// A request with a valid token or session reaches reportsHandler with its
-// principal on the context, if authorizer allows it to read reports. A
-// request with neither gets a 401 with the header
-// `WWW-Authenticate: Bearer realm="api"`, and one the authorizer denies a
-// 403.
+// With this setup:
+//
+//   - A request with a valid token or session reaches reportsHandler with
+//     its principal on the context, if authorizer allows it to read
+//     reports.
+//   - A request with neither gets a 401 with the header
+//     `WWW-Authenticate: Bearer realm="api"`.
+//   - A request the authorizer denies gets a 403.
 //
 // # Authenticators
 //
@@ -44,19 +48,24 @@
 // of a type that implements gas.Principal, counts as ErrUnauthenticated
 // everywhere in this package, never as a success.
 //
+// # Principals
+//
 // [BasePrincipal] is a gas.Principal holding fixed values, which
-// authenticators return. [NewPrincipal] builds one; a nil metadata becomes
-// an empty gas.BasePrincipalMetadata, and a non-nil one is kept, not
-// copied, so later changes to the map show through. [SchemeJWT],
-// [SchemeSession] and [SchemeAPIKey] are the schemes of this module's
-// authenticators.
+// authenticators return. [NewPrincipal] builds one:
+//
+//   - A nil metadata becomes an empty gas.BasePrincipalMetadata.
+//   - A non-nil metadata is kept, not copied, so later changes to the map
+//     show through.
+//
+// [SchemeJWT], [SchemeSession] and [SchemeAPIKey] are the schemes of this
+// module's authenticators.
 //
 // # Chains
 //
 // A [Chain] is an Authenticator that tries its members in order and
-// returns the principal of the first one that succeeds; the members after
-// it are not called. A member that returns ErrNoCredentials is skipped.
-// When no member succeeds:
+// returns the principal of the first one that succeeds. The members after
+// it are not called, and a member that returns ErrNoCredentials is
+// skipped. When no member succeeds:
 //
 //  1. If every member returned ErrNoCredentials, or the chain is empty,
 //     the chain returns ErrNoCredentials.
@@ -75,8 +84,9 @@
 // [Middleware] runs an Authenticator on each request. On success it
 // stores the principal on the request's context with gas.WithPrincipal,
 // where handlers read it with gas.PrincipalFromContext or
-// gas.Context.Principal, and calls the next handler. Otherwise it does not
-// call the next handler, and answers:
+// gas.Context.Principal, and calls the next handler.
+//
+// Otherwise it does not call the next handler, and answers:
 //
 //   - 401 for ErrNoCredentials or an error matching ErrUnauthenticated,
 //     with the plain-text body `Unauthorized`.
@@ -90,42 +100,61 @@
 // The errors are told apart with [errors.Is], so an error that joins a
 // denial with another error counts as a denial; Chain never returns one.
 // The bodies are those of [http.Error], and say nothing about the cause.
-// [WithOnError] replaces both responses with a function of the
-// authenticator's error, which then owns the response and its logging.
-// [WithChallenge] sets a `WWW-Authenticate` value that Middleware puts on
-// the response to a 401-class error, before calling the error function,
-// which may change it; by default no such header is sent. Middleware
-// panics at construction when the Authenticator is nil or a nil pointer.
 //
 // An authenticator that returns ErrForbidden, which is not a denial of
 // credentials, gets a 500 like any other infrastructure error.
 //
+// Middleware takes these options:
+//
+//   - [WithOnError] replaces both responses with a function of the
+//     authenticator's error, which then owns the response and its logging.
+//   - [WithChallenge] sets a `WWW-Authenticate` value that Middleware puts
+//     on the response to a 401-class error, before calling the error
+//     function, which may change it. By default no such header is sent.
+//
+// Middleware panics at construction when the Authenticator is nil or a
+// nil pointer.
+//
 // # Schemes
 //
 // [RequireScheme] lets a request through only when Middleware stored a
-// principal with the given scheme, compared exactly. A request without a
-// principal gets a 401 `Unauthorized`; one with another scheme a 403
-// `Forbidden`. Neither response says which scheme was wanted.
+// principal with the given scheme, compared exactly. Otherwise:
+//
+//   - A request without a principal gets a 401 `Unauthorized`.
+//   - A request with another scheme gets a 403 `Forbidden`.
+//
+// Neither response says which scheme was wanted.
 //
 // # Authorization
 //
 // An [Authorizer] decides whether a principal may perform an action on a
-// resource: it returns nil to allow, an error matching [ErrForbidden] to
-// deny, and any other error when it could not decide.
+// resource. It returns:
+//
+//   - nil to allow.
+//   - An error matching [ErrForbidden] to deny.
+//   - Any other error when it could not decide.
+//
 // [RequireAuthorization] runs one with a fixed action and resource on the
 // principal Middleware stored, and lets the request through when it
-// allows. A request without a principal gets a 401 `Unauthorized`, a
-// denial a 403 `Forbidden`, and any other error a 500 `Internal Server
-// Error`, logged as Middleware logs one, with the message `authorization
-// failed`, and likewise not logged once the request's context has ended.
+// allows. Otherwise:
+//
+//   - A request without a principal gets a 401 `Unauthorized`.
+//   - A denial gets a 403 `Forbidden`.
+//   - Any other error gets a 500 `Internal Server Error`. It is logged as
+//     Middleware logs one, with the message `authorization failed`, and
+//     likewise not logged once the request's context has ended.
+//
 // RequireAuthorization panics at construction when the Authorizer is nil
 // or a nil pointer.
 //
 // # Revocation
 //
 // A [PrincipalRevoker] invalidates credentials so that they no longer
-// authenticate: the one a principal used, every one of a subject, or
-// every one of a subject with a given scheme.
+// authenticate. It revokes one of:
+//
+//   - The credential a principal used.
+//   - Every credential of a subject.
+//   - Every credential of a subject with a given scheme.
 //
 // # Issuing and revoking
 //
@@ -147,10 +176,12 @@
 //
 // # Concurrency
 //
-// Chain, BasePrincipal and the middleware keep no mutable state and are
+// Chain, BasePrincipal and the middleware keep no mutable state. They are
 // safe for concurrent use, as long as the authenticators and authorizers
-// they call are. A BasePrincipal's metadata map is shared with the caller
-// of NewPrincipal, so changing it while requests read it is a data race.
+// they call are.
+//
+// A BasePrincipal's metadata map is shared with the caller of
+// NewPrincipal, so changing it while requests read it is a data race.
 //
 // # Errors
 //
@@ -166,9 +197,9 @@
 //     ErrUnauthenticated.
 //   - [ErrForbidden]: an Authorizer denied the action.
 //
-// The sentinels of the rules in Issuing and revoking, which this package
-// never returns except from CheckLength, and the services return wrapped
-// after their name:
+// The sentinels of the rules in Issuing and revoking follow. This package
+// never returns them except from CheckLength, and the services return them
+// wrapped after their name:
 //
 //   - [ErrEmptySubject]: a credential was to be issued for an empty
 //     subject.

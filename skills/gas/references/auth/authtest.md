@@ -35,9 +35,11 @@ it never lets a request through by accident:
 ## Calls
 
 Each method appends a `Call` with its name and arguments, the context
-included, before it calls its field. Calls returns a copy of them in the
-order they were made, CallCount counts those of one method, and Reset
-forgets them all.
+included, before it calls its field. Every mock reads them back with:
+
+- Calls, which returns a copy of them in the order they were made.
+- CallCount, which counts those of one method.
+- Reset, which forgets them all.
 
 The methods may be called from several goroutines at once, as the calls
 are kept under a lock, which Calls, CallCount and Reset take too.

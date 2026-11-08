@@ -5,9 +5,10 @@ import "github.com/gasmod/gas/auth/jwt"
 ```
 
 Package jwt signs and verifies JSON Web Tokens with HS256 or RS256, and
-authenticates requests that carry one as a bearer token. It keeps no
-state per token, so it needs no database. `Service` implements
-auth.Authenticator, gas.Service and `Provider`, which embeds
+authenticates requests that carry one as a bearer token.
+
+It keeps no state per token, so it needs no database. `Service`
+implements auth.Authenticator, gas.Service and `Provider`, which embeds
 auth.Authenticator.
 
 ## Usage
@@ -37,9 +38,15 @@ r.Header.Set("Authorization", "Bearer "+token)
 p, err := svc.Authenticate(ctx, r)
 ```
 
-p.Subject() is `user-42`, p.Scheme() is auth.SchemeJWT, p.CredentialID()
-is the token's random `jti`, and p.Metadata() holds `role`. Behind
-auth.Middleware, the service authenticates every request the same way.
+After it runs:
+
+- p.Subject() is `user-42`.
+- p.Scheme() is auth.SchemeJWT.
+- p.CredentialID() is the token's random `jti`.
+- p.Metadata() holds `role`.
+
+Behind auth.Middleware, the service authenticates every request the same
+way.
 
 ## Configuration
 
@@ -59,19 +66,26 @@ must be positive. Default: `DefaultExpiry`.
 - `jwt.leeway`: the clock skew allowed when checking `exp`, `nbf` and
 `iat`; it must not be negative. Default: 0.
 
-HS256 requires a signing key and both key paths empty. RS256 requires a
-public key path and an empty signing key; the private key path is
-optional, and without it the service only verifies. A setting the
-method does not use is an error rather than ignored.
+Each method requires its own settings:
 
-`Service.Init` resolves the configuration each time it runs. Without
-`WithConfig`, it binds `DefaultConfig` from the gas.ConfigProvider,
-which checks the `validate` tags. With WithConfig, it takes a copy of
-the given Config, never changing the caller's struct, and checks the
-same tags; a nil Config is the error `ErrNilConfig`. Either way, the
-rules above then run, and the keys load. Init fails, with an error
-wrapping `ErrInvalidConfig`, `ErrNoConfigProvider` or
-`ErrKeyLoadFailed`, unless all of it succeeds.
+- HS256 requires a signing key and both key paths empty.
+- RS256 requires a public key path and an empty signing key. The
+private key path is optional; without it the service only verifies.
+
+A setting the method does not use is an error rather than ignored.
+
+`Service.Init` resolves the configuration each time it runs:
+
+1. Without `WithConfig`, it binds `DefaultConfig` from the
+gas.ConfigProvider, which checks the `validate` tags. With
+WithConfig, it takes a copy of the given Config, never changing the
+caller's struct, and checks the same tags; a nil Config is the error
+`ErrNilConfig`.
+2. The rules above run.
+3. The keys load.
+
+Init fails, with an error wrapping `ErrInvalidConfig`,
+`ErrNoConfigProvider` or `ErrKeyLoadFailed`, unless all of it succeeds.
 
 `Service.Config` returns a copy of the configuration the last
 successful Init resolved, defaults included, with SigningKey still a
@@ -85,15 +99,22 @@ Its length is checked, not its randomness; generate it from a secure
 random source.
 
 For RS256, Init reads each key file whole, up to 64 KiB, and parses its
-first PEM block. The public key may be PKIX (`PUBLIC KEY`) or PKCS #1
-(`RSA PUBLIC KEY`), the private key PKCS #8 (`PRIVATE KEY`) or PKCS #1
-(`RSA PRIVATE KEY`), unencrypted. Each must have at least
-`MinRSAKeyBits` bits, and the private key must belong to the public
-key, so that the service verifies every token it signs. A key that
-fails any of this fails Init with an error wrapping ErrKeyLoadFailed
-that names the setting, and `ErrKeyTooSmall` too for a small key; a
-file that does not exist wraps `fs.ErrNotExist`. The error never
-includes the path or the file's contents.
+first PEM block. The keys must be:
+
+- The public key: PKIX (`PUBLIC KEY`) or PKCS #1 (`RSA PUBLIC KEY`).
+- The private key: PKCS #8 (`PRIVATE KEY`) or PKCS #1
+(`RSA PRIVATE KEY`), unencrypted.
+- Each at least `MinRSAKeyBits` bits.
+- The private key belonging to the public key, so that the service
+verifies every token it signs.
+
+A key that fails any of this fails Init with an error wrapping
+ErrKeyLoadFailed that names the setting:
+
+- A small key's error wraps `ErrKeyTooSmall` too.
+- A file that does not exist wraps `fs.ErrNotExist`.
+
+The error never includes the path or the file's contents.
 
 ## Signing
 
@@ -109,8 +130,10 @@ unpadded URL-safe base64, new for each token.
 
 Times are whole seconds, rounded down, so a token's lifetime is the
 expiry less up to one second. `Service.Sign` is SignWithExpiry with the
-configured expiry. The checks run in this order, and the first that
-fails returns its error and no token:
+configured expiry.
+
+The checks run in this order, and the first that fails returns its
+error and no token:
 
 1. The service is initialized (`ErrNotInitialized`).
 2. It has a signing key: RS256 without a private key cannot sign
@@ -151,56 +174,70 @@ A `jti` is not required, so tokens from other issuers that share the
 key verify; a token without one has an empty `TokenClaims`.TokenID.
 The claims that are not registered come back in
 TokenClaims.CustomClaims, as encoding/json decodes them, so a number
-is a float64.
+is a float64. Verify does not limit the length of `sub`.
 
-Verify does not limit the length of `sub`. A token that fails a check
-is denied with an error wrapping `ErrTokenInvalid` and a fixed reason.
-The one exception is a token that passes every check but `exp`: it is
-denied with `ErrTokenExpired`. So an expired token without `sub` is
-invalid, not expired.
+A token that fails a check is denied with an error wrapping
+`ErrTokenInvalid` and a fixed reason. The one exception is a token that
+passes every check but `exp`: it is denied with `ErrTokenExpired`. So
+an expired token without `sub` is invalid, not expired.
 
 ## Authenticating
 
 `Service.Authenticate` reads the request's Authorization headers. One
 whose value, trimmed, starts with `Bearer` in any case, then one or
-more spaces, carries a token; headers with another scheme, such as
-`Basic`, are left for other authenticators. With no bearer header, or a
-nil request, the error wraps auth.ErrNoCredentials, which auth.Chain
-skips. With more than one, or a bearer header without a token, it wraps
-ErrTokenInvalid. The token is then verified as Verify does, and
-Verify's error returned as it is. On success the principal has:
+more spaces, carries a token. Headers with another scheme, such as
+`Basic`, are left for other authenticators. Before verifying:
+
+- With no bearer header, or a nil request, the error wraps
+auth.ErrNoCredentials, which auth.Chain skips.
+- With more than one, or a bearer header without a token, the error
+wraps ErrTokenInvalid.
+
+The token is then verified as Verify does, and Verify's error returned
+as it is. On success the principal has:
 
 - Subject: the `sub` claim.
 - Scheme: auth.SchemeJWT.
 - CredentialID: the `jti` claim, or empty.
 - Metadata: the custom claims.
 
+## Revocation
+
 A JWT cannot be revoked: the service stores nothing per token and does
 not implement auth.PrincipalRevoker. Keep the expiry short.
 
 ## Lifecycle
 
+`New`'s constructor fails with `ErrNilLogger` for a nil logger. A nil
+ConfigProvider is accepted, and Init then requires WithConfig.
+
 Until Init succeeds, every method other than Name, Init, Close and
 Config returns an error wrapping ErrNotInitialized, which
-auth.Middleware answers with a 500, not a 401. A successful Init logs
-`service initialized` at info level with `service` set to
-`ServiceName`, the signing method and whether the service only
-verifies. It is the only event the service logs. Init may run again,
-after Close or not, and takes up the configuration and key files as
-they are then; a failed Init leaves the service uninitialized, not on
-the previous keys. Close makes the service uninitialized and always
-returns nil. `New`'s constructor fails with `ErrNilLogger` for a nil
-logger; a nil ConfigProvider is accepted, and Init then requires
-WithConfig.
+auth.Middleware answers with a 500, not a 401.
+
+A successful Init logs `service initialized` at info level with
+`service` set to `ServiceName`, the signing method and whether the
+service only verifies. It is the only event the service logs.
+
+Init and Close may run more than once:
+
+- Init may run again, after Close or not, and takes up the
+configuration and key files as they are then.
+- A failed Init leaves the service uninitialized, not on the previous
+keys.
+- Close makes the service uninitialized and always returns nil.
 
 ## Concurrency
 
-A Service is safe for concurrent use. Init swaps in what it loaded at
-once, so a call running beside Init uses either the old keys or the new
-ones, never a mix. Init and Close each change the state in one atomic
-step, and the service holds nothing else, such as a background task,
-so an Init and a Close that run at the same time leave it as if one ran
-after the other. Sign, Verify and Authenticate do no I/O.
+A Service is safe for concurrent use. Sign, Verify and Authenticate do
+no I/O.
+
+Init swaps in what it loaded at once, so a call running beside Init uses
+either the old keys or the new ones, never a mix.
+
+Init and Close each change the state in one atomic step, and the service
+holds nothing else, such as a background task. So an Init and a Close
+that run at the same time leave it as if one ran after the other.
 
 ## Errors
 
