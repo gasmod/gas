@@ -213,21 +213,28 @@ header.header {
 }
 
 .sidebar-content {
-	padding: 2rem 1.5rem 3rem;
+	padding: 1.5rem 1.5rem 2.5rem;
 }
 
 .sidebar-content ul.top-level > li + li {
-	margin-top: 2rem;
+	margin-top: 0.85rem;
 }
 
-/* A group is a label over a list, always open. */
+/* A group is a label over a list; a module's opens with its chevron. */
 .sidebar-content details > summary {
-	padding: 0;
-	pointer-events: none;
+	padding: 0.15rem 0;
+	cursor: pointer;
 }
 
 .sidebar-content details > summary .caret {
-	display: none;
+	width: 0.9rem;
+	height: 0.9rem;
+	color: var(--gas-muted);
+}
+
+.sidebar-content details > summary:hover .large,
+.sidebar-content details > summary:hover .caret {
+	color: var(--gas-accent);
 }
 
 /* Group labels read as the package paths they stand for. */
@@ -241,7 +248,7 @@ header.header {
 
 /* Under the label, items hang off a rail; the current one marks it in ink. */
 .sidebar-content details > ul {
-	margin-top: 0.75rem;
+	margin-top: 0.35rem;
 	padding: 0;
 	border-inline-start: 1px solid var(--gas-line);
 }
@@ -255,7 +262,7 @@ header.header {
 .sidebar-content details > ul a {
 	display: block;
 	margin-inline-start: -1px;
-	padding: 0.3rem 0 0.3rem 1rem;
+	padding: 0.2rem 0 0.2rem 1rem;
 	border-inline-start: 1px solid transparent;
 	border-radius: 0;
 	background: none;
