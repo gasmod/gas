@@ -19,7 +19,7 @@ go get github.com/gasmod/gas
 ```
 
 The core is enough for a working HTTP app. See the example on the
-[home page](/gas/).
+[home page](/).
 
 ## Add modules
 
@@ -110,8 +110,8 @@ INFO server started environment=development addr=0.0.0.0:8080
 
 ## Next steps
 
-- [Core](/gas/reference/gas/): services, routing, handlers and middleware.
-- [config](/gas/reference/config/): every provider and how values bind to
+- [Core](/reference/gas/): services, routing, handlers and middleware.
+- [config](/reference/config/): every provider and how values bind to
   structs.
-- [database](/gas/reference/database/): dialects, connection settings and
+- [database](/reference/database/): dialects, connection settings and
   transactions.

@@ -4,12 +4,11 @@ import starlight from '@astrojs/starlight';
 import starlightLinksValidator from 'starlight-links-validator';
 import starlightLlmsTxt from 'starlight-llms-txt';
 
-// Deployed to GitHub Pages as a project page, so the site lives under /gas.
-// Starlight prefixes sidebar entries with `base`; links written in pages,
-// including the generated reference pages, carry /gas explicitly.
+// Deployed to GitHub Pages behind the custom domain gasmod.dev, so the site
+// lives at the root and links written in pages, including the generated
+// reference pages, start at /.
 export default defineConfig({
-	site: 'https://gasmod.github.io',
-	base: '/gas',
+	site: 'https://gasmod.dev',
 	integrations: [
 		starlight({
 			title: 'Gas',
@@ -20,8 +19,8 @@ export default defineConfig({
 			],
 			favicon: '/gas-icon.svg',
 			head: [
-				{ tag: 'link', attrs: { rel: 'apple-touch-icon', href: '/gas/apple-touch-icon.png' } },
-				{ tag: 'meta', attrs: { property: 'og:image', content: 'https://gasmod.github.io/gas/og.png' } },
+				{ tag: 'link', attrs: { rel: 'apple-touch-icon', href: '/apple-touch-icon.png' } },
+				{ tag: 'meta', attrs: { property: 'og:image', content: 'https://gasmod.dev/og.png' } },
 				{ tag: 'meta', attrs: { property: 'og:image:width', content: '1200' } },
 				{ tag: 'meta', attrs: { property: 'og:image:height', content: '630' } },
 			],

@@ -2,7 +2,7 @@
 
 [![Test](https://github.com/gasmod/gas/actions/workflows/test.yml/badge.svg)](https://github.com/gasmod/gas/actions/workflows/test.yml) [![Go Reference](https://pkg.go.dev/badge/github.com/gasmod/gas/template.svg)](https://pkg.go.dev/github.com/gasmod/gas/template) ![Go Version](https://img.shields.io/github/go-mod/go-version/gasmod/gas?filename=template/go.mod) [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Part of the [Gas](../README.md) monorepo · [Documentation](https://gasmod.github.io/gas) · [All modules](../README.md#modules)
+Part of the [Gas](../README.md) monorepo · [Documentation](https://gasmod.dev) · [All modules](../README.md#modules)
 
 Template storage for the [Gas](../README.md) framework. Holds raw template content so that
 rendering, in `gas/ui` or `gas/email`, stays decoupled from where templates live.
@@ -36,7 +36,7 @@ Stored templates are code: never let users write them.
 The full documentation is on the docs site.
 This README is deliberately a signpost: keeping a second copy here is how the docs drifted before.
 
-- **Docs:** [template](https://gasmod.github.io/gas/reference/template/)
+- **Docs:** [template](https://gasmod.dev/reference/template/)
 - **API reference:** [pkg.go.dev/github.com/gasmod/gas/template](https://pkg.go.dev/github.com/gasmod/gas/template)
 - **Contributing:** [CONTRIBUTING.md](../CONTRIBUTING.md)
 

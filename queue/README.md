@@ -2,7 +2,7 @@
 
 [![Test](https://github.com/gasmod/gas/actions/workflows/test.yml/badge.svg)](https://github.com/gasmod/gas/actions/workflows/test.yml) [![Go Reference](https://pkg.go.dev/badge/github.com/gasmod/gas/queue.svg)](https://pkg.go.dev/github.com/gasmod/gas/queue) ![Go Version](https://img.shields.io/github/go-mod/go-version/gasmod/gas?filename=queue/go.mod) [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Part of the [Gas](../README.md) monorepo · [Documentation](https://gasmod.github.io/gas) · [All modules](../README.md#modules)
+Part of the [Gas](../README.md) monorepo · [Documentation](https://gasmod.dev) · [All modules](../README.md#modules)
 
 Job queues for the [Gas](../README.md) framework, with two interchangeable stores that keep
 one contract, Amazon SQS's rules: Amazon SQS (or an emulator such as ElasticMQ or LocalStack),
@@ -36,7 +36,7 @@ Each store's `Config()` returns the configuration its last successful `Init` res
 The full documentation is on the docs site.
 This README is deliberately a signpost: keeping a second copy here is how the docs drifted before.
 
-- **Docs:** [queue](https://gasmod.github.io/gas/reference/queue/)
+- **Docs:** [queue](https://gasmod.dev/reference/queue/)
 - **API reference:** [pkg.go.dev/github.com/gasmod/gas/queue](https://pkg.go.dev/github.com/gasmod/gas/queue)
 - **Contributing:** [CONTRIBUTING.md](../CONTRIBUTING.md)
 
