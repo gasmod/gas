@@ -2,7 +2,7 @@ package config
 
 // ConfigProvider is the part of *Config that services read configuration
 // through. Core defines gas.ConfigProvider with the same methods, which
-// *Config satisfies without either module importing the other.
+// *Config satisfies.
 //
 //goland:noinspection GoNameStartsWithPackageName
 type ConfigProvider interface { //nolint:revive // named for gas.ConfigProvider, which has the same methods

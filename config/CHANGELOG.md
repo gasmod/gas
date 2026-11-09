@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING: `NewExtension` is `NewEnvExtension`.** The constructor of
+  `EnvExtension` is named for the extension it returns, beside
+  `NewEnvProvider`.
+- **`Environment` is `gas.Environment` again.** `Environment` and the
+  `Env*` constants are aliases of core's, so a `config.Environment` passes
+  for a `gas.Environment` without a conversion, as in
+  `gas.WithAllowedEnvironments(config.EnvProduction)`. For this, config
+  requires core again.
+
+## [0.6.0] - 2026-11-08
+
 v0.6.0 rewrites the module around the contract in its package
 documentation (`doc.go`), which lists every error verbatim. Read it before
 upgrading: most of the API moved or changed.
@@ -37,10 +50,6 @@ upgrading: most of the API moved or changed.
 
 ### Changed
 
-- **BREAKING: `NewExtension` is `NewEnvExtension`.** The constructor of
-  `EnvExtension` is named for the extension it returns, beside
-  `NewEnvProvider`.
-
 - **BREAKING: one package.** `providers` and `extensions/gasenv` are merged
   into `config`: `providers.NewEnvProvider` is `config.NewEnvProvider`,
   `providers.Provider` is `config.Provider`, `gasenv.NewExtension` is
@@ -55,11 +64,6 @@ upgrading: most of the API moved or changed.
   validates; to skip validation, pass `WithValidator` a `Validator` that
   returns nil. An app reads the environment by binding a field of type
   `Environment` (or `gas.Environment`) from the key `gasenv`.
-- **`Environment` is `gas.Environment` again.** `Environment` and the
-  `Env*` constants are aliases of core's, so a `config.Environment` passes
-  for a `gas.Environment` without a conversion, as in
-  `gas.WithAllowedEnvironments(config.EnvProduction)`. For this, config
-  requires core again.
 - **BREAKING: an `EnvProvider` needs a prefix.** Without `WithEnvPrefix`
   or `WithoutEnvPrefix`, `Load` fails with `ErrEnvPrefixRequired`, wrapped
   with `ErrProviderLoadFailed`, and reads nothing, so the process
@@ -85,7 +89,15 @@ upgrading: most of the API moved or changed.
   matches a field with exactly its name (the `json` tag, or else the Go
   name), or else without regard to case, at every depth. Two keys that
   match one field, such as `Host` and `host`, are an error; the tag key
-  used to win.
+  used to win. Two kinds of field that used to bind now keep their value
+  without an error, as a key without a field is ignored:
+  - A field tagged `json:"-"` binds from no key. The field
+    ``Password string `json:"-"` `` was set from `password`; drop the
+    tag, or tag it with its key, such as `json:"password"`.
+  - A tagged field binds only from its tag. The field
+    ``ReadTimeout time.Duration `json:"read_timeout"` `` was also set from
+    `readtimeout`, its Go name; rename the key to `read_timeout`, or drop
+    the tag.
 - **BREAKING: a duration needs a unit.** `Bind` parses every string for a
   `time.Duration` field with `time.ParseDuration`. A string without a unit
   was read as nanoseconds, so `SERVER__READTIMEOUT=30` set 30ns; it is now
@@ -287,5 +299,6 @@ repository; this entry summarizes the package as published.
   `.env` file from leaking secrets into child processes or overwriting
   dynamic-linker variables.
 
-[Unreleased]: https://github.com/gasmod/gas/compare/config/v0.5.6...HEAD
+[Unreleased]: https://github.com/gasmod/gas/compare/config/v0.6.0...HEAD
+[0.6.0]: https://github.com/gasmod/gas/releases/tag/config/v0.6.0
 [0.5.6]: https://github.com/gasmod/gas/releases/tag/config/v0.5.6
