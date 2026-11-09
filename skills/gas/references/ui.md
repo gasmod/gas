@@ -158,8 +158,9 @@ layout's non-empty one in its place.
 
 A page that does not define the block but has top-level text has that
 text as the block too. So under a layout Render shows what
-RenderFragment does, unless the text calls the block itself with
-`{{template}}` or a partial defines it.
+RenderFragment does, unless a partial defines the block or the text
+calls it with `{{template}}`, directly or through the templates it
+calls, such as the layout.
 
 ## Blocks
 
