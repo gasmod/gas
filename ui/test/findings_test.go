@@ -552,6 +552,67 @@ func TestFragment_NoAliasOverSelfCallOrPartial(t *testing.T) {
 	}
 }
 
+// A page whose text called the fragment block through another template,
+// such as {{template "base" .}} calling the layout, had that text as the
+// block too, so the layout called it until html/template's depth limit.
+// Calling the block through the layout, a partial or the page's own
+// define now counts as calling it, and a cycle of templates that never
+// calls it leaves the text the block.
+func TestFragment_NoAliasOverIndirectCall(t *testing.T) {
+	t.Parallel()
+
+	layout := `{{define "base"}}<main>{{block "content" .}}L{{end}}</main>{{end}}`
+
+	cases := []struct {
+		fs       files
+		render   string
+		fragment string
+	}{
+		{
+			fs: files{
+				"layouts/base.html": layout,
+				"p.html":            `{{template "base" .}}`,
+			},
+			render:   "<main>L</main>",
+			fragment: "<main>L</main>",
+		},
+		{
+			fs: files{
+				"layouts/base.html": layout,
+				"partials/w.html":   `{{define "wrap"}}<div>{{template "base" .}}</div>{{end}}`,
+				"p.html":            `{{if .}}{{template "wrap" .}}{{end}}`,
+			},
+			render:   "<main>L</main>",
+			fragment: "<div><main>L</main></div>",
+		},
+		{
+			fs: files{
+				"layouts/base.html": layout,
+				"p.html":            `{{define "inner"}}<i>{{template "content" .}}</i>{{end}}<p>{{template "inner" .}}</p>`,
+			},
+			render:   "<main>L</main>",
+			fragment: "<p><i>L</i></p>",
+		},
+		{
+			fs: files{
+				"layouts/base.html": layout,
+				"partials/a.html":   `{{define "a"}}{{if not .}}{{template "b" .}}{{end}}{{end}}`,
+				"partials/b.html":   `{{define "b"}}{{if not .}}{{template "a" .}}{{end}}{{end}}`,
+				"p.html":            `<p>{{template "a" .}}</p>`,
+			},
+			render:   "<main><p></p></main>",
+			fragment: "<p></p>",
+		},
+	}
+
+	for _, c := range cases {
+		s := initialized(t, c.fs, nil)
+
+		assert.Equal(t, c.render, body(t, s, "p", []string{"x"}), c.fs["p.html"])
+		assert.Equal(t, c.fragment, fragmentBody(t, s, "p", []string{"x"}), c.fs["p.html"])
+	}
+}
+
 // Without a layout or a partial that defines it, a page whose text calls
 // the fragment block fails to execute both ways, with the template
 // missing, instead of calling itself.
