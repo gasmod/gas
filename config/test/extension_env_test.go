@@ -40,7 +40,7 @@ func TestEnvironment_IsGasEnvironment(t *testing.T) {
 	assert.Equal(t, gas.EnvProduction, config.EnvProduction)
 	assert.Equal(t, gas.DefaultEnvironment, config.DefaultEnvironment)
 
-	ext := config.NewExtension(config.WithAllowedEnvs(gas.EnvStaging))
+	ext := config.NewEnvExtension(config.WithAllowedEnvs(gas.EnvStaging))
 	loadEnv(t, ext, map[string]any{"gasenv": "staging"})
 	assert.Equal(t, gas.EnvStaging, ext.Current())
 	assert.True(t, ext.Current().IsProductionLike())
