@@ -25,17 +25,14 @@ on:
 permissions:
   contents: read
 
-env:
-  GO_VERSION: '1.27.3'
-
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
       - name: Check the skill is current
         # skills/gas is generated from the Go doc and committed; run
         # `make skill` after changing a doc comment or the template.
@@ -43,11 +40,11 @@ jobs:
           GOWORK=off go run . -skill ../.. "$RUNNER_TEMP/skill"
           diff -r "$RUNNER_TEMP/skill" ../../skills/gas
         working-directory: docs/gen
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           # Installs the pnpm version pinned by packageManager.
           package_json_file: docs/package.json
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           # Astro's engines field requires >= 22.23.4; a bare 22 can resolve
           # to an older Node cached on the runner.
@@ -62,7 +59,7 @@ jobs:
         # when a link, including a doc link in a Go comment, does not resolve.
         run: pnpm build
         working-directory: docs
-      - uses: actions/upload-pages-artifact@v5
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         if: github.event_name != 'pull_request'
         with:
           path: docs/dist
@@ -84,4 +81,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# Print, as a JSON array of absolute directories, the workspace modules that
-# a change since BASE can affect:
+# Print, as a JSON array of directories relative to the repo root ("." for
+# the root module, "storage", ...), the workspace modules that a change
+# since BASE can affect:
 #
 #   ./scripts/changed-modules.sh <base-commit>
 #
@@ -17,8 +18,8 @@
 # Markdown files and the docs site (docs/), which holds no workspace module,
 # select nothing.
 #
-# Run by test.yml to pick which modules to lint, vet and test. release.yml
-# checks every module and does not use it.
+# Run by test.yml to pick which modules checks.yml lints, scans and tests,
+# and by release.yml with no BASE to check and tag every module.
 
 set -euo pipefail
 
@@ -28,7 +29,8 @@ cd "$(dirname "$0")/.."
 root="$(pwd)"
 
 all_modules() {
-  go list -m -json | jq -sc '[.[].Dir]'
+  go list -m -json | jq -sc --arg root "$root" \
+    '[.[].Dir | if . == $root then "." else ltrimstr($root + "/") end] | sort'
 }
 
 if [ -z "$BASE" ] || [ -z "${BASE//0/}" ] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
@@ -39,6 +41,11 @@ fi
 # module path<TAB>relative dir, one line per workspace module.
 modules="$(go list -m -json | jq -r --arg root "$root/" \
   '"\(.Path)\t\(if .Dir == ($root | rtrimstr("/")) then "." else (.Dir | ltrimstr($root)) end)"')"
+
+# A rename counts as a deletion and an addition, so a file moved out of a
+# module selects that module too. Captured first, so a failing diff fails
+# the script instead of selecting nothing.
+changed_files="$(git diff --name-only --no-renames "$BASE" HEAD)"
 
 selected=()
 while IFS= read -r file; do
@@ -64,7 +71,7 @@ while IFS= read -r file; do
     fi
   done <<<"$modules"
   [ -n "$best" ] && selected+=("$best")
-done < <(git diff --name-only "$BASE" HEAD)
+done <<<"$changed_files"
 
 # chosen holds one selected module directory per line.
 chosen="$(printf '%s\n' "${selected[@]+"${selected[@]}"}" | sort -u | sed '/^$/d')"
@@ -87,5 +94,4 @@ while [ "$changed" -eq 1 ]; do
   done <<<"$modules"
 done
 
-printf '%s\n' "$chosen" | sort | jq -Rsc --arg root "$root" \
-  'split("\n") | map(select(. != "")) | map(if . == "." then $root else "\($root)/\(.)" end)'
+printf '%s\n' "$chosen" | sort | jq -Rsc 'split("\n") | map(select(. != ""))'

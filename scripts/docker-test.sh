@@ -30,9 +30,14 @@ fi
 
 root="$(git rev-parse --show-toplevel)"
 prefix="$(git rev-parse --show-prefix)"
-go_version="$(sed -n "s/^ *GO_VERSION: *'\(.*\)'/\1/p" "$root/.github/workflows/test.yml")"
+# The Go CI uses: setup-go reads go.mod's toolchain directive, or else its
+# go directive.
+go_version="$(sed -n 's/^toolchain go\(.*\)$/\1/p' "$root/go.mod")"
 if [ -z "$go_version" ]; then
-	echo "docker-test: GO_VERSION not found in .github/workflows/test.yml" >&2
+	go_version="$(sed -n 's/^go \(.*\)$/\1/p' "$root/go.mod")"
+fi
+if [ -z "$go_version" ]; then
+	echo "docker-test: no Go version found in go.mod" >&2
 	exit 1
 fi
 image="gas-test:go$go_version"
