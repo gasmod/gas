@@ -1,0 +1,134 @@
+name: Checks
+
+# The checks every module must pass, called by test.yml for the modules a
+# push can affect and by release.yml for every module.
+#
+# Each check runs one matrix entry per module, in parallel. The ruleset on
+# main requires only the `gate` job (plus test.yml's detect-modules), so its
+# required checks do not change when a module is added or removed.
+
+on:
+  workflow_call:
+    inputs:
+      modules:
+        description: JSON array of module dirs relative to the repo root, e.g. '[".","storage"]'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  # A version, not a commit: the lint action's binary install takes only a
+  # version, and a commit needs install-mode goinstall, a build from source.
+  GOLANGCI_LINT_VERSION: v2.15.0
+  # The commit of govulncheck v1.9.0.
+  GOVULNCHECK_VERSION: e672cbe8fbc8c76e28fcb6db0efd9ce354e0dac5
+
+defaults:
+  run:
+    # An explicit bash runs with -o pipefail; the default shell does not.
+    shell: bash
+
+jobs:
+  # golangci-lint, which also runs govet (.golangci.yml enables every linter).
+  lint:
+    if: inputs.modules != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # Never an empty matrix, which is an error even when `if` skips the
+        # job.
+        module: ${{ fromJSON(inputs.modules != '[]' && inputs.modules || '["none"]') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+      - name: golangci-lint ${{ matrix.module }}
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          working-directory: ${{ matrix.module }}
+
+  vulncheck:
+    if: inputs.modules != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ${{ fromJSON(inputs.modules != '[]' && inputs.modules || '["none"]') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+      - name: govulncheck ${{ matrix.module }}
+        run: go run "golang.org/x/vuln/cmd/govulncheck@$GOVULNCHECK_VERSION" ./...
+        working-directory: ${{ matrix.module }}
+
+  # Runs every test of the module, the Docker-backed integration tests
+  # included. GAS_TEST_REQUIRE_DOCKER makes those tests fail when Docker is
+  # unreachable instead of skipping, so a broken runner cannot pass as green
+  # skips.
+  test:
+    if: inputs.modules != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ${{ fromJSON(inputs.modules != '[]' && inputs.modules || '["none"]') }}
+    env:
+      GAS_TEST_REQUIRE_DOCKER: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+      - name: go test ${{ matrix.module }}
+        run: go test -v -race ./...
+        working-directory: ${{ matrix.module }}
+
+  # Runs the storage module's tests on Windows, where the dir backend locks
+  # with LockFileEx (lock_win.go) and removes files and directories under
+  # Windows sharing rules. Only storage runs: it is the module with
+  # Windows-specific code. -race is left to the Linux job. LocalStack tests
+  # skip themselves here, since they need a Linux container.
+  test-windows:
+    if: contains(fromJSON(inputs.modules), 'storage')
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: storage/go.sum
+      - run: go test -v -short ./...
+        # PowerShell, as before; the workflow default is bash.
+        shell: pwsh
+        working-directory: storage
+
+  # The one check the ruleset requires from this workflow. It passes when
+  # every check above passed or was skipped because no module was selected,
+  # and fails when any of them failed or was cancelled.
+  gate:
+    if: always()
+    needs: [ lint, vulncheck, test, test-windows ]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every check passed
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: |
+          echo "Results: $RESULTS"
+          # Exactly the four needs above, so an empty list cannot pass.
+          jq -e 'length == 4 and all(. == "success" or . == "skipped")' <<<"$RESULTS" >/dev/null

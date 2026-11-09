@@ -4,16 +4,22 @@ on:
   push:
     branches:
       - '**'
-    tags-ignore:
-      - '**'
 
 permissions:
   contents: read
 
-env:
-  GO_VERSION: '1.27.3'
-  GOLANGCI_LINT_VERSION: v2.14.0
-  GOVULNCHECK_VERSION: v1.8.0
+# A branch cancels its superseded runs. Each push to main gets its own group,
+# so none is cancelled: a concurrency group keeps at most one pending run and
+# cancels the older one when another queues, and every run on main checks
+# only the modules its own push changed.
+concurrency:
+  group: test-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    # An explicit bash runs with -o pipefail; the default shell does not.
+    shell: bash
 
 jobs:
   # Selects the modules this push can affect: those with changed files, plus
@@ -21,21 +27,20 @@ jobs:
   # A branch is compared with its merge base on main, a push to main with the
   # commit it moved from. Release tags run every module (release.yml).
   #
-  # The check jobs still run a matrix entry for every module, because the
-  # ruleset on main requires each module's check by name. An entry for a
-  # module that is not selected skips its steps and passes.
+  # The ruleset on main requires this job and checks / gate.
   detect-modules:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
-      all: ${{ steps.set-modules.outputs.all }}
       modules: ${{ steps.set-modules.outputs.modules }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
+          cache: false
       - id: set-modules
         env:
           BEFORE: ${{ github.event.before }}
@@ -45,118 +50,13 @@ jobs:
           else
             base="$(git merge-base origin/main HEAD 2>/dev/null || true)"
           fi
+          # A failing script fails the step: the assignment takes its status.
           modules="$(./scripts/changed-modules.sh "$base")"
           echo "Checking: $modules"
           echo "modules=$modules" >> "$GITHUB_OUTPUT"
-          echo "all=$(go list -m -json | jq -sc '[.[].Dir]')" >> "$GITHUB_OUTPUT"
 
-  golangci-lint:
+  checks:
     needs: detect-modules
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        modules: ${{ fromJSON(needs.detect-modules.outputs.all) }}
-    env:
-      SELECTED: ${{ contains(fromJSON(needs.detect-modules.outputs.modules), matrix.modules) }}
-    steps:
-      - uses: actions/checkout@v7
-        if: env.SELECTED == 'true'
-      - uses: actions/setup-go@v7
-        if: env.SELECTED == 'true'
-        with:
-          go-version: ${{ env.GO_VERSION }}
-      - name: golangci-lint ${{ matrix.modules }}
-        if: env.SELECTED == 'true'
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: ${{ env.GOLANGCI_LINT_VERSION }}
-          working-directory: ${{ matrix.modules }}
-
-  # Runs every test of the selected modules, the Docker-backed integration
-  # tests included. GAS_TEST_REQUIRE_DOCKER makes those tests fail when
-  # Docker is unreachable instead of skipping, so a broken runner cannot pass
-  # as green skips.
-  go-test:
-    needs: detect-modules
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        modules: ${{ fromJSON(needs.detect-modules.outputs.all) }}
-    env:
-      SELECTED: ${{ contains(fromJSON(needs.detect-modules.outputs.modules), matrix.modules) }}
-      GAS_TEST_REQUIRE_DOCKER: '1'
-    steps:
-      - uses: actions/checkout@v7
-        if: env.SELECTED == 'true'
-      - uses: actions/setup-go@v7
-        if: env.SELECTED == 'true'
-        with:
-          go-version: ${{ env.GO_VERSION }}
-      - name: go test ${{ matrix.modules }}
-        if: env.SELECTED == 'true'
-        run: go test -v -race ./...
-        working-directory: ${{ matrix.modules }}
-
-  # Runs the storage module's tests on Windows, where the dir backend locks
-  # with LockFileEx (lock_win.go) and removes files and directories under
-  # Windows sharing rules. It is its own job, not an OS axis on go-test, so
-  # the check names the ruleset on main requires stay as they are. Only
-  # storage runs: it is the module with Windows-specific code. -race is left
-  # to the Linux job. LocalStack tests skip themselves here, since they need
-  # a Linux container.
-  go-test-windows:
-    needs: detect-modules
-    runs-on: windows-latest
-    env:
-      SELECTED: ${{ contains(needs.detect-modules.outputs.modules, '/storage"') }}
-    steps:
-      - uses: actions/checkout@v7
-        if: env.SELECTED == 'true'
-      - uses: actions/setup-go@v7
-        if: env.SELECTED == 'true'
-        with:
-          go-version: ${{ env.GO_VERSION }}
-      - name: go test storage
-        if: env.SELECTED == 'true'
-        run: go test -v -short ./...
-        working-directory: storage
-
-  go-vet:
-    needs: detect-modules
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        modules: ${{ fromJSON(needs.detect-modules.outputs.all) }}
-    env:
-      SELECTED: ${{ contains(fromJSON(needs.detect-modules.outputs.modules), matrix.modules) }}
-    steps:
-      - uses: actions/checkout@v7
-        if: env.SELECTED == 'true'
-      - uses: actions/setup-go@v7
-        if: env.SELECTED == 'true'
-        with:
-          go-version: ${{ env.GO_VERSION }}
-      - name: go vet ${{ matrix.modules }}
-        if: env.SELECTED == 'true'
-        run: go vet ./...
-        working-directory: ${{ matrix.modules }}
-
-  govulncheck:
-    needs: detect-modules
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        modules: ${{ fromJSON(needs.detect-modules.outputs.all) }}
-    env:
-      SELECTED: ${{ contains(fromJSON(needs.detect-modules.outputs.modules), matrix.modules) }}
-    steps:
-      - uses: actions/checkout@v7
-        if: env.SELECTED == 'true'
-      - uses: actions/setup-go@v7
-        if: env.SELECTED == 'true'
-        with:
-          go-version: ${{ env.GO_VERSION }}
-      - name: govulncheck ${{ matrix.modules }}
-        if: env.SELECTED == 'true'
-        run: go run golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }} ./...
-        working-directory: ${{ matrix.modules }}
+    uses: ./.github/workflows/checks.yml
+    with:
+      modules: ${{ needs.detect-modules.outputs.modules }}

@@ -1,7 +1,7 @@
 # Image that `make test` runs go test in, so tests never see the host's
 # environment, ~/.aws, or other credentials. Built and run by
-# scripts/docker-test.sh, which passes GO_VERSION from .github/workflows/test.yml
-# so local runs use the same Go as CI.
+# scripts/docker-test.sh, which passes GO_VERSION from the root go.mod, the
+# version CI uses, so local runs use the same Go as CI.
 ARG GO_VERSION
 FROM golang:${GO_VERSION}
 

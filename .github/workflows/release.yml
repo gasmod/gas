@@ -6,137 +6,90 @@ on:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: read
 
-env:
-  GO_VERSION: '1.27.3'
-  GOLANGCI_LINT_VERSION: v2.14.0
-  GOVULNCHECK_VERSION: v1.8.0
+defaults:
+  run:
+    # An explicit bash runs with -o pipefail; the default shell does not.
+    shell: bash
 
 jobs:
-  verify-versions:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Internal module versions must match ${{ github.ref_name }}
-        run: ./scripts/verify-versions.sh "${{ github.ref_name }}"
-
   detect-modules:
-    needs: verify-versions
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       modules: ${{ steps.set-modules.outputs.modules }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Internal module versions must match ${{ github.ref_name }}
+        run: ./scripts/verify-versions.sh "$GITHUB_REF_NAME"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
+          cache: false
       - id: set-modules
-        run: echo "modules=$(go list -m -json | jq -sc '[.[].Dir]')" >> $GITHUB_OUTPUT
-
-  golangci-lint:
-    needs: detect-modules
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        modules: ${{ fromJSON(needs.detect-modules.outputs.modules) }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-      - name: golangci-lint ${{ matrix.modules }}
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: ${{ env.GOLANGCI_LINT_VERSION }}
-          working-directory: ${{ matrix.modules }}
-
-  go-test:
-    needs: detect-modules
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        modules: ${{ fromJSON(needs.detect-modules.outputs.modules) }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-      - name: go test ${{ matrix.modules }}
-        run: go test -v -race ./...
-        working-directory: ${{ matrix.modules }}
-        env:
-          GAS_TEST_REQUIRE_DOCKER: '1'
-
-  go-vet:
-    needs: detect-modules
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        modules: ${{ fromJSON(needs.detect-modules.outputs.modules) }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-      - name: go vet ${{ matrix.modules }}
-        run: go vet ./...
-        working-directory: ${{ matrix.modules }}
-
-  govulncheck:
-    needs: detect-modules
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        modules: ${{ fromJSON(needs.detect-modules.outputs.modules) }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-      - name: govulncheck ${{ matrix.modules }}
-        run: go run golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }} ./...
-        working-directory: ${{ matrix.modules }}
-
-  tag:
-    needs: [ detect-modules, golangci-lint, go-test, go-vet, govulncheck ]
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        modules: ${{ fromJSON(needs.detect-modules.outputs.modules) }}
-    steps:
-      - uses: actions/checkout@v7
-      - id: mod
-        env:
-          MODULE: ${{ matrix.modules }}
         run: |
-          # A module's tag is prefixed with its path relative to the repo root.
-          # The root module takes a bare tag, which the triggering push already created.
-          rel="${MODULE#"$GITHUB_WORKSPACE"}"
-          rel="${rel#/}"
-          if [ -z "$rel" ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "name=$rel" >> "$GITHUB_OUTPUT"
+          # No base selects every module.
+          modules="$(./scripts/changed-modules.sh "")"
+          # The root module and at least one sub-module, or the listing broke.
+          if ! jq -e 'index(".") != null and length > 1' <<<"$modules" >/dev/null; then
+            echo "::error::unexpected module list: $modules"
+            exit 1
           fi
-      - if: steps.mod.outputs.skip == 'false'
-        run: |
-          git tag "$TAG"
-          git push origin "$TAG"
-        env:
-          TAG: ${{ steps.mod.outputs.name }}/${{ github.ref_name }}
+          echo "Releasing: $modules"
+          echo "modules=$modules" >> "$GITHUB_OUTPUT"
+
+  checks:
+    needs: detect-modules
+    uses: ./.github/workflows/checks.yml
+    with:
+      modules: ${{ needs.detect-modules.outputs.modules }}
 
   release:
-    needs: tag
+    needs: [ detect-modules, checks ]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v7
-      - uses: softprops/action-gh-release@v3
-        with:
-          name: Release ${{ github.ref_name }}
-          draft: false
-          prerelease: false
-          generate_release_notes: true
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # A module's tag is prefixed with its path relative to the repo root.
+      # The root module takes the bare tag, which the triggering push already
+      # created. A re-run skips the tags already pushed at this commit and
+      # fails on one that points elsewhere.
+      - name: Tag the sub-modules
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MODULES: ${{ needs.detect-modules.outputs.modules }}
+        run: |
+          head="$(git rev-parse HEAD)"
+          # Captured first, so a jq failure fails the step.
+          subs="$(jq -r '.[] | select(. != ".")' <<<"$MODULES")"
+          if [ -z "$subs" ]; then
+            echo "::error::no sub-modules to tag in $MODULES"
+            exit 1
+          fi
+          tags=()
+          for m in $subs; do
+            tag="$m/$GITHUB_REF_NAME"
+            remote="$(git ls-remote --tags origin "refs/tags/$tag" | cut -f1)"
+            if [ -z "$remote" ]; then
+              git tag "$tag"
+              tags+=("$tag")
+            elif [ "$remote" != "$head" ]; then
+              echo "::error::$tag already exists at $remote, not $head"
+              exit 1
+            fi
+          done
+          # All the missing sub-module tags land or none do.
+          if [ ${#tags[@]} -gt 0 ]; then
+            git push --atomic origin "${tags[@]}"
+          fi
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists"
+          else
+            gh release create "$GITHUB_REF_NAME" --verify-tag --title "Release $GITHUB_REF_NAME" --generate-notes
+          fi
