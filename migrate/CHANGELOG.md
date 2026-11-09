@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A call's connection is closed in gas/database's `ModePgx` too.**
+  There `*sql.DB` borrows the pgxpool's connections, and closing one
+  returned it to the pool, so a migration's session settings, such as
+  `SET search_path`, reached the app's later queries, and an advisory
+  lock whose release failed stayed held. The connection is now closed,
+  as the package documentation says.
+
 ## [0.6.0] - 2026-11-08
 
 v0.6.0 rewrites the module around the contract in its package

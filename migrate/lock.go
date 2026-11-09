@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 const (
@@ -322,8 +324,24 @@ func (s *Service) release(ctx context.Context, sess *session) error {
 // call: database/sql closes a connection whose Raw function returns
 // driver.ErrBadConn. A connection database/sql has already closed, after
 // the driver reported it broken, is sql.ErrConnDone, the state wanted.
+//
+// pgx's stdlib connection that borrows a pgxpool's, as gas/database's
+// ModePgx makes, releases it to the pool when database/sql closes it, and
+// the pool keeps an idle connection. Its pgx connection is closed first,
+// so the pool destroys it instead.
 func discard(conn *sql.Conn) error {
-	err := conn.Raw(func(any) error { return driver.ErrBadConn })
+	err := conn.Raw(func(dc any) error {
+		if pc, ok := dc.(interface{ Conn() *pgx.Conn }); ok {
+			ctx, cancel := context.WithTimeout(context.Background(), releaseTimeout)
+			defer cancel()
+
+			// pgx closes the socket whatever Close returns, which is
+			// the state wanted.
+			_ = pc.Conn().Close(ctx)
+		}
+
+		return driver.ErrBadConn
+	})
 	if err != nil && !errors.Is(err, driver.ErrBadConn) && !errors.Is(err, sql.ErrConnDone) {
 		return fmt.Errorf("%s: release connection: %w", ServiceName, err)
 	}
