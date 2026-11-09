@@ -51,6 +51,11 @@ upgrading: most of the API moved or changed.
   validates; to skip validation, pass `WithValidator` a `Validator` that
   returns nil. An app reads the environment by binding a field of type
   `Environment` (or `gas.Environment`) from the key `gasenv`.
+- **`Environment` is `gas.Environment` again.** `Environment` and the
+  `Env*` constants are aliases of core's, so a `config.Environment` passes
+  for a `gas.Environment` without a conversion, as in
+  `gas.WithAllowedEnvironments(config.EnvProduction)`. For this, config
+  requires core again.
 - **BREAKING: an `EnvProvider` needs a prefix.** Without `WithEnvPrefix`
   or `WithoutEnvPrefix`, `Load` fails with `ErrEnvPrefixRequired`, wrapped
   with `ErrProviderLoadFailed`, and reads nothing, so the process

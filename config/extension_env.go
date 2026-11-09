@@ -8,44 +8,28 @@ import (
 	"slices"
 	"strings"
 	"sync"
+
+	"github.com/gasmod/gas"
 )
 
 // Environment is an application environment, such as development or
-// production. Values are compared with their case.
-type Environment string
+// production. It is gas.Environment, so a value from either package passes
+// for the other, and it has gas.Environment's methods, such as
+// IsDevelopment and IsProductionLike.
+type Environment = gas.Environment
 
 // ErrEnvironmentNotAllowed indicates that the environment variable, or the
 // key a provider sets, holds a value that EnvExtension does not allow.
 var ErrEnvironmentNotAllowed = errors.New("environment not allowed")
 
-// The environments EnvExtension allows by default.
+// The environments EnvExtension allows by default, gas's standard
+// environments.
 const (
-	EnvDevelopment Environment = "development"
-	EnvTesting     Environment = "testing"
-	EnvStaging     Environment = "staging"
-	EnvProduction  Environment = "production"
+	EnvDevelopment = gas.EnvDevelopment
+	EnvTesting     = gas.EnvTesting
+	EnvStaging     = gas.EnvStaging
+	EnvProduction  = gas.EnvProduction
 )
-
-// IsDevelopment reports whether e is EnvDevelopment.
-func (e Environment) IsDevelopment() bool { return e == EnvDevelopment }
-
-// IsTesting reports whether e is EnvTesting.
-func (e Environment) IsTesting() bool { return e == EnvTesting }
-
-// IsStaging reports whether e is EnvStaging.
-func (e Environment) IsStaging() bool { return e == EnvStaging }
-
-// IsProduction reports whether e is EnvProduction.
-func (e Environment) IsProduction() bool { return e == EnvProduction }
-
-// IsDevelopmentLike reports whether e is EnvDevelopment or EnvTesting.
-func (e Environment) IsDevelopmentLike() bool { return e.IsDevelopment() || e.IsTesting() }
-
-// IsProductionLike reports whether e is EnvProduction or EnvStaging.
-func (e Environment) IsProductionLike() bool { return e.IsProduction() || e.IsStaging() }
-
-// String returns e as a string.
-func (e Environment) String() string { return string(e) }
 
 const (
 	// ExtensionName is the name EnvExtension reports.
