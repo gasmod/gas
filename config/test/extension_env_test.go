@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/config"
 )
 
@@ -28,6 +29,24 @@ func TestEnvExtension_Defaults(t *testing.T) {
 	assert.Equal(t, "GAS_ENV", config.DefaultEnvVarName)
 	assert.Equal(t, config.EnvDevelopment, config.DefaultEnvironment)
 	assert.Equal(t, config.ExtensionName, config.NewExtension().Name())
+}
+
+// config.Environment is gas.Environment, so values pass between the
+// packages without a conversion.
+func TestEnvironment_IsGasEnvironment(t *testing.T) {
+	t.Parallel()
+
+	// assert.Equal compares the types too.
+	assert.Equal(t, gas.EnvProduction, config.EnvProduction)
+	assert.Equal(t, gas.DefaultEnvironment, config.DefaultEnvironment)
+
+	ext := config.NewExtension(config.WithAllowedEnvs(gas.EnvStaging))
+	loadEnv(t, ext, map[string]any{"gasenv": "staging"})
+	assert.Equal(t, gas.EnvStaging, ext.Current())
+	assert.True(t, ext.Current().IsProductionLike())
+
+	// Compiles only while the types are one.
+	_ = gas.WithAllowedEnvironments(config.EnvStaging, ext.Current())
 }
 
 // The environment comes from the key when a provider sets it, else from

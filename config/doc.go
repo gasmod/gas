@@ -326,9 +326,8 @@
 // development or production, during each load, and stores it at the key
 // `GasEnv`.
 //
-// An app reads it by binding a field of type [Environment], or
-// gas.Environment, which has the same values, from that key, as
-// gas.Config.Env does. A field named `Env` needs the tag, as its own name
+// An app reads it by binding a field of type [Environment], which is
+// gas.Environment, from that key, as gas.Config.Env does. A field named `Env` needs the tag, as its own name
 // is the key `env`. With [WithConfigKey] set to `env`, it binds without
 // one:
 //

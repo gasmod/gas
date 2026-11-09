@@ -2,8 +2,8 @@ package gas
 
 // Environment is the environment an App runs in, such as development or
 // production, as described under Configuration in the package
-// documentation. Values are compared with their case. It has the values
-// of the config module's Environment, which binds into it.
+// documentation. Values are compared with their case. The config module's
+// Environment is an alias of it.
 type Environment string
 
 // The standard environments, which an App accepts by default.
