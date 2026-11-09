@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
@@ -163,6 +164,66 @@ func TestCacheControl_Directives(t *testing.T) {
 			got := serveThrough(t, gas.CacheControl(tt.opts...), "/any")
 			if g := got.Get("Cache-Control"); g != tt.want {
 				t.Errorf("Cache-Control = %q, want %q", g, tt.want)
+			}
+		})
+	}
+}
+
+// CacheControl set its header when the status was written, after the
+// handler, so it replaced the handler's own Cache-Control: a private or
+// no-store response went out public. A handler's header now stands, and
+// a handler that sets none gets the middleware's.
+func TestCacheControl_KeepsHandlerHeader(t *testing.T) {
+	t.Parallel()
+
+	mw := gas.CacheControl(gas.WithCacheControlPublic(), gas.WithCacheControlMaxAge(time.Hour))
+
+	tests := []struct {
+		name   string
+		handle func(w http.ResponseWriter)
+		want   []string
+	}{
+		{
+			name: "set before WriteHeader",
+			handle: func(w http.ResponseWriter) {
+				w.Header().Set("Cache-Control", "private, no-store")
+				w.WriteHeader(http.StatusOK)
+			},
+			want: []string{"private, no-store"},
+		},
+		{
+			name: "set before Write",
+			handle: func(w http.ResponseWriter) {
+				w.Header().Set("Cache-Control", "no-cache")
+
+				_, _ = w.Write([]byte("x"))
+			},
+			want: []string{"no-cache"},
+		},
+		{
+			name: "set empty",
+			handle: func(w http.ResponseWriter) {
+				w.Header().Set("Cache-Control", "")
+				w.WriteHeader(http.StatusNoContent)
+			},
+			want: []string{""},
+		},
+		{
+			name:   "not set",
+			handle: func(w http.ResponseWriter) { w.WriteHeader(http.StatusOK) },
+			want:   []string{"public, max-age=3600"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			h := mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { tt.handle(w) }))
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/x", nil))
+
+			if got := rec.Header().Values("Cache-Control"); !slices.Equal(got, tt.want) {
+				t.Errorf("Cache-Control = %q, want %q", got, tt.want)
 			}
 		})
 	}

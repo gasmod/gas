@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `CacheControl` keeps a Cache-Control the handler set, as it did before
+  v0.6.0. Since v0.6.0 it set its header when the status was written,
+  after the handler, so a handler's `private` or `no-store` went out as
+  the middleware's directives, such as `public`.
+
 ## [0.6.0] - 2026-11-08
 
 v0.6.0 rewrites the core and every module around documented contracts.

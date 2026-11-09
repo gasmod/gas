@@ -159,7 +159,8 @@ func WithCacheControlImmutable() CacheControlOption { return directive("immutabl
 // CacheControl is middleware that sets Cache-Control to the directives the
 // options add, in order, on the responses with a 2xx or 3xx status to
 // requests whose path the path options match, or every path when none is
-// set. Error responses never get it. With no directive it sets nothing. A
+// set. Error responses never get it, and a response whose handler set
+// Cache-Control keeps the handler's. With no directive it sets nothing. A
 // directive given a negative duration panics with an error wrapping
 // ErrInvalidOption.
 func CacheControl(opt ...CacheControlOption) func(next http.Handler) http.Handler {
@@ -208,7 +209,8 @@ func CacheControl(opt ...CacheControlOption) func(next http.Handler) http.Handle
 	}
 }
 
-// cacheWriter sets Cache-Control when the status it writes is 2xx or 3xx.
+// cacheWriter sets Cache-Control when the status it writes is 2xx or 3xx
+// and the handler has not set it.
 type cacheWriter struct {
 	http.ResponseWriter
 
@@ -258,7 +260,7 @@ func (cw *cacheWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 // Unwrap returns the writer underneath, for http.ResponseController.
 func (cw *cacheWriter) Unwrap() http.ResponseWriter { return cw.ResponseWriter }
 
-// decide sets the header for code, once.
+// decide sets the header for code, once, unless the handler set it.
 func (cw *cacheWriter) decide(code int) {
 	if cw.wrote || code < http.StatusOK {
 		return
@@ -266,7 +268,8 @@ func (cw *cacheWriter) decide(code int) {
 
 	cw.wrote = true
 
-	if code < http.StatusBadRequest {
-		cw.ResponseWriter.Header().Set("Cache-Control", cw.value)
+	h := cw.Header()
+	if code < http.StatusBadRequest && len(h.Values("Cache-Control")) == 0 {
+		h.Set("Cache-Control", cw.value)
 	}
 }
