@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A page without the fragment block whose top-level text calls it
+  through another template, such as `{{template "base" .}}` calling the
+  layout, no longer has that text as the block too. `Render` and
+  `RenderFragment` of such a page failed with `exceeded maximum template
+  depth`.
+
 ## [0.6.0] - 2026-11-08
 
 v0.6.0 rewrites the module around the `ui.Provider` contract, which the

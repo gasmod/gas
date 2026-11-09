@@ -242,7 +242,8 @@ func (b *builder) read(ctx context.Context, name string) (file, error) {
 // added, or the error of the page alone. When the page does not define
 // the fragment block but has top-level text, that text is the block too,
 // so that a layout's block shows what RenderFragment does, unless the
-// text calls the block itself or a partial defines it.
+// text calls the block, itself or through the templates it calls, or a
+// partial defines it.
 func (b *builder) page(ctx context.Context, base *template.Template, name string) *page {
 	f, err := b.read(ctx, name)
 	if err != nil {
@@ -267,7 +268,8 @@ func (b *builder) page(ctx context.Context, base *template.Template, name string
 	case defines(trees, name):
 		p.fragment = name
 
-		if b.partialDefs[b.set.FragmentBlock] || calls(trees[name].Root, b.set.FragmentBlock) {
+		if b.partialDefs[b.set.FragmentBlock] ||
+			reaches(set, trees[name].Root, b.set.FragmentBlock, map[string]bool{name: true}) {
 			break
 		}
 
@@ -357,9 +359,10 @@ func defines(trees map[string]*parse.Tree, name string) bool {
 	return ok && !parse.IsEmptyTree(tree.Root)
 }
 
-// calls reports whether node, or a node inside it, calls the template
-// name with {{template}}.
-func calls(node parse.Node, name string) bool {
+// reaches reports whether node, or a node inside it, calls the template
+// name with {{template}}, directly or through the templates of set it
+// calls. seen holds the templates already walked, so a cycle ends.
+func reaches(set *template.Template, node parse.Node, name string, seen map[string]bool) bool {
 	switch n := node.(type) {
 	case *parse.ListNode:
 		if n == nil {
@@ -367,26 +370,46 @@ func calls(node parse.Node, name string) bool {
 		}
 
 		for _, c := range n.Nodes {
-			if calls(c, name) {
+			if reaches(set, c, name, seen) {
 				return true
 			}
 		}
 	case *parse.TemplateNode:
-		return n.Name == name
+		return n.Name == name || calleeReaches(set, n.Name, name, seen)
 	case *parse.IfNode:
-		return branchCalls(&n.BranchNode, name)
+		return branchReaches(set, &n.BranchNode, name, seen)
 	case *parse.RangeNode:
-		return branchCalls(&n.BranchNode, name)
+		return branchReaches(set, &n.BranchNode, name, seen)
 	case *parse.WithNode:
-		return branchCalls(&n.BranchNode, name)
+		return branchReaches(set, &n.BranchNode, name, seen)
 	}
 
 	return false
 }
 
-// branchCalls reports whether a list of n calls the template name.
-func branchCalls(n *parse.BranchNode, name string) bool {
-	return calls(n.List, name) || calls(n.ElseList, name)
+// calleeReaches reports whether the template callee of set reaches the
+// template name, as reaches does. A callee already in seen does not.
+func calleeReaches(set *template.Template, callee, name string, seen map[string]bool) bool {
+	if seen[callee] {
+		return false
+	}
+
+	seen[callee] = true
+
+	t := set.Lookup(callee)
+
+	return t != nil && t.Tree != nil && reaches(set, t.Tree.Root, name, seen)
+}
+
+// branchReaches reports whether a list of n reaches the template name, as
+// reaches does.
+func branchReaches(
+	set *template.Template,
+	n *parse.BranchNode,
+	name string,
+	seen map[string]bool,
+) bool {
+	return reaches(set, n.List, name, seen) || reaches(set, n.ElseList, name, seen)
 }
 
 // hasExtension reports whether name ends in one of exts.
