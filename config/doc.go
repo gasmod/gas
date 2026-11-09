@@ -337,7 +337,7 @@
 //
 // The extension also reports the environment itself:
 //
-//	envExt := config.NewExtension()
+//	envExt := config.NewEnvExtension()
 //	cfg := config.New(config.WithExtension(envExt))
 //	if err := cfg.Load(); err != nil {
 //		return err

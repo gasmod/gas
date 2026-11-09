@@ -28,7 +28,7 @@ func TestEnvExtension_Defaults(t *testing.T) {
 	assert.Equal(t, "GasEnv", config.DefaultConfigKey)
 	assert.Equal(t, "GAS_ENV", config.DefaultEnvVarName)
 	assert.Equal(t, config.EnvDevelopment, config.DefaultEnvironment)
-	assert.Equal(t, config.ExtensionName, config.NewExtension().Name())
+	assert.Equal(t, config.ExtensionName, config.NewEnvExtension().Name())
 }
 
 // config.Environment is gas.Environment, so values pass between the
@@ -40,7 +40,7 @@ func TestEnvironment_IsGasEnvironment(t *testing.T) {
 	assert.Equal(t, gas.EnvProduction, config.EnvProduction)
 	assert.Equal(t, gas.DefaultEnvironment, config.DefaultEnvironment)
 
-	ext := config.NewExtension(config.WithAllowedEnvs(gas.EnvStaging))
+	ext := config.NewEnvExtension(config.WithAllowedEnvs(gas.EnvStaging))
 	loadEnv(t, ext, map[string]any{"gasenv": "staging"})
 	assert.Equal(t, gas.EnvStaging, ext.Current())
 	assert.True(t, ext.Current().IsProductionLike())
@@ -69,7 +69,7 @@ func TestEnvExtension_Resolution(t *testing.T) {
 	} {
 		t.Setenv("GAS_ENV", tc.variable)
 
-		ext := config.NewExtension()
+		ext := config.NewEnvExtension()
 		c := loadEnv(t, ext, tc.values)
 
 		assert.Equal(t, tc.want, ext.Current(), tc.name)
@@ -122,7 +122,7 @@ func TestEnvExtension_NotAllowed(t *testing.T) {
 	} {
 		t.Setenv("GAS_ENV", tc.variable)
 
-		ext := config.NewExtension()
+		ext := config.NewEnvExtension()
 		c := config.New(
 			config.WithProvider(newStatic("static", tc.values)),
 			config.WithExtension(ext),
@@ -145,13 +145,13 @@ func TestEnvExtension_Options(t *testing.T) {
 	t.Setenv("GAS_ENV", "production")
 	t.Setenv("APP_ENV", "staging")
 
-	ext := config.NewExtension(config.WithEnvVarName("APP_ENV"))
+	ext := config.NewEnvExtension(config.WithEnvVarName("APP_ENV"))
 	loadEnv(t, ext, nil)
 	assert.Equal(t, config.EnvStaging, ext.Current())
 
 	t.Setenv("APP_ENV", "")
 
-	ext = config.NewExtension(
+	ext = config.NewEnvExtension(
 		config.WithEnvVarName("APP_ENV"),
 		config.WithAllowedEnvs(config.EnvDevelopment, config.EnvProduction),
 		config.WithDefault("local"),
@@ -172,7 +172,7 @@ func TestEnvExtension_Options(t *testing.T) {
 		"variable APP_ENV holds a value that is not one of development, production, local",
 	)
 
-	ext = config.NewExtension(config.WithConfigKey("app.env"))
+	ext = config.NewEnvExtension(config.WithConfigKey("app.env"))
 
 	c := loadEnv(t, ext, m{"app": m{"env": "testing"}})
 	assert.Equal(t, config.EnvTesting, ext.Current())
@@ -186,7 +186,7 @@ func TestEnvExtension_Options(t *testing.T) {
 func TestEnvExtension_Bind(t *testing.T) {
 	t.Setenv("GAS_ENV", "production")
 
-	c := loadEnv(t, config.NewExtension(), nil)
+	c := loadEnv(t, config.NewEnvExtension(), nil)
 
 	var app struct{ GasEnv config.Environment }
 
@@ -207,7 +207,7 @@ func TestEnvExtension_Bind(t *testing.T) {
 	assert.Empty(t, untagged.Env, "without the tag, Env is the key env, which holds nothing")
 
 	// With WithConfigKey set to env, it binds without one.
-	c = loadEnv(t, config.NewExtension(config.WithConfigKey("env")), nil)
+	c = loadEnv(t, config.NewEnvExtension(config.WithConfigKey("env")), nil)
 
 	require.NoError(t, c.Bind(&untagged))
 	assert.Equal(t, config.EnvProduction, untagged.Env)
@@ -219,7 +219,7 @@ func TestEnvExtension_Bind(t *testing.T) {
 func TestEnvExtension_Current(t *testing.T) {
 	t.Setenv("GAS_ENV", "staging")
 
-	ext := config.NewExtension()
+	ext := config.NewEnvExtension()
 	assert.Equal(t, config.Environment(""), ext.Current())
 
 	loadEnv(t, ext, nil)
@@ -240,7 +240,7 @@ func TestEnvExtension_Current(t *testing.T) {
 func TestEnvExtension_Reload(t *testing.T) {
 	t.Setenv("GAS_ENV", "staging")
 
-	ext := config.NewExtension()
+	ext := config.NewEnvExtension()
 	c := loadEnv(t, ext, nil)
 
 	t.Setenv("GAS_ENV", "production")

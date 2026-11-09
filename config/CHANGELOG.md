@@ -37,6 +37,10 @@ upgrading: most of the API moved or changed.
 
 ### Changed
 
+- **BREAKING: `NewExtension` is `NewEnvExtension`.** The constructor of
+  `EnvExtension` is named for the extension it returns, beside
+  `NewEnvProvider`.
+
 - **BREAKING: one package.** `providers` and `extensions/gasenv` are merged
   into `config`: `providers.NewEnvProvider` is `config.NewEnvProvider`,
   `providers.Provider` is `config.Provider`, `gasenv.NewExtension` is
