@@ -74,7 +74,7 @@ func TestConfig_SetDefaultsNilMapPointer(t *testing.T) {
 func TestEnvExtension_ConcurrentLoads(t *testing.T) {
 	t.Setenv("GAS_ENV", "staging")
 
-	ext := config.NewExtension()
+	ext := config.NewEnvExtension()
 	c := config.New(
 		config.WithProvider(newStatic("static", m{"gasenv": "production"})),
 		config.WithExtension(ext),
@@ -104,7 +104,7 @@ func TestEnvExtension_ConcurrentLoads(t *testing.T) {
 func TestEnvExtension_CustomKeyStoresString(t *testing.T) {
 	t.Setenv("GAS_ENV", "staging")
 
-	c := loadEnv(t, config.NewExtension(config.WithConfigKey("app.env")), nil)
+	c := loadEnv(t, config.NewEnvExtension(config.WithConfigKey("app.env")), nil)
 
 	assert.IsType(t, "", c.Get("GasEnv"))
 	assert.Equal(t, "staging", c.Get("GasEnv"))
@@ -120,7 +120,7 @@ func TestEnvExtension_CustomKeyStoresString(t *testing.T) {
 func TestEnvExtension_FoldedKeyStillCopied(t *testing.T) {
 	t.Setenv("GAS_ENV", "staging")
 
-	c := loadEnv(t, config.NewExtension(config.WithConfigKey("Ga\u017fEnv")), nil)
+	c := loadEnv(t, config.NewEnvExtension(config.WithConfigKey("Ga\u017fEnv")), nil)
 
 	assert.Equal(t, "staging", c.Get("GasEnv"))
 	assert.Equal(t, "staging", c.Get("ga\u017fenv"))

@@ -277,7 +277,7 @@ func TestLoad_Concurrent(t *testing.T) {
 
 	c := config.New(
 		config.WithProvider(newStatic("static", m{"db": m{"host": "a"}})),
-		config.WithExtension(config.NewExtension()),
+		config.WithExtension(config.NewEnvExtension()),
 	)
 
 	var wg sync.WaitGroup

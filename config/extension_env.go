@@ -105,8 +105,8 @@ type EnvExtension struct {
 
 var _ Extension = (*EnvExtension)(nil)
 
-// NewExtension returns an EnvExtension configured by opts.
-func NewExtension(opts ...EnvOption) *EnvExtension {
+// NewEnvExtension returns an EnvExtension configured by opts.
+func NewEnvExtension(opts ...EnvOption) *EnvExtension {
 	em := &EnvExtension{
 		envVarName:  DefaultEnvVarName,
 		defaultEnv:  DefaultEnvironment,
