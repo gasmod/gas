@@ -23,7 +23,7 @@ var skillTemplate string
 const installPage = "docs/src/content/docs/start/installation.md"
 
 // siteURL is where the docs site is published.
-const siteURL = "https://gasmod.github.io/gas/"
+const siteURL = "https://gasmod.dev/"
 
 // skillModule is a module of the package index of SKILL.md.
 type skillModule struct {
@@ -178,9 +178,9 @@ var (
 	// frontMatter matches the front matter of a site page.
 	frontMatter = regexp.MustCompile(`(?s)\A---\n.*?\n---\n+`)
 	// referenceLink matches a link to a reference page of the site.
-	referenceLink = regexp.MustCompile(`\]\(/gas/reference/([^)#]*?)/?\)`)
+	referenceLink = regexp.MustCompile(`\]\(/reference/([^)#]*?)/?\)`)
 	// siteLink matches any other link to a page of the site.
-	siteLink = regexp.MustCompile(`\]\(/gas/([^)]*)\)`)
+	siteLink = regexp.MustCompile(`\]\(/([^)]*)\)`)
 	// heading matches a Markdown heading outside a code block.
 	heading = regexp.MustCompile(`(?m)^(#+) `)
 )

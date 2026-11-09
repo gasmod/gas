@@ -6,7 +6,7 @@
 needs (dependency injection, routing, middleware, events, migrations, and service lifecycle management) so you
 can spend your time on business logic instead of rebuilding the same wiring for each project.
 
-📚 **[Documentation](https://gasmod.github.io/gas)** · [Getting started](https://gasmod.github.io/gas/start/installation/) · [Modules](https://gasmod.github.io/gas/#modules) · [API reference](https://pkg.go.dev/github.com/gasmod/gas)
+📚 **[Documentation](https://gasmod.dev)** · [Getting started](https://gasmod.dev/start/installation/) · [Modules](https://gasmod.dev/#modules) · [API reference](https://pkg.go.dev/github.com/gasmod/gas)
 
 ## Quick start
 
@@ -43,7 +43,7 @@ go run .
 # ... INFO server started environment=development addr=0.0.0.0:8080
 ```
 
-That is a complete Gas app. From there you write [services](https://gasmod.github.io/gas/reference/gas/)
+That is a complete Gas app. From there you write [services](https://gasmod.dev/reference/gas/)
 and register modules the same way, letting the DI container wire them together.
 
 ## Modules
@@ -81,7 +81,7 @@ Gas is pre-1.0: minor versions may contain breaking changes. See the [CHANGELOG]
 
 | Where | What |
 |---|---|
-| [gasmod.github.io/gas](https://gasmod.github.io/gas) | Getting started, tutorial, core concepts, and module guides |
+| [gasmod.dev](https://gasmod.dev) | Getting started, tutorial, core concepts, and module guides |
 | [pkg.go.dev](https://pkg.go.dev/github.com/gasmod/gas) | API reference for every package |
 
 Documentation lives in one place per kind, on purpose. Guides and concepts are on the site, API reference comes

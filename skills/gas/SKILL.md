@@ -57,7 +57,7 @@ go get github.com/gasmod/gas
 ```
 
 The core is enough for a working HTTP app. See the example on the
-[home page](https://gasmod.github.io/gas/).
+[home page](https://gasmod.dev/).
 
 ### Add modules
 

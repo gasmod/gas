@@ -39,7 +39,7 @@ const (
 	// coreName is the name the core package's page and reference go by.
 	coreName = "gas"
 	editBase = "https://github.com/gasmod/gas/edit/main/"
-	siteBase = "/gas/reference/"
+	siteBase = "/reference/"
 
 	// Heading levels: a package's sections, a declaration's doc and a
 	// function's doc.

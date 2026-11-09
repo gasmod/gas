@@ -3,7 +3,7 @@
 [![Test](https://github.com/gasmod/gas/actions/workflows/test.yml/badge.svg)](https://github.com/gasmod/gas/actions/workflows/test.yml) [![Go Reference](https://pkg.go.dev/badge/github.com/gasmod/gas/auth.svg)](https://pkg.go.dev/github.com/gasmod/gas/auth) ![Go Version](https://img.shields.io/github/go-mod/go-version/gasmod/gas?filename=auth/go.mod) [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 Part of the [Gas](../README.md)
-monorepo · [Documentation](https://gasmod.github.io/gas) · [All modules](../README.md#modules)
+monorepo · [Documentation](https://gasmod.dev) · [All modules](../README.md#modules)
 
 Authentication, authorization, and credential management for the [Gas](../README.md) framework:
 JWT, server-side sessions, API keys, and single-use tokens.
@@ -39,7 +39,7 @@ credentials and own migrations.
 The full documentation is on the docs site.
 This README is deliberately a signpost: keeping a second copy here is how the docs drifted before.
 
-- **Docs:** [auth](https://gasmod.github.io/gas/reference/auth/)
+- **Docs:** [auth](https://gasmod.dev/reference/auth/)
 - **API reference:** [pkg.go.dev/github.com/gasmod/gas/auth](https://pkg.go.dev/github.com/gasmod/gas/auth)
 - **Contributing:** [CONTRIBUTING.md](../CONTRIBUTING.md)
 
