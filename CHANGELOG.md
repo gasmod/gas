@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `CacheControl` keeps a Cache-Control the handler set, as it did before
+  v0.6.0. Since v0.6.0 it set its header when the status was written,
+  after the handler, so a handler's `private` or `no-store` went out as
+  the middleware's directives, such as `public`.
+
+## [0.6.0] - 2026-11-08
+
 v0.6.0 rewrites the core and every module around documented contracts.
 Each package's `doc.go` is its behavioral contract and lists its errors
 verbatim; read it before upgrading. Breaking changes are marked
@@ -742,7 +751,8 @@ repository; this entry summarizes the framework as published.
 - Eliminated a data race between the router and the service kill-switch by
   switching route storage to copy-on-write.
 
-[Unreleased]: https://github.com/gasmod/gas/compare/v0.5.6...HEAD
+[Unreleased]: https://github.com/gasmod/gas/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/gasmod/gas/compare/v0.5.6...v0.6.0
 [0.5.6]: https://github.com/gasmod/gas/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/gasmod/gas/compare/v0.5.0...v0.5.5
 [0.5.0]: https://github.com/gasmod/gas/compare/v0.3.0...v0.5.0

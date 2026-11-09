@@ -379,8 +379,9 @@ The other middleware:
 
 - `SecurityHeaders` sets security headers with safe defaults.
 - `CacheControl` sets Cache-Control on responses with a 2xx or 3xx
-status only, rounding durations up to whole seconds. A negative
-duration panics with `ErrInvalidOption`.
+status only, rounding durations up to whole seconds, and keeps a
+Cache-Control the handler set. A negative duration panics with
+`ErrInvalidOption`.
 - `BodyLimit` caps request bodies, answering 413 in the unified error
 shape.
 - `Timeout` gives each request a deadline, answering 503 with code
