@@ -206,7 +206,12 @@
 //   - [Service.Revoke] deletes the session a principal from Authenticate
 //     stands for. A nil principal, a nil pointer included, is
 //     auth.ErrNilPrincipal, and one of another scheme
-//     auth.ErrSchemeMismatch.
+//     auth.ErrSchemeMismatch. The principal's credential ID is the hash
+//     of the session ID, so a principal built from Session.ID deletes
+//     nothing.
+//   - [Service.RevokeSession] deletes a Session from Create or Rotate,
+//     without a request. A nil session, or one whose ID is not a session
+//     ID, is [ErrInvalidSession].
 //   - [Service.RevokeAll] deletes every session of a subject.
 //   - [Service.RevokeAllByScheme] does the same for auth.SchemeSession, and
 //     nothing for any other scheme.
@@ -344,8 +349,8 @@
 //   - [ErrEmptySubject]: Create was given an empty subject.
 //   - auth.ErrValueTooLong: Create was given a subject longer than
 //     auth.MaxValueLength bytes.
-//   - [ErrInvalidSession]: SetCookie was given a nil session or one that
-//     Create or Rotate did not return.
+//   - [ErrInvalidSession]: SetCookie or RevokeSession was given a nil
+//     session or one that Create or Rotate did not return.
 //   - auth.ErrNilPrincipal: Revoke was given a nil principal.
 //   - auth.ErrSchemeMismatch: Revoke was given a principal of another
 //     scheme.
@@ -359,8 +364,9 @@
 // operation, such as `create:` or `revoke all:`:
 //
 //   - These do: the errors of Create, Rotate, SetCookie, Revoke,
-//     RevokeAll and RevokeAllByScheme, other than a denial or
-//     ErrNotInitialized, and a database error from Authenticate.
+//     RevokeSession, RevokeAll and RevokeAllByScheme, other than a
+//     denial or ErrNotInitialized, and a database error from
+//     Authenticate.
 //   - These do not: a denial, ErrNotInitialized, and the errors of the
 //     constructor and Init.
 //
@@ -379,6 +385,7 @@
 //	gas/auth/session: set cookie: invalid session
 //	gas/auth/session: revoke: nil principal
 //	gas/auth/session: revoke: principal scheme mismatch
+//	gas/auth/session: revoke session: invalid session
 //	gas/auth/session: invalid config: session TTL must not exceed the max lifetime
 //	gas/auth/session: invalid config: cleanup interval must not be negative
 //	gas/auth/session: authenticate: gas/auth/session-store: get session: sql: database is closed

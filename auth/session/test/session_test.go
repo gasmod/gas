@@ -609,6 +609,67 @@ func TestRevoke_Unknown(t *testing.T) {
 		auth.NewPrincipal("alice", auth.SchemeSession, cryptoutil.SHA256Hex("unknown"), nil)))
 }
 
+// RevokeSession deletes the session of a Session from Create or Rotate,
+// and no other, and revoking it again is not an error. A principal built
+// from Session.ID deletes nothing, as its credential ID is not the hash.
+func TestRevokeSession(t *testing.T) {
+	testutil.ForEachBackend(
+		t,
+		func(t *testing.T, b testutil.Backend) { //nolint:thelper // a subtest body, not a helper
+			e := newEnv(t, b, nil)
+			ctx := t.Context()
+			sess := e.create(t, "alice", nil)
+			other := e.create(t, "alice", nil)
+
+			require.NoError(t, e.svc.Revoke(ctx,
+				auth.NewPrincipal("alice", auth.SchemeSession, sess.ID, nil)))
+
+			_, err := e.authenticate(ctx, sess.ID)
+			require.NoError(t, err)
+
+			require.NoError(t, e.svc.RevokeSession(ctx, sess))
+			require.NoError(t, e.svc.RevokeSession(ctx, sess))
+
+			_, err = e.authenticate(ctx, sess.ID)
+			requireDenied(t, auth.ErrUnauthenticated, err)
+
+			_, err = e.authenticate(ctx, other.ID)
+			require.NoError(t, err)
+
+			rotated, err := e.svc.Rotate(ctx, withCookie(e.cfg.Session.CookieName, other.ID))
+			require.NoError(t, err)
+			require.NoError(t, e.svc.RevokeSession(ctx, rotated))
+
+			_, err = e.authenticate(ctx, rotated.ID)
+			requireDenied(t, auth.ErrUnauthenticated, err)
+		},
+	)
+}
+
+// RevokeSession rejects a nil session and one whose ID is not a session
+// ID with ErrInvalidSession, deleting nothing; a stored session's hash
+// as the ID is not a session ID either.
+func TestRevokeSession_Invalid(t *testing.T) {
+	t.Parallel()
+
+	e := sqliteEnv(t, nil)
+	sess := e.create(t, "alice", nil)
+
+	for _, bad := range []*session.Session{
+		nil,
+		{},
+		{ID: "short"},
+		{ID: cryptoutil.SHA256Hex(sess.ID)},
+	} {
+		err := e.svc.RevokeSession(t.Context(), bad)
+		require.ErrorIs(t, err, session.ErrInvalidSession)
+		require.EqualError(t, err, "gas/auth/session: revoke session: invalid session")
+	}
+
+	_, err := e.authenticate(t.Context(), sess.ID)
+	require.NoError(t, err)
+}
+
 // RevokeAll deletes every session of a subject and no other, and
 // RevokeAllByScheme does so only for the session scheme.
 func TestRevokeAll(t *testing.T) {
@@ -655,6 +716,9 @@ func TestRevoke_DatabaseErrors(t *testing.T) {
 
 	require.EqualError(t, e.svc.Revoke(t.Context(), p),
 		"gas/auth/session: revoke: gas/auth/session-store: delete session: sql: database is closed")
+	require.EqualError(t, e.svc.RevokeSession(t.Context(), sess),
+		"gas/auth/session: revoke session: gas/auth/session-store: delete session: "+
+			"sql: database is closed")
 	require.EqualError(t, e.svc.RevokeAll(t.Context(), "alice"),
 		"gas/auth/session: revoke all: gas/auth/session-store: delete sessions by subject: "+
 			"sql: database is closed")

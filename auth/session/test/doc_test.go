@@ -194,6 +194,9 @@ func TestDoc_Errors(t *testing.T) {
 				auth.NewPrincipal(p.Subject(), auth.SchemeJWT, p.CredentialID(), nil),
 			)
 		},
+		"gas/auth/session: revoke session: invalid session": func() error {
+			return e.svc.RevokeSession(ctx, nil)
+		},
 		"gas/auth/session: invalid config: session TTL must not exceed the max lifetime": func() error {
 			return initErr(func(s *session.Settings) { s.SessionTTL = s.MaxLifetime + time.Second })
 		},

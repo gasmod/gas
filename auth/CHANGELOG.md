@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **session: `Service.RevokeSession`** deletes a `Session` from `Create`
+  or `Rotate` without a request. Since v0.6.0 a principal's credential ID
+  is the hash of the session ID, so `Revoke` of a principal built from
+  `Session.ID`, which worked before, matches no session and returns nil
+  with the session still live. A nil session, or one whose ID is not a
+  session ID, is `ErrInvalidSession`.
+
+## [0.6.0] - 2026-11-08
+
 v0.6.0 rewrites the module around documented contracts. Each package's
 `doc.go` is its behavioral contract and lists its errors verbatim; read it
 before upgrading. Most changes are breaking.
@@ -318,5 +329,6 @@ repository; this entry summarizes the framework as published.
   already-expired context from silently failing the cleanup goroutine on
   every run.
 
-[Unreleased]: https://github.com/gasmod/gas/compare/auth/v0.5.6...HEAD
+[Unreleased]: https://github.com/gasmod/gas/compare/auth/v0.6.0...HEAD
+[0.6.0]: https://github.com/gasmod/gas/releases/tag/auth/v0.6.0
 [0.5.6]: https://github.com/gasmod/gas/releases/tag/auth/v0.5.6
