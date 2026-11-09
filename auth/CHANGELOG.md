@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **session: `Service.RevokeSession`** deletes a `Session` from `Create`
+  or `Rotate` without a request. Since v0.6.0 a principal's credential ID
+  is the hash of the session ID, so `Revoke` of a principal built from
+  `Session.ID`, which worked before, matches no session and returns nil
+  with the session still live. A nil session, or one whose ID is not a
+  session ID, is `ErrInvalidSession`.
+
 ## [0.6.0] - 2026-11-08
 
 v0.6.0 rewrites the module around documented contracts. Each package's

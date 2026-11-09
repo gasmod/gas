@@ -65,9 +65,9 @@ var (
 	// ErrNilRequest indicates that Create or Rotate was given a nil
 	// request.
 	ErrNilRequest = errors.New("request is nil")
-	// ErrInvalidSession indicates that SetCookie was given a nil session,
-	// or one that Create or Rotate did not issue: its ID is not a session
-	// ID or it has no creation time.
+	// ErrInvalidSession indicates that SetCookie or RevokeSession was
+	// given a nil session, or one that Create or Rotate did not issue: its
+	// ID is not a session ID or, for SetCookie, it has no creation time.
 	ErrInvalidSession = errors.New("invalid session")
 )
 
@@ -340,6 +340,10 @@ func (s *Service) Rotate(ctx context.Context, r *http.Request) (*Session, error)
 // Revoke deletes the session a principal from Authenticate stands for.
 // A session that is already gone is not an error. A nil principal is
 // auth.ErrNilPrincipal, and one of another scheme auth.ErrSchemeMismatch.
+//
+// The principal's credential ID is the hash of the session ID, so a
+// principal built from Session.ID matches no session and deletes
+// nothing; RevokeSession deletes a Session.
 func (s *Service) Revoke(ctx context.Context, principal gas.Principal) error {
 	st, err := s.current()
 	if err != nil {
@@ -357,6 +361,28 @@ func (s *Service) Revoke(ctx context.Context, principal gas.Principal) error {
 	err = st.store.DeleteSession(ctx, principal.CredentialID())
 	if err != nil {
 		return fmt.Errorf("%s: revoke: %w", ServiceName, err)
+	}
+
+	return nil
+}
+
+// RevokeSession deletes the session sess, as returned by Create or
+// Rotate. A session that is already gone is not an error. A nil session,
+// or one whose ID is not a session ID, is ErrInvalidSession and deletes
+// nothing.
+func (s *Service) RevokeSession(ctx context.Context, sess *Session) error {
+	st, err := s.current()
+	if err != nil {
+		return err
+	}
+
+	if sess == nil || !validID(sess.ID) {
+		return fmt.Errorf("%s: revoke session: %w", ServiceName, ErrInvalidSession)
+	}
+
+	err = st.store.DeleteSession(ctx, cryptoutil.SHA256Hex(sess.ID))
+	if err != nil {
+		return fmt.Errorf("%s: revoke session: %w", ServiceName, err)
 	}
 
 	return nil

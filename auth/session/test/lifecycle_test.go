@@ -61,6 +61,7 @@ func assertNotInitialized(t *testing.T, svc *session.Service) {
 	check(err)
 
 	check(svc.Revoke(ctx, auth.NewPrincipal("alice", auth.SchemeSession, "x", nil)))
+	check(svc.RevokeSession(ctx, &session.Session{}))
 	check(svc.RevokeAll(ctx, "alice"))
 	check(svc.RevokeAllByScheme(ctx, "alice", auth.SchemeJWT))
 
