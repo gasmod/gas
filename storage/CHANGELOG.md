@@ -57,6 +57,14 @@ verbatim; read it before upgrading: most of the API changed.
   literals break.
 - **`Expires` is a `*string`**, not a `*time.Time`, and must be an
   IMF-fixdate exactly as `http.TimeFormat` writes it, on every backend.
+- **A write without a `ContentType` is `application/octet-stream`**
+  (`storage.DefaultContentType`) on every backend, and reads back as
+  that. dir used to sniff a type from the first bytes of the body with
+  `http.DetectContentType`, so an HTML or PNG object written to dir
+  without one now reads back as `application/octet-stream`; s3 used to
+  send no Content-Type and leave the type to S3. Set `ContentType` to
+  keep a type, such as from the name with `mime.TypeByExtension` or from
+  the first 512 bytes of the body with `http.DetectContentType`.
 - **`ObjectInfo` embeds `HeaderValues`**, which holds the content type and
   every header field written, and gains `ETag`; `ObjectSummary` gains
   `ETag` too. The ETag is unquoted.
