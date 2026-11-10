@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   v0.6.0. Since v0.6.0 it set its header when the status was written,
   after the handler, so a handler's `private` or `no-store` went out as
   the middleware's directives, such as `public`.
+- A handler's `ResponseWriter` is an `http.Pusher` again, as it was
+  before v0.6.0. Since v0.6.0 the Router's writer, and `CacheControl`'s,
+  dropped it, so `w.(http.Pusher)` failed even on an HTTP/2 connection
+  and HTTP/2 server push was lost, with `RequestLogger` too. `Push` now
+  passes on to the server's writer, and returns `http.ErrNotSupported`
+  where it cannot push, such as on HTTP/1, as net/http's HTTP/2 writer
+  does when the client disabled push.
 
 ## [0.6.0] - 2026-11-08
 
@@ -110,7 +117,14 @@ the details.
   binds and validates the Config once every service is built and
   initialized, keeps it only once it is valid, and closes the services
   when it is not. The errors read `gas: invalid config: ...` and wrap
-  `ErrInvalidConfig`.
+  `ErrInvalidConfig`. That moved the binding, and `AppConfigUpdated`,
+  earlier: Start binds the Config and emits `AppConfigUpdated` before it
+  emits `SystemAllServicesInitialized`, runs the pending migrations and
+  runs the ready hooks, where v0.5.6 did both after the ready hooks. A
+  ready hook now sees the bound Config through `App.Config`, and an
+  invalid Config fails Start before any migration runs. An `AppConfigUpdated` subscriber that needs the migrations
+  applied, such as one that reads a table, does that work in a ready hook
+  (`ReadyFunc`) instead, which still runs after them.
 - **BREAKING: `Config.Env` binds from the key `gasenv`** and replaces the
   embedded `WithGasEnv`, which is removed. The config module's
   `EnvExtension` stores the environment it resolves from `GAS_ENV` there.
@@ -152,7 +166,13 @@ the details.
   that the new `WithProblemTypeBase` option or `Router.SetProblemTypeBase`
   sets, and is left out (`about:blank`) without one. `Problem` replaces
   `ErrorResponse` for decoding; `FieldError` has `Pointer` in place of
-  `Field`; `WantsJSON` also accepts `application/problem+json`.
+  `Field`; `WantsJSON` also accepts `application/problem+json`. `*Error`
+  is no longer a wire type and has no `json` tags, so `json.Marshal` of
+  one, or `ctx.JSON(status, err)`, gives its Go field names, such as
+  `{"Details":null,"Code":"validation_failed","Message":"bad","Fields":[...],"Status":422}`,
+  where v0.5.6 gave `{"status":422,"code":"validation_failed","message":"bad","fields":[...]}`.
+  Write an error with `WriteError(w, r, err)`, or return it from a
+  DI-aware handler, to send the problem body.
 - **BREAKING: `Router.Use`, `Group` and `Route` take an owner.** `Use`,
   `UseMiddlewareFunc` and `UseMiddlewareByName` take the owning service
   first, as `Handle` and `Register` do, nil for the router. `Group` and
@@ -191,6 +211,24 @@ the details.
   (`BadRequest`, `BadRequestErr` and the others); use the package
   functions, such as `gas.BadRequest(msg)` and
   `gas.BadRequest(msg).WithCause(err)`.
+- **BREAKING: `RequestLogger`'s line changed.** A log query or alert
+  built on v0.5.6's lines needs updating:
+  - Level: a 4xx is logged at warn, where it was error. Info below 400
+    and error from 500 are as before. To keep matching client errors,
+    match `status` from 400 rather than the error level.
+  - `duration` is a `time.Duration` through `LogEvent.Duration`, where it
+    was the string `time.Duration.String()` gave, such as `"1.5ms"`. The
+    Logger encodes it: slog's JSON handler as integer nanoseconds, such
+    as `1500000`, and the log module's zerolog backend in
+    `zerolog.DurationFieldUnit`, milliseconds unless changed. The other
+    fields keep their names and types: `method`, `path` and `remote`
+    strings, `status` and `bytes` ints.
+  - One line per request. With `RequestLogger`, the default ErrorHandler
+    no longer logs a line of its own (`request error` at warn for a 4xx,
+    `unhandled request error` at error for a 5xx) next to the `request`
+    line; the `request` line carries the error as `error`. Without
+    `RequestLogger` it still logs its own line, now `request error` for a
+    5xx too, at error.
 - **`App.Handler` no longer builds the server.** It used to return
   `Server().Handler`, so calling it before `Start`, as tests and embedders
   do, built the `*http.Server` from the config as it stood then. It now

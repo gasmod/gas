@@ -257,6 +257,11 @@ func (cw *cacheWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return http.NewResponseController(cw.ResponseWriter).Hijack()
 }
 
+// Push pushes target through the writer underneath, when it can push.
+func (cw *cacheWriter) Push(target string, opts *http.PushOptions) error {
+	return push(cw.ResponseWriter, target, opts)
+}
+
 // Unwrap returns the writer underneath, for http.ResponseController.
 func (cw *cacheWriter) Unwrap() http.ResponseWriter { return cw.ResponseWriter }
 

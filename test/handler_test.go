@@ -754,3 +754,63 @@ func TestResponseWriter_PassesThrough(t *testing.T) {
 		assert.Equal(t, want, string(body), path)
 	}
 }
+
+// pushRecorder is a ResponseRecorder that can push, as net/http's HTTP/2
+// writer can, and records the targets.
+type pushRecorder struct {
+	*httptest.ResponseRecorder
+
+	pushed []string
+}
+
+func (p *pushRecorder) Push(target string, _ *http.PushOptions) error {
+	p.pushed = append(p.pushed, target)
+
+	return nil
+}
+
+// A handler sees http.Pusher on its writer, under the Router, CacheControl
+// and RequestLogger, and a Push reaches the server's writer, as before
+// v0.6.0. Where the server's writer cannot push, Push returns
+// http.ErrNotSupported.
+func TestResponseWriter_PassesPush(t *testing.T) {
+	t.Parallel()
+
+	app := quietApp()
+	app.Router().UseMiddlewareFunc(nil, gas.RequestLogger[gas.Logger]())
+	app.Router().UseMiddlewareFunc(nil, gas.CacheControl(gas.WithCacheControlPublic()))
+	app.Router().Get(nil, "/push", func(c gas.Context) error {
+		p, ok := c.ResponseWriter().(http.Pusher)
+		if !ok {
+			return gas.NewError(http.StatusTeapot, "no_pusher", "no pusher")
+		}
+
+		err := p.Push("/app.css", nil)
+		if errors.Is(err, http.ErrNotSupported) {
+			return c.Text(http.StatusNotImplemented, "not supported")
+		}
+
+		if err != nil {
+			return err
+		}
+
+		return c.Text(http.StatusOK, "pushed")
+	})
+	require.NoError(t, app.Start(t.Context()))
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/push", nil)
+
+	req.Proto, req.ProtoMajor, req.ProtoMinor = "HTTP/2.0", 2, 0
+
+	w := &pushRecorder{ResponseRecorder: httptest.NewRecorder()}
+	app.Handler().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, []string{"/app.css"}, w.pushed)
+
+	rr := httptest.NewRecorder()
+	h1 := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/push", nil)
+	app.Handler().ServeHTTP(rr, h1)
+
+	assert.Equal(t, http.StatusNotImplemented, rr.Code, rr.Body.String())
+}
