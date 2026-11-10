@@ -363,25 +363,54 @@ type queryer interface {
 }
 
 // readRows returns the rows of the tracking table, read with q, in version
-// order.
+// order. On SQLite, a read that meets another connection's write lock
+// gets SQLITE_BUSY and is tried again, as retryBusy does.
 func (s *Service) readRows(
 	ctx context.Context,
 	q queryer,
 	d *dialect,
-) (out []AppliedMigration, err error) {
+) ([]AppliedMigration, error) {
+	var (
+		out []AppliedMigration
+		err error
+	)
+
+	if d.lock == nil {
+		err = s.retryBusy(ctx, stepRead, func(ctx context.Context) error {
+			var readErr error
+
+			out, readErr = scanRows(ctx, q, d)
+
+			return readErr
+		})
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", ServiceName, err)
+		}
+	} else {
+		out, err = scanRows(ctx, q, d)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %s: %w", ServiceName, stepRead, s.safeErr(err))
+		}
+	}
+
+	slices.SortFunc(out, func(a, b AppliedMigration) int {
+		return compareVersions(a.Version, b.Version)
+	})
+
+	return out, nil
+}
+
+// scanRows reads the tracking table with q.
+func scanRows(ctx context.Context, q queryer, d *dialect) (out []AppliedMigration, err error) {
 	rows, err := q.QueryContext(ctx, d.selectRows)
 	if err != nil {
-		return nil, fmt.Errorf("%s: read tracking table: %w", ServiceName, s.safeErr(err))
+		return nil, err //nolint:wrapcheck // Service.readRows wraps it.
 	}
 
 	defer func() {
 		closeErr := rows.Close()
 		if err == nil && closeErr != nil {
-			out, err = nil, fmt.Errorf(
-				"%s: read tracking table: %w",
-				ServiceName,
-				s.safeErr(closeErr),
-			)
+			out, err = nil, closeErr
 		}
 	}()
 
@@ -390,7 +419,7 @@ func (s *Service) readRows(
 
 		err = rows.Scan(&m.Version, &m.Service, &m.Description, &m.Dirty, &m.Checksum)
 		if err != nil {
-			return nil, fmt.Errorf("%s: read tracking table: %w", ServiceName, s.safeErr(err))
+			return nil, err //nolint:wrapcheck // Service.readRows wraps it.
 		}
 
 		out = append(out, m)
@@ -398,12 +427,8 @@ func (s *Service) readRows(
 
 	err = rows.Err()
 	if err != nil {
-		return nil, fmt.Errorf("%s: read tracking table: %w", ServiceName, s.safeErr(err))
+		return nil, err //nolint:wrapcheck // Service.readRows wraps it.
 	}
-
-	slices.SortFunc(out, func(a, b AppliedMigration) int {
-		return compareVersions(a.Version, b.Version)
-	})
 
 	return out, nil
 }

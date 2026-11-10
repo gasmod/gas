@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SET search_path`, reached the app's later queries, and an advisory
   lock whose release failed stayed held. The connection is now closed,
   as the package documentation says.
+- **A read of the tracking table on SQLite waits for another instance's
+  write lock.** It failed with `SQLITE_BUSY` when it ran while another
+  instance committed and SQLite's busy timeout, as `busy_timeout(0)`
+  sets it, ran out first, so two instances running together could fail. It now tries again within the lock
+  timeout, as taking the write lock does, and a read that waits longer
+  fails with an error wrapping `ErrLockTimeout`.
 
 ## [0.6.0] - 2026-11-08
 

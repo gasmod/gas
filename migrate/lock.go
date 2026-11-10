@@ -209,6 +209,9 @@ const (
 	stepLock = "acquire lock"
 	// stepCommit commits a SQLite transaction, which waits for readers.
 	stepCommit = "commit"
+	// stepRead reads the tracking table, which on SQLite waits for a
+	// writer's commit.
+	stepRead = "read tracking table"
 )
 
 // wait calls try until it reports true, as described in the package
