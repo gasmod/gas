@@ -696,23 +696,6 @@ func (g *RouteGroup) Delete(path string, handler any, middleware ...Middleware) 
 	g.Handle(http.MethodDelete, path, handler, middleware...)
 }
 
-// NotFound sets the handler for a path under g that no route matches,
-// owned by g's owner. handler takes the shapes Router.Handle takes.
-func (g *RouteGroup) NotFound(handler any) {
-	r := g.r
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	httpHandler, depTypes := r.adapt(handler)
-
-	if !r.root.building.booked {
-		r.bookNotFound(g.owner, depTypes)
-	}
-
-	r.mux.NotFound(httpHandler)
-}
-
 // writeNotFound answers a path no route matches with a 404 in the unified
 // error shape.
 func writeNotFound(w http.ResponseWriter, req *http.Request) {
