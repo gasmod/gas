@@ -61,26 +61,6 @@ func TestDIHandler_BootValidation_NotFound(t *testing.T) {
 	}
 }
 
-// The same holds for a NotFound handler registered on a sub-router.
-func TestDIHandler_BootValidation_NotFoundInRoute(t *testing.T) {
-	app := gas.NewApp()
-
-	app.Router().Route(nil, "/api", func(sub *gas.RouteGroup) {
-		sub.NotFound(func(_ gas.Context, _ *testDep) error {
-			return nil
-		})
-	})
-
-	err := app.Start(context.Background())
-	if err == nil {
-		t.Fatal("Start() = nil, want an error for the NotFound handler's missing dependency")
-	}
-
-	if !strings.Contains(err.Error(), "testDep") {
-		t.Errorf("Start() error = %v, want it to name testDep", err)
-	}
-}
-
 func newTestDepB() *testDepB { return &testDepB{Count: 42} }
 
 //nolint:dupl // parallel cases kept apart for clarity

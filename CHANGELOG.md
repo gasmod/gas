@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **BREAKING: `RouteGroup.NotFound`.** The NotFound handler is the
+  router's alone: `Router.NotFound` sets it for every path, as
+  `Router.SetErrorHandler` sets the one ErrorHandler. A handler set on a
+  `Group` was always replaced by the router's.
+
 ### Fixed
 
 - `CacheControl` keeps a Cache-Control the handler set, as it did before

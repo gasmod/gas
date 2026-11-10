@@ -268,7 +268,9 @@ service owns is what the kill switch removes.
 `Router.Group` and `Router.Route` take the owner once and pass a
 `RouteGroup`, whose registrations take none: everything in the group,
 nested groups included, belongs to that service. A RouteGroup uses the
-router's validator, form decoder and JSON body limit.
+router's validator, form decoder, JSON body limit, NotFound handler and
+ErrorHandler; `Router.NotFound` and `Router.SetErrorHandler` set those
+for the whole router, and a group has neither of its own.
 
 The router defers every registration until Start seals it, so services
 register middleware and routes in any order; until then every path
