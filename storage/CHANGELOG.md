@@ -205,7 +205,10 @@ verbatim; read it before upgrading: most of the API changed.
   `ErrThrottled`, `ErrWrongRegion`, `ErrConflict` and
   `ErrUploadNotAborted`; `ServiceName` and `PresignerName`; and
   `Presigner.CheckReady`. `Provider.CheckReady` sends a `HeadBucket` of
-  the configured bucket. An upload in parts that fails is aborted with
+  the configured bucket, which S3 authorizes as the `s3:ListBucket`
+  action on that bucket: credentials without it fail `CheckReady` with
+  `storage.ErrAccessDenied` even when they may read and write its
+  objects. An upload in parts that fails is aborted with
   `AbortMultipartUpload` on a context of its own.
 
 ### Changed

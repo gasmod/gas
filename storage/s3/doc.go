@@ -476,6 +476,11 @@
 // as storage.ErrBucketNotFound or storage.ErrAccessDenied. Without one it
 // does no I/O.
 //
+// S3 authorizes a HeadBucket of a general purpose bucket as the
+// s3:ListBucket action on the bucket. Credentials that may read and write
+// the bucket's objects but not list it make CheckReady fail with
+// storage.ErrAccessDenied; grant s3:ListBucket on the configured bucket.
+//
 // [Presigner.CheckReady] does no I/O.
 //
 // # Client
