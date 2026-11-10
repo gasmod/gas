@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-08
+
 v0.6.0 rewrites the module around one contract, Amazon SES's rules,
 that every sender keeps, written in the `email` package's `doc.go` and
 checked by a shared conformance suite that runs against the memory
@@ -245,5 +247,6 @@ repository; this entry summarizes the package as published.
   `gas.EmailProvider` and `gas.ReadyReporter` that records calls
   (`CallCount`, `Reset`) and delegates to per-method `Fn` fields when set.
 
-[Unreleased]: https://github.com/gasmod/gas/compare/email/v0.5.6...HEAD
+[Unreleased]: https://github.com/gasmod/gas/compare/email/v0.6.0...HEAD
+[0.6.0]: https://github.com/gasmod/gas/releases/tag/email/v0.6.0
 [0.5.6]: https://github.com/gasmod/gas/releases/tag/email/v0.5.6
