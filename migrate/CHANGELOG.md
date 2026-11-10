@@ -54,7 +54,17 @@ upgrading, and its section "Upgrading from v0.5" in particular.
   and MySQL, such as for CREATE INDEX CONCURRENTLY, and
   `-- gas:no-split`, to send MySQL SQL as one statement, such as a stored
   routine. An unknown directive is `ErrUnknownDirective`;
-  `no-transaction` on SQLite is `ErrUnsupportedDirective`.
+  `no-transaction` on SQLite is `ErrUnsupportedDirective`. The name is
+  all that follows `gas:`, so `-- gas: no-split`, with white space after
+  the colon, is an unknown directive. **BREAKING** for a v0.5 migration
+  whose up or down SQL opens with a plain comment starting `gas:`, such
+  as `-- gas: create users`: `RunPending`, `Down` and `CheckReady` now
+  fail with `ErrUnknownDirective`. Reword the comment, as
+  `-- create users`, in the build that upgrades to v0.6.0: its first
+  `RunPending` records the checksum of the reworded up SQL for a row
+  v0.5 wrote, so there is no `ErrChecksumMismatch`. Only the leading
+  blank and `--` lines are read, so such a comment after the first
+  statement is plain SQL.
 - **`ServiceName`, `TableName`, `PostgresLockKey`, `MySQLLockPrefix`**
   and `DefaultLockTimeout` constants, and the sentinel errors
   `ErrNilDatabase`, `ErrNilLogger`, `ErrNotInitialized`,
