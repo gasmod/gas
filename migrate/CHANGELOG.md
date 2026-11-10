@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A call's connection is closed in gas/database's `ModePgx` too.**
+  There `*sql.DB` borrows the pgxpool's connections, and closing one
+  returned it to the pool, so a migration's session settings, such as
+  `SET search_path`, reached the app's later queries, and an advisory
+  lock whose release failed stayed held. The connection is now closed,
+  as the package documentation says.
+
+## [0.6.0] - 2026-11-08
+
 v0.6.0 rewrites the module around the contract in its package
 documentation (`doc.go`), which lists every error verbatim. Read it before
 upgrading, and its section "Upgrading from v0.5" in particular.
@@ -257,5 +268,6 @@ repository; this entry summarizes the module as published.
   same transaction, so a crash between the two no longer leaves the schema
   changed but unrecorded and the pipeline wedged as dirty.
 
-[Unreleased]: https://github.com/gasmod/gas/compare/migrate/v0.5.6...HEAD
+[Unreleased]: https://github.com/gasmod/gas/compare/migrate/v0.6.0...HEAD
+[0.6.0]: https://github.com/gasmod/gas/releases/tag/migrate/v0.6.0
 [0.5.6]: https://github.com/gasmod/gas/releases/tag/migrate/v0.5.6

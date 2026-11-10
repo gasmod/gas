@@ -365,7 +365,8 @@
 // closing its connection` at warn level, and the call's result stands.
 //
 // On PostgreSQL and MySQL the call's connection is closed when the call
-// ends, never returned to the pool. So no lock, open transaction or
+// ends, never returned to the pool, the pgxpool of gas/database's ModePgx
+// included. So no lock, open transaction or
 // session setting a migration made, such as `SET FOREIGN_KEY_CHECKS = 0`
 // on MySQL or `SET search_path` on PostgreSQL, reaches the app's later
 // queries. Closing it also releases a lock that releasing could not.

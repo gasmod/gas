@@ -143,6 +143,7 @@ func TestSQLite_InMemory(t *testing.T) {
 	cfg.Database.DSN = ":memory:"
 	cfg.Database.MaxOpenConns = 1
 	cfg.Database.MaxIdleConns = 1
+	cfg.Database.MaxIdleConns = 1
 
 	db, err := database.New(database.WithConfig(cfg))(nil, &gas.NopLogger{})
 	require.NoError(t, err)
@@ -374,4 +375,54 @@ func TestSQLite_PanicRollsBack(t *testing.T) {
 	require.NoError(t, p.db.QueryRowContext(t.Context(),
 		"SELECT COUNT(*) FROM sqlite_master WHERE name = 'a'").Scan(&n))
 	assert.Zero(t, n, "the failed migration's CREATE TABLE was rolled back")
+}
+
+// In ModePgx, database/sql's connections borrow the pgxpool's, and
+// closing one releases it to the pool rather than closing it. A run's
+// connection went back to the pool with what the run set on its
+// session, the lock timeout and a migration's settings among them. The
+// connection is now closed, so the app's next query on the same pool
+// sees the server's defaults.
+func TestPgx_RunLeavesNoSessionState(t *testing.T) {
+	t.Parallel()
+
+	cfg := database.DefaultConfig()
+
+	cfg.Database.Dialect = database.DialectPostgres
+	cfg.Database.Mode = database.ModePgx
+	cfg.Database.DSN = gas.Secret(postgresBackend.fresh(t))
+	// One connection, so the app's query gets the one the run used.
+	cfg.Database.MaxOpenConns = 1
+	cfg.Database.MaxIdleConns = 1
+
+	db, err := database.New(database.WithConfig(cfg))(nil, &gas.NopLogger{})
+	require.NoError(t, err)
+	require.NoError(t, db.Init(t.Context()))
+	t.Cleanup(func() { require.NoError(t, db.Close(context.Background())) })
+
+	settings := func() (lockTimeout, marker string) {
+		t.Helper()
+
+		require.NoError(t, db.DB().QueryRowContext(t.Context(),
+			"SELECT current_setting('lock_timeout'), "+
+				"COALESCE(current_setting('app.marker', true), '')").
+			Scan(&lockTimeout, &marker))
+
+		return lockTimeout, marker
+	}
+
+	wantLockTimeout, _ := settings()
+
+	svc, _ := started(t, db, migrate.WithLockTimeout(3*time.Second))
+	svc.Register(app, gas.Migration{
+		Version:     "001",
+		Description: "set a session setting",
+		Up:          "SELECT set_config('app.marker', 'leaked', false)",
+		Down:        "SELECT 1",
+	})
+	require.NoError(t, svc.RunPendingContext(t.Context()))
+
+	lockTimeout, marker := settings()
+	assert.Equal(t, wantLockTimeout, lockTimeout)
+	assert.Empty(t, marker)
 }
