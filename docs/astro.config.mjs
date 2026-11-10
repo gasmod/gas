@@ -52,6 +52,26 @@ export default defineConfig({
 					tag: 'link',
 					attrs: { rel: 'describedby', type: 'text/plain', href: 'https://gasmod.dev/llms.txt', title: 'llms.txt' },
 				},
+				// The Context7 chat widget: a floating button that answers
+				// questions from the documentation Context7 holds for Gas. Its
+				// script adds the button to <body> as it runs, so it is deferred
+				// until the page is parsed. It sends nothing until a reader asks
+				// a question, and Context7 answers only on the domains allowed in
+				// the library's chat settings there.
+				{
+					tag: 'script',
+					attrs: {
+						src: 'https://context7.com/widget.js',
+						'data-library': '/gasmod/gas',
+						// The accent of the light theme, which white text reads on
+						// in both themes.
+						'data-color': '#3d5afe',
+						'data-placeholder': 'Ask about Gas',
+						'data-welcome-message':
+							'Ask a question about Gas. An AI answers from the documentation, so check what it says against the page.',
+						defer: true,
+					},
+				},
 			],
 			// Per page: the robots rule, the link to the page's Markdown version
 			// and its structured data.
