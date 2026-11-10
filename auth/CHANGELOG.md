@@ -135,7 +135,21 @@ before upgrading. Most changes are breaking.
   User-Agent. `Revoke` refuses a nil principal or one of another scheme.
   `Init` checks the cookie name, path, domain and SameSite, and logs the
   insecure-attribute warnings once per `Init`, not on each cookie
-  written.
+  written. `Init` also requires `MaxLifetime` to be positive and
+  `SessionTTL` to be at most `MaxLifetime`, so two v0.5.6 setups now
+  fail `Init` with `ErrInvalidConfig`: a `Config` literal given to
+  `WithConfig` without `MaxLifetime`, since the literal is checked as
+  given and its zero is not replaced by the default, and a `SessionTTL`
+  over 30 days with the default `MaxLifetime`. Set `MaxLifetime` to at
+  least `SessionTTL`, in the literal or as `session.maxlifetime`, or
+  build the config from `session.DefaultConfig()` rather than a literal:
+
+  ```go
+  cfg := session.DefaultConfig()
+  cfg.Session.SessionTTL = 60 * 24 * time.Hour
+  cfg.Session.MaxLifetime = 90 * 24 * time.Hour
+  ctor := session.New(session.WithConfig(cfg))
+  ```
 - **BREAKING: apikey.** Authenticate tells a revoked key
   (`ErrCredentialRevoked`) and an expired one (`ErrCredentialsExpired`)
   from an unknown one (`ErrUnauthenticated`), and a failed `LastUsed`
@@ -143,7 +157,12 @@ before upgrading. Most changes are breaking.
   refuses an empty subject, a subject or name over 255 bytes, a scope that
   is empty, holds a comma or has surrounding white space, metadata with the
   reserved key `scopes`, and a `WithTTL` or `WithExpiresAt` that is not in
-  the future; these used to be ignored or stored. `Revoke` and `Delete`
+  the future; these used to be ignored or stored. The `KeyInfo` Generate
+  returns holds the metadata as JSON decodes it, as `List` and the
+  principal from Authenticate already did: an `int` given to
+  `WithMetadata` comes back as a `float64`, a struct as a
+  `map[string]any`. It used to hold a copy of the values as given.
+  `Revoke` and `Delete`
   refuse a nil principal or one of another scheme. `List` breaks ties in
   the creation time by ID, descending.
 - **BREAKING: token.** `ErrTokenInvalid` and `ErrTokenExpired` wrap the

@@ -306,6 +306,16 @@ A handler is an `http.HandlerFunc`, or a DI-aware func(Context,
 Deps...) error whose dependencies are resolved from the request's Scope
 on each call. Another shape panics with `ErrInvalidHandler`.
 
+The Router's ResponseWriter, and the one `CacheControl` wraps it in, is
+an `http.Flusher`, an `http.Hijacker`, an `http.Pusher` and an
+`io.ReaderFrom`, and unwraps for `http.ResponseController`. Each passes
+on to the server's writer; Hijack and Push return the server's error,
+such as `http.ErrNotSupported`, where the connection cannot.
+`RequestLogger` wraps it in chi's writer, which is an http.Pusher for
+an HTTP/2 request only and an http.Hijacker and io.ReaderFrom for an
+HTTP/1 request only. `Timeout` buffers the response, and its writer is
+none of these.
+
 An error a DI-aware handler returns goes to the `ErrorHandler`. The
 default one logs it and writes it with `WriteError`: an `*Error` as a
 `Problem`, and anything else as a 500 with code `CodeInternal`. A cause
@@ -364,8 +374,11 @@ request has no `Principal`.
 
 `RequestLogger` derives a per-request logger and puts it on the request
 context, with `request_id` when chi's RequestID middleware runs before
-it. It logs one line per request, `request`, with the method, path,
-status, bytes, duration and remote address:
+it. It logs one line per request, `request`, with the fields `method`,
+`path` and `remote` as strings, `status` and `bytes` as ints, and
+`duration` as a `time.Duration` through `LogEvent.Duration`, which the
+Logger encodes: log/slog's JSON handler as integer nanoseconds, for
+one. The line's level:
 
 - at info level below 400,
 - at warn level below 500,
@@ -420,7 +433,11 @@ one is registered, and validates the copy against these rules:
 config module's EnvExtension stores the environment it resolved from
 `GAS_ENV`. ConfigProvider has no other way to report the
 environment, so a provider that resolves it differently must store
-it at `gasenv`.
+it at `gasenv`. An environment the EnvExtension allows with
+config.WithAllowedEnvs or config.WithDefault, such as `local`, must
+also be passed to WithAllowedEnvironments, or Start fails with
+`gas: invalid config: gasenv must be one of development, testing,
+staging, production`, wrapping ErrInvalidConfig.
 - Host must be an IP address or an RFC 1123 hostname.
 - Port must be 0 to 65535.
 - ReadTimeout, WriteTimeout and IdleTimeout must not be negative, 0

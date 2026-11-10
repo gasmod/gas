@@ -228,8 +228,11 @@ first other line ends them. A directive applies to the SQL it opens, up
 or down.
 
 MySQL reads `--` as a comment only when white space follows it, so
-`--gas:no-split` is no directive, and on MySQL not a comment either. An
-unknown name is a registration problem that names the line, not its
+`--gas:no-split` is no directive, and on MySQL not a comment either. The
+name is all that follows `gas:` on the line, so every such leading
+comment is a directive: `-- gas: no-split`, with white space after the
+colon, and `-- gas: create users`, a plain comment, are unknown names.
+An unknown name is a registration problem that names the line, not its
 text.
 
 The directives are:
@@ -657,6 +660,13 @@ wait does.
 The first RunPending records the checksums of the rows written without
 one, from the up SQL registered at that time, and from then on checks
 them. An edit made before that run is therefore not caught.
+
+v0.5 read no directives. A migration whose up or down SQL opens with a
+comment such as `-- gas: create users` now makes RunPending, Down and
+CheckReady fail with `ErrUnknownDirective`, as described under
+Directives. Reword the comment, as `-- create users`, in the build that
+upgrades: its first RunPending records the reworded up SQL's checksum
+for a row v0.5 wrote, so the edit is no `ErrChecksumMismatch`.
 
 What changed besides is the order of versions:
 

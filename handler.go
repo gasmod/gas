@@ -369,8 +369,36 @@ func (t *responseTracker) ReadFrom(src io.Reader) (int64, error) {
 	return io.Copy(t.ResponseWriter, src)
 }
 
+// Push pushes target through the writer underneath, when it can push. It
+// records no commit: a push promise is not the response.
+func (t *responseTracker) Push(target string, opts *http.PushOptions) error {
+	return push(t.ResponseWriter, target, opts)
+}
+
 // Unwrap returns the writer underneath, for http.ResponseController.
 func (t *responseTracker) Unwrap() http.ResponseWriter { return t.ResponseWriter }
+
+// push pushes target through w or the first writer under it, found
+// through Unwrap, that is an http.Pusher. It returns http.ErrNotSupported
+// when none is, as for net/http's HTTP/1 writer; http.ResponseController
+// has no Push to do this.
+func push(w http.ResponseWriter, target string, opts *http.PushOptions) error {
+	for w != nil {
+		if p, ok := w.(http.Pusher); ok {
+			//nolint:wrapcheck // the server's error, as from the writer itself
+			return p.Push(target, opts)
+		}
+
+		u, ok := w.(interface{ Unwrap() http.ResponseWriter })
+		if !ok {
+			break
+		}
+
+		w = u.Unwrap()
+	}
+
+	return http.ErrNotSupported
+}
 
 // responseCommitted reports whether the response is committed.
 func (t *responseTracker) responseCommitted() bool { return t.wrote.Load() }

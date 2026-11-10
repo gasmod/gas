@@ -35,7 +35,10 @@ what DownFn returns.
 ## Calls
 
 Each method appends a `Call` with its name and arguments, the context
-of Init and Close included, before it calls its field. To read them:
+of Init and Close included, before it calls its field. A call is
+recorded under the method called only: gas's Start calls
+RunPendingContext, so after it CallCount("RunPendingContext") is 1 and
+CallCount("RunPending") is 0. To read them:
 
 - Calls returns a copy of them in the order they were made.
 - CallCount counts those of one method.

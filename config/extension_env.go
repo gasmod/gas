@@ -60,7 +60,10 @@ func WithEnvVarName(name string) EnvOption {
 	}
 }
 
-// WithAllowedEnvs sets the environments the extension accepts.
+// WithAllowedEnvs sets the environments the extension accepts. An App
+// accepts only the environments gas.WithAllowedEnvironments sets, so give
+// it the same ones, or App.Start fails on any environment outside gas's
+// four standard ones.
 //
 // Default: EnvDevelopment, EnvTesting, EnvStaging and EnvProduction.
 func WithAllowedEnvs(envs ...Environment) EnvOption {
@@ -71,7 +74,9 @@ func WithAllowedEnvs(envs ...Environment) EnvOption {
 
 // WithDefault sets the environment the extension falls back to when the
 // variable is unset or empty. The fallback is allowed even when it is not
-// one of the allowed environments.
+// one of the allowed environments. An App does not allow it that way: a
+// fallback outside gas's four standard environments must also be given to
+// gas.WithAllowedEnvironments, or App.Start fails.
 //
 // Default: DefaultEnvironment.
 func WithDefault(env Environment) EnvOption {

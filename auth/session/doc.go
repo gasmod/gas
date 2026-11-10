@@ -262,6 +262,11 @@
 //   - CleanupInterval is not negative.
 //   - CleanupTimeout is positive when CleanupInterval is.
 //
+// A configuration given to WithConfig is checked as given: no zero
+// setting in it is replaced by its default, so a Config literal that
+// leaves MaxLifetime out fails Init. Build one from [DefaultConfig] to
+// keep the defaults.
+//
 // The defaults:
 //
 //   - CookieName: [DefaultCookieName].

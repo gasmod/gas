@@ -461,6 +461,39 @@ func TestChecksum_UpgradeFromV05(t *testing.T) {
 	}
 }
 
+// A v0.5 migration whose SQL opens with a comment starting `gas:` reads
+// as an unknown directive, with white space after the colon too, so
+// RunPending fails. Rewording the comment in the build that upgrades is
+// no checksum mismatch: the first RunPending records the reworded SQL's
+// checksum for the row v0.5 wrote.
+func TestChecksum_UpgradeGasComment(t *testing.T) {
+	t.Parallel()
+
+	b := sqliteBackend
+	dsn := b.fresh(t)
+	db := openDB(t, b, dsn)
+
+	legacyTable(t, b, db)
+	legacyInsert(t, b, db, "001", "app")
+
+	const body = "\nCREATE TABLE a (id INT)"
+
+	svc, _ := started(t, db)
+	svc.Register(app, gas.Migration{Version: "001", Up: "-- gas: create a" + body})
+	require.EqualError(t, svc.RunPending(), "gas/migrate: register 001 (owner app): "+
+		"up SQL: unknown directive on line 1")
+
+	directive, _ := started(t, openDB(t, b, dsn))
+	directive.Register(app, gas.Migration{Version: "001", Up: "-- gas: no-split" + body})
+	require.ErrorIs(t, directive.RunPending(), migrate.ErrUnknownDirective)
+
+	reworded, _ := started(t, openDB(t, b, dsn))
+	reworded.Register(app, gas.Migration{Version: "001", Up: "-- create a" + body})
+	require.NoError(t, reworded.RunPending())
+	assert.Equal(t, sum("-- create a"+body), rows(t, reworded)[0].Checksum)
+	require.NoError(t, reworded.RunPending())
+}
+
 // tableExists reports whether db, a database of b, has the table.
 func tableExists(t *testing.T, b backend, db *database.Service, table string) bool {
 	t.Helper()
