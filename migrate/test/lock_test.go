@@ -313,3 +313,70 @@ func assertUnlocked(t *testing.T, e *env) {
 	require.NoError(t, conn.QueryRowContext(t.Context(), q).Scan(&free))
 	assert.True(t, free.Bool)
 }
+
+// holdExclusive takes SQLite's exclusive lock on e's database with
+// another connection, which keeps readers out, and returns a func that
+// commits it.
+func holdExclusive(t *testing.T, e *env) func() {
+	t.Helper()
+
+	conn, err := openDB(t, sqliteBackend, e.dsn).DB().Conn(t.Context())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, conn.Close()) })
+
+	_, err = conn.ExecContext(t.Context(), "BEGIN EXCLUSIVE")
+	require.NoError(t, err)
+
+	return func() {
+		_, err := conn.ExecContext(t.Context(), "COMMIT")
+		require.NoError(t, err)
+	}
+}
+
+// On SQLite, a read of the tracking table that meets another
+// connection's write lock, as a peer's commit holds it, waits for it
+// instead of failing with SQLITE_BUSY.
+func TestConcurrency_SQLiteReadWaits(t *testing.T) {
+	t.Parallel()
+
+	for name, read := range map[string]func(*migrate.Service) error{
+		"Applied": func(svc *migrate.Service) error {
+			_, err := svc.Applied(t.Context())
+
+			return err
+		},
+		"RunPending": func(svc *migrate.Service) error { return svc.RunPending() },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			e := sqliteEnv(t, migrate.WithLockTimeout(10*time.Second))
+			commit := holdExclusive(t, e)
+
+			done := make(chan error, 1)
+
+			go func() { done <- read(e.svc) }()
+
+			select {
+			case err := <-done:
+				require.Failf(t, "read did not wait", "returned %v", err)
+			case <-time.After(200 * time.Millisecond):
+			}
+
+			commit()
+			require.NoError(t, <-done)
+		})
+	}
+}
+
+// A read that waits past the lock timeout fails with ErrLockTimeout.
+func TestConcurrency_SQLiteReadTimesOut(t *testing.T) {
+	t.Parallel()
+
+	e := sqliteEnv(t, migrate.WithLockTimeout(50*time.Millisecond))
+	holdExclusive(t, e)
+
+	_, err := e.svc.Applied(t.Context())
+	require.ErrorIs(t, err, migrate.ErrLockTimeout)
+	require.EqualError(t, err, "gas/migrate: read tracking table: lock timed out")
+}

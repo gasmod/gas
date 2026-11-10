@@ -333,7 +333,8 @@ So several instances may share the pending migrations between them,
 each applying one at a time, and every one is applied once.
 
 A connection that meets another's write lock gets SQLITE_BUSY, and
-tries again. The service tells SQLITE_BUSY by the driver error's Code
+tries again. That holds for a read of the tracking table too, which
+meets the lock while another instance commits. The service tells SQLITE_BUSY by the driver error's Code
 method, as modernc.org/sqlite has. COMMIT, which waits for readers to
 finish, is tried again the same way, keeping the transaction open. With
 a driver whose errors have no Code method, SQLITE_BUSY is returned as
@@ -362,7 +363,9 @@ error.
 On SQLite each write waits up to the lock timeout. A failed wait for a
 migration names it, as `apply 001 (owner app): acquire lock: lock timed
 out`. A COMMIT that waits for readers longer fails the migration, as
-`commit: ` and the same causes.
+`commit: ` and the same causes. A read of the tracking table that waits
+longer fails as `read tracking table: ` and the same causes; it takes
+no lock, so it logs nothing while it waits.
 
 ## Releasing the lock
 
@@ -734,7 +737,8 @@ version.
 once it had started. It wraps the driver's error. A failure before
 anything ran, such as taking SQLite's write lock or writing the
 dirty mark that comes first on MySQL, does not wrap it.
-- `ErrLockTimeout`: the lock was not taken within the lock timeout.
+- `ErrLockTimeout`: the lock was not taken within the lock timeout,
+or on SQLite, the tracking table was not read within it.
 - `ErrChecksumMismatch`: an applied migration's up SQL was edited, as
 under Edited migrations.
 
