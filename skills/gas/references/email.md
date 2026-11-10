@@ -49,7 +49,8 @@ err = mailer.SendFromTemplate(ctx, &gas.TemplatedEmail{
 
 After this SES has accepted both messages for delivery, or the memory
 outbox holds them, normalized. The second is sent from the sender's
-FromEmail setting.
+FromEmail setting. Its templates come from a store that holds `.txt`
+names as well as `.html` ones, as under Templates.
 
 ## Contract
 
@@ -291,6 +292,20 @@ Each template is fetched by its name from the gas.TemplateProvider,
 parsed alone, so it cannot call another, and executed with Data. A
 template name left empty keeps that field of the embedded Email.
 Templates are fetched and parsed on every call.
+
+A sender fetches any name the gas.TemplateProvider holds. The stores
+of gas/template hold only names that end in one of their extensions,
+`.html` unless their WithExtensions option gives others, and fail Get
+of any other name. A subject or text template named `.txt` therefore
+needs a store built with `.txt` among its extensions, such as this
+gas/template/memory store:
+
+```go
+store, err := memory.NewStore(memory.WithExtensions(".html", ".txt"))()
+```
+
+With the default extensions the fetch of `welcome-subject.txt` fails,
+and the call is `ErrTemplate`.
 
 The fields render in the order subject, text, HTML. The first failure
 ends the call, with nothing sent and the caller's message unchanged.

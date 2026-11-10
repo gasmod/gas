@@ -118,13 +118,27 @@ upgrading: most of the API moved or changed.
   too large for a `float64`, such as `1e400`, is an error. A float bound
   to a string field is written without an exponent, so 1234567.0 is
   `1234567`.
+- **BREAKING: a float binds to an integer field only when it is whole.**
+  `Bind` dropped the fractional part, so `8080.7`, from a JSON file or
+  `Set`, set an `int` or `uint` field to 8080. It is now an error that
+  names the key, such as
+  `bind config: port: cannot convert float64 to int: not a whole number`,
+  and so are NaN and an infinity. A whole float such as `8080.0` binds as
+  before. Write the value as an integer, or bind it to a float field and
+  convert it in code.
 - **BREAKING: an environment that is not allowed fails the load.** A
   `GAS_ENV` value, or a value a provider sets at the extension's key, that
   is not one of the allowed environments fails `Load` with an error
   wrapping `ErrEnvironmentNotAllowed`, which names the variable or key and
   the allowed values but not the value. It used to be replaced with the
   fallback without a word, so `prod` ran as development. The fallback is
-  always allowed.
+  always allowed. Core's `App.Start` now checks the environment as well,
+  against `gas.WithAllowedEnvironments`, which defaults to the four
+  standard environments: an environment added with `WithAllowedEnvs` or
+  `WithDefault`, such as `local`, loads but fails `Start` with
+  `gas: invalid config: gasenv must be one of development, testing,
+  staging, production`. Give core the same list, as in
+  `gas.WithAllowedEnvironments("local", gas.EnvProduction)`.
 - **BREAKING: the `.env` format is strict.** A name is
   `[A-Za-z_][A-Za-z0-9_]*`, defined once and not differing from another
   only in case; there is no `export`; nothing is escaped; an unquoted

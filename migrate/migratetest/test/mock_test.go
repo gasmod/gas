@@ -78,6 +78,21 @@ func TestMock_ContextMethods(t *testing.T) {
 	require.NoError(t, empty.DownContext(ctx, 1))
 }
 
+// gas's Start runs the pending migrations through RunPendingContext, and
+// the mock records that call under its own name only.
+func TestMock_WorkerStart(t *testing.T) {
+	t.Parallel()
+
+	m := &migratetest.MockMigrationManager{}
+
+	w := gas.NewWorker(gas.WithServiceInstance[gas.MigrationManager](m))
+	require.NoError(t, w.Start(t.Context()))
+	t.Cleanup(func() { require.NoError(t, w.Shutdown(context.Background())) })
+
+	assert.Equal(t, 1, m.CallCount("RunPendingContext"))
+	assert.Equal(t, 0, m.CallCount("RunPending"))
+}
+
 // With every field nil, each method succeeds and does nothing, and Name
 // is migrate.ServiceName.
 func TestMock_Defaults(t *testing.T) {

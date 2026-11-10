@@ -299,7 +299,9 @@
 //     it as a whole; elements past the end of the list are zero.
 //   - A bool, integer or float field takes a value of that kind, or a string
 //     that parses as one, such as `8080`. A number that does not fit the
-//     field's type is an error.
+//     field's type is an error. A float fits an integer field only when it
+//     is a whole number, so 8080.0 binds as 8080, while 8080.7, NaN and an
+//     infinity are errors; the string `8080.0` is an error too.
 //   - A string field takes a string, and a bool or number formatted with
 //     [fmt.Sprint], except that a float is written without an exponent, so
 //     1234567.0 is `1234567`.
@@ -380,6 +382,33 @@
 //   - [WithDefault] changes the fallback.
 //   - [WithConfigKey] changes the key. With another key, the environment
 //     is stored at `GasEnv` too.
+//
+// An App checks the environment too. App.Start accepts only the
+// environments gas.WithAllowedEnvironments sets, by default the four above,
+// so an environment that WithAllowedEnvs or WithDefault adds, such as
+// `local`, loads but fails Start with an error wrapping
+// gas.ErrInvalidConfig:
+//
+//	gas: invalid config: gasenv must be one of development, testing, staging, production
+//
+// Give both the same environments:
+//
+//	envs := []config.Environment{"local", config.EnvStaging, config.EnvProduction}
+//	envExt := config.NewEnvExtension(
+//		config.WithAllowedEnvs(envs...),
+//		config.WithDefault("local"),
+//	)
+//	cfg := config.New(
+//		config.WithProvider(config.NewEnvProvider(config.WithEnvPrefix("APP"))),
+//		config.WithExtension(envExt),
+//	)
+//	if err := cfg.Load(); err != nil {
+//		return err
+//	}
+//	app := gas.NewApp(
+//		gas.WithServiceInstance[gas.ConfigProvider](cfg),
+//		gas.WithAllowedEnvironments(envs...),
+//	)
 //
 // Before the providers load, the extension stores the variable's value, or
 // the fallback, at the key unless the key holds a value. So once a load
