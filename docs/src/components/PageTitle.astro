@@ -4,6 +4,11 @@
 // part of the site the page belongs to: start, gas, or its module. A
 // reference page is marked, so its API declaration headings can be set as
 // code.
+//
+// Beside the title, a menu offers the page to an LLM: its Markdown on the
+// clipboard, or a new Claude or ChatGPT chat that opens with the page.
+import { askPrompt, chatgptUrl, claudeUrl, markdownPath } from '../lib/llm';
+
 const { entry, id } = Astro.locals.starlightRoute;
 const { title, template } = entry.data;
 const pageTitleId = '_top';
@@ -15,6 +20,17 @@ let section = 'docs';
 if (id.startsWith('start/')) section = 'start';
 else if (id === 'reference/gas') section = 'gas';
 else if (isReference) section = `gas/${id.split('/')[1]}`;
+
+// The page's Markdown version, which the copy action fetches, and the prompt
+// a chat opens with, which names it by its full URL. Without `site` there is
+// no full URL, and the chats are left out. A splash page has no Markdown
+// version, and its id is empty.
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const markdown = `${base}${markdownPath(id)}`;
+const prompt =
+	template !== 'splash' &&
+	Astro.site &&
+	askPrompt(title, new URL(`${base}/${id}/`, Astro.site).href, new URL(markdown, Astro.site).href);
 ---
 
 {
@@ -26,51 +42,204 @@ else if (isReference) section = `gas/${id.split('/')[1]}`;
 					{title}
 				</h1>
 			</div>
-			<button class="gas-copy-page" type="button" data-copy-page>
-				<svg aria-hidden="true" viewBox="0 0 20 20" fill="none">
-					<rect x="7" y="6" width="9" height="11" rx="1.5" />
-					<path d="M13 6V4.5A1.5 1.5 0 0 0 11.5 3h-7A1.5 1.5 0 0 0 3 4.5v9A1.5 1.5 0 0 0 4.5 15H7" />
-				</svg>
-				<span data-copy-label>Copy page</span>
-			</button>
+			<div class="gas-page-actions" data-page-actions>
+				<button
+					class="gas-copy-page"
+					type="button"
+					aria-haspopup="menu"
+					aria-expanded="false"
+					aria-controls="gas-page-menu"
+					data-page-actions-toggle
+				>
+					<svg class="gas-copy-page-icon" aria-hidden="true" viewBox="0 0 20 20" fill="none">
+						<rect x="7" y="6" width="9" height="11" rx="1.5" />
+						<path d="M13 6V4.5A1.5 1.5 0 0 0 11.5 3h-7A1.5 1.5 0 0 0 3 4.5v9A1.5 1.5 0 0 0 4.5 15H7" />
+					</svg>
+					<svg class="gas-copy-page-done" aria-hidden="true" viewBox="0 0 20 20" fill="none">
+						<path d="m4.5 10.5 3.5 3.5 7.5-8" />
+					</svg>
+					<span data-copy-label>Copy page</span>
+					<svg class="gas-copy-page-caret" aria-hidden="true" viewBox="0 0 20 20" fill="none">
+						<path d="m6 8 4 4 4-4" />
+					</svg>
+				</button>
+				<div
+					class="gas-page-menu"
+					id="gas-page-menu"
+					role="menu"
+					aria-label="Use this page with an LLM"
+					hidden
+					data-page-actions-menu
+				>
+					<button class="gas-page-menu-item" type="button" role="menuitem" tabindex="-1" data-copy-markdown={markdown}>
+						<svg aria-hidden="true" viewBox="0 0 20 20" fill="none">
+							<rect x="7" y="6" width="9" height="11" rx="1.5" />
+							<path d="M13 6V4.5A1.5 1.5 0 0 0 11.5 3h-7A1.5 1.5 0 0 0 3 4.5v9A1.5 1.5 0 0 0 4.5 15H7" />
+						</svg>
+						<span>
+							<span class="gas-page-menu-label">Copy for LLM</span>
+							<span class="gas-page-menu-hint">Copies this page as Markdown</span>
+						</span>
+					</button>
+					{
+						prompt && (
+							<>
+								<a
+									class="gas-page-menu-item"
+									role="menuitem"
+									tabindex="-1"
+									href={claudeUrl(prompt)}
+									target="_blank"
+									rel="noopener nofollow"
+								>
+									<svg aria-hidden="true" viewBox="0 0 20 20" fill="none">
+										<path d="M4.5 4h11A1.5 1.5 0 0 1 17 5.5v7a1.5 1.5 0 0 1-1.5 1.5H9l-4 3v-3h-.5A1.5 1.5 0 0 1 3 12.5v-7A1.5 1.5 0 0 1 4.5 4Z" />
+									</svg>
+									<span>
+										<span class="gas-page-menu-label">Ask Claude</span>
+										<span class="gas-page-menu-hint">Opens a new chat about this page</span>
+									</span>
+								</a>
+								<a
+									class="gas-page-menu-item"
+									role="menuitem"
+									tabindex="-1"
+									href={chatgptUrl(prompt)}
+									target="_blank"
+									rel="noopener nofollow"
+								>
+									<svg aria-hidden="true" viewBox="0 0 20 20" fill="none">
+										<path d="M4.5 4h11A1.5 1.5 0 0 1 17 5.5v7a1.5 1.5 0 0 1-1.5 1.5H9l-4 3v-3h-.5A1.5 1.5 0 0 1 3 12.5v-7A1.5 1.5 0 0 1 4.5 4Z" />
+									</svg>
+									<span>
+										<span class="gas-page-menu-label">Ask ChatGPT</span>
+										<span class="gas-page-menu-hint">Opens a new chat about this page</span>
+									</span>
+								</a>
+							</>
+						)
+					}
+				</div>
+			</div>
 		</div>
 	)
 }
 
 <script>
-	const button = document.querySelector<HTMLButtonElement>('[data-copy-page]');
-	const label = button?.querySelector<HTMLElement>('[data-copy-label]');
-	button?.addEventListener('click', async () => {
-		if (!label) return;
-		try {
-			const title = document.querySelector<HTMLElement>('[data-page-title]');
-			const article = document.querySelector<HTMLElement>('.sl-markdown-content');
-			const content = article?.cloneNode(true) as HTMLElement | undefined;
-			content?.querySelectorAll('button, .sl-anchor-link, script, style').forEach((element) => element.remove());
+	const root = document.querySelector<HTMLElement>('[data-page-actions]');
+	const toggle = root?.querySelector<HTMLButtonElement>('[data-page-actions-toggle]');
+	const menu = root?.querySelector<HTMLElement>('[data-page-actions-menu]');
+	const label = toggle?.querySelector<HTMLElement>('[data-copy-label]');
 
-			let articleText = '';
-			if (content && article) {
-				content.style.position = 'fixed';
-				content.style.left = '-10000px';
-				content.style.top = '0';
-				content.style.width = `${article.getBoundingClientRect().width}px`;
-				content.style.opacity = '0';
-				content.style.pointerEvents = 'none';
-				content.setAttribute('aria-hidden', 'true');
-				document.body.append(content);
-				articleText = content.innerText.trim();
-				content.remove();
+	if (root && toggle && menu && label) {
+		const idleLabel = label.textContent ?? '';
+		const items = () => Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitem"]'));
+
+		const open = (focus: 'first' | 'last' = 'first') => {
+			menu.hidden = false;
+			toggle.setAttribute('aria-expanded', 'true');
+			(focus === 'last' ? items().at(-1) : items()[0])?.focus();
+		};
+
+		// The focus goes back to the button only when the reader closed the
+		// menu from inside it, not when they moved on to something else.
+		const close = (refocus = false) => {
+			if (menu.hidden) return;
+			menu.hidden = true;
+			toggle.setAttribute('aria-expanded', 'false');
+			if (refocus) toggle.focus();
+		};
+
+		toggle.addEventListener('click', () => (menu.hidden ? open() : close()));
+		toggle.addEventListener('keydown', (event) => {
+			if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+			event.preventDefault();
+			open(event.key === 'ArrowUp' ? 'last' : 'first');
+		});
+
+		// The keys of a menu: the arrows, Home and End move through the items,
+		// Escape closes it, and Tab closes it on the way out.
+		menu.addEventListener('keydown', (event) => {
+			const all = items();
+			const at = all.indexOf(document.activeElement as HTMLElement);
+			let next: HTMLElement | undefined;
+			switch (event.key) {
+				case 'ArrowDown':
+					next = all[(at + 1) % all.length];
+					break;
+				case 'ArrowUp':
+					next = all[(at - 1 + all.length) % all.length];
+					break;
+				case 'Home':
+					next = all[0];
+					break;
+				case 'End':
+					next = all.at(-1);
+					break;
+				case 'Escape':
+					event.preventDefault();
+					close(true);
+					return;
+				case 'Tab':
+					close();
+					return;
+				default:
+					return;
 			}
+			event.preventDefault();
+			next?.focus();
+		});
 
-			const pageText = [title?.innerText.trim(), articleText].filter(Boolean).join('\n\n');
-			if (!pageText) throw new Error('No page content found.');
-			await navigator.clipboard.writeText(pageText);
-			label.textContent = 'Copied';
-		} catch {
-			label.textContent = 'Copy failed';
-		}
-		window.setTimeout(() => {
-			label.textContent = 'Copy page';
-		}, 1600);
-	});
+		document.addEventListener('pointerdown', (event) => {
+			if (!root.contains(event.target as Node)) close();
+		});
+		root.addEventListener('focusout', (event) => {
+			const to = event.relatedTarget as Node | null;
+			if (to && !root.contains(to)) close();
+		});
+
+		// Shows on the button how the copy went, then puts its label back.
+		const report = (state: 'copied' | 'failed') => {
+			toggle.dataset.state = state;
+			label.textContent = state === 'copied' ? 'Copied' : 'Copy failed';
+			window.setTimeout(() => {
+				delete toggle.dataset.state;
+				label.textContent = idleLabel;
+			}, 1600);
+		};
+
+		const copyMarkdown = async (url: string) => {
+			const text = fetch(url).then((response) => {
+				if (!response.ok) throw new Error(`${url} answered ${response.status}`);
+				return response.text();
+			});
+			// Safari lets a page write to the clipboard only while it handles
+			// the click, so the write starts now and takes the text when it
+			// arrives. A browser that does not take a promise there writes the
+			// text once it is here.
+			try {
+				await navigator.clipboard.write([
+					new ClipboardItem({
+						'text/plain': text.then((value) => new Blob([value], { type: 'text/plain' })),
+					}),
+				]);
+			} catch {
+				await navigator.clipboard.writeText(await text);
+			}
+		};
+
+		menu.addEventListener('click', async (event) => {
+			const item = (event.target as HTMLElement).closest<HTMLElement>('[role="menuitem"]');
+			if (!item) return;
+			close(true);
+			const url = item.dataset.copyMarkdown;
+			if (!url) return;
+			try {
+				await copyMarkdown(url);
+				report('copied');
+			} catch {
+				report('failed');
+			}
+		});
+	}
 </script>

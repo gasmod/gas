@@ -448,6 +448,115 @@ header.header {
 	stroke-width: 1.5;
 }
 
+/* The pill opens a menu of what to do with the page. Its mark turns into a
+   tick, in the accent, while it says a copy went through. */
+.gas-page-actions {
+	position: relative;
+	flex-shrink: 0;
+}
+
+.gas-copy-page[aria-expanded='true'] {
+	box-shadow: inset 0 0 0 1px var(--gas-muted);
+	color: var(--gas-ink);
+}
+
+.gas-copy-page-caret {
+	margin-inline-start: -0.1rem;
+	transition: transform 150ms ease;
+}
+
+.gas-copy-page[aria-expanded='true'] .gas-copy-page-caret {
+	transform: rotate(180deg);
+}
+
+.gas-copy-page-done,
+.gas-copy-page[data-state='copied'] .gas-copy-page-icon {
+	display: none;
+}
+
+.gas-copy-page[data-state='copied'] .gas-copy-page-done {
+	display: block;
+	color: var(--gas-accent);
+}
+
+.gas-page-menu {
+	position: absolute;
+	inset-block-start: calc(100% + 0.5rem);
+	inset-inline-end: 0;
+	z-index: 3;
+	display: grid;
+	gap: 0.125rem;
+	width: max-content;
+	max-width: calc(100vw - 2rem);
+	padding: 0.3rem;
+	border-radius: 0.75rem;
+	background: var(--gas-paper);
+	box-shadow:
+		0 0 0 1px var(--gas-line),
+		0 16px 40px -20px rgb(3 7 18 / 0.35);
+}
+
+.gas-page-menu[hidden] {
+	display: none;
+}
+
+.gas-page-menu-item {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr);
+	gap: 0.65rem;
+	padding: 0.5rem 0.75rem 0.5rem 0.6rem;
+	border: 0;
+	border-radius: 0.5rem;
+	background: transparent;
+	color: var(--gas-body);
+	font: inherit;
+	text-align: start;
+	text-decoration: none;
+	cursor: pointer;
+}
+
+.gas-page-menu-item:is(:hover, :focus-visible) {
+	background: var(--gas-surface);
+	color: var(--gas-ink);
+}
+
+.gas-page-menu-item:focus-visible {
+	outline-offset: -2px;
+}
+
+.gas-page-menu-item svg {
+	width: 1rem;
+	height: 1rem;
+	margin-block-start: 0.15rem;
+	stroke: currentColor;
+	stroke-width: 1.5;
+	stroke-linejoin: round;
+}
+
+.gas-page-menu-label,
+.gas-page-menu-hint {
+	display: block;
+}
+
+.gas-page-menu-label {
+	color: var(--gas-ink);
+	font-size: 0.875rem;
+	font-weight: 500;
+	line-height: 1.35;
+}
+
+.gas-page-menu-hint {
+	color: var(--gas-muted);
+	font-size: 0.8125rem;
+	line-height: 1.4;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.gas-copy-page-caret {
+		transition: none;
+	}
+}
+
 /* ---- Article --------------------------------------------------------- */
 
 .sl-markdown-content {
