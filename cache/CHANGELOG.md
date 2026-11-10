@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-08
+
 v0.6.0 rewrites the module around one contract that both stores keep,
 written in the `cache` package's `doc.go` and checked by a shared
 conformance suite. Each package's `doc.go` is its behavioral contract
@@ -270,5 +272,6 @@ repository; this entry summarizes the package as published.
   tests, with per-method `Fn` overrides, recorded `Calls`, `Reset()`,
   and `CallCount()`.
 
-[Unreleased]: https://github.com/gasmod/gas/compare/cache/v0.5.6...HEAD
+[Unreleased]: https://github.com/gasmod/gas/compare/cache/v0.6.0...HEAD
+[0.6.0]: https://github.com/gasmod/gas/releases/tag/cache/v0.6.0
 [0.5.6]: https://github.com/gasmod/gas/releases/tag/cache/v0.5.6
