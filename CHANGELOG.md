@@ -198,6 +198,24 @@ the details.
   (`BadRequest`, `BadRequestErr` and the others); use the package
   functions, such as `gas.BadRequest(msg)` and
   `gas.BadRequest(msg).WithCause(err)`.
+- **BREAKING: `RequestLogger`'s line changed.** A log query or alert
+  built on v0.5.6's lines needs updating:
+  - Level: a 4xx is logged at warn, where it was error. Info below 400
+    and error from 500 are as before. To keep matching client errors,
+    match `status` from 400 rather than the error level.
+  - `duration` is a `time.Duration` through `LogEvent.Duration`, where it
+    was the string `time.Duration.String()` gave, such as `"1.5ms"`. The
+    Logger encodes it: slog's JSON handler as integer nanoseconds, such
+    as `1500000`, and the log module's zerolog backend in
+    `zerolog.DurationFieldUnit`, milliseconds unless changed. The other
+    fields keep their names and types: `method`, `path` and `remote`
+    strings, `status` and `bytes` ints.
+  - One line per request. With `RequestLogger`, the default ErrorHandler
+    no longer logs a line of its own (`request error` at warn for a 4xx,
+    `unhandled request error` at error for a 5xx) next to the `request`
+    line; the `request` line carries the error as `error`. Without
+    `RequestLogger` it still logs its own line, now `request error` for a
+    5xx too, at error.
 - **`App.Handler` no longer builds the server.** It used to return
   `Server().Handler`, so calling it before `Start`, as tests and embedders
   do, built the `*http.Server` from the config as it stood then. It now

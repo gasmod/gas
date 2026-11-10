@@ -366,8 +366,11 @@
 //
 // [RequestLogger] derives a per-request logger and puts it on the request
 // context, with `request_id` when chi's RequestID middleware runs before
-// it. It logs one line per request, `request`, with the method, path,
-// status, bytes, duration and remote address:
+// it. It logs one line per request, `request`, with the fields `method`,
+// `path` and `remote` as strings, `status` and `bytes` as ints, and
+// `duration` as a [time.Duration] through [LogEvent.Duration], which the
+// Logger encodes: log/slog's JSON handler as integer nanoseconds, for
+// one. The line's level:
 //
 //   - at info level below 400,
 //   - at warn level below 500,
