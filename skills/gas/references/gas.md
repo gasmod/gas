@@ -433,7 +433,11 @@ one is registered, and validates the copy against these rules:
 config module's EnvExtension stores the environment it resolved from
 `GAS_ENV`. ConfigProvider has no other way to report the
 environment, so a provider that resolves it differently must store
-it at `gasenv`.
+it at `gasenv`. An environment the EnvExtension allows with
+config.WithAllowedEnvs or config.WithDefault, such as `local`, must
+also be passed to WithAllowedEnvironments, or Start fails with
+`gas: invalid config: gasenv must be one of development, testing,
+staging, production`, wrapping ErrInvalidConfig.
 - Host must be an IP address or an RFC 1123 hostname.
 - Port must be 0 to 65535.
 - ReadTimeout, WriteTimeout and IdleTimeout must not be negative, 0
