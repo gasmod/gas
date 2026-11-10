@@ -104,7 +104,11 @@ upgrading, and its section "Upgrading from v0.5" in particular.
   `CloseFn` take the context, `Calls` is a method returning a copy of the
   recorded calls, and the mock implements `RunPendingContext` and
   `DownContext`, which return what `RunPendingFn` and `DownFn` return.
-  An unset `NameFn` returns `migrate.ServiceName`.
+  An unset `NameFn` returns `migrate.ServiceName`. A call is recorded
+  under the method called only, and gas's `Start` now calls
+  `RunPendingContext`, so a test that starts an app with the mock and
+  asserts `CallCount("RunPending")` gets 0: count `"RunPendingContext"`
+  instead, and `"DownContext"` for a revert through `gas.MigrationManager`.
 - **MySQL migrations are split into statements.** The up and down SQL
   are split at each semicolon outside quotes, backticks and comments, as
   MySQL reads them in the session's SQL mode, and sent one at a time, so
