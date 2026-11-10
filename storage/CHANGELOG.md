@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-10
+
+### Changed
+
+- Dependencies updated, and the internal modules required at v0.6.1.
+
 ## [0.6.0] - 2026-11-08
 
 v0.6.0 rewrites the module around one contract that every backend keeps,
@@ -480,7 +486,8 @@ repository; this entry summarizes the package as published.
   `gas.StorageProvider` (and `gas.ReadyReporter`) that records calls and
   delegates to per-method `Fn` fields for tests that need custom behavior.
 
-[Unreleased]: https://github.com/gasmod/gas/compare/storage/v0.6.0...HEAD
+[Unreleased]: https://github.com/gasmod/gas/compare/storage/v0.6.1...HEAD
+[0.6.1]: https://github.com/gasmod/gas/compare/storage/v0.6.0...storage/v0.6.1
 [0.6.0]: https://github.com/gasmod/gas/compare/storage/v0.5.6...storage/v0.6.0
 [0.5.6]: https://github.com/gasmod/gas/compare/storage/v0.5.5...storage/v0.5.6
 [0.5.5]: https://github.com/gasmod/gas/releases/tag/storage/v0.5.5

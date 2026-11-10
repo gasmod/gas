@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-10
+
+### Changed
+
+- Dependencies updated, and the internal modules required at v0.6.1.
+
+## [0.6.0] - 2026-11-08
+
 v0.6.0 rewrites the module around a documented contract. The package's
 `doc.go` is its behavioral contract and lists its errors verbatim; read it
 before upgrading. Most changes are breaking.
@@ -251,5 +259,7 @@ repository; this entry summarizes the module as published.
 - **`Driver()`** accessor reporting the effective database driver name based
   on configured mode and settings.
 
-[Unreleased]: https://github.com/gasmod/gas/compare/database/v0.5.6...HEAD
+[Unreleased]: https://github.com/gasmod/gas/compare/database/v0.6.1...HEAD
+[0.6.1]: https://github.com/gasmod/gas/releases/tag/database/v0.6.1
+[0.6.0]: https://github.com/gasmod/gas/releases/tag/database/v0.6.0
 [0.5.6]: https://github.com/gasmod/gas/releases/tag/database/v0.5.6

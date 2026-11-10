@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-10
+
+### Changed
+
+- Dependencies updated, and the internal modules required at v0.6.1.
+
+## [0.6.0] - 2026-11-08
+
 v0.6.0 rewrites the module around the contract in its package
 documentation (`doc.go`), which lists every error verbatim. Read it before
 upgrading.
@@ -179,5 +187,7 @@ repository, and this file records none of its releases.
   `gas.MutableLoggerContext` from core. Derive a logger with `With()` and
   carry it on the request context with `gas.WithLogger` instead.
 
-[Unreleased]: https://github.com/gasmod/gas/compare/log/v0.5.6...HEAD
+[Unreleased]: https://github.com/gasmod/gas/compare/log/v0.6.1...HEAD
+[0.6.1]: https://github.com/gasmod/gas/releases/tag/log/v0.6.1
+[0.6.0]: https://github.com/gasmod/gas/releases/tag/log/v0.6.0
 [0.5.6]: https://github.com/gasmod/gas/releases/tag/log/v0.5.6

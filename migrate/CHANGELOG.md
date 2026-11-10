@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-10
+
+### Changed
+
+- Dependencies updated, and the internal modules required at v0.6.1.
+
 ### Fixed
 
 - **A call's connection is closed in gas/database's `ModePgx` too.**
@@ -18,9 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A read of the tracking table on SQLite waits for another instance's
   write lock.** It failed with `SQLITE_BUSY` when it ran while another
   instance committed and SQLite's busy timeout, as `busy_timeout(0)`
-  sets it, ran out first, so two instances running together could fail. It now tries again within the lock
-  timeout, as taking the write lock does, and a read that waits longer
-  fails with an error wrapping `ErrLockTimeout`.
+  sets it, ran out first, so two instances running together could fail.
+  It now tries again within the lock timeout, as taking the write lock
+  does, and a read that waits longer fails with an error wrapping
+  `ErrLockTimeout`.
 
 ## [0.6.0] - 2026-11-08
 
@@ -288,6 +295,7 @@ repository; this entry summarizes the module as published.
   same transaction, so a crash between the two no longer leaves the schema
   changed but unrecorded and the pipeline wedged as dirty.
 
-[Unreleased]: https://github.com/gasmod/gas/compare/migrate/v0.6.0...HEAD
+[Unreleased]: https://github.com/gasmod/gas/compare/migrate/v0.6.1...HEAD
+[0.6.1]: https://github.com/gasmod/gas/releases/tag/migrate/v0.6.1
 [0.6.0]: https://github.com/gasmod/gas/releases/tag/migrate/v0.6.0
 [0.5.6]: https://github.com/gasmod/gas/releases/tag/migrate/v0.5.6

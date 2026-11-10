@@ -3,8 +3,8 @@ module github.com/gasmod/gas/database
 go 1.27.3
 
 require (
-	github.com/gasmod/gas v0.6.0
-	github.com/gasmod/gas/config v0.6.0
+	github.com/gasmod/gas v0.6.1
+	github.com/gasmod/gas/config v0.6.1
 	github.com/go-playground/validator/v10 v10.30.6
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/jackc/pgx/v5 v5.12.0

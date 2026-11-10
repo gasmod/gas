@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-10
+
+### Changed
+
+- Dependencies updated, and the internal modules required at v0.6.1.
+
+## [0.6.0] - 2026-11-08
+
 v0.6.0 rewrites the module around one store contract, which the
 `template` package's `doc.go` documents and a shared conformance suite
 checks against every store. Each package's `doc.go` is its behavioral
@@ -291,5 +299,7 @@ repository; this entry summarizes the module as published.
 - **DI wiring** — `dir.NewStore`, `fs.NewStore`, and `db.NewStore` all
   return DI-injectable constructors for use with `gas.WithSingletonService`.
 
-[Unreleased]: https://github.com/gasmod/gas/compare/template/v0.5.6...HEAD
+[Unreleased]: https://github.com/gasmod/gas/compare/template/v0.6.1...HEAD
+[0.6.1]: https://github.com/gasmod/gas/releases/tag/template/v0.6.1
+[0.6.0]: https://github.com/gasmod/gas/releases/tag/template/v0.6.0
 [0.5.6]: https://github.com/gasmod/gas/releases/tag/template/v0.5.6
