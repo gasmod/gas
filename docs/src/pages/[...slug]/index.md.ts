@@ -8,7 +8,7 @@
 // wrote. The landing page is a component, not Markdown, and has none.
 import type { APIRoute, GetStaticPaths } from 'astro';
 import { getCollection, type CollectionEntry } from 'astro:content';
-import { llmsTxtPath } from '../../lib/llm';
+import { llmsTxtPath, pageIndexText, searchText } from '../../lib/llm';
 
 export const prerender = true;
 
@@ -31,7 +31,8 @@ export const GET: APIRoute<{ entry: CollectionEntry<'docs'> }> = ({ props, site 
 	// lead nowhere once the Markdown is pasted elsewhere.
 	const body = (entry.body ?? '').replace(/\]\(\/(?!\/)/g, `](${site.origin}/`).trim();
 
-	const parts = [`# ${entry.data.title}`];
+	// Above the title, where to find the other pages and the search endpoint.
+	const parts = [`## Search\n\n${pageIndexText(index.href)}\n\n${searchText}`, `# ${entry.data.title}`];
 	if (entry.data.description) parts.push(`> ${entry.data.description}`);
 	// At the top, since an agent may cut a long page short.
 	parts.push(`The Markdown of ${page} from the Gas documentation, whose index for LLMs is ${index}`);
