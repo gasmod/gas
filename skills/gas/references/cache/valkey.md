@@ -41,7 +41,8 @@ and c.Get(ctx, "greeting") returns `hello` until then.
 
 The settings live in the `cache` section, in `Settings`:
 
-- `cache.addr`: the server's address, as host:port. It has no
+- `cache.addr`: the server's address, as host:port, or for a cluster
+the address of one of its nodes, as under Connecting. It has no
 default, and is required.
 - `cache.username`: the ACL user to authenticate as. Default: none,
 the server's default user.
@@ -49,7 +50,8 @@ the server's default user.
 which fmt, encoding/json, YAML encoders and log/slog write as
 `[redacted]`. Default: none; no password is sent.
 - `cache.db`: the database number to select, 0 or more; the server
-decides how many there are. Default: `DefaultDB`, 0.
+decides how many there are, and a valkey-server 8 cluster has only
+0. Default: `DefaultDB`, 0.
 - `cache.keyprefix`: prepended to every key the store's methods
 send, as under Keys. Default: none.
 - `cache.defaultttl`: the TTL of a Set with a zero TTL, 0 or more; 0
@@ -111,20 +113,38 @@ Stores share their keys when:
 Stores that share a server and a database keep apart only when no
 prefix is a prefix of another.
 
+On a cluster, the slot of a key is that of the whole sent key, prefix
+included. A prefix that holds a hash tag, such as `{app}:`, puts every
+key of the store in one slot, on one node.
+
 ## Connecting
 
-The store connects to one standalone server, at `addr`. Cluster and
-sentinel deployments are not supported, and the store sends no cluster
-command. Given a node of a cluster, the store talks to that node alone,
-and a key in a slot the node does not serve fails with a `MOVED` reply,
-as under Server replies.
+The store connects to a standalone server or to a Valkey or Redis
+Cluster, at `addr`. Sentinel deployments are not supported.
 
 Init makes connect attempts. Each attempt builds a valkey-go client,
-which dials, authenticates with HELLO, selects `db`, and is then checked
-with PING, all within Init's context and `dialtimeout`.
+which dials `addr`, authenticates with HELLO, selects `db`, asks the
+server for the cluster's slots with CLUSTER SHARDS (CLUSTER SLOTS from
+a server before version 8), and is then checked with PING, all within
+Init's context and `dialtimeout`.
 
-valkey-go also bounds the handshake, HELLO and SELECT, and the PING,
-each by `optimeout`, as it does every command. So with an `optimeout`
+A server that is not a cluster replies to CLUSTER with an error, and
+valkey-go then uses its single-server client. So does a user that may
+not run CLUSTER, whose reply is NOPERM: on a cluster, the store then
+talks to the node at `addr` alone, and a key in a slot that node does
+not serve fails with a `MOVED` reply, as under Server replies.
+
+On a cluster, valkey-go sends each command to the node that serves the
+key's slot, follows MOVED and ASK redirects, and reads the slots again
+after a redirect or a failed command. It connects to each node at the
+address the cluster announces for it, which must be reachable from the
+app, with the same `username`, `password`, `db` and TLS settings.
+`addr` is only where it starts, a single seed. A `db` other than 0
+fails Init on a valkey-server 8 cluster, which refuses SELECT, with the
+reason `failed`.
+
+valkey-go also bounds the handshake, HELLO and SELECT, CLUSTER SHARDS
+and the PING, each by `optimeout`, as it does every command. So with an `optimeout`
 shorter than `dialtimeout`, a server that accepts and never answers
 fails the attempt after `optimeout`.
 
@@ -222,6 +242,10 @@ command 'GET', with args beginning with: ` and the key.
 - MOVED, ASK and REDIRECT hold an address.
 - BUSY can carry a module's text.
 
+A cluster's CLUSTERDOWN and TRYAGAIN replies are cut to their code too,
+such as `get: CLUSTERDOWN`. valkey-go retries GET and EXISTS after
+either, as after a network error, until the command's deadline.
+
 valkey-go drops `ERR ` from a reply's text, so a reply whose first word
 is not one of the codes valkey-server 8 sends is cut to `ERR`. A
 WRONGPASS or NOAUTH reply, which a reconnect with rotated credentials
@@ -232,6 +256,9 @@ gets, is the reason `authentication failed`.
 With `tls` on, the store connects with TLS 1.2 or later. It checks the
 server's certificate against the system's root certificates, and checks
 it names `tlsservername`, or, when that is empty, the host of `addr`.
+On a cluster, the store connects to each node with TLS, at the TLS port
+the cluster announces, and checks the node's certificate names
+`tlsservername`, or, when that is empty, the host it connects to.
 
 `WithTLSConfig` takes a *tls.Config for anything else, such as a private
 certificate authority or a client certificate. It turns TLS on and
@@ -310,7 +337,8 @@ initialized or its context has ended, since valkey-go reconnects by
 itself after a network failure.
 
 `Service.CheckReady` sends PING within its context and `optimeout`, with
-errors as a command's, after `ping: `.
+errors as a command's, after `ping: `. On a cluster, PING goes to one
+node, which valkey-go picks.
 
 ## Client
 
@@ -319,6 +347,8 @@ store has no method for, or nil when the store is not initialized. The
 commands sent on it:
 
 - are not prefixed with `keyprefix`;
+- on a cluster, go through valkey-go's cluster client, so a command
+on keys in different slots fails with CROSSSLOT;
 - are bounded only by their own context;
 - return valkey-go's errors as they are, which can hold the address;
 - are never answered from a client-side cache. The client is built

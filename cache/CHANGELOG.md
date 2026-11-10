@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `valkey` works with a Valkey or Redis Cluster again, as in v0.5.6.
+  v0.6.0 forced valkey-go's single-server client, so a store whose
+  `Addr` is a cluster node talked to that node alone, and a key in a
+  slot another node serves failed with `MOVED`, such as
+  `gas/cache/valkey: get: MOVED`. valkey-go again detects a cluster
+  from `Addr`, a single seed, and sends each command to the node that
+  serves its key. A `DB` other than 0 fails `Init` on a valkey-server 8
+  cluster, which refuses `SELECT`, and a user that may not run
+  `CLUSTER` talks to the node at `Addr` alone. Sentinel is still not
+  supported.
+
 ## [0.6.0] - 2026-11-08
 
 v0.6.0 rewrites the module around one contract that both stores keep,
@@ -89,15 +102,6 @@ and lists its errors verbatim; read it before upgrading.
   with an empty store.
 - **BREAKING: `valkey.Settings.Addr` has no default** and is required;
   `DefaultConfig` no longer sets `localhost:6379`.
-- **BREAKING: `valkey` connects to one standalone server only.** It
-  builds valkey-go's single-server client (`ForceSingleClient`), so it
-  no longer lets valkey-go find out whether `Addr` is a Valkey or Redis
-  Cluster node and switch to its cluster client, as v0.5.6 did. Against
-  a cluster node the store talks to that node alone, and a key in a
-  slot the node does not serve fails with a `MOVED` error, such as
-  `gas/cache/valkey: get: MOVED`. Cluster and sentinel deployments are
-  not supported: point `Addr` at a standalone server, or build a
-  valkey-go cluster client of your own.
 - **BREAKING: `valkey.Settings.WriteTimeout` is replaced by
   `OpTimeout`**, which bounds every command, the connect handshake and
   `PING` included, so a server that stops answering cannot hold a call

@@ -64,8 +64,6 @@ func (s *Service) clientOption(set *Settings) valkey.ClientOption {
 		// A connection whose reply is late by OpTimeout is closed, so a
 		// stalled server never holds Close for longer.
 		ConnWriteTimeout: set.OpTimeout,
-		// One standalone server: no cluster probe on connect.
-		ForceSingleClient: true,
 		// The store never uses client-side caching, so connections do not
 		// send CLIENT TRACKING, which an ACL user may not be allowed.
 		DisableCache: true,
@@ -114,8 +112,7 @@ func attemptConnect(
 		return client, nil
 	}
 
-	// With ForceSingleClient, NewClient returns a client beside the error
-	// of its first dial.
+	// The PING, or the context, can fail a client NewClient built.
 	if client != nil {
 		client.Close()
 	}

@@ -262,6 +262,26 @@ func TestCommand_NoPermCut(t *testing.T) {
 	assert.Contains(t, raw.Error(), limitedUser, "the reply valkey-go returns names the user")
 }
 
+// A user that may not run CLUSTER connects to a standalone server: the
+// NOPERM reply to valkey-go's cluster check makes it use its
+// single-server client.
+func TestConnect_UserWithoutCluster(t *testing.T) {
+	t.Parallel()
+
+	cfg := config(valkeyServer(t).addr)
+
+	cfg.Cache.Username = noClusterUser
+	cfg.Cache.Password = aclPassword
+
+	s := open(t, cfg)
+
+	require.NoError(t, s.Set(t.Context(), "k", []byte("v"), 0))
+
+	got, err := s.Get(t.Context(), "k")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("v"), got)
+}
+
 // Username and Password log in as an ACL user; a wrong password fails
 // Init with `authentication failed`, and neither the error nor the log
 // holds the user, the password or the address.

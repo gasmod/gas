@@ -19,8 +19,9 @@ const fakeHello = "%3\r\n$6\r\nserver\r\n$6\r\nvalkey\r\n$7\r\nversion\r\n$5\r\n
 	"$5\r\nproto\r\n:3\r\n"
 
 // fakeServer returns the address of a loopback server that speaks just
-// enough RESP3 for the store: it answers the handshake and PING, and
-// every GET with getReply, raw RESP. It is closed with its connections
+// enough RESP3 for the store: it answers the handshake and PING, a
+// CLUSTER command as a standalone server does, and every GET with
+// getReply, raw RESP. It is closed with its connections
 // when the test ends.
 func fakeServer(t *testing.T, getReply string) string {
 	t.Helper()
@@ -83,6 +84,10 @@ func fakeServe(c net.Conn, getReply string) {
 			reply = fakeHello
 		case "PING":
 			reply = "+PONG\r\n"
+		case "CLUSTER":
+			// valkey-server's reply when it does not run as a cluster,
+			// which makes valkey-go use its single-server client.
+			reply = "-ERR This instance has cluster support disabled\r\n"
 		case "GET":
 			reply = getReply
 		default:
