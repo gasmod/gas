@@ -80,7 +80,9 @@ verbatim; read it before upgrading: most of the API changed.
   - `ErrInputRequired` is renamed `ErrNilInput`, `ErrInvalidOption`
     `ErrNilOption`, and `ErrInvalidContinuationToken` `ErrInvalidToken`.
   - `ErrInvalidLimit` and `ErrInvalidTTL` are removed: an argument out of
-    its bounds is `ErrInvalidArgument`.
+    its bounds is `ErrInvalidArgument`. This includes a `ListObjects`
+    `MaxKeys` over 1000, which used to be read as 1000: pass at most
+    `storage.MaxListKeys`, or nil for a page of 1000.
   - `ErrInvalidRange` now means a `Range` that is not one byte range; a
     range that selects no byte is the new `ErrRangeNotSatisfiable`.
   - `dir.ErrRootRequired` and `dir.ErrStaleData` are removed. A data file
@@ -93,7 +95,10 @@ verbatim; read it before upgrading: most of the API changed.
   refused; values hold only printable ASCII, space and tab, and are never
   encoded; names and values hold at most 2048 bytes together
   (`ErrInvalidMetadata`). Header field values keep the same character
-  rules and hold at most 1024 bytes (`ErrInvalidHeader`). A `Range` that is not one byte range is
+  rules and hold at most 1024 bytes (`ErrInvalidHeader`). A header field
+  that is set must not be empty, so an empty `ContentType`, which dir used
+  to sniff as it did a nil one, is `ErrInvalidHeader`: leave it nil for
+  `application/octet-stream`. A `Range` that is not one byte range is
   `ErrInvalidRange` rather than ignored. The checks are exported (see
   Added).
 - **Presigned uploads need a `ContentLength`**, 0 to
