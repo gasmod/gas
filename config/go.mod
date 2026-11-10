@@ -7,7 +7,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.33.16
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.16
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.50.11
-	github.com/gasmod/gas v0.6.1
+	github.com/gasmod/gas v0.6.2
 	github.com/go-playground/validator/v10 v10.30.6
 	github.com/stretchr/testify v1.12.1
 )

@@ -4,4 +4,4 @@
  * fails the release while it names another. Both match the line below as it
  * is written, so keep its form.
  */
-export const version = 'v0.6.1';
+export const version = 'v0.6.2';

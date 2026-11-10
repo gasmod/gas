@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-11-10
+
+### Changed
+
+- The internal modules are required at v0.6.2.
+
 ## [0.6.1] - 2026-11-10
 
 ### Changed
@@ -296,7 +302,8 @@ repository; this entry summarizes the package as published.
   tests, with per-method `Fn` overrides, recorded `Calls`, `Reset()`,
   and `CallCount()`.
 
-[Unreleased]: https://github.com/gasmod/gas/compare/cache/v0.6.1...HEAD
+[Unreleased]: https://github.com/gasmod/gas/compare/cache/v0.6.2...HEAD
+[0.6.2]: https://github.com/gasmod/gas/releases/tag/cache/v0.6.2
 [0.6.1]: https://github.com/gasmod/gas/releases/tag/cache/v0.6.1
 [0.6.0]: https://github.com/gasmod/gas/releases/tag/cache/v0.6.0
 [0.5.6]: https://github.com/gasmod/gas/releases/tag/cache/v0.5.6
