@@ -157,7 +157,12 @@ before upgrading. Most changes are breaking.
   refuses an empty subject, a subject or name over 255 bytes, a scope that
   is empty, holds a comma or has surrounding white space, metadata with the
   reserved key `scopes`, and a `WithTTL` or `WithExpiresAt` that is not in
-  the future; these used to be ignored or stored. `Revoke` and `Delete`
+  the future; these used to be ignored or stored. The `KeyInfo` Generate
+  returns holds the metadata as JSON decodes it, as `List` and the
+  principal from Authenticate already did: an `int` given to
+  `WithMetadata` comes back as a `float64`, a struct as a
+  `map[string]any`. It used to hold a copy of the values as given.
+  `Revoke` and `Delete`
   refuse a nil principal or one of another scheme. `List` breaks ties in
   the creation time by ID, descending.
 - **BREAKING: token.** `ErrTokenInvalid` and `ErrTokenExpired` wrap the
