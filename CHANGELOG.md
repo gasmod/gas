@@ -117,7 +117,14 @@ the details.
   binds and validates the Config once every service is built and
   initialized, keeps it only once it is valid, and closes the services
   when it is not. The errors read `gas: invalid config: ...` and wrap
-  `ErrInvalidConfig`.
+  `ErrInvalidConfig`. That moved the binding, and `AppConfigUpdated`,
+  earlier: Start binds the Config and emits `AppConfigUpdated` before it
+  emits `SystemAllServicesInitialized`, runs the pending migrations and
+  runs the ready hooks, where v0.5.6 did both after the ready hooks. A
+  ready hook now sees the bound Config through `App.Config`, and an
+  invalid Config fails Start before any migration runs. An `AppConfigUpdated` subscriber that needs the migrations
+  applied, such as one that reads a table, does that work in a ready hook
+  (`ReadyFunc`) instead, which still runs after them.
 - **BREAKING: `Config.Env` binds from the key `gasenv`** and replaces the
   embedded `WithGasEnv`, which is removed. The config module's
   `EnvExtension` stores the environment it resolves from `GAS_ENV` there.
