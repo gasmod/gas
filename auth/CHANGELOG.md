@@ -135,7 +135,21 @@ before upgrading. Most changes are breaking.
   User-Agent. `Revoke` refuses a nil principal or one of another scheme.
   `Init` checks the cookie name, path, domain and SameSite, and logs the
   insecure-attribute warnings once per `Init`, not on each cookie
-  written.
+  written. `Init` also requires `MaxLifetime` to be positive and
+  `SessionTTL` to be at most `MaxLifetime`, so two v0.5.6 setups now
+  fail `Init` with `ErrInvalidConfig`: a `Config` literal given to
+  `WithConfig` without `MaxLifetime`, since the literal is checked as
+  given and its zero is not replaced by the default, and a `SessionTTL`
+  over 30 days with the default `MaxLifetime`. Set `MaxLifetime` to at
+  least `SessionTTL`, in the literal or as `session.maxlifetime`, or
+  build the config from `session.DefaultConfig()` rather than a literal:
+
+  ```go
+  cfg := session.DefaultConfig()
+  cfg.Session.SessionTTL = 60 * 24 * time.Hour
+  cfg.Session.MaxLifetime = 90 * 24 * time.Hour
+  ctor := session.New(session.WithConfig(cfg))
+  ```
 - **BREAKING: apikey.** Authenticate tells a revoked key
   (`ErrCredentialRevoked`) and an expired one (`ErrCredentialsExpired`)
   from an unknown one (`ErrUnauthenticated`), and a failed `LastUsed`
