@@ -107,7 +107,9 @@
 //
 // The store connects to one standalone server, at `addr`. Cluster and
 // sentinel deployments are not supported, and the store sends no cluster
-// command.
+// command. Given a node of a cluster, the store talks to that node alone,
+// and a key in a slot the node does not serve fails with a `MOVED` reply,
+// as under Server replies.
 //
 // Init makes connect attempts. Each attempt builds a valkey-go client,
 // which dials, authenticates with HELLO, selects `db`, and is then checked

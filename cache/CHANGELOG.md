@@ -89,6 +89,15 @@ and lists its errors verbatim; read it before upgrading.
   with an empty store.
 - **BREAKING: `valkey.Settings.Addr` has no default** and is required;
   `DefaultConfig` no longer sets `localhost:6379`.
+- **BREAKING: `valkey` connects to one standalone server only.** It
+  builds valkey-go's single-server client (`ForceSingleClient`), so it
+  no longer lets valkey-go find out whether `Addr` is a Valkey or Redis
+  Cluster node and switch to its cluster client, as v0.5.6 did. Against
+  a cluster node the store talks to that node alone, and a key in a
+  slot the node does not serve fails with a `MOVED` error, such as
+  `gas/cache/valkey: get: MOVED`. Cluster and sentinel deployments are
+  not supported: point `Addr` at a standalone server, or build a
+  valkey-go cluster client of your own.
 - **BREAKING: `valkey.Settings.WriteTimeout` is replaced by
   `OpTimeout`**, which bounds every command, the connect handshake and
   `PING` included, so a server that stops answering cannot hold a call
