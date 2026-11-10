@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`configtest.StaticProvider`**, a `Provider` that loads fixed values, so
+  a test can give a real `Config` its values without the environment or a
+  file. `NewStaticProvider` takes the values.
+
 ## [0.6.2] - 2026-11-10
 
 ### Changed

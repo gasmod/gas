@@ -184,7 +184,7 @@ INFO server started environment=development addr=0.0.0.0:8080
 ### config
 
 - [`github.com/gasmod/gas/config`](references/config.md): Package config loads an app's configuration from providers, such as the environment, `.env` and JSON files, and AWS Secrets Manager, merges it into one tree of values, and binds that tree into structs.
-- [`github.com/gasmod/gas/config/configtest`](references/config/configtest.md): Package configtest holds MockConfig, a config.ConfigProvider for tests of code that reads configuration.
+- [`github.com/gasmod/gas/config/configtest`](references/config/configtest.md): Package configtest holds MockConfig, a config.ConfigProvider for tests of code that reads configuration, and StaticProvider, a config.Provider that loads fixed values.
 - [`github.com/gasmod/gas/config/secretsmanager`](references/config/secretsmanager.md): Package secretsmanager is a config provider that loads values from AWS Secrets Manager.
 
 ### database

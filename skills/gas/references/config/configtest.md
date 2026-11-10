@@ -5,7 +5,8 @@ import "github.com/gasmod/gas/config/configtest"
 ```
 
 Package configtest holds `MockConfig`, a config.ConfigProvider for tests
-of code that reads configuration.
+of code that reads configuration, and `StaticProvider`, a config.Provider
+that loads fixed values.
 
 ## Usage
 
@@ -49,6 +50,29 @@ so their keys are trimmed and lowercased, and two keys that become the
 same are an error. Nil values make an empty configuration. No provider
 loads, so the environment does not reach it. Any field may be replaced
 afterwards, and LoadProvider loads a provider into the configuration.
+
+## Static provider
+
+A `StaticProvider` gives a real config.Config fixed values, for a test
+of code that builds its own Config from providers, such as an app's
+function that loads its configuration:
+
+```go
+c := config.New(config.WithProvider(configtest.NewStaticProvider(map[string]any{
+	"database": map[string]any{"host": "db"},
+})))
+if err := c.Load(); err != nil {
+	return err
+}
+```
+
+Each load returns the values, and the Config treats them as any
+provider's: their keys are trimmed and lowercased, two keys that become
+the same fail the load, and a later provider overrides them. Errors name
+the provider `static`. Nil values load nothing.
+
+The provider keeps the map it is given rather than copying it, so do not
+change the map while a load may run.
 
 ## API
 
