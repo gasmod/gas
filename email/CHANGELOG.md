@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-08
+
 v0.6.0 rewrites the module around one contract, Amazon SES's rules,
 that every sender keeps, written in the `email` package's `doc.go` and
 checked by a shared conformance suite that runs against the memory
@@ -76,6 +78,13 @@ upgrading.
   `MaxMessageSize`, and cuts one trailing CRLF or LF of a rendered
   subject. A failed template is `email.ErrTemplate`, and the error names
   the field and the template, never the data or the engine's error.
+  With gas/template v0.6.0 a store holds only names ending in one of its
+  extensions, `.html` by default, where v0.5.6 stores read or stored any
+  name, so a subject or text template named `.txt` now fails as
+  `template failed: subject "welcome-subject.txt": fetch failed`. Build
+  the store with `.txt` among its extensions, such as
+  `memory.NewStore(memory.WithExtensions(".html", ".txt"))` of
+  gas/template/memory.
 - **BREAKING: lifecycle sentinels.** Before the first successful `Init`
   every method returns `email.ErrNotInitialized` (`Send` panicked and
   `CheckReady` reported ready); `Init` on an initialized sender returns
@@ -245,5 +254,6 @@ repository; this entry summarizes the package as published.
   `gas.EmailProvider` and `gas.ReadyReporter` that records calls
   (`CallCount`, `Reset`) and delegates to per-method `Fn` fields when set.
 
-[Unreleased]: https://github.com/gasmod/gas/compare/email/v0.5.6...HEAD
+[Unreleased]: https://github.com/gasmod/gas/compare/email/v0.6.0...HEAD
+[0.6.0]: https://github.com/gasmod/gas/releases/tag/email/v0.6.0
 [0.5.6]: https://github.com/gasmod/gas/releases/tag/email/v0.5.6
