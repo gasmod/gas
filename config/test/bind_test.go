@@ -118,7 +118,8 @@ func (v *recordingValidator) StructCtx(_ context.Context, s any) error {
 	return v.err
 }
 
-// WithValidator replaces the validator; a nil one keeps the default.
+// WithValidator replaces the validator; a nil one keeps the default, and
+// so does a nil *validator.Validate, which used to panic in Bind.
 func TestBind_WithValidator(t *testing.T) {
 	t.Parallel()
 
@@ -147,4 +148,15 @@ func TestBind_WithValidator(t *testing.T) {
 	var verrs validator.ValidationErrors
 
 	require.ErrorAs(t, c.Bind(&app), &verrs)
+
+	var typedNil *validator.Validate
+
+	c = config.New(
+		config.WithProvider(newStatic("static", m{"port": "80"})),
+		config.WithValidator(typedNil),
+	)
+	require.NoError(t, c.Load())
+
+	require.NotPanics(t, func() { err = c.Bind(&app) })
+	require.ErrorAs(t, err, &verrs)
 }
