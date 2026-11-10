@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-10
+
 ### Changed
 
 - **BREAKING: `NewExtension` is `NewEnvExtension`.** The constructor of
@@ -17,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for a `gas.Environment` without a conversion, as in
   `gas.WithAllowedEnvironments(config.EnvProduction)`. For this, config
   requires core again.
+- Dependencies updated, and the internal modules required at v0.6.1.
 
 ### Fixed
 
@@ -318,6 +321,7 @@ repository; this entry summarizes the package as published.
   `.env` file from leaking secrets into child processes or overwriting
   dynamic-linker variables.
 
-[Unreleased]: https://github.com/gasmod/gas/compare/config/v0.6.0...HEAD
+[Unreleased]: https://github.com/gasmod/gas/compare/config/v0.6.1...HEAD
+[0.6.1]: https://github.com/gasmod/gas/releases/tag/config/v0.6.1
 [0.6.0]: https://github.com/gasmod/gas/releases/tag/config/v0.6.0
 [0.5.6]: https://github.com/gasmod/gas/releases/tag/config/v0.5.6

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-10
+
+### Changed
+
+- Dependencies updated, and the internal modules required at v0.6.1.
+
 ### Removed
 
 - **BREAKING: `RouteGroup.NotFound`.** The NotFound handler is the
@@ -796,7 +802,8 @@ repository; this entry summarizes the framework as published.
 - Eliminated a data race between the router and the service kill-switch by
   switching route storage to copy-on-write.
 
-[Unreleased]: https://github.com/gasmod/gas/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/gasmod/gas/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/gasmod/gas/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/gasmod/gas/compare/v0.5.6...v0.6.0
 [0.5.6]: https://github.com/gasmod/gas/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/gasmod/gas/compare/v0.5.0...v0.5.5

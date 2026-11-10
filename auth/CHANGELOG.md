@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-10
+
 ### Added
 
 - **session: `Service.RevokeSession`** deletes a `Session` from `Create`
@@ -15,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Session.ID`, which worked before, matches no session and returns nil
   with the session still live. A nil session, or one whose ID is not a
   session ID, is `ErrInvalidSession`.
+
+### Changed
+
+- Dependencies updated, and the internal modules required at v0.6.1.
 
 ## [0.6.0] - 2026-11-08
 
@@ -348,6 +354,7 @@ repository; this entry summarizes the framework as published.
   already-expired context from silently failing the cleanup goroutine on
   every run.
 
-[Unreleased]: https://github.com/gasmod/gas/compare/auth/v0.6.0...HEAD
+[Unreleased]: https://github.com/gasmod/gas/compare/auth/v0.6.1...HEAD
+[0.6.1]: https://github.com/gasmod/gas/releases/tag/auth/v0.6.1
 [0.6.0]: https://github.com/gasmod/gas/releases/tag/auth/v0.6.0
 [0.5.6]: https://github.com/gasmod/gas/releases/tag/auth/v0.5.6
