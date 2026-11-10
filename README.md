@@ -83,6 +83,7 @@ Gas is pre-1.0: minor versions may contain breaking changes. See the [CHANGELOG]
 |---|---|
 | [gasmod.dev](https://gasmod.dev) | Getting started, tutorial, core concepts, and module guides |
 | [pkg.go.dev](https://pkg.go.dev/github.com/gasmod/gas) | API reference for every package |
+| [llms.txt](https://gasmod.dev/llms.txt) | The docs for LLMs and coding agents: an index, with every page also served as Markdown |
 
 Documentation lives in one place per kind, on purpose. Guides and concepts are on the site, API reference comes
 from doc comments on pkg.go.dev, and each module's README is a signpost to both. Each package's `doc.go` is its

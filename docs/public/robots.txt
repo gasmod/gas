@@ -1,0 +1,10 @@
+# gasmod.dev, the Gas documentation. Every crawler may read every page.
+#
+# For LLMs and coding agents: the index of the documentation is
+# https://gasmod.dev/llms.txt, and each page is also served as Markdown at
+# its URL plus index.md.
+
+User-agent: *
+Allow: /
+
+Sitemap: https://gasmod.dev/sitemap-index.xml
