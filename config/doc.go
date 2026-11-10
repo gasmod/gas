@@ -299,7 +299,9 @@
 //     it as a whole; elements past the end of the list are zero.
 //   - A bool, integer or float field takes a value of that kind, or a string
 //     that parses as one, such as `8080`. A number that does not fit the
-//     field's type is an error.
+//     field's type is an error. A float fits an integer field only when it
+//     is a whole number, so 8080.0 binds as 8080, while 8080.7, NaN and an
+//     infinity are errors; the string `8080.0` is an error too.
 //   - A string field takes a string, and a bool or number formatted with
 //     [fmt.Sprint], except that a float is written without an exponent, so
 //     1234567.0 is `1234567`.
