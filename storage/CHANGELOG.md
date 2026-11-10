@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-08
+
 v0.6.0 rewrites the module around one contract that every backend keeps,
 written in the `storage` package's `doc.go` and checked by a conformance
 suite that runs against memory, dir, an S3 fake and LocalStack. Each
@@ -55,6 +57,14 @@ verbatim; read it before upgrading: most of the API changed.
   literals break.
 - **`Expires` is a `*string`**, not a `*time.Time`, and must be an
   IMF-fixdate exactly as `http.TimeFormat` writes it, on every backend.
+- **A write without a `ContentType` is `application/octet-stream`**
+  (`storage.DefaultContentType`) on every backend, and reads back as
+  that. dir used to sniff a type from the first bytes of the body with
+  `http.DetectContentType`, so an HTML or PNG object written to dir
+  without one now reads back as `application/octet-stream`; s3 used to
+  send no Content-Type and leave the type to S3. Set `ContentType` to
+  keep a type, such as from the name with `mime.TypeByExtension` or from
+  the first 512 bytes of the body with `http.DetectContentType`.
 - **`ObjectInfo` embeds `HeaderValues`**, which holds the content type and
   every header field written, and gains `ETag`; `ObjectSummary` gains
   `ETag` too. The ETag is unquoted.
@@ -70,7 +80,9 @@ verbatim; read it before upgrading: most of the API changed.
   - `ErrInputRequired` is renamed `ErrNilInput`, `ErrInvalidOption`
     `ErrNilOption`, and `ErrInvalidContinuationToken` `ErrInvalidToken`.
   - `ErrInvalidLimit` and `ErrInvalidTTL` are removed: an argument out of
-    its bounds is `ErrInvalidArgument`.
+    its bounds is `ErrInvalidArgument`. This includes a `ListObjects`
+    `MaxKeys` over 1000, which used to be read as 1000: pass at most
+    `storage.MaxListKeys`, or nil for a page of 1000.
   - `ErrInvalidRange` now means a `Range` that is not one byte range; a
     range that selects no byte is the new `ErrRangeNotSatisfiable`.
   - `dir.ErrRootRequired` and `dir.ErrStaleData` are removed. A data file
@@ -83,7 +95,10 @@ verbatim; read it before upgrading: most of the API changed.
   refused; values hold only printable ASCII, space and tab, and are never
   encoded; names and values hold at most 2048 bytes together
   (`ErrInvalidMetadata`). Header field values keep the same character
-  rules and hold at most 1024 bytes (`ErrInvalidHeader`). A `Range` that is not one byte range is
+  rules and hold at most 1024 bytes (`ErrInvalidHeader`). A header field
+  that is set must not be empty, so an empty `ContentType`, which dir used
+  to sniff as it did a nil one, is `ErrInvalidHeader`: leave it nil for
+  `application/octet-stream`. A `Range` that is not one byte range is
   `ErrInvalidRange` rather than ignored. The checks are exported (see
   Added).
 - **Presigned uploads need a `ContentLength`**, 0 to
@@ -203,11 +218,21 @@ verbatim; read it before upgrading: most of the API changed.
   `ErrThrottled`, `ErrWrongRegion`, `ErrConflict` and
   `ErrUploadNotAborted`; `ServiceName` and `PresignerName`; and
   `Presigner.CheckReady`. `Provider.CheckReady` sends a `HeadBucket` of
-  the configured bucket. An upload in parts that fails is aborted with
+  the configured bucket, which S3 authorizes as the `s3:ListBucket`
+  action on that bucket: credentials without it fail `CheckReady` with
+  `storage.ErrAccessDenied` even when they may read and write its
+  objects. An upload in parts that fails is aborted with
   `AbortMultipartUpload` on a context of its own.
 
 ### Changed
 
+- **`LastModified` is in UTC, truncated to the second**, on every
+  backend, as the package documentation states. dir used to return the
+  data file's modification time as the file system gave it, in the local
+  time zone and with its sub-second part, and s3 the time as the AWS SDK
+  parsed it. A dir time now prints in UTC and may read up to a second
+  earlier than the file system's; call `In(time.Local)` to show it in the
+  local zone.
 - **`CheckBucket` no longer refuses S3's reserved starts and ends**, such
   as `xn--` and `-s3alias`: S3 refuses them itself, and the dir and memory
   backends accept them.
@@ -455,6 +480,7 @@ repository; this entry summarizes the package as published.
   `gas.StorageProvider` (and `gas.ReadyReporter`) that records calls and
   delegates to per-method `Fn` fields for tests that need custom behavior.
 
-[Unreleased]: https://github.com/gasmod/gas/compare/storage/v0.5.6...HEAD
+[Unreleased]: https://github.com/gasmod/gas/compare/storage/v0.6.0...HEAD
+[0.6.0]: https://github.com/gasmod/gas/compare/storage/v0.5.6...storage/v0.6.0
 [0.5.6]: https://github.com/gasmod/gas/compare/storage/v0.5.5...storage/v0.5.6
 [0.5.5]: https://github.com/gasmod/gas/releases/tag/storage/v0.5.5
