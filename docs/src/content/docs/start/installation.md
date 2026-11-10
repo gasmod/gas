@@ -117,3 +117,6 @@ INFO server started environment=development addr=0.0.0.0:8080
   structs.
 - [database](/reference/database/): dialects, connection settings and
   transactions.
+- [llms.txt](https://gasmod.dev/llms.txt): these docs for LLMs and coding
+  agents. Every page is also served as Markdown, at its URL plus
+  `index.md`.
