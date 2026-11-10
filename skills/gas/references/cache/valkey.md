@@ -320,7 +320,12 @@ commands sent on it:
 
 - are not prefixed with `keyprefix`;
 - are bounded only by their own context;
-- return valkey-go's errors as they are, which can hold the address.
+- return valkey-go's errors as they are, which can hold the address;
+- are never answered from a client-side cache. The client is built
+with valkey-go's DisableCache, so its connections send no CLIENT
+TRACKING, which an ACL user may not be allowed, and DoCache and
+DoMultiCache send each command to the server, as Do and DoMulti
+do.
 
 The store closes the client on Close.
 

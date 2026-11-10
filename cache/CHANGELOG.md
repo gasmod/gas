@@ -117,7 +117,12 @@ and lists its errors verbatim; read it before upgrading.
   is not initialized or its context has ended; `CheckReady` sends `PING`
   within its context and `OpTimeout`.
 - `valkey.Service.Client` returns nil when the store is not initialized;
-  after `Close` it returned the closed client.
+  after `Close` it returned the closed client. The client is built with
+  valkey-go's `DisableCache`, so its connections send no
+  `CLIENT TRACKING`, which an ACL user may not be allowed. `DoCache` and
+  `DoMultiCache` on it send every command to the server, as `Do` and
+  `DoMulti` do, and never answer from a client-side cache, as they did in
+  v0.5.6. For client-side caching, build a valkey-go client of your own.
 - The logs change: `service initialized` (with `max_entries`,
   `cleanup_interval` and `default_ttl` for `memory`, `db` and `tls` for
   `valkey`) and `service closed`, at info level. The valkey log no
