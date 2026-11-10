@@ -395,6 +395,37 @@ Options change these defaults:
 - `WithConfigKey` changes the key. With another key, the environment
 is stored at `GasEnv` too.
 
+An App checks the environment too. App.Start accepts only the
+environments gas.WithAllowedEnvironments sets, by default the four above,
+so an environment that WithAllowedEnvs or WithDefault adds, such as
+`local`, loads but fails Start with an error wrapping
+gas.ErrInvalidConfig:
+
+```go
+gas: invalid config: gasenv must be one of development, testing, staging, production
+```
+
+Give both the same environments:
+
+```go
+envs := []config.Environment{"local", config.EnvStaging, config.EnvProduction}
+envExt := config.NewEnvExtension(
+	config.WithAllowedEnvs(envs...),
+	config.WithDefault("local"),
+)
+cfg := config.New(
+	config.WithProvider(config.NewEnvProvider(config.WithEnvPrefix("APP"))),
+	config.WithExtension(envExt),
+)
+if err := cfg.Load(); err != nil {
+	return err
+}
+app := gas.NewApp(
+	gas.WithServiceInstance[gas.ConfigProvider](cfg),
+	gas.WithAllowedEnvironments(envs...),
+)
+```
+
 Before the providers load, the extension stores the variable's value, or
 the fallback, at the key unless the key holds a value. So once a load
 has stored it, a later change to the variable takes effect only through

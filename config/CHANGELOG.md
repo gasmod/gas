@@ -124,7 +124,13 @@ upgrading: most of the API moved or changed.
   wrapping `ErrEnvironmentNotAllowed`, which names the variable or key and
   the allowed values but not the value. It used to be replaced with the
   fallback without a word, so `prod` ran as development. The fallback is
-  always allowed.
+  always allowed. Core's `App.Start` now checks the environment as well,
+  against `gas.WithAllowedEnvironments`, which defaults to the four
+  standard environments: an environment added with `WithAllowedEnvs` or
+  `WithDefault`, such as `local`, loads but fails `Start` with
+  `gas: invalid config: gasenv must be one of development, testing,
+  staging, production`. Give core the same list, as in
+  `gas.WithAllowedEnvironments("local", gas.EnvProduction)`.
 - **BREAKING: the `.env` format is strict.** A name is
   `[A-Za-z_][A-Za-z0-9_]*`, defined once and not differing from another
   only in case; there is no `export`; nothing is escaped; an unquoted
