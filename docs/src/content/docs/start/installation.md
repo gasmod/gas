@@ -110,6 +110,8 @@ INFO server started environment=development addr=0.0.0.0:8080
 
 ## Next steps
 
+- [Project layout](/start/project-layout/): where the entry point, the
+  wiring, the modules and their migrations go as the app grows.
 - [Core](/reference/gas/): services, routing, handlers and middleware.
 - [config](/reference/config/): every provider and how values bind to
   structs.

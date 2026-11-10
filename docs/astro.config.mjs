@@ -72,7 +72,14 @@ export default defineConfig({
 			// Start and Core stay open; a module's group opens when one of its
 			// pages is open, so the sidebar fits the screen.
 			sidebar: [
-				{ label: 'Start', items: [{ label: 'Introduction', slug: 'index' }, { label: 'Installation', slug: 'start/installation' }] },
+				{
+					label: 'Start',
+					items: [
+						{ label: 'Introduction', slug: 'index' },
+						{ label: 'Installation', slug: 'start/installation' },
+						{ label: 'Project layout', slug: 'start/project-layout' },
+					],
+				},
 				{ label: 'Core', items: [{ label: 'gas', slug: 'reference/gas' }] },
 				{ label: 'config', collapsed: true, items: [{ autogenerate: { directory: 'reference/config' } }] },
 				{ label: 'log', collapsed: true, items: [{ autogenerate: { directory: 'reference/log' } }] },

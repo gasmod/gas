@@ -416,7 +416,7 @@ envExt := config.NewEnvExtension(
 	config.WithDefault("local"),
 )
 cfg := config.New(
-	config.WithProvider(config.NewEnvProvider(config.WithEnvPrefix("APP"))),
+	config.WithProvider(config.NewEnvProvider(config.WithEnvPrefix("APP_"))),
 	config.WithExtension(envExt),
 )
 if err := cfg.Load(); err != nil {

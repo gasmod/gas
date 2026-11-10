@@ -148,6 +148,8 @@ INFO server started environment=development addr=0.0.0.0:8080
 
 ### Next steps
 
+- [Project layout](https://gasmod.dev/start/project-layout/): where the entry point, the
+  wiring, the modules and their migrations go as the app grows.
 - [Core](references/gas.md): services, routing, handlers and middleware.
 - [config](references/config.md): every provider and how values bind to
   structs.
