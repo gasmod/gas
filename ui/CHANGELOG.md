@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- With no layout in the store and no `WithLayout`, `Render` executes the
+  page's top-level text, as the package documentation says, even when a
+  partial or the page defines a template of the layout's name, `base` by
+  default. That template took the page's place.
 - A page without the fragment block whose top-level text calls it
   through another template, such as `{{template "base" .}}` calling the
   layout, no longer has that text as the block too. `Render` and

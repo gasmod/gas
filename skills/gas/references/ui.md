@@ -138,8 +138,9 @@ unless `WithLayout` gives another, in the page's set.
 
 When the store holds no layout and WithLayout is not given, Render
 executes the page's top-level text instead, so a site without layouts
-renders its pages whole. Otherwise a set without the layout's name is
-`ErrLayoutNotFound`.
+renders its pages whole, even when a partial or the page defines a
+template of the layout's name. Otherwise a set without the layout's
+name is `ErrLayoutNotFound`.
 
 ## Fragments
 

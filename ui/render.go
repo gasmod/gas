@@ -282,10 +282,12 @@ func (p *page) layoutEntry(o *RenderOptions, set *Settings, hasLayouts bool) (st
 	}
 
 	switch {
+	case o.Layout == "" && !hasLayouts:
+		// A template of the layout's name that a partial or the page
+		// defines is not a layout.
+		return p.root, nil
 	case has(p.set, layout):
 		return layout, nil
-	case o.Layout == "" && !hasLayouts:
-		return p.root, nil
 	default:
 		return "", fmt.Errorf("%w: %q", ErrLayoutNotFound, layout)
 	}
