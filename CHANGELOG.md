@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   v0.6.0. Since v0.6.0 it set its header when the status was written,
   after the handler, so a handler's `private` or `no-store` went out as
   the middleware's directives, such as `public`.
+- A handler's `ResponseWriter` is an `http.Pusher` again, as it was
+  before v0.6.0. Since v0.6.0 the Router's writer, and `CacheControl`'s,
+  dropped it, so `w.(http.Pusher)` failed even on an HTTP/2 connection
+  and HTTP/2 server push was lost, with `RequestLogger` too. `Push` now
+  passes on to the server's writer, and returns `http.ErrNotSupported`
+  where it cannot push, such as on HTTP/1, as net/http's HTTP/2 writer
+  does when the client disabled push.
 
 ## [0.6.0] - 2026-11-08
 

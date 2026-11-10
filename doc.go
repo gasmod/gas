@@ -298,6 +298,16 @@
 // Deps...) error whose dependencies are resolved from the request's Scope
 // on each call. Another shape panics with [ErrInvalidHandler].
 //
+// The Router's ResponseWriter, and the one [CacheControl] wraps it in, is
+// an [http.Flusher], an [http.Hijacker], an [http.Pusher] and an
+// [io.ReaderFrom], and unwraps for [http.ResponseController]. Each passes
+// on to the server's writer; Hijack and Push return the server's error,
+// such as [http.ErrNotSupported], where the connection cannot.
+// [RequestLogger] wraps it in chi's writer, which is an http.Pusher for
+// an HTTP/2 request only and an http.Hijacker and io.ReaderFrom for an
+// HTTP/1 request only. [Timeout] buffers the response, and its writer is
+// none of these.
+//
 // An error a DI-aware handler returns goes to the [ErrorHandler]. The
 // default one logs it and writes it with [WriteError]: an [*Error] as a
 // [Problem], and anything else as a 500 with code [CodeInternal]. A cause
