@@ -3,9 +3,9 @@ module github.com/gasmod/gas/ui
 go 1.27.3
 
 require (
-	github.com/gasmod/gas v0.6.2
-	github.com/gasmod/gas/config v0.6.2
-	github.com/gasmod/gas/template v0.6.2
+	github.com/gasmod/gas v0.6.3
+	github.com/gasmod/gas/config v0.6.3
+	github.com/gasmod/gas/template v0.6.3
 	github.com/go-playground/validator/v10 v10.30.6
 	github.com/stretchr/testify v1.12.1
 )

@@ -95,15 +95,24 @@ type Config struct {
 	store *config.Config
 }
 
-// LoadConfig reads the configuration from the environment.
+// LoadConfig reads the configuration from `.env`, when there is one, and
+// from the environment, which overrides it.
 func LoadConfig() (*Config, error) {
-	return LoadConfigFrom(config.NewEnvProvider(config.WithEnvPrefix("APP_")))
+	return LoadConfigFrom(
+		config.NewDotEnvProvider(config.WithDotEnvFileNotFoundPanic(false)),
+		config.NewEnvProvider(config.WithEnvPrefix("APP_")),
+	)
 }
 
-// LoadConfigFrom reads the configuration from the given providers, so a
-// test can pass fixed values.
+// LoadConfigFrom reads the configuration from the given providers, a later
+// one overriding an earlier one, so a test can pass fixed values.
 func LoadConfigFrom(providers ...config.Provider) (*Config, error) {
-	opts := make([]config.Option, 0, len(providers))
+	if len(providers) == 0 {
+		return nil, errors.New("app: LoadConfigFrom needs a provider")
+	}
+
+	// The extension resolves the environment from GAS_ENV.
+	opts := []config.Option{config.WithExtension(config.NewEnvExtension())}
 	for _, p := range providers {
 		opts = append(opts, config.WithProvider(p))
 	}
@@ -132,6 +141,19 @@ A few things to know:
 - **Gas's modules bind their own sections.** The loaded configuration is
   registered as `gas.ConfigProvider`, where the server, the database and
   the other Gas modules find sections such as `server` and `database`.
+- **The environment overrides `.env`.** A later provider overrides an
+  earlier one, and a missing `.env` loads nothing, so a deployment can set
+  the environment alone. See [Settings files](#settings-files) for how the
+  names differ.
+- **`GAS_ENV` picks the environment.** The `EnvExtension` resolves it, as
+  under
+  [Resolving the environment](/reference/config/#resolving-the-environment),
+  and stores it where the App reads it. Without the extension the App
+  runs as `development` whatever `GAS_ENV` holds.
+- **`LoadConfigFrom` needs a provider.** `config.New` with none falls back
+  to an environment provider with no prefix, whose load fails with
+  `environment prefix is required`, so `LoadConfigFrom` says what is
+  missing itself.
 
 `app.go` holds `New`. It registers in three layers: what every module
 depends on, then each domain's repository and service, then the modules.
@@ -310,6 +332,14 @@ starts it, and serves its handler from a test server, and `test/e2e` holds
 the tests.
 
 ```go title="test/harness/harness.go"
+cfg, err := app.LoadConfigFrom(configtest.NewStaticProvider(map[string]any{
+	"gasenv":   "testing",
+	"database": map[string]any{"dialect": "postgres", "dsn": dsn},
+}))
+if err != nil {
+	t.Fatal(err)
+}
+
 a := app.New(cfg)
 
 if err := a.Start(t.Context()); err != nil {
@@ -327,8 +357,10 @@ t.Cleanup(func() {
 })
 ```
 
-`cfg` comes from `app.LoadConfigFrom`, with the values the test needs.
-`Start` applies the migrations, so each test runs against the schema the
+`cfg` comes from `app.LoadConfigFrom`, with the values the test needs in a
+[`configtest.StaticProvider`](/reference/config/configtest/#static-provider),
+so neither `.env` nor the environment's settings reach the test; `dsn` is
+the test database's. `Start` applies the migrations, so each test runs against the schema the
 modules declare. When the tests need outside services, such as a database
 in a container, keep them behind a build tag, such as `e2e`, so that
 `go test ./...` runs the unit tests alone.
@@ -339,3 +371,24 @@ Settings files sit in the project root, and the app runs from there: the
 `.env` and JSON providers read from the
 [working directory](/reference/config/#file-access). Keep `.env` out of
 version control, and commit an `example.env` that lists every setting.
+
+`LoadConfig` reads `.env` when the file is there, and then the
+environment. The same setting has two names, as a name in `.env` has no
+prefix and one in the environment has the app's:
+
+```sh title=".env"
+SERVER__PORT=8080
+```
+
+```sh
+export APP_SERVER__PORT=8080
+```
+
+Both become the key `server.port`. A name in `.env` that keeps the prefix,
+such as `APP_SERVER__PORT`, becomes `app_server.port`, which nothing
+reads.
+
+`GAS_ENV` is the exception: the `EnvExtension` reads it from the process
+environment under that name, with no prefix. In `.env`, set the
+environment as `GASENV`, the key it is stored at. A `GAS_ENV` line there
+becomes the key `gas_env`, which nothing reads.

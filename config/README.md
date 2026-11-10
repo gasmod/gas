@@ -28,7 +28,7 @@ anything else starts.
 |-------------------------|----------------------------------------------------------------------------------|
 | `config`                | Config; environment, JSON, and `.env` providers; environment detection extension |
 | `config/secretsmanager` | AWS Secrets Manager                                                              |
-| `config/configtest`     | Mock and a real-backed fake seeded with known values                             |
+| `config/configtest`     | Mock, a real-backed fake seeded with known values, and a static provider         |
 
 ## Documentation
 
