@@ -1,9 +1,30 @@
 name: Release
 
+# Releases vX.Y.Z in one of two ways:
+#
+#   - Run this workflow on main with the version, from the Actions tab or
+#     with `gh workflow run release.yml -f version=vX.Y.Z`. Once the checks
+#     pass, the run pushes the root tag and every sub-module tag in one
+#     atomic push. No tag exists before the checks pass, and the root tag
+#     never exists without the others.
+#   - Push the tag vX.Y.Z. The run adds the sub-module tags once the checks
+#     pass. Until then `go get` of a sub-module at vX.Y.Z fails with "module
+#     found, but does not contain package", and the Go proxy may go on
+#     answering so for up to 30 minutes.
+#
+# Pushing every tag by hand in one push starts no run: GitHub creates no
+# push event for more than three tags at once.
+
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The version to release from main, such as v0.6.2
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -18,11 +39,37 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
+      version: ${{ steps.version.outputs.version }}
       modules: ${{ steps.set-modules.outputs.modules }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Internal module versions must match ${{ github.ref_name }}
-        run: ./scripts/verify-versions.sh "$GITHUB_REF_NAME"
+      # A pushed tag is the version. A manual run takes it as its input, and
+      # runs on main only, so it cannot tag a commit main does not hold.
+      - id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+              echo "::error::a release runs on main, not on $GITHUB_REF"
+              exit 1
+            fi
+            version="$INPUT_VERSION"
+          else
+            version="$GITHUB_REF_NAME"
+          fi
+          # The form scripts/bump.sh takes, matched against the whole value,
+          # so an input of several lines fails. The value is not echoed: it
+          # is unchecked input until it passes.
+          if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::the version must have the form vX.Y.Z"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Versions must match ${{ steps.version.outputs.version }}
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: ./scripts/verify-versions.sh "$VERSION"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -51,13 +98,16 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
+    env:
+      VERSION: ${{ needs.detect-modules.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # A module's tag is prefixed with its path relative to the repo root.
-      # The root module takes the bare tag, which the triggering push already
-      # created. A re-run skips the tags already pushed at this commit and
-      # fails on one that points elsewhere.
-      - name: Tag the sub-modules
+      # A module's tag is prefixed with its path relative to the repo root,
+      # and the root module takes the bare tag. A manual run creates the root
+      # tag with the sub-module tags; a pushed tag is the root tag already. A
+      # re-run skips the tags already pushed at this commit and fails on one
+      # that points elsewhere.
+      - name: Tag the modules
         env:
           MODULES: ${{ needs.detect-modules.outputs.modules }}
         run: |
@@ -68,9 +118,20 @@ jobs:
             echo "::error::no sub-modules to tag in $MODULES"
             exit 1
           fi
-          tags=()
+          names=()
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            # The tags go on the commit the checks ran on.
+            if [ "$head" != "$GITHUB_SHA" ]; then
+              echo "::error::checked out $head, not $GITHUB_SHA, the commit the checks ran on"
+              exit 1
+            fi
+            names+=("$VERSION")
+          fi
           for m in $subs; do
-            tag="$m/$GITHUB_REF_NAME"
+            names+=("$m/$VERSION")
+          done
+          tags=()
+          for tag in "${names[@]}"; do
             remote="$(git ls-remote --tags origin "refs/tags/$tag" | cut -f1)"
             if [ -z "$remote" ]; then
               git tag "$tag"
@@ -80,7 +141,7 @@ jobs:
               exit 1
             fi
           done
-          # All the missing sub-module tags land or none do.
+          # All the missing tags land or none do.
           if [ ${#tags[@]} -gt 0 ]; then
             git push --atomic origin "${tags[@]}"
           fi
@@ -88,8 +149,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo "Release $GITHUB_REF_NAME already exists"
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "Release $VERSION already exists"
           else
-            gh release create "$GITHUB_REF_NAME" --verify-tag --title "Release $GITHUB_REF_NAME" --generate-notes
+            gh release create "$VERSION" --verify-tag --title "Release $VERSION" --generate-notes
           fi
