@@ -166,7 +166,13 @@ the details.
   that the new `WithProblemTypeBase` option or `Router.SetProblemTypeBase`
   sets, and is left out (`about:blank`) without one. `Problem` replaces
   `ErrorResponse` for decoding; `FieldError` has `Pointer` in place of
-  `Field`; `WantsJSON` also accepts `application/problem+json`.
+  `Field`; `WantsJSON` also accepts `application/problem+json`. `*Error`
+  is no longer a wire type and has no `json` tags, so `json.Marshal` of
+  one, or `ctx.JSON(status, err)`, gives its Go field names, such as
+  `{"Details":null,"Code":"validation_failed","Message":"bad","Fields":[...],"Status":422}`,
+  where v0.5.6 gave `{"status":422,"code":"validation_failed","message":"bad","fields":[...]}`.
+  Write an error with `WriteError(w, r, err)`, or return it from a
+  DI-aware handler, to send the problem body.
 - **BREAKING: `Router.Use`, `Group` and `Route` take an owner.** `Use`,
   `UseMiddlewareFunc` and `UseMiddlewareByName` take the owning service
   first, as `Handle` and `Register` do, nil for the router. `Group` and
