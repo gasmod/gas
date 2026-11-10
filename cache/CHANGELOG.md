@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `valkey` works with a Valkey or Redis Cluster again, as in v0.5.6.
+  v0.6.0 forced valkey-go's single-server client, so a store whose
+  `Addr` is a cluster node talked to that node alone, and a key in a
+  slot another node serves failed with `MOVED`, such as
+  `gas/cache/valkey: get: MOVED`. valkey-go again detects a cluster
+  from `Addr`, a single seed, and sends each command to the node that
+  serves its key. A `DB` other than 0 fails `Init` on a valkey-server 8
+  cluster, which refuses `SELECT`, and a user that may not run
+  `CLUSTER` talks to the node at `Addr` alone. Sentinel is still not
+  supported.
+
+## [0.6.0] - 2026-11-08
+
 v0.6.0 rewrites the module around one contract that both stores keep,
 written in the `cache` package's `doc.go` and checked by a shared
 conformance suite. Each package's `doc.go` is its behavioral contract
@@ -106,7 +121,12 @@ and lists its errors verbatim; read it before upgrading.
   is not initialized or its context has ended; `CheckReady` sends `PING`
   within its context and `OpTimeout`.
 - `valkey.Service.Client` returns nil when the store is not initialized;
-  after `Close` it returned the closed client.
+  after `Close` it returned the closed client. The client is built with
+  valkey-go's `DisableCache`, so its connections send no
+  `CLIENT TRACKING`, which an ACL user may not be allowed. `DoCache` and
+  `DoMultiCache` on it send every command to the server, as `Do` and
+  `DoMulti` do, and never answer from a client-side cache, as they did in
+  v0.5.6. For client-side caching, build a valkey-go client of your own.
 - The logs change: `service initialized` (with `max_entries`,
   `cleanup_interval` and `default_ttl` for `memory`, `db` and `tls` for
   `valkey`) and `service closed`, at info level. The valkey log no
@@ -270,5 +290,6 @@ repository; this entry summarizes the package as published.
   tests, with per-method `Fn` overrides, recorded `Calls`, `Reset()`,
   and `CallCount()`.
 
-[Unreleased]: https://github.com/gasmod/gas/compare/cache/v0.5.6...HEAD
+[Unreleased]: https://github.com/gasmod/gas/compare/cache/v0.6.0...HEAD
+[0.6.0]: https://github.com/gasmod/gas/releases/tag/cache/v0.6.0
 [0.5.6]: https://github.com/gasmod/gas/releases/tag/cache/v0.5.6

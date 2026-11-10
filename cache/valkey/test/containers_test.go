@@ -9,16 +9,20 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
@@ -30,12 +34,14 @@ const valkeyImage = "valkey/valkey:8"
 // tests fail instead of skipping when Docker is unavailable.
 const requireDockerEnv = "GAS_TEST_REQUIRE_DOCKER"
 
-// The ACL users of the container, with aclPassword. aclUser may run every
-// command; limitedUser every command but GET.
+// The ACL users of the containers, with aclPassword. aclUser may run
+// every command; limitedUser every command but GET; noClusterUser every
+// command but CLUSTER.
 const (
-	aclUser     = "zqxuser"
-	limitedUser = "zqxlimited"
-	aclPassword = "zqxpass"
+	aclUser       = "zqxuser"
+	limitedUser   = "zqxlimited"
+	noClusterUser = "zqxnocluster"
+	aclPassword   = "zqxpass"
 )
 
 // server is the container the tests share, started on first use.
@@ -84,7 +90,7 @@ func requireDocker(t *testing.T) {
 // valkeyServer returns the shared server, which it starts on first use,
 // skipping the test without Docker. The server listens in plain text and
 // with TLS, has no password for the default user, and has the users
-// aclUser and limitedUser.
+// aclUser, limitedUser and noClusterUser.
 func valkeyServer(t *testing.T) *server {
 	t.Helper()
 	requireDocker(t)
@@ -118,6 +124,7 @@ func (s *server) start() error {
 			"--tls-auth-clients", "no",
 			"--user", aclUser, "on", ">"+aclPassword, "~*", "&*", "+@all",
 			"--user", limitedUser, "on", ">"+aclPassword, "~*", "&*", "+@all", "-get",
+			"--user", noClusterUser, "on", ">"+aclPassword, "~*", "&*", "+@all", "-cluster",
 		),
 		testcontainers.WithWaitStrategyAndDeadline(time.Minute,
 			wait.ForLog("Ready to accept connections"),
@@ -230,4 +237,238 @@ func certificates() (caPEM, certPEM, keyPEM []byte, roots *x509.CertPool, err er
 		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER}),
 		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}),
 		roots, nil
+}
+
+// clusterNode is a node of the cluster container: the port it listens
+// on, its cluster bus port, and the first and last slot it serves.
+type clusterNode struct {
+	port, bus, first, last string
+}
+
+// clusterNodes are the primary nodes of the cluster container, which
+// split the slots between them.
+var clusterNodes = []clusterNode{
+	{port: "7000", bus: "17000", first: "0", last: "5460"},
+	{port: "7001", bus: "17001", first: "5461", last: "10922"},
+	{port: "7002", bus: "17002", first: "10923", last: "16383"},
+}
+
+// cluster is the Valkey cluster container the tests share, started on
+// first use.
+type cluster struct {
+	// err is the error of starting it.
+	err error
+	// terminate stops it, or is nil.
+	terminate func()
+	// addr is the address of its first node, host:port.
+	addr string
+	// once starts it once.
+	once sync.Once
+}
+
+// sharedCluster is the cluster of the package, terminated by TestMain.
+var sharedCluster cluster
+
+// valkeyCluster returns the shared cluster, which it starts on first use,
+// skipping the test without Docker. It has three primary nodes and no
+// replicas, no password for the default user, and the users aclUser and
+// noClusterUser.
+func valkeyCluster(t *testing.T) *cluster {
+	t.Helper()
+	requireDocker(t)
+
+	sharedCluster.once.Do(func() { sharedCluster.err = sharedCluster.start() })
+
+	require.NoError(t, sharedCluster.err)
+
+	return &sharedCluster
+}
+
+// start starts the nodes in one container, where they reach each other on
+// the loopback. Each node announces the address the tests reach it at,
+// the container's host and the node's published port, so valkey-go
+// connects to the nodes the cluster names. Docker picks the published
+// ports, so they are known only once the container runs, and the nodes
+// form the cluster after that.
+func (c *cluster) start() error {
+	ctx := context.Background()
+
+	var script strings.Builder
+
+	exposed := make([]string, 0, len(clusterNodes))
+	waits := make([]wait.Strategy, 0, len(clusterNodes))
+
+	for _, n := range clusterNodes {
+		fmt.Fprintf(&script, "valkey-server --port %s --cluster-enabled yes"+
+			" --cluster-config-file nodes-%s.conf --save '' --appendonly no"+
+			" --user %s on '>%s' '~*' '&*' '+@all'"+
+			" --user %s on '>%s' '~*' '&*' '+@all' -cluster --daemonize yes\n",
+			n.port, n.port, aclUser, aclPassword, noClusterUser, aclPassword)
+
+		exposed = append(exposed, n.port+"/tcp")
+		waits = append(waits, wait.ForListeningPort(n.port+"/tcp"))
+	}
+
+	script.WriteString("exec sleep infinity\n")
+
+	ctr, err := testcontainers.Run(ctx, valkeyImage,
+		testcontainers.WithExposedPorts(exposed...),
+		testcontainers.WithEntrypoint("sh", "-c", script.String()),
+		testcontainers.WithWaitStrategyAndDeadline(time.Minute, waits...),
+	)
+	if ctr != nil {
+		c.terminate = func() { _ = ctr.Terminate(context.Background()) }
+	}
+
+	if err != nil {
+		return fmt.Errorf("start valkey cluster: %w", err)
+	}
+
+	host, err := c.form(ctx, ctr)
+	if err != nil {
+		return err
+	}
+
+	return awaitCluster(ctx, ctr, host)
+}
+
+// form tells each node of ctr the address it is reached at and the slots
+// it serves, and has the first node meet the others. It returns the host
+// the nodes are reached at.
+func (c *cluster) form(ctx context.Context, ctr testcontainers.Container) (string, error) {
+	var host string
+
+	for i, n := range clusterNodes {
+		endpoint, err := ctr.PortEndpoint(ctx, n.port+"/tcp", "")
+		if err != nil {
+			return "", fmt.Errorf("node endpoint: %w", err)
+		}
+
+		h, published, err := net.SplitHostPort(endpoint)
+		if err != nil {
+			return "", fmt.Errorf("node endpoint: %w", err)
+		}
+
+		if i == 0 {
+			c.addr, host = endpoint, h
+		}
+
+		cmds := [][]string{
+			{
+				n.port, "config", "set",
+				"cluster-announce-hostname", h,
+				"cluster-preferred-endpoint-type", "hostname",
+				"cluster-announce-port", published,
+				"cluster-announce-bus-port", n.bus,
+			},
+			{n.port, "cluster", "addslotsrange", n.first, n.last},
+		}
+
+		// The first node meets each of the others.
+		if i > 0 {
+			cmds = append(cmds, []string{
+				clusterNodes[0].port, "cluster", "meet", "127.0.0.1", n.port, n.bus,
+			})
+		}
+
+		for _, cmd := range cmds {
+			_, err = nodeCLI(ctx, ctr, cmd[0], cmd[1:]...)
+			if err != nil {
+				return "", err
+			}
+		}
+	}
+
+	return host, nil
+}
+
+// errNodeCLI is a valkey-cli run that failed or got an error reply.
+var errNodeCLI = errors.New("valkey-cli failed")
+
+// nodeCLI runs valkey-cli with args in ctr against the node on port and
+// returns its output.
+func nodeCLI(
+	ctx context.Context,
+	ctr testcontainers.Container,
+	port string,
+	args ...string,
+) (string, error) {
+	cmd := append([]string{"valkey-cli", "-p", port}, args...)
+
+	code, out, err := ctr.Exec(ctx, cmd, tcexec.Multiplexed())
+	if err != nil {
+		return "", fmt.Errorf("valkey-cli %v: %w", args, err)
+	}
+
+	b, err := io.ReadAll(out)
+	if err != nil {
+		return "", fmt.Errorf("valkey-cli %v: %w", args, err)
+	}
+
+	if code != 0 || strings.HasPrefix(string(b), "ERR") {
+		return "", fmt.Errorf("%w: %v: exit %d: %s", errNodeCLI, args, code, b)
+	}
+
+	return string(b), nil
+}
+
+// awaitCluster waits until every node of ctr reports the cluster ok and
+// names every node by host in CLUSTER SHARDS, so the topology valkey-go
+// reads from any node is the whole cluster.
+func awaitCluster(ctx context.Context, ctr testcontainers.Container, host string) error {
+	deadline := time.Now().Add(30 * time.Second)
+
+	for {
+		formed, err := clusterFormed(ctx, ctr, host)
+		if err != nil || formed {
+			return err
+		}
+
+		if time.Now().After(deadline) {
+			return errClusterNotFormed
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// clusterFormed reports whether every node of ctr reports the cluster ok
+// and names every node by host.
+func clusterFormed(ctx context.Context, ctr testcontainers.Container, host string) (bool, error) {
+	for _, n := range clusterNodes {
+		info, err := nodeCLI(ctx, ctr, n.port, "cluster", "info")
+		if err != nil {
+			return false, err
+		}
+
+		shards, err := nodeCLI(ctx, ctr, n.port, "cluster", "shards")
+		if err != nil {
+			return false, err
+		}
+
+		if !strings.Contains(info, "cluster_state:ok") ||
+			endpoints(shards, host) != len(clusterNodes) {
+			return false, nil
+		}
+	}
+
+	return true, nil
+}
+
+// errClusterNotFormed is a cluster whose nodes did not agree in time.
+var errClusterNotFormed = errors.New("valkey cluster did not form")
+
+// endpoints counts the nodes of valkey-cli's CLUSTER SHARDS output whose
+// endpoint is host.
+func endpoints(shards, host string) int {
+	lines := strings.Split(strings.ReplaceAll(shards, "\r", ""), "\n")
+	n := 0
+
+	for i := 0; i+1 < len(lines); i++ {
+		if lines[i] == "endpoint" && lines[i+1] == host {
+			n++
+		}
+	}
+
+	return n
 }

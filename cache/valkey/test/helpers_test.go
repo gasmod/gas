@@ -24,12 +24,16 @@ import (
 	"github.com/gasmod/gas/cache/valkey"
 )
 
-// TestMain runs the tests, then terminates the shared container.
+// TestMain runs the tests, then terminates the shared containers.
 func TestMain(m *testing.M) {
 	code := m.Run()
 
 	if shared.terminate != nil {
 		shared.terminate()
+	}
+
+	if sharedCluster.terminate != nil {
+		sharedCluster.terminate()
 	}
 
 	os.Exit(code)
