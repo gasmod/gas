@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `gas.WithAllowedEnvironments(config.EnvProduction)`. For this, config
   requires core again.
 
+### Fixed
+
+- `WithValidator` given a nil pointer, such as a nil `*validator.Validate`,
+  keeps the default validator, as a nil `Validator` does. `Bind` panicked.
+
 ## [0.6.0] - 2026-11-08
 
 v0.6.0 rewrites the module around the contract in its package

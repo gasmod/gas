@@ -1,5 +1,7 @@
 package config
 
+import "reflect"
+
 // Option configures a Config.
 type Option func(*Config)
 
@@ -20,12 +22,31 @@ func WithExtension(ext Extension) Option {
 }
 
 // WithValidator sets the validator Bind checks structs with, such as one
-// with custom validation tags registered. A nil validator keeps the
-// default, validator.New().
+// with custom validation tags registered. A nil validator, a nil pointer
+// such as a nil *validator.Validate included, keeps the default,
+// validator.New().
 func WithValidator(v Validator) Option {
 	return func(c *Config) {
-		if v != nil {
+		if !isNil(v) {
 			c.validate = v
 		}
+	}
+}
+
+// isNil reports whether v is nil or holds a nil pointer, map, slice, func
+// or channel.
+func isNil(v Validator) bool {
+	if v == nil {
+		return true
+	}
+
+	rv := reflect.ValueOf(v)
+
+	//nolint:exhaustive // only these kinds can be nil.
+	switch rv.Kind() {
+	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan:
+		return rv.IsNil()
+	default:
+		return false
 	}
 }
