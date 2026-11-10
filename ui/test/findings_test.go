@@ -629,3 +629,21 @@ func TestFragment_SelfCallWithoutLayout(t *testing.T) {
 	require.ErrorIs(t, err, ui.ErrExecute)
 	assert.Contains(t, err.Error(), `no such template "content"`)
 }
+
+// Without layouts in the store, Render executed a template named as the
+// layout, `base`, when a partial or the page defined one, instead of the
+// page's top-level text. Only a layout is a layout now: the text renders,
+// and WithLayout still picks any template of the set by name.
+func TestRender_NoLayoutsBaseIsNotALayout(t *testing.T) {
+	t.Parallel()
+
+	s := initialized(t, files{
+		"partials/base.html": `{{define "base"}}<b>BASE</b>{{end}}`,
+		"p.html":             `<p>{{.}}</p>`,
+		"own.html":           `{{define "base"}}OWN{{end}}<p>{{.}}</p>`,
+	}, nil)
+
+	assert.Equal(t, "<p>x</p>", body(t, s, "p", "x"))
+	assert.Equal(t, "<p>x</p>", body(t, s, "own", "x"))
+	assert.Equal(t, "<b>BASE</b>", body(t, s, "p", "x", ui.WithLayout("base")))
+}
