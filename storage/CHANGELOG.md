@@ -226,6 +226,13 @@ verbatim; read it before upgrading: most of the API changed.
 
 ### Changed
 
+- **`LastModified` is in UTC, truncated to the second**, on every
+  backend, as the package documentation states. dir used to return the
+  data file's modification time as the file system gave it, in the local
+  time zone and with its sub-second part, and s3 the time as the AWS SDK
+  parsed it. A dir time now prints in UTC and may read up to a second
+  earlier than the file system's; call `In(time.Local)` to show it in the
+  local zone.
 - **`CheckBucket` no longer refuses S3's reserved starts and ends**, such
   as `xn--` and `-s3alias`: S3 refuses them itself, and the dir and memory
   backends accept them.
