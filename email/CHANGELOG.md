@@ -78,6 +78,13 @@ upgrading.
   `MaxMessageSize`, and cuts one trailing CRLF or LF of a rendered
   subject. A failed template is `email.ErrTemplate`, and the error names
   the field and the template, never the data or the engine's error.
+  With gas/template v0.6.0 a store holds only names ending in one of its
+  extensions, `.html` by default, where v0.5.6 stores read or stored any
+  name, so a subject or text template named `.txt` now fails as
+  `template failed: subject "welcome-subject.txt": fetch failed`. Build
+  the store with `.txt` among its extensions, such as
+  `memory.NewStore(memory.WithExtensions(".html", ".txt"))` of
+  gas/template/memory.
 - **BREAKING: lifecycle sentinels.** Before the first successful `Init`
   every method returns `email.ErrNotInitialized` (`Send` panicked and
   `CheckReady` reported ready); `Init` on an initialized sender returns
