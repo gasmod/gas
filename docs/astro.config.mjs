@@ -3,6 +3,8 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import starlightLinksValidator from 'starlight-links-validator';
 import starlightLlmsTxt from 'starlight-llms-txt';
+import { readFile, writeFile } from 'node:fs/promises';
+import { context7SiteKey, searchSection } from './src/lib/llm.ts';
 
 // The modules and what each gives, worded as on the home page
 // (src/components/Landing.astro). llms.txt lists a file of documentation
@@ -20,6 +22,25 @@ const modules = [
 	['template', 'template storage in memory, a directory, an embedded FS or a database'],
 	['ui', 'HTML pages with layouts, partials, static files and HTMX fragments'],
 ];
+
+// starlight-llms-txt opens llms-full.txt with a <SYSTEM> line and gives no
+// option to add to it, so the Search section is put after that line once the
+// site is built.
+const llmsFullSearch = {
+	name: 'llms-full-search',
+	hooks: {
+		'astro:build:done': async ({ dir }) => {
+			const file = new URL('llms-full.txt', dir);
+			const text = await readFile(file, 'utf8');
+			const end = text.indexOf('</SYSTEM>\n');
+			if (!text.startsWith('<SYSTEM>') || end < 0) {
+				throw new Error('llms-full.txt does not open with a <SYSTEM> line to put the Search section after.');
+			}
+			const at = end + '</SYSTEM>\n'.length;
+			await writeFile(file, `${text.slice(0, at)}\n${searchSection}\n${text.slice(at)}`);
+		},
+	},
+};
 
 // Deployed to GitHub Pages behind the custom domain gasmod.dev, so the site
 // lives at the root and links written in pages, including the generated
@@ -45,6 +66,9 @@ export default defineConfig({
 					tag: 'meta',
 					attrs: { property: 'og:image:alt', content: 'The Gas mark beside the text github.com/gasmod' },
 				},
+				// Context7 verifies the site by this tag before it serves the
+				// search endpoint the site's pages name (src/lib/llm.ts).
+				{ tag: 'meta', attrs: { name: 'context7-site-verification', content: context7SiteKey } },
 				// Where a client finds the index of the documentation for LLMs:
 				// the link relation the llms.txt proposal gives for it. A static
 				// host cannot send it as a Link header.
@@ -79,6 +103,7 @@ export default defineConfig({
 			components: {
 				Header: './src/components/Header.astro',
 				PageTitle: './src/components/PageTitle.astro',
+				SkipLink: './src/components/SkipLink.astro',
 				SiteTitle: './src/components/SiteTitle.astro',
 			},
 			editLink: {
@@ -104,6 +129,7 @@ export default defineConfig({
 							'- For exact signatures, run `go doc`, which matches the version in go.mod, such as `go doc github.com/gasmod/gas/storage.CopyObjectInput`.',
 							'- A skill for coding agents, generated from the same documentation, is at https://github.com/gasmod/gas/tree/main/skills/gas.',
 						].join('\n'),
+						searchSection,
 					].join('\n\n'),
 					// One file per part of the site, so an agent can take a module's
 					// documentation without the rest.
@@ -186,5 +212,6 @@ export default defineConfig({
 				{ label: 'ui', collapsed: true, items: [{ autogenerate: { directory: 'reference/ui' } }] },
 			],
 		}),
+		llmsFullSearch,
 	],
 });

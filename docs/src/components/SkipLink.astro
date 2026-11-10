@@ -1,0 +1,21 @@
+---
+// Replaces Starlight's SkipLink, the first element of every page's <body>,
+// to put a note for agents before it: where the index of the documentation
+// for LLMs is, and the search endpoint. It is visually hidden and hidden
+// from screen readers, so only an agent reading the page as text sees it.
+// Context7 checks the note, by its data-context7-ask attribute, to verify
+// the site.
+import Default from '@astrojs/starlight/components/SkipLink.astro';
+import { llmsTxtPath, pageIndexText, searchText } from '../lib/llm';
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+if (!Astro.site) throw new Error('`site` must be set in the Astro configuration.');
+const llmsTxtUrl = new URL(`${base}${llmsTxtPath}`, Astro.site).href;
+---
+
+<blockquote data-context7-ask="true" aria-hidden="true" class="sr-only">
+	<h2>Search</h2>
+	<p>{pageIndexText(llmsTxtUrl)}</p>
+	<p>{searchText}</p>
+</blockquote>
+<Default />
