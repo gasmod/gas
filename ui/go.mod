@@ -5,9 +5,9 @@ go 1.27.0
 toolchain go1.27.4
 
 require (
-	github.com/gasmod/gas v0.8.0
-	github.com/gasmod/gas/config v0.8.0
-	github.com/gasmod/gas/template v0.8.0
+	github.com/gasmod/gas v0.9.0
+	github.com/gasmod/gas/config v0.9.0
+	github.com/gasmod/gas/template v0.9.0
 	github.com/go-playground/validator/v10 v10.30.6
 	github.com/stretchr/testify v1.12.1
 )

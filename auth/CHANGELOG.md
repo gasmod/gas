@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-11
+
 ### Changed
 
 - **session: `Service.RevokeByID` and `Provider.RevokeByID`** now
@@ -18,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nothing about other subjects' sessions. Callers that only need the
   error take it as `_, err :=`, and a type that implements `Provider`
   outside this module needs the new signature.
+- The internal modules are required at v0.9.0.
 
 ## [0.8.0] - 2026-11-11
 
