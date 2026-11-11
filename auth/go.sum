@@ -47,8 +47,8 @@ github.com/gasmod/gas/database v0.7.0 h1:zr3R4JGHnyWAhkB3n6xL36dhd3DZ6jrgtd2kYYY
 github.com/gasmod/gas/database v0.7.0/go.mod h1:96WEYUh2E+pfcpjX204Ms3NzO1XhsF3O5NCveU/r9BQ=
 github.com/gasmod/gas/migrate v0.7.0 h1:ssD0oGVas8pQ23Df1qeMMbORSsjSnMYEkqQPMwaLMeQ=
 github.com/gasmod/gas/migrate v0.7.0/go.mod h1:OY3lLCUsh/H3YYldJpVZtfOQo2xEnGswZ2D+G9IGB8k=
-github.com/gasmod/omap v0.2.0 h1:0DqSlX5VctBnKj7SxhcR+kkJO2b3FgBgssn6E33sBVI=
-github.com/gasmod/omap v0.2.0/go.mod h1:vPphmJIp/85x0tPuwJQnldlI2NDSAwVFzmCL0G5+iLg=
+github.com/gasmod/omap v0.2.1 h1:jvz81PIn/yp84gkOzH5RXfkWXyWd5g50GNBIj3rD3Zk=
+github.com/gasmod/omap v0.2.1/go.mod h1:z1IPmErvTHKLh+Ueb9uUKJq7Kc5dUjtmcbh1eYe6miw=
 github.com/go-chi/chi/v5 v5.5.0 h1:xdKQ1dJmVJsmgahrXSKhUx8NyVPzpwdlyrrQFpMPJgg=
 github.com/go-chi/chi/v5 v5.5.0/go.mod h1:d1IG7GtKPSjPyBP365PH8sAGVHk3qfB/IhjFNRH1wWM=
 github.com/go-logr/logr v1.2.2/go.mod h1:jdQByPbusPIv2/zmleS9BjJVeZ6kBagPoEUsqbVz/1A=
