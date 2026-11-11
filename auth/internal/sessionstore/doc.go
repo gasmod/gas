@@ -29,7 +29,9 @@
 // taken. [Store.GetSession] reads one back, and
 // [Store.ListSessionsBySubject] every session of a subject, expired ones
 // included, newest first and by ID hash, descending, for a tie.
-// [Store.ExtendSession] sets a session's expiry and last active time.
+// [Store.ExtendSession] sets a session's expiry and last active time, and
+// [Store.TouchSession] its last active time alone, so that it cannot undo
+// a concurrent extension.
 // [Store.DeleteSession] deletes one session,
 // [Store.DeleteSessionOfSubject] one session only if it belongs to a
 // given subject, [Store.DeleteOtherSessionsOfSubject] every session of a

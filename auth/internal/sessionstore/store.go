@@ -229,6 +229,18 @@ func (s *Store) ExtendSession(
 	return nil
 }
 
+// TouchSession sets the session's last active time, leaving its expiry
+// as it is, so that it cannot undo a concurrent ExtendSession. A missing
+// session is not an error.
+func (s *Store) TouchSession(ctx context.Context, idHash string, lastActive time.Time) error {
+	err := s.q.touchSession(ctx, idHash, lastActive)
+	if err != nil {
+		return fmt.Errorf("%s: touch session: %w", storeName, err)
+	}
+
+	return nil
+}
+
 // DeleteSession deletes the session whose ID hashes to idHash. A missing
 // session is not an error.
 func (s *Store) DeleteSession(ctx context.Context, idHash string) error {

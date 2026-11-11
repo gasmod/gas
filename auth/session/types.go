@@ -15,7 +15,10 @@ type Session struct {
 	// ExpiresAt is when the session expires unless it is used and
 	// extended.
 	ExpiresAt time.Time
-	// LastActive is when the session's expiry was last set.
+	// LastActive is when the session was last used, as last recorded:
+	// when it was created or rotated, when Authenticate extended it, and,
+	// with ActivityInterval set, when Authenticate found the last record
+	// at least that old. See the package documentation.
 	LastActive time.Time
 	// Metadata holds the values stored with the session, which its
 	// principal carries.
@@ -41,7 +44,8 @@ type Info struct {
 	// ExpiresAt is when the session expires unless it is used and
 	// extended.
 	ExpiresAt time.Time
-	// LastActive is when the session's expiry was last set.
+	// LastActive is when the session was last used, as last recorded, as
+	// Session.LastActive describes.
 	LastActive time.Time
 	// Metadata holds the values stored with the session. It is never nil.
 	Metadata gas.BasePrincipalMetadata

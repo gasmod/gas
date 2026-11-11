@@ -175,6 +175,29 @@ func (e *env) setTimes(t *testing.T, id string, createdAt, expiresAt time.Time) 
 	require.Equal(t, int64(1), n)
 }
 
+// setLastActive sets the stored last active time of id.
+func (e *env) setLastActive(t *testing.T, id string, lastActive time.Time) {
+	t.Helper()
+
+	query := "UPDATE __gas_auth_sessions SET last_active = $1 WHERE id_hash = $2"
+	args := []any{lastActive, cryptoutil.SHA256Hex(id)}
+
+	switch e.backend {
+	case "sqlite":
+		query = "UPDATE __gas_auth_sessions SET last_active = ? WHERE id_hash = ?"
+		args[0] = sqlutil.FormatSQLiteTime(lastActive)
+	case "mysql":
+		query = "UPDATE __gas_auth_sessions SET last_active = ? WHERE id_hash = ?"
+	}
+
+	res, err := e.db.ExecContext(t.Context(), query, args...)
+	require.NoError(t, err)
+
+	n, err := res.RowsAffected()
+	require.NoError(t, err)
+	require.Equal(t, int64(1), n)
+}
+
 // startCleanup turns the cleanup on with interval and runs Init again,
 // which starts it.
 func (e *env) startCleanup(t *testing.T, interval time.Duration) {

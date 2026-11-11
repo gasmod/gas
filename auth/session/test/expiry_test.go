@@ -176,6 +176,116 @@ func TestAuthenticate_ExtendFailureLogged(t *testing.T) {
 	assert.NotContains(t, logged.Error(), sess.ID)
 }
 
+// With ActivityInterval set, Authenticate records the last activity once
+// the recorded one is at least the interval old, and leaves the expiry as
+// it is; a newer one is not written again.
+func TestAuthenticate_ActivityInterval(t *testing.T) {
+	testutil.ForEachBackend(
+		t,
+		func(t *testing.T, b testutil.Backend) { //nolint:thelper // a subtest body, not a helper
+			e := newEnv(t, b, func(s *session.Settings) { s.ActivityInterval = 5 * time.Minute })
+			sess := e.create(t, "alice", nil)
+
+			e.setLastActive(t, sess.ID, time.Now().Add(-10*time.Minute).UTC().Truncate(time.Second))
+
+			before := e.stored(t, sess.ID)
+			now := time.Now()
+
+			_, err := e.authenticate(t.Context(), sess.ID)
+			require.NoError(t, err)
+
+			after := e.stored(t, sess.ID)
+			assert.True(t, within(now, after.LastActive, 2*time.Second), after.LastActive)
+			assert.True(t, before.ExpiresAt.Equal(after.ExpiresAt), after.ExpiresAt)
+
+			infos, err := e.svc.List(t.Context(), "alice")
+			require.NoError(t, err)
+			require.Len(t, infos, 1)
+			assert.True(t, after.LastActive.Equal(infos[0].LastActive))
+
+			recent := time.Now().Add(-time.Minute).UTC().Truncate(time.Second)
+			e.setLastActive(t, sess.ID, recent)
+
+			_, err = e.authenticate(t.Context(), sess.ID)
+			require.NoError(t, err)
+			assert.True(t, recent.Equal(e.stored(t, sess.ID).LastActive))
+			assert.Empty(t, e.entries("warn", "session touch failed"))
+		},
+	)
+}
+
+// With ActivityInterval zero, the default, an old last activity is not
+// written when the session is not extended.
+func TestAuthenticate_ActivityIntervalOff(t *testing.T) {
+	t.Parallel()
+
+	e := sqliteEnv(t, nil)
+	sess := e.create(t, "alice", nil)
+	old := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+
+	e.setLastActive(t, sess.ID, old)
+
+	_, err := e.authenticate(t.Context(), sess.ID)
+	require.NoError(t, err)
+	assert.True(t, old.Equal(e.stored(t, sess.ID).LastActive))
+}
+
+// A session due for both an extension and an activity record is written
+// once, by the extension, which sets both.
+func TestAuthenticate_ActivityWithExtend(t *testing.T) {
+	t.Parallel()
+
+	e := sqliteEnv(t, func(s *session.Settings) {
+		s.SessionTTL = time.Hour
+		s.ActivityInterval = time.Minute
+	})
+	sess := e.create(t, "alice", nil)
+
+	e.setTimes(t, sess.ID, time.Now().Add(-time.Hour), time.Now().Add(5*time.Minute))
+	e.setLastActive(t, sess.ID, time.Now().Add(-10*time.Minute).UTC().Truncate(time.Second))
+
+	now := time.Now()
+
+	_, err := e.authenticate(t.Context(), sess.ID)
+	require.NoError(t, err)
+
+	after := e.stored(t, sess.ID)
+	assert.True(t, within(now.Add(time.Hour), after.ExpiresAt, 2*time.Second), after.ExpiresAt)
+	assert.True(t, within(now, after.LastActive, 2*time.Second), after.LastActive)
+}
+
+// A failed activity write does not fail authentication; it is logged at
+// warn level with its error.
+func TestAuthenticate_TouchFailureLogged(t *testing.T) {
+	t.Parallel()
+
+	e := sqliteEnv(t, func(s *session.Settings) { s.ActivityInterval = time.Minute })
+	sess := e.create(t, "alice", nil)
+
+	e.setLastActive(t, sess.ID, time.Now().Add(-time.Hour))
+
+	_, err := e.db.ExecContext(
+		t.Context(),
+		`CREATE TRIGGER no_update BEFORE UPDATE ON __gas_auth_sessions
+		BEGIN SELECT RAISE(ABORT, 'no updates'); END`,
+	)
+	require.NoError(t, err)
+
+	p, err := e.authenticate(t.Context(), sess.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "alice", p.Subject())
+
+	warns := e.entries("warn", "session touch failed")
+	require.Len(t, warns, 1)
+	assert.Equal(t, session.ServiceName, warns[0].Fields["service"])
+
+	logged, ok := warns[0].Fields["error"].(error)
+	require.True(t, ok)
+	require.ErrorContains(t, logged, "gas/auth/session-store: touch session: ")
+	assert.NotContains(t, logged.Error(), sess.ID)
+	assert.Empty(t, e.entries("warn", "session extend failed"))
+}
+
 // The cleanup deletes the sessions past their idle or absolute expiry,
 // keeps the rest, and logs how many it deleted at debug level. The
 // sessions are set up before the cleanup starts, so its first run sees

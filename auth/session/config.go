@@ -39,6 +39,9 @@ var (
 	// errCookieSameSite is the rule that SameSite is one of http.SameSite's
 	// constants.
 	errCookieSameSite = errors.New("cookie SameSite is not one of the http.SameSite values")
+	// errActivityInterval is the rule that the activity interval is not
+	// negative.
+	errActivityInterval = errors.New("activity interval must not be negative")
 )
 
 // Config is the session service's configuration, in the `session`
@@ -91,6 +94,14 @@ type Settings struct {
 	//
 	// Default: DefaultCleanupTimeout.
 	CleanupTimeout time.Duration
+	// ActivityInterval makes authentication record a session's last active
+	// time once at least this long has passed since it was last recorded,
+	// as described in the package documentation, so that LastActive is
+	// accurate to within it. Zero records it only when the expiry is set;
+	// a negative interval is a configuration error.
+	//
+	// Default: 0.
+	ActivityInterval time.Duration
 	// CookieSecure sets the cookie's Secure attribute.
 	//
 	// Default: true.
@@ -137,6 +148,10 @@ func checkRules(cfg *Config) error {
 
 	if s.SessionTTL > s.MaxLifetime {
 		return errTTLOverMax
+	}
+
+	if s.ActivityInterval < 0 {
+		return errActivityInterval
 	}
 
 	// net/http drops a cookie with an invalid name, and the invalid bytes

@@ -235,3 +235,19 @@ func (q *Queries) RotateSession(ctx context.Context, arg *RotateSessionParams) (
 	}
 	return result.RowsAffected()
 }
+
+const touchSession = `-- name: TouchSession :exec
+UPDATE __gas_auth_sessions
+SET last_active = $2
+WHERE id_hash = $1
+`
+
+type TouchSessionParams struct {
+	IDHash     string
+	LastActive time.Time
+}
+
+func (q *Queries) TouchSession(ctx context.Context, arg *TouchSessionParams) error {
+	_, err := q.db.ExecContext(ctx, touchSession, arg.IDHash, arg.LastActive)
+	return err
+}
