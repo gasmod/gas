@@ -117,18 +117,19 @@ func (a *postgresAdapter) deleteSession(ctx context.Context, idHash string) erro
 	return err
 }
 
-// deleteSessionOfSubject deletes one session if it is subject's.
+// deleteSessionOfSubject deletes one session if it is subject's and
+// returns how many rows it deleted.
 func (a *postgresAdapter) deleteSessionOfSubject(
 	ctx context.Context,
 	idHash, subject string,
-) error {
-	_, err := a.q.DeleteSessionOfSubject(ctx, &pgdb.DeleteSessionOfSubjectParams{
+) (int64, error) {
+	n, err := a.q.DeleteSessionOfSubject(ctx, &pgdb.DeleteSessionOfSubjectParams{
 		IDHash:  idHash,
 		Subject: subject,
 	})
 
 	//nolint:wrapcheck // Store.DeleteSessionOfSubject wraps it.
-	return err
+	return n, err
 }
 
 // deleteOtherSessionsOfSubject deletes a subject's sessions but one.
@@ -283,15 +284,19 @@ func (a *mysqlAdapter) deleteSession(ctx context.Context, idHash string) error {
 	return err
 }
 
-// deleteSessionOfSubject deletes one session if it is subject's.
-func (a *mysqlAdapter) deleteSessionOfSubject(ctx context.Context, idHash, subject string) error {
-	_, err := a.q.DeleteSessionOfSubject(ctx, &mydb.DeleteSessionOfSubjectParams{
+// deleteSessionOfSubject deletes one session if it is subject's and
+// returns how many rows it deleted.
+func (a *mysqlAdapter) deleteSessionOfSubject(
+	ctx context.Context,
+	idHash, subject string,
+) (int64, error) {
+	n, err := a.q.DeleteSessionOfSubject(ctx, &mydb.DeleteSessionOfSubjectParams{
 		IDHash:  idHash,
 		Subject: subject,
 	})
 
 	//nolint:wrapcheck // Store.DeleteSessionOfSubject wraps it.
-	return err
+	return n, err
 }
 
 // deleteOtherSessionsOfSubject deletes a subject's sessions but one.
@@ -481,15 +486,19 @@ func (a *sqliteAdapter) deleteSession(ctx context.Context, idHash string) error 
 	return err
 }
 
-// deleteSessionOfSubject deletes one session if it is subject's.
-func (a *sqliteAdapter) deleteSessionOfSubject(ctx context.Context, idHash, subject string) error {
-	_, err := a.q.DeleteSessionOfSubject(ctx, &litedb.DeleteSessionOfSubjectParams{
+// deleteSessionOfSubject deletes one session if it is subject's and
+// returns how many rows it deleted.
+func (a *sqliteAdapter) deleteSessionOfSubject(
+	ctx context.Context,
+	idHash, subject string,
+) (int64, error) {
+	n, err := a.q.DeleteSessionOfSubject(ctx, &litedb.DeleteSessionOfSubjectParams{
 		IDHash:  idHash,
 		Subject: subject,
 	})
 
 	//nolint:wrapcheck // Store.DeleteSessionOfSubject wraps it.
-	return err
+	return n, err
 }
 
 // deleteOtherSessionsOfSubject deletes a subject's sessions but one.

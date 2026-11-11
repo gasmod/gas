@@ -736,7 +736,8 @@ func TestList(t *testing.T) {
 }
 
 // RevokeByID deletes the session an Info.ID names only when it
-// belongs to the subject given, and revoking it again is not an error.
+// belongs to the subject given, and reports whether it did: revoking it
+// again, another subject's or an unknown ID is false and not an error.
 // An ID from before a rotation matches nothing, and the one List returns
 // after it revokes the rotated session.
 func TestRevokeByID(t *testing.T) {
@@ -750,13 +751,22 @@ func TestRevokeByID(t *testing.T) {
 			bob := e.create(t, "bob", nil)
 			id := cryptoutil.SHA256Hex(sess.ID)
 
-			require.NoError(t, e.svc.RevokeByID(ctx, "bob", id))
+			revoke := func(subject, infoID string, want bool) {
+				t.Helper()
+
+				deleted, err := e.svc.RevokeByID(ctx, subject, infoID)
+				require.NoError(t, err)
+				assert.Equal(t, want, deleted, "deleted")
+			}
+
+			revoke("bob", id, false)
 
 			_, err := e.authenticate(ctx, sess.ID)
 			require.NoError(t, err)
 
-			require.NoError(t, e.svc.RevokeByID(ctx, "alice", id))
-			require.NoError(t, e.svc.RevokeByID(ctx, "alice", id))
+			revoke("alice", id, true)
+			revoke("alice", id, false)
+			revoke("alice", cryptoutil.SHA256Hex("never issued"), false)
 
 			_, err = e.authenticate(ctx, sess.ID)
 			requireDenied(t, auth.ErrUnauthenticated, err)
@@ -768,7 +778,7 @@ func TestRevokeByID(t *testing.T) {
 
 			rotated, err := e.svc.Rotate(ctx, withCookie(e.cfg.Session.CookieName, other.ID))
 			require.NoError(t, err)
-			require.NoError(t, e.svc.RevokeByID(ctx, "alice", cryptoutil.SHA256Hex(other.ID)))
+			revoke("alice", cryptoutil.SHA256Hex(other.ID), false)
 
 			_, err = e.authenticate(ctx, rotated.ID)
 			require.NoError(t, err)
@@ -778,7 +788,7 @@ func TestRevokeByID(t *testing.T) {
 			require.Len(t, list, 1)
 			assert.Equal(t, cryptoutil.SHA256Hex(rotated.ID), list[0].ID)
 
-			require.NoError(t, e.svc.RevokeByID(ctx, "alice", list[0].ID))
+			revoke("alice", list[0].ID, true)
 
 			_, err = e.authenticate(ctx, rotated.ID)
 			requireDenied(t, auth.ErrUnauthenticated, err)
@@ -804,8 +814,9 @@ func TestRevokeByID_Invalid(t *testing.T) {
 		hash[:63] + "g",
 		hash + "0",
 	} {
-		err := e.svc.RevokeByID(t.Context(), "alice", bad)
+		deleted, err := e.svc.RevokeByID(t.Context(), "alice", bad)
 		require.ErrorIs(t, err, session.ErrInvalidSession, bad)
+		assert.False(t, deleted, bad)
 		require.EqualError(t, err, "gas/auth/session: revoke by id: invalid session")
 	}
 
@@ -939,9 +950,12 @@ func TestRevoke_DatabaseErrors(t *testing.T) {
 	require.EqualError(t, e.svc.RevokeAllByScheme(t.Context(), "alice", auth.SchemeSession),
 		"gas/auth/session: revoke all: gas/auth/session-store: delete sessions by subject: "+
 			"sql: database is closed")
-	require.EqualError(t, e.svc.RevokeByID(t.Context(), "alice", p.CredentialID()),
+
+	deleted, err := e.svc.RevokeByID(t.Context(), "alice", p.CredentialID())
+	require.EqualError(t, err,
 		"gas/auth/session: revoke by id: gas/auth/session-store: delete session of subject: "+
 			"sql: database is closed")
+	assert.False(t, deleted)
 	require.EqualError(t, e.svc.RevokeOthers(t.Context(), p),
 		"gas/auth/session: revoke others: gas/auth/session-store: "+
 			"delete other sessions of subject: sql: database is closed")
