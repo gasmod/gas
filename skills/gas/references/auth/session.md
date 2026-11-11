@@ -264,7 +264,11 @@ ID, is `ErrInvalidSession`.
 only if it belongs to the subject given, so that a user who sends
 back another user's ID deletes nothing. An ID that is not 64
 lowercase hex digits, such as a Session.ID, is `ErrInvalidSession`.
-An ID from before the session was rotated matches nothing.
+An ID from before the session was rotated matches nothing. It
+reports whether it deleted a session, false when the ID matched
+none of the subject's, whether the session is gone or another
+subject's, so an API can answer "not found" without listing the
+sessions first.
 - `Service.RevokeOthers` deletes every session of a principal's
 subject but the principal's own, for "sign out other devices", in
 one DELETE. It rejects a principal as Revoke does. If the

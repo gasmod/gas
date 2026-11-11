@@ -46,8 +46,8 @@ type querier interface {
 	listSessionsBySubject(ctx context.Context, subject string) ([]*sessionRow, error)
 	deleteSession(ctx context.Context, idHash string) error
 	// deleteSessionOfSubject deletes the row of idHash only if its subject
-	// is subject.
-	deleteSessionOfSubject(ctx context.Context, idHash, subject string) error
+	// is subject. It returns how many rows it deleted, 0 or 1.
+	deleteSessionOfSubject(ctx context.Context, idHash, subject string) (int64, error)
 	// deleteOtherSessionsOfSubject deletes the rows of subject but the
 	// one of keepIDHash.
 	deleteOtherSessionsOfSubject(ctx context.Context, subject, keepIDHash string) error

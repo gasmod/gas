@@ -33,8 +33,8 @@ type Provider interface {
 	// Service.List does.
 	List(ctx context.Context, subject string) ([]Info, error)
 	// RevokeByID deletes the session of subject that an Info.ID
-	// names, as Service.RevokeByID does.
-	RevokeByID(ctx context.Context, subject, id string) error
+	// names and reports whether it did, as Service.RevokeByID does.
+	RevokeByID(ctx context.Context, subject, id string) (bool, error)
 	// RevokeOthers deletes every session of the principal's subject but
 	// the principal's own, as Service.RevokeOthers does.
 	RevokeOthers(ctx context.Context, principal gas.Principal) error

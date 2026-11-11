@@ -433,27 +433,28 @@ func (s *Service) List(ctx context.Context, subject string) ([]Info, error) {
 
 // RevokeByID deletes the session whose Info.ID is id, only if it
 // belongs to subject, so that a user given the IDs of their own sessions
-// cannot revoke another user's. A session that is gone, or that belongs
-// to another subject, is not an error, and neither is an ID from before
-// the session was rotated, which matches nothing. An id that is not an
-// Info.ID, such as a Session.ID, is ErrInvalidSession and deletes
-// nothing.
-func (s *Service) RevokeByID(ctx context.Context, subject, id string) error {
+// cannot revoke another user's, and reports whether this call deleted
+// one. A session that is gone, one that belongs to another subject, an
+// ID from before the session was rotated and an ID that never named a
+// session all answer false and no error, alike, so the answer says
+// nothing about other subjects' sessions. An id that is not an Info.ID,
+// such as a Session.ID, is ErrInvalidSession and deletes nothing.
+func (s *Service) RevokeByID(ctx context.Context, subject, id string) (bool, error) {
 	st, err := s.current()
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	if !validIDHash(id) {
-		return fmt.Errorf("%s: revoke by id: %w", ServiceName, ErrInvalidSession)
+		return false, fmt.Errorf("%s: revoke by id: %w", ServiceName, ErrInvalidSession)
 	}
 
-	err = st.store.DeleteSessionOfSubject(ctx, id, subject)
+	deleted, err := st.store.DeleteSessionOfSubject(ctx, id, subject)
 	if err != nil {
-		return fmt.Errorf("%s: revoke by id: %w", ServiceName, err)
+		return false, fmt.Errorf("%s: revoke by id: %w", ServiceName, err)
 	}
 
-	return nil
+	return deleted, nil
 }
 
 // RevokeOthers deletes every session of the subject of a principal from

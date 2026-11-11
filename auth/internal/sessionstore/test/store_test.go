@@ -261,7 +261,8 @@ func TestStore_ListBySubject(t *testing.T) {
 }
 
 // DeleteSessionOfSubject deletes the session only when it is the
-// subject's, and deleting a missing one is not an error.
+// subject's and reports whether it did; deleting a missing one is false
+// and not an error.
 func TestStore_DeleteOfSubject(t *testing.T) {
 	testutil.ForEachBackend(
 		t,
@@ -272,13 +273,21 @@ func TestStore_DeleteOfSubject(t *testing.T) {
 			require.NoError(t, store.InsertSession(ctx, session("a1", "alice", time.Hour)))
 			require.NoError(t, store.InsertSession(ctx, session("b1", "bob", time.Hour)))
 
-			require.NoError(t, store.DeleteSessionOfSubject(ctx, "b1", "alice"))
+			deleteOf := func(idHash, subject string, want bool) {
+				t.Helper()
+
+				deleted, err := store.DeleteSessionOfSubject(ctx, idHash, subject)
+				require.NoError(t, err)
+				assert.Equal(t, want, deleted, "deleted")
+			}
+
+			deleteOf("b1", "alice", false)
 
 			_, err := store.GetSession(ctx, "b1")
 			require.NoError(t, err)
 
-			require.NoError(t, store.DeleteSessionOfSubject(ctx, "a1", "alice"))
-			require.NoError(t, store.DeleteSessionOfSubject(ctx, "a1", "alice"))
+			deleteOf("a1", "alice", true)
+			deleteOf("a1", "alice", false)
 
 			_, err = store.GetSession(ctx, "a1")
 			require.ErrorIs(t, err, sessionstore.ErrNotFound)
@@ -605,8 +614,10 @@ func TestStore_DatabaseErrors(t *testing.T) {
 		"gas/auth/session-store: delete session: ")
 	require.ErrorContains(t, store.DeleteSessionsBySubject(ctx, "y"),
 		"gas/auth/session-store: delete sessions by subject: ")
-	require.ErrorContains(t, store.DeleteSessionOfSubject(ctx, "x", "y"),
-		"gas/auth/session-store: delete session of subject: ")
+
+	deleted, err := store.DeleteSessionOfSubject(ctx, "x", "y")
+	require.ErrorContains(t, err, "gas/auth/session-store: delete session of subject: ")
+	assert.False(t, deleted)
 	require.ErrorContains(t, store.DeleteOtherSessionsOfSubject(ctx, "y", "x"),
 		"gas/auth/session-store: delete other sessions of subject: ")
 	require.ErrorContains(t, store.RotateSession(ctx, "x", session("z", "y", time.Hour)),

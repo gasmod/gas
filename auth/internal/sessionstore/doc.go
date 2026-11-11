@@ -34,9 +34,10 @@
 // a concurrent extension.
 // [Store.DeleteSession] deletes one session,
 // [Store.DeleteSessionOfSubject] one session only if it belongs to a
-// given subject, [Store.DeleteOtherSessionsOfSubject] every session of a
-// subject but one, and [Store.DeleteSessionsBySubject] every session of
-// a subject; none fails when there is nothing to delete.
+// given subject, and reports whether it did,
+// [Store.DeleteOtherSessionsOfSubject] every session of a subject but
+// one, and [Store.DeleteSessionsBySubject] every session of a subject;
+// none fails when there is nothing to delete.
 // [Store.DeleteExpiredSessions] deletes the sessions whose expiry is at
 // or before one time or whose creation time is at or before another, the
 // sessions that are expired at those times, and returns how many it

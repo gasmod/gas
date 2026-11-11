@@ -253,15 +253,18 @@ func (s *Store) DeleteSession(ctx context.Context, idHash string) error {
 }
 
 // DeleteSessionOfSubject deletes the session whose ID hashes to idHash,
-// only if it belongs to subject. A missing session, or one of another
-// subject, is not an error.
-func (s *Store) DeleteSessionOfSubject(ctx context.Context, idHash, subject string) error {
-	err := s.q.deleteSessionOfSubject(ctx, idHash, subject)
+// only if it belongs to subject, and reports whether it deleted one. A
+// missing session, or one of another subject, is false and not an error.
+func (s *Store) DeleteSessionOfSubject(
+	ctx context.Context,
+	idHash, subject string,
+) (bool, error) {
+	n, err := s.q.deleteSessionOfSubject(ctx, idHash, subject)
 	if err != nil {
-		return fmt.Errorf("%s: delete session of subject: %w", storeName, err)
+		return false, fmt.Errorf("%s: delete session of subject: %w", storeName, err)
 	}
 
-	return nil
+	return n > 0, nil
 }
 
 // DeleteOtherSessionsOfSubject deletes every session of subject but the
