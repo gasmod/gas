@@ -29,4 +29,13 @@ type Provider interface {
 	// ClearCookie writes a cookie that removes the session cookie, as
 	// Service.ClearCookie does.
 	ClearCookie(w http.ResponseWriter) error
+	// List returns the live sessions of subject, newest first, as
+	// Service.List does.
+	List(ctx context.Context, subject string) ([]Info, error)
+	// RevokeByID deletes the session of subject that an Info.ID
+	// names, as Service.RevokeByID does.
+	RevokeByID(ctx context.Context, subject, id string) error
+	// RevokeOthers deletes every session of the principal's subject but
+	// the principal's own, as Service.RevokeOthers does.
+	RevokeOthers(ctx context.Context, principal gas.Principal) error
 }

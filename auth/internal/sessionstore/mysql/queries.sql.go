@@ -31,6 +31,23 @@ func (q *Queries) DeleteExpiredSessions(ctx context.Context, arg *DeleteExpiredS
 	return result.RowsAffected()
 }
 
+const deleteOtherSessionsOfSubject = `-- name: DeleteOtherSessionsOfSubject :exec
+DELETE
+FROM __gas_auth_sessions
+WHERE subject = ?
+  AND id_hash <> ?
+`
+
+type DeleteOtherSessionsOfSubjectParams struct {
+	Subject string
+	IDHash  string
+}
+
+func (q *Queries) DeleteOtherSessionsOfSubject(ctx context.Context, arg *DeleteOtherSessionsOfSubjectParams) error {
+	_, err := q.db.ExecContext(ctx, deleteOtherSessionsOfSubject, arg.Subject, arg.IDHash)
+	return err
+}
+
 const deleteSession = `-- name: DeleteSession :execrows
 DELETE
 FROM __gas_auth_sessions
@@ -39,6 +56,26 @@ WHERE id_hash = ?
 
 func (q *Queries) DeleteSession(ctx context.Context, idHash string) (int64, error) {
 	result, err := q.db.ExecContext(ctx, deleteSession, idHash)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteSessionOfSubject = `-- name: DeleteSessionOfSubject :execrows
+DELETE
+FROM __gas_auth_sessions
+WHERE id_hash = ?
+  AND subject = ?
+`
+
+type DeleteSessionOfSubjectParams struct {
+	IDHash  string
+	Subject string
+}
+
+func (q *Queries) DeleteSessionOfSubject(ctx context.Context, arg *DeleteSessionOfSubjectParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteSessionOfSubject, arg.IDHash, arg.Subject)
 	if err != nil {
 		return 0, err
 	}
@@ -124,6 +161,45 @@ func (q *Queries) InsertSession(ctx context.Context, arg *InsertSessionParams) e
 		arg.LastActive,
 	)
 	return err
+}
+
+const listSessionsBySubject = `-- name: ListSessionsBySubject :many
+SELECT id_hash, subject, metadata, ip_address, user_agent, created_at, expires_at, last_active
+FROM __gas_auth_sessions
+WHERE subject = ?
+ORDER BY created_at DESC, id_hash DESC
+`
+
+func (q *Queries) ListSessionsBySubject(ctx context.Context, subject string) ([]*GasAuthSession, error) {
+	rows, err := q.db.QueryContext(ctx, listSessionsBySubject, subject)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []*GasAuthSession
+	for rows.Next() {
+		var i GasAuthSession
+		if err := rows.Scan(
+			&i.IDHash,
+			&i.Subject,
+			&i.Metadata,
+			&i.IpAddress,
+			&i.UserAgent,
+			&i.CreatedAt,
+			&i.ExpiresAt,
+			&i.LastActive,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, &i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const rotateSession = `-- name: RotateSession :execrows
