@@ -417,5 +417,7 @@ reads.
 
 `GAS_ENV` is the exception: the `EnvExtension` reads it from the process
 environment under that name, with no prefix. In `.env`, set the
-environment as `GASENV`, the key it is stored at. A `GAS_ENV` line there
-becomes the key `gas_env`, which nothing reads.
+environment as `GAS_ENV` or `GASENV`: the extension reads the keys
+`gasenv` and `gas_env`, and takes `gasenv` when both are set. The
+`GAS_ENV` variable in the process environment wins over either, as the
+process environment does for every other setting.
