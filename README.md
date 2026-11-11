@@ -1,6 +1,6 @@
 # Gas
 
-[![Test](https://github.com/gasmod/gas/actions/workflows/test.yml/badge.svg)](https://github.com/gasmod/gas/actions/workflows/test.yml) [![Go Reference](https://pkg.go.dev/badge/github.com/gasmod/gas.svg)](https://pkg.go.dev/github.com/gasmod/gas) ![Go Version](https://img.shields.io/github/go-mod/go-version/gasmod/gas) [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Test](https://github.com/gasmod/gas/actions/workflows/test.yml/badge.svg)](https://github.com/gasmod/gas/actions/workflows/test.yml) [![Go Reference](https://pkg.go.dev/badge/github.com/gasmod/gas.svg)](https://pkg.go.dev/github.com/gasmod/gas) ![Go Version](https://img.shields.io/github/go-mod/go-version/gasmod/gas) [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Gas on StartupScores](https://startupscores.com/badge/gas.svg?style=shield&v=combo&theme=dark)](https://startupscores.com/open-source/gas)
 
 **Gas is a modular Go framework for building micro-SaaS applications.** It provides the plumbing every product
 needs (dependency injection, routing, middleware, events, migrations, and service lifecycle management) so you
