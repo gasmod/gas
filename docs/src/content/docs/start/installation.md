@@ -5,7 +5,8 @@ description: Add Gas to a Go project, register modules and run your first app.
 
 ## Requirements
 
-- Go 1.27.3 or newer.
+- Go 1.27.0 or newer. Use 1.27.4 or newer in production: earlier 1.27
+  releases can crash an HTTP/1 server ([GO-2026-6859](https://pkg.go.dev/vuln/GO-2026-6859)).
 
 That is all the core needs. Some modules talk to outside services, such as
 PostgreSQL, Valkey or AWS, and only need them when you use those backends.
