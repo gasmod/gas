@@ -31,6 +31,9 @@ const (
 	maxUserAgentBytes = 512
 	// maxIPAddressBytes bounds the stored remote address.
 	maxIPAddressBytes = 255
+	// idHashLength is the length of an Info.ID: a SHA-256 in
+	// lowercase hex.
+	idHashLength = 64
 )
 
 // idLength is the length of a session ID: idBytes in unpadded URL-safe
@@ -68,6 +71,7 @@ var (
 	// ErrInvalidSession indicates that SetCookie or RevokeSession was
 	// given a nil session, or one that Create or Rotate did not issue: its
 	// ID is not a session ID or, for SetCookie, it has no creation time.
+	// RevokeByID returns it for an ID that is not an Info.ID.
 	ErrInvalidSession = errors.New("invalid session")
 )
 
@@ -388,6 +392,102 @@ func (s *Service) RevokeSession(ctx context.Context, sess *Session) error {
 	return nil
 }
 
+// List returns the live sessions of subject, newest first; sessions
+// created at the same stored time are ordered by ID, descending. Expired
+// sessions the cleanup has not deleted yet are left out. A subject
+// without live sessions gets an empty slice.
+func (s *Service) List(ctx context.Context, subject string) ([]Info, error) {
+	st, err := s.current()
+	if err != nil {
+		return nil, err
+	}
+
+	recs, err := st.store.ListSessionsBySubject(ctx, subject)
+	if err != nil {
+		return nil, fmt.Errorf("%s: list: %w", ServiceName, err)
+	}
+
+	now := time.Now()
+	out := make([]Info, 0, len(recs))
+
+	for i := range recs {
+		rec := &recs[i]
+		if st.expired(rec, now) {
+			continue
+		}
+
+		out = append(out, Info{
+			ID:         rec.IDHash,
+			Subject:    rec.Subject,
+			Metadata:   rec.Metadata,
+			IPAddress:  rec.IPAddress,
+			UserAgent:  rec.UserAgent,
+			CreatedAt:  rec.CreatedAt,
+			ExpiresAt:  rec.ExpiresAt,
+			LastActive: rec.LastActive,
+		})
+	}
+
+	return out, nil
+}
+
+// RevokeByID deletes the session whose Info.ID is id, only if it
+// belongs to subject, so that a user given the IDs of their own sessions
+// cannot revoke another user's. A session that is gone, or that belongs
+// to another subject, is not an error, and neither is an ID from before
+// the session was rotated, which matches nothing. An id that is not an
+// Info.ID, such as a Session.ID, is ErrInvalidSession and deletes
+// nothing.
+func (s *Service) RevokeByID(ctx context.Context, subject, id string) error {
+	st, err := s.current()
+	if err != nil {
+		return err
+	}
+
+	if !validIDHash(id) {
+		return fmt.Errorf("%s: revoke by id: %w", ServiceName, ErrInvalidSession)
+	}
+
+	err = st.store.DeleteSessionOfSubject(ctx, id, subject)
+	if err != nil {
+		return fmt.Errorf("%s: revoke by id: %w", ServiceName, err)
+	}
+
+	return nil
+}
+
+// RevokeOthers deletes every session of the subject of a principal from
+// Authenticate except the session the principal stands for, as a "sign
+// out other devices" action does, in one DELETE. The principal's own
+// session need not still exist, and a subject with no other sessions is
+// not an error. A nil principal is auth.ErrNilPrincipal, and one of
+// another scheme auth.ErrSchemeMismatch.
+//
+// The session kept is the one whose ID hash is the principal's
+// credential ID, so if that session is rotated before the DELETE runs,
+// its new ID hash no longer matches and it is deleted too.
+func (s *Service) RevokeOthers(ctx context.Context, principal gas.Principal) error {
+	st, err := s.current()
+	if err != nil {
+		return err
+	}
+
+	if isNil(principal) {
+		return fmt.Errorf("%s: revoke others: %w", ServiceName, auth.ErrNilPrincipal)
+	}
+
+	if principal.Scheme() != auth.SchemeSession {
+		return fmt.Errorf("%s: revoke others: %w", ServiceName, auth.ErrSchemeMismatch)
+	}
+
+	err = st.store.DeleteOtherSessionsOfSubject(ctx, principal.Subject(), principal.CredentialID())
+	if err != nil {
+		return fmt.Errorf("%s: revoke others: %w", ServiceName, err)
+	}
+
+	return nil
+}
+
 // RevokeAll deletes every session of subject. A subject with no sessions
 // is not an error.
 func (s *Service) RevokeAll(ctx context.Context, subject string) error {
@@ -487,11 +587,18 @@ func (st *state) lookup(
 
 	now := time.Now()
 
-	if !now.Before(sess.ExpiresAt) || !now.Before(sess.CreatedAt.Add(st.cfg.Session.MaxLifetime)) {
+	if st.expired(sess, now) {
 		return nil, time.Time{}, deny(auth.ErrCredentialsExpired)
 	}
 
 	return sess, now, nil
+}
+
+// expired reports whether sess is past its idle or its absolute expiry at
+// now.
+func (st *state) expired(sess *sessionstore.Session, now time.Time) bool {
+	return !now.Before(sess.ExpiresAt) ||
+		!now.Before(sess.CreatedAt.Add(st.cfg.Session.MaxLifetime))
 }
 
 // extend moves the session's expiry to SessionTTL from now, but not past
@@ -588,6 +695,23 @@ func validID(v string) bool {
 
 	for i := range len(v) {
 		if !isBase64URL(v[i]) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// validIDHash reports whether v has the form of an Info.ID:
+// idHashLength lowercase hex digits.
+func validIDHash(v string) bool {
+	if len(v) != idHashLength {
+		return false
+	}
+
+	for i := range len(v) {
+		c := v[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 			return false
 		}
 	}
