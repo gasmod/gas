@@ -3,7 +3,7 @@ module github.com/gasmod/gas/log
 go 1.27.4
 
 require (
-	github.com/gasmod/gas v0.7.0
+	github.com/gasmod/gas v0.8.0
 	github.com/rs/zerolog v1.35.1
 	github.com/stretchr/testify v1.12.1
 )

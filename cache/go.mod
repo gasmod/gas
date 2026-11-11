@@ -3,8 +3,8 @@ module github.com/gasmod/gas/cache
 go 1.27.4
 
 require (
-	github.com/gasmod/gas v0.7.0
-	github.com/gasmod/gas/config v0.7.0
+	github.com/gasmod/gas v0.8.0
+	github.com/gasmod/gas/config v0.8.0
 	github.com/go-playground/validator/v10 v10.30.6
 	github.com/stretchr/testify v1.12.1
 	github.com/testcontainers/testcontainers-go v0.45.0

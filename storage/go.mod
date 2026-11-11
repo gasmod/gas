@@ -9,8 +9,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.5.7
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.10
 	github.com/aws/smithy-go v1.28.9
-	github.com/gasmod/gas v0.7.0
-	github.com/gasmod/gas/config v0.7.0
+	github.com/gasmod/gas v0.8.0
+	github.com/gasmod/gas/config v0.8.0
 	github.com/go-playground/validator/v10 v10.30.6
 	github.com/stretchr/testify v1.12.1
 	github.com/testcontainers/testcontainers-go v0.45.0
