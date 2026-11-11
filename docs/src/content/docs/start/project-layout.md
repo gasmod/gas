@@ -326,8 +326,8 @@ that knows nothing of the app gets a package of its own under
 
 Unit tests sit beside the code they test. Tests of the whole app go through
 HTTP, as a client does: `test/harness` builds the app with `app.New`,
-starts it, and serves its handler from a test server, and `test/e2e` holds
-the tests.
+starts it, and serves its server from a listener the test owns, and
+`test/e2e` holds the tests.
 
 ```go title="test/harness/harness.go"
 cfg, err := app.LoadConfigFrom(configtest.NewStaticProvider(map[string]any{
@@ -344,15 +344,44 @@ if err := a.Start(t.Context()); err != nil {
 	t.Fatal(err)
 }
 
-srv := httptest.NewServer(a.Handler())
+l, err := net.Listen("tcp", "127.0.0.1:0")
+if err != nil {
+	t.Fatal(err)
+}
+
+srv := a.Server()
+served := make(chan error, 1)
+
+go func() { served <- srv.Serve(l) }()
+
+baseURL := "http://" + l.Addr().String()
 
 t.Cleanup(func() {
-	srv.Close()
-
 	if err := a.Stop(context.Background()); err != nil {
 		t.Error(err)
 	}
+
+	if err := <-served; !errors.Is(err, http.ErrServerClosed) {
+		t.Error(err)
+	}
 })
+```
+
+`a.Server()` is the `http.Server` the app builds from its `server`
+settings, so the tests meet the timeouts the app runs with; a test server
+around `a.Handler()` would have its own. The listener takes a free port, and
+`baseURL` is where the tests send their requests. `Stop` shuts the server
+down, and `Serve` then returns `http.ErrServerClosed`.
+
+A test reaches a registered service through the started app's container,
+under the type it was registered as, such as the contract the notes module
+implements, with `a` from the harness:
+
+```go
+notes, err := a.ServiceContainer().Resolve[contracts.NoteCounter]()
+if err != nil {
+	t.Fatal(err)
+}
 ```
 
 `cfg` comes from `app.LoadConfigFrom`, with the values the test needs in a
