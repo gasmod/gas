@@ -29,20 +29,25 @@ func TestRequireScheme_Match(t *testing.T) {
 }
 
 // Without a principal the request is unauthenticated: 401, not 403. A
-// typed nil principal counts as none.
+// typed nil principal counts as none. The response is the core's problem
+// details, or plain text for a client that asks for HTML.
 func TestRequireScheme_NoPrincipal401(t *testing.T) {
 	t.Parallel()
 
-	for _, r := range []*http.Request{nil, withPrincipal((*auth.BasePrincipal)(nil))} {
+	for _, r := range []*http.Request{newGet(), withPrincipal((*auth.BasePrincipal)(nil))} {
 		rec := serve(auth.RequireScheme(auth.SchemeJWT)(okHandler), r)
 
-		assert.Equal(t, http.StatusUnauthorized, rec.Code)
-		assert.Equal(t, "Unauthorized\n", rec.Body.String())
+		detail := assertProblem(t, rec, http.StatusUnauthorized, gas.CodeUnauthorized)
+		assert.Equal(t, "unauthorized", detail)
+
+		rec = serve(auth.RequireScheme(auth.SchemeJWT)(okHandler), acceptHTML(r))
+		assertPlainText(t, rec, http.StatusUnauthorized, "unauthorized")
 	}
 }
 
 // A principal of another scheme, case included, gets a 403 that names
-// neither scheme.
+// neither scheme, as problem details or, for a client that asks for HTML,
+// plain text.
 func TestRequireScheme_OtherScheme403(t *testing.T) {
 	t.Parallel()
 
@@ -50,8 +55,12 @@ func TestRequireScheme_OtherScheme403(t *testing.T) {
 		p := auth.NewPrincipal("alice", scheme, "c", nil)
 		rec := serve(auth.RequireScheme(auth.SchemeJWT)(okHandler), withPrincipal(p))
 
-		assert.Equal(t, http.StatusForbidden, rec.Code)
-		assert.Equal(t, "Forbidden\n", rec.Body.String())
+		detail := assertProblem(t, rec, http.StatusForbidden, gas.CodeForbidden)
+		assert.Equal(t, "forbidden", detail)
+		assert.NotContains(t, rec.Body.String(), "jwt")
+
+		rec = serve(auth.RequireScheme(auth.SchemeJWT)(okHandler), acceptHTML(withPrincipal(p)))
+		assertPlainText(t, rec, http.StatusForbidden, "forbidden")
 	}
 }
 
@@ -82,25 +91,27 @@ func TestRequireAuthorization_Allow(t *testing.T) {
 	assert.Equal(t, "reports", calls[0].Args[3])
 }
 
-// A denial, wrapped or not, is a 403.
+// A denial, wrapped or not, is a 403, as problem details or, for a client
+// that asks for HTML, plain text.
 func TestRequireAuthorization_Deny403(t *testing.T) {
 	t.Parallel()
 
 	p := auth.NewPrincipal("alice", auth.SchemeJWT, "c", nil)
 
 	for _, err := range []error{auth.ErrForbidden, fmt.Errorf("policy: %w", auth.ErrForbidden)} {
-		rec := serve(
-			auth.RequireAuthorization(allowing(err), "write", "reports")(okHandler),
-			withPrincipal(p),
-		)
+		h := auth.RequireAuthorization(allowing(err), "write", "reports")(okHandler)
 
-		assert.Equal(t, http.StatusForbidden, rec.Code)
-		assert.Equal(t, "Forbidden\n", rec.Body.String())
+		rec := serve(h, withPrincipal(p))
+		detail := assertProblem(t, rec, http.StatusForbidden, gas.CodeForbidden)
+		assert.Equal(t, "forbidden", detail)
+
+		rec = serve(h, acceptHTML(withPrincipal(p)))
+		assertPlainText(t, rec, http.StatusForbidden, "forbidden")
 	}
 }
 
-// Any other error is a 500, logged with the request's logger, whose body
-// says nothing about the cause.
+// Any other error is a 500, logged once with the request's logger, whose
+// body says nothing about the cause.
 func TestRequireAuthorization_Error500(t *testing.T) {
 	t.Parallel()
 
@@ -110,14 +121,21 @@ func TestRequireAuthorization_Error500(t *testing.T) {
 	r := withLogger(withPrincipal(p), &logger)
 
 	rec := serve(auth.RequireAuthorization(allowing(errDB), "read", "reports")(okHandler), r)
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-	assert.Equal(t, "Internal Server Error\n", rec.Body.String())
+	detail := assertProblem(t, rec, http.StatusInternalServerError, gas.CodeInternal)
+	assert.Equal(t, "internal server error", detail)
+	assert.NotContains(t, rec.Body.String(), "database")
 
 	entries := logger.Entries()
 	require.Len(t, entries, 1)
 	assert.Equal(t, "error", entries[0].Level)
 	assert.Equal(t, "authorization failed", entries[0].Msg)
 	assert.Equal(t, errDB, entries[0].Fields["error"])
+
+	rec = serve(
+		auth.RequireAuthorization(allowing(errDB), "read", "reports")(okHandler),
+		acceptHTML(withPrincipal(p)),
+	)
+	assertPlainText(t, rec, http.StatusInternalServerError, "internal server error")
 
 	rec = serve(
 		auth.RequireAuthorization(allowing(auth.ErrUnauthenticated), "read", "reports")(okHandler),
@@ -140,8 +158,7 @@ func TestRequireAuthorization_EndedContextNotLogged(t *testing.T) {
 	r := withLogger(newGet().WithContext(gas.WithPrincipal(ctx, p)), &logger)
 
 	rec := serve(auth.RequireAuthorization(allowing(errDB), "read", "reports")(okHandler), r)
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-	assert.Equal(t, "Internal Server Error\n", rec.Body.String())
+	assertProblem(t, rec, http.StatusInternalServerError, gas.CodeInternal)
 	assert.Empty(t, logger.Entries())
 }
 
@@ -152,8 +169,11 @@ func TestRequireAuthorization_NoPrincipal401(t *testing.T) {
 	a := allowing(nil)
 	rec := serve(auth.RequireAuthorization(a, "read", "reports")(okHandler), nil)
 
-	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assertProblem(t, rec, http.StatusUnauthorized, gas.CodeUnauthorized)
 	assert.Equal(t, 0, a.CallCount("Authorize"))
+
+	rec = serve(auth.RequireAuthorization(a, "read", "reports")(okHandler), acceptHTML(newGet()))
+	assertPlainText(t, rec, http.StatusUnauthorized, "unauthorized")
 }
 
 // The unset MockAuthorizer denies, so a test that forgets to set it fails
