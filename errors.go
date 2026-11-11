@@ -49,7 +49,10 @@ var ErrInvalidProblemTypeBase = errors.New("gas: invalid problem type base")
 // field in the request body, such as `#/email` or `#/items/0/name`. Each
 // name in it is the one the client sent: the field's `json` tag name,
 // else its `form` tag name, else, when it has neither or its `json` tag
-// is `-`, its Go name.
+// is `-`, its Go name. An embedded struct, or pointer to one, with
+// neither name adds no name, since encoding/json flattens its fields into
+// the enclosing object: an error on such a field at the root, such as a
+// `required` embedded pointer, points at the whole body, `#`.
 //
 // Field order is the JSON key order of the item.
 type FieldError struct {

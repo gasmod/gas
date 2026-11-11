@@ -387,7 +387,7 @@ func (c *reqContext) validateStruct(dest any) error {
 	}
 
 	e := Unprocessable("request validation failed").WithCause(err)
-	if fields, ok := validationFieldErrors(err); ok {
+	if fields, ok := validationFieldErrors(err, dest); ok {
 		e.Fields = fields
 	}
 
