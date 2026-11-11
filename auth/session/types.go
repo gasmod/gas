@@ -7,7 +7,7 @@ import (
 )
 
 // Session is a session that Create or Rotate issued, as described in the
-// package documentation. Its ID is the secret the cookie carries.
+// package documentation. Its ID is the secret the client sends back.
 type Session struct {
 	// CreatedAt is when the session was created. The session expires at
 	// CreatedAt plus the MaxLifetime setting at the latest.
@@ -23,8 +23,9 @@ type Session struct {
 	// Metadata holds the values stored with the session, which its
 	// principal carries.
 	Metadata gas.BasePrincipalMetadata
-	// ID is the session ID, the secret the cookie carries. It is stored
-	// nowhere else.
+	// ID is the session ID, the secret the client sends back in the
+	// cookie or, with AcceptBearer, in a Bearer header. The service
+	// stores only its hash.
 	ID string
 	// Subject is the user or client the session belongs to.
 	Subject string
@@ -51,7 +52,7 @@ type Info struct {
 	Metadata gas.BasePrincipalMetadata
 	// ID identifies the session: the SHA-256 hex of its session ID, which
 	// is also the CredentialID of the principal Authenticate returns for
-	// it. It is not the secret the cookie carries, and Rotate changes it.
+	// it. It is not the session ID, and Rotate changes it.
 	ID string
 	// Subject is the user or client the session belongs to.
 	Subject string

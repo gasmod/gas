@@ -172,7 +172,7 @@ INFO server started environment=development addr=0.0.0.0:8080
 - [`github.com/gasmod/gas/auth/apikey`](references/auth/apikey.md): Package apikey authenticates HTTP requests by API key: a Service generates random keys, stores only their SHA-256 hashes in a SQL database, and turns a key presented in a request header into a gas.Principal with the key's subject, scopes and metadata.
 - [`github.com/gasmod/gas/auth/authtest`](references/auth/authtest.md): Package authtest holds mocks of the interfaces in package auth, for tests of code that authenticates, authorizes or revokes: MockAuthenticator, MockAuthorizer and MockRevoker.
 - [`github.com/gasmod/gas/auth/jwt`](references/auth/jwt.md): Package jwt signs and verifies JSON Web Tokens with HS256 or RS256, and authenticates requests that carry one as a bearer token.
-- [`github.com/gasmod/gas/auth/session`](references/auth/session.md): Package session authenticates HTTP requests by a session cookie, with the sessions kept server-side in a SQL database.
+- [`github.com/gasmod/gas/auth/session`](references/auth/session.md): Package session authenticates HTTP requests by a session cookie, or by an `Authorization: Bearer` header for clients that are not browsers, with the sessions kept server-side in a SQL database.
 - [`github.com/gasmod/gas/auth/token`](references/auth/token.md): Package token issues single-use, time-limited tokens, for links such as a password reset, an email verification, a magic login link or an invite.
 
 ### cache

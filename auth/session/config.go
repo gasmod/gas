@@ -115,6 +115,13 @@ type Settings struct {
 	//
 	// Default: true.
 	ExtendOnAccess bool
+	// AcceptBearer makes Authenticate and Rotate also read the session ID
+	// from an `Authorization: Bearer` header, for clients that are not
+	// browsers, as described in the package documentation. The cookie
+	// takes precedence when a request carries both.
+	//
+	// Default: false.
+	AcceptBearer bool
 }
 
 // DefaultConfig returns a new Config holding the defaults.
