@@ -368,6 +368,30 @@ func TestStore_DeleteExpired(t *testing.T) {
 	)
 }
 
+// TouchSession sets the session's last active time and nothing else, and
+// touching a missing session is not an error.
+func TestStore_Touch(t *testing.T) {
+	testutil.ForEachBackend(
+		t,
+		func(t *testing.T, b testutil.Backend) { //nolint:thelper // a subtest body, not a helper
+			store := newStore(t, b)
+			ctx := t.Context()
+			s := session("hash-1", "alice", time.Hour)
+
+			require.NoError(t, store.InsertSession(ctx, s))
+
+			s.LastActive = s.LastActive.Add(time.Minute)
+
+			require.NoError(t, store.TouchSession(ctx, "hash-1", s.LastActive))
+			require.NoError(t, store.TouchSession(ctx, "missing", s.LastActive))
+
+			got, err := store.GetSession(ctx, "hash-1")
+			require.NoError(t, err)
+			assertSession(t, s, got)
+		},
+	)
+}
+
 // RotateSession moves the session to the new ID hash, sets its address,
 // User-Agent, expiry and last active time, and keeps its subject,
 // metadata and creation time; with the old hash gone it changes nothing
@@ -575,6 +599,8 @@ func TestStore_DatabaseErrors(t *testing.T) {
 		"gas/auth/session-store: insert session: ")
 	require.ErrorContains(t, store.ExtendSession(ctx, "x", time.Now(), time.Now()),
 		"gas/auth/session-store: extend session: ")
+	require.ErrorContains(t, store.TouchSession(ctx, "x", time.Now()),
+		"gas/auth/session-store: touch session: ")
 	require.ErrorContains(t, store.DeleteSession(ctx, "x"),
 		"gas/auth/session-store: delete session: ")
 	require.ErrorContains(t, store.DeleteSessionsBySubject(ctx, "y"),

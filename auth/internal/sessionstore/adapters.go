@@ -78,6 +78,19 @@ func (a *postgresAdapter) extendSession(
 	})
 }
 
+// touchSession sets a session's last active time.
+func (a *postgresAdapter) touchSession(
+	ctx context.Context,
+	idHash string,
+	lastActive time.Time,
+) error {
+	//nolint:wrapcheck // Store.TouchSession wraps it.
+	return a.q.TouchSession(ctx, &pgdb.TouchSessionParams{
+		IDHash:     idHash,
+		LastActive: lastActive,
+	})
+}
+
 // rotateSession moves a session to a new ID hash and sets what a
 // rotation changes.
 func (a *postgresAdapter) rotateSession(
@@ -228,6 +241,19 @@ func (a *mysqlAdapter) extendSession(
 		ExpiresAt:  sqlutil.TruncateToSecond(expiresAt),
 		LastActive: sqlutil.TruncateToSecond(lastActive),
 		IDHash:     idHash,
+	})
+}
+
+// touchSession sets a session's last active time.
+func (a *mysqlAdapter) touchSession(
+	ctx context.Context,
+	idHash string,
+	lastActive time.Time,
+) error {
+	//nolint:wrapcheck // Store.TouchSession wraps it.
+	return a.q.TouchSession(ctx, &mydb.TouchSessionParams{
+		IDHash:     idHash,
+		LastActive: sqlutil.TruncateToSecond(lastActive),
 	})
 }
 
@@ -413,6 +439,19 @@ func (a *sqliteAdapter) extendSession(
 		ExpiresAt:  sqlutil.FormatSQLiteTime(expiresAt),
 		LastActive: sqlutil.FormatSQLiteTime(lastActive),
 		IDHash:     idHash,
+	})
+}
+
+// touchSession sets a session's last active time.
+func (a *sqliteAdapter) touchSession(
+	ctx context.Context,
+	idHash string,
+	lastActive time.Time,
+) error {
+	//nolint:wrapcheck // Store.TouchSession wraps it.
+	return a.q.TouchSession(ctx, &litedb.TouchSessionParams{
+		IDHash:     idHash,
+		LastActive: sqlutil.FormatSQLiteTime(lastActive),
 	})
 }
 

@@ -67,6 +67,11 @@ var configRuleCases = []struct {
 		want:   "invalid config: cleanup interval must not be negative",
 	},
 	{
+		name:   "negative activity interval",
+		mutate: func(s *session.Settings) { s.ActivityInterval = -time.Second },
+		want:   "invalid config: activity interval must not be negative",
+	},
+	{
 		name:   "ttl over max",
 		mutate: func(s *session.Settings) { s.SessionTTL = s.MaxLifetime + time.Second },
 		want:   "invalid config: session TTL must not exceed the max lifetime",

@@ -102,6 +102,30 @@
 // `session extend failed` and the error under `error`, unless the
 // request's context has ended, as when the client went away.
 //
+// # Last activity
+//
+// [Session].LastActive, and an [Info]'s, is when the session was last
+// used, as last recorded. Create and Rotate record it, and so does every
+// extension on access. Without more, a session in steady use is recorded
+// about once per half SessionTTL, every 12 hours with the defaults.
+//
+// ActivityInterval makes it finer: when Authenticate accepts a session
+// whose last activity was recorded at least ActivityInterval ago, and
+// does not extend it, it records now as its last activity, with an UPDATE
+// of that column alone, so that it never undoes a concurrent extension.
+// LastActive is then less than ActivityInterval behind the last request
+// Authenticate accepted for the session, unless a write failed, enough for
+// "active 5 minutes ago" on a page of the user's sessions. A session in
+// steady use costs one write per interval: a shorter one is more accurate
+// and writes more. Zero, the default, turns it off; a negative interval
+// is a configuration error.
+//
+// The write is best-effort, as the extension's is: when it fails,
+// Authenticate still succeeds, and the error is logged at warn level with
+// the message `session touch failed` and the error under `error`, unless
+// the request's context has ended. On MySQL and SQLite, which keep whole
+// seconds, the last activity may be recorded up to a second early.
+//
 // # Cleanup
 //
 // Expired sessions are deleted by a cleanup that runs every
@@ -287,6 +311,7 @@
 //     MaxLifetime.
 //   - CleanupInterval is not negative.
 //   - CleanupTimeout is positive when CleanupInterval is.
+//   - ActivityInterval is not negative.
 //
 // A configuration given to WithConfig is checked as given: no zero
 // setting in it is replaced by its default, so a Config literal that
@@ -305,6 +330,7 @@
 //   - ExtendOnAccess: true.
 //   - CleanupInterval: [DefaultCleanupInterval] (1 hour).
 //   - CleanupTimeout: [DefaultCleanupTimeout] (30 seconds).
+//   - ActivityInterval: 0, off.
 //
 // [Service.Config] returns a copy of the configuration the last
 // successful Init resolved, defaults included, or the zero Config before

@@ -603,31 +603,57 @@ func (st *state) expired(sess *sessionstore.Session, now time.Time) bool {
 
 // extend moves the session's expiry to SessionTTL from now, but not past
 // its absolute expiry, when ExtendOnAccess is on and less than half of
-// SessionTTL remains. A failed write is logged, not returned, unless the
-// request's context ended.
+// SessionTTL remains, which also records now as its last active time.
+// Otherwise it records only the last active time, when ActivityInterval
+// is set and at least that long has passed since the last one. A failed
+// write is logged, not returned, unless the request's context ended.
 func (s *Service) extend(
 	ctx context.Context,
 	st *state,
 	sess *sessionstore.Session,
 	now time.Time,
 ) {
+	if expiresAt, ok := st.extendedExpiry(sess, now); ok {
+		err := st.store.ExtendSession(ctx, sess.IDHash, expiresAt, now)
+		if err != nil && ctx.Err() == nil {
+			s.logger.Warn("session extend failed").
+				Str("service", ServiceName).
+				Err("error", err).
+				Send()
+		}
+
+		return
+	}
+
+	interval := st.cfg.Session.ActivityInterval
+	if interval <= 0 || now.Sub(sess.LastActive) < interval {
+		return
+	}
+
+	// Only the last active time, so that a concurrent extension's expiry
+	// is not overwritten with the one read here.
+	err := st.store.TouchSession(ctx, sess.IDHash, now)
+	if err != nil && ctx.Err() == nil {
+		s.logger.Warn("session touch failed").Str("service", ServiceName).Err("error", err).Send()
+	}
+}
+
+// extendedExpiry returns the idle expiry that extending sess at now
+// moves it to, and whether extend moves it: ExtendOnAccess is on, less
+// than half of SessionTTL remains, and the new expiry, capped by the
+// absolute one, is later than the stored one.
+func (st *state) extendedExpiry(sess *sessionstore.Session, now time.Time) (time.Time, bool) {
 	cfg := st.cfg
 	if !cfg.Session.ExtendOnAccess || sess.ExpiresAt.Sub(now) >= cfg.Session.SessionTTL/2 {
-		return
+		return time.Time{}, false
 	}
 
 	expiresAt := earlier(
 		now.Add(cfg.Session.SessionTTL),
 		sess.CreatedAt.Add(cfg.Session.MaxLifetime),
 	)
-	if !expiresAt.After(sess.ExpiresAt) {
-		return
-	}
 
-	err := st.store.ExtendSession(ctx, sess.IDHash, expiresAt, now)
-	if err != nil && ctx.Err() == nil {
-		s.logger.Warn("session extend failed").Str("service", ServiceName).Err("error", err).Send()
-	}
+	return expiresAt, expiresAt.After(sess.ExpiresAt)
 }
 
 // deleteExpired deletes from store the sessions past their idle or

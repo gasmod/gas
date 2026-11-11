@@ -13,6 +13,11 @@ SET expires_at  = ?,
     last_active = ?
 WHERE id_hash = ?;
 
+-- name: TouchSession :exec
+UPDATE __gas_auth_sessions
+SET last_active = ?
+WHERE id_hash = ?;
+
 -- name: RotateSession :execrows
 UPDATE __gas_auth_sessions
 SET id_hash     = sqlc.arg(new_id_hash),

@@ -29,10 +29,14 @@ type sessionRow struct {
 // querier is what each dialect adapter implements over its sqlc queries.
 // getSession returns sql.ErrNoRows, unwrapped, when no row matches; the
 // Store wraps every error.
+//
+//nolint:interfacebloat // one method per query, as the Store's methods are.
 type querier interface {
 	getSession(ctx context.Context, idHash string) (*sessionRow, error)
 	insertSession(ctx context.Context, row *sessionRow) error
 	extendSession(ctx context.Context, idHash string, expiresAt, lastActive time.Time) error
+	// touchSession sets the row's last active time and nothing else.
+	touchSession(ctx context.Context, idHash string, lastActive time.Time) error
 	// rotateSession moves the row of oldIDHash to row.IDHash and sets its
 	// address, User-Agent, expiry and last active time to row's. It
 	// returns how many rows it changed, 0 or 1.

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **session: `Settings.ActivityInterval`** makes `Authenticate` record a
+  session's `LastActive` once the recorded one is at least that old, so
+  it is less than the interval behind the session's last accepted
+  request, enough for "active 5 minutes ago". Without it, `LastActive`
+  moves only when the session is created, rotated or extended, about
+  once per half `SessionTTL`. The write sets `last_active` alone, so it
+  never undoes a concurrent extension, and a failed one is logged as
+  `session touch failed`. Zero, the default, keeps the previous
+  behavior; a negative interval fails `Init`.
+
 ## [0.7.0] - 2026-11-11
 
 ### Added
