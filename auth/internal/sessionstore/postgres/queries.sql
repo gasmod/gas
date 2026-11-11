@@ -27,6 +27,24 @@ DELETE
 FROM __gas_auth_sessions
 WHERE id_hash = $1;
 
+-- name: ListSessionsBySubject :many
+SELECT id_hash, subject, metadata, ip_address, user_agent, created_at, expires_at, last_active
+FROM __gas_auth_sessions
+WHERE subject = $1
+ORDER BY created_at DESC, id_hash DESC;
+
+-- name: DeleteSessionOfSubject :execrows
+DELETE
+FROM __gas_auth_sessions
+WHERE id_hash = $1
+  AND subject = $2;
+
+-- name: DeleteOtherSessionsOfSubject :exec
+DELETE
+FROM __gas_auth_sessions
+WHERE subject = $1
+  AND id_hash <> $2;
+
 -- name: DeleteSessionsBySubject :exec
 DELETE
 FROM __gas_auth_sessions

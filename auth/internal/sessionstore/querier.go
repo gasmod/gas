@@ -37,7 +37,16 @@ type querier interface {
 	// address, User-Agent, expiry and last active time to row's. It
 	// returns how many rows it changed, 0 or 1.
 	rotateSession(ctx context.Context, oldIDHash string, row *sessionRow) (int64, error)
+	// listSessionsBySubject returns the rows of subject, newest first,
+	// rows created at the same stored time ordered by ID hash, descending.
+	listSessionsBySubject(ctx context.Context, subject string) ([]*sessionRow, error)
 	deleteSession(ctx context.Context, idHash string) error
+	// deleteSessionOfSubject deletes the row of idHash only if its subject
+	// is subject.
+	deleteSessionOfSubject(ctx context.Context, idHash, subject string) error
+	// deleteOtherSessionsOfSubject deletes the rows of subject but the
+	// one of keepIDHash.
+	deleteOtherSessionsOfSubject(ctx context.Context, subject, keepIDHash string) error
 	deleteSessionsBySubject(ctx context.Context, subject string) error
 	deleteExpiredSessions(
 		ctx context.Context,

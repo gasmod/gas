@@ -670,6 +670,220 @@ func TestRevokeSession_Invalid(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// List returns the subject's live sessions, newest first, each with the
+// hash of its session ID as its ID, which is its principal's credential
+// ID. Other subjects' sessions, and sessions past their idle or absolute
+// expiry, are left out, and a subject without sessions gets an empty
+// slice, not nil.
+func TestList(t *testing.T) {
+	testutil.ForEachBackend(
+		t,
+		func(t *testing.T, b testutil.Backend) { //nolint:thelper // a subtest body, not a helper
+			e := newEnv(t, b, nil)
+			ctx := t.Context()
+			now := time.Now().UTC().Truncate(time.Second)
+
+			older := e.create(t, "alice", gas.BasePrincipalMetadata{"device": "laptop"})
+			newer := e.create(t, "alice", nil)
+			idle := e.create(t, "alice", nil)
+			old := e.create(t, "alice", nil)
+
+			e.create(t, "bob", nil)
+
+			e.setTimes(t, older.ID, now.Add(-2*time.Hour), now.Add(time.Hour))
+			e.setTimes(t, newer.ID, now.Add(-time.Hour), now.Add(time.Hour))
+			e.setTimes(t, idle.ID, now.Add(-time.Hour), now.Add(-time.Second))
+			e.setTimes(t, old.ID, now.Add(-session.DefaultMaxLifetime), now.Add(time.Hour))
+
+			got, err := e.svc.List(ctx, "alice")
+			require.NoError(t, err)
+			require.Len(t, got, 2)
+
+			p, err := e.authenticate(ctx, newer.ID)
+			require.NoError(t, err)
+			assert.Equal(t, p.CredentialID(), got[0].ID)
+			assert.Equal(t, gas.BasePrincipalMetadata{}, got[0].Metadata)
+
+			info := got[1]
+			assert.Equal(t, cryptoutil.SHA256Hex(older.ID), info.ID)
+			assert.Equal(t, "alice", info.Subject)
+			assert.Equal(t, gas.BasePrincipalMetadata{"device": "laptop"}, info.Metadata)
+			assert.Equal(t, remoteAddr, info.IPAddress)
+			assert.Equal(t, "test-agent", info.UserAgent)
+			assert.True(
+				t,
+				info.CreatedAt.Equal(now.Add(-2*time.Hour)),
+				"created_at %v",
+				info.CreatedAt,
+			)
+			assert.True(
+				t,
+				info.ExpiresAt.Equal(now.Add(time.Hour)),
+				"expires_at %v",
+				info.ExpiresAt,
+			)
+
+			for _, info := range got {
+				assert.NotContains(t, []string{older.ID, newer.ID}, info.ID)
+			}
+
+			empty, err := e.svc.List(ctx, "nobody")
+			require.NoError(t, err)
+			assert.NotNil(t, empty)
+			assert.Empty(t, empty)
+		},
+	)
+}
+
+// RevokeByID deletes the session an Info.ID names only when it
+// belongs to the subject given, and revoking it again is not an error.
+// An ID from before a rotation matches nothing, and the one List returns
+// after it revokes the rotated session.
+func TestRevokeByID(t *testing.T) {
+	testutil.ForEachBackend(
+		t,
+		func(t *testing.T, b testutil.Backend) { //nolint:thelper // a subtest body, not a helper
+			e := newEnv(t, b, nil)
+			ctx := t.Context()
+			sess := e.create(t, "alice", nil)
+			other := e.create(t, "alice", nil)
+			bob := e.create(t, "bob", nil)
+			id := cryptoutil.SHA256Hex(sess.ID)
+
+			require.NoError(t, e.svc.RevokeByID(ctx, "bob", id))
+
+			_, err := e.authenticate(ctx, sess.ID)
+			require.NoError(t, err)
+
+			require.NoError(t, e.svc.RevokeByID(ctx, "alice", id))
+			require.NoError(t, e.svc.RevokeByID(ctx, "alice", id))
+
+			_, err = e.authenticate(ctx, sess.ID)
+			requireDenied(t, auth.ErrUnauthenticated, err)
+
+			for _, live := range []string{other.ID, bob.ID} {
+				_, err = e.authenticate(ctx, live)
+				require.NoError(t, err)
+			}
+
+			rotated, err := e.svc.Rotate(ctx, withCookie(e.cfg.Session.CookieName, other.ID))
+			require.NoError(t, err)
+			require.NoError(t, e.svc.RevokeByID(ctx, "alice", cryptoutil.SHA256Hex(other.ID)))
+
+			_, err = e.authenticate(ctx, rotated.ID)
+			require.NoError(t, err)
+
+			list, err := e.svc.List(ctx, "alice")
+			require.NoError(t, err)
+			require.Len(t, list, 1)
+			assert.Equal(t, cryptoutil.SHA256Hex(rotated.ID), list[0].ID)
+
+			require.NoError(t, e.svc.RevokeByID(ctx, "alice", list[0].ID))
+
+			_, err = e.authenticate(ctx, rotated.ID)
+			requireDenied(t, auth.ErrUnauthenticated, err)
+		},
+	)
+}
+
+// RevokeByID rejects an ID that is not an Info.ID with
+// ErrInvalidSession, deleting nothing; a Session.ID, the secret, is not
+// one.
+func TestRevokeByID_Invalid(t *testing.T) {
+	t.Parallel()
+
+	e := sqliteEnv(t, nil)
+	sess := e.create(t, "alice", nil)
+	hash := cryptoutil.SHA256Hex(sess.ID)
+
+	for _, bad := range []string{
+		"",
+		"short",
+		sess.ID,
+		strings.ToUpper(hash),
+		hash[:63] + "g",
+		hash + "0",
+	} {
+		err := e.svc.RevokeByID(t.Context(), "alice", bad)
+		require.ErrorIs(t, err, session.ErrInvalidSession, bad)
+		require.EqualError(t, err, "gas/auth/session: revoke by id: invalid session")
+	}
+
+	_, err := e.authenticate(t.Context(), sess.ID)
+	require.NoError(t, err)
+}
+
+// RevokeOthers deletes every session of the principal's subject but the
+// principal's own, and no other subject's; again, with nothing left to
+// delete, it is not an error, and it works when the principal's own
+// session is gone.
+func TestRevokeOthers(t *testing.T) {
+	testutil.ForEachBackend(
+		t,
+		func(t *testing.T, b testutil.Backend) { //nolint:thelper // a subtest body, not a helper
+			e := newEnv(t, b, nil)
+			ctx := t.Context()
+			current := e.create(t, "alice", nil)
+			others := []*session.Session{e.create(t, "alice", nil), e.create(t, "alice", nil)}
+			bob := e.create(t, "bob", nil)
+
+			p, err := e.authenticate(ctx, current.ID)
+			require.NoError(t, err)
+
+			require.NoError(t, e.svc.RevokeOthers(ctx, p))
+			require.NoError(t, e.svc.RevokeOthers(ctx, p))
+
+			_, err = e.authenticate(ctx, current.ID)
+			require.NoError(t, err)
+
+			for _, sess := range others {
+				_, err = e.authenticate(ctx, sess.ID)
+				requireDenied(t, auth.ErrUnauthenticated, err)
+			}
+
+			_, err = e.authenticate(ctx, bob.ID)
+			require.NoError(t, err)
+
+			later := e.create(t, "alice", nil)
+
+			require.NoError(t, e.svc.RevokeSession(ctx, current))
+			require.NoError(t, e.svc.RevokeOthers(ctx, p))
+
+			_, err = e.authenticate(ctx, later.ID)
+			requireDenied(t, auth.ErrUnauthenticated, err)
+		},
+	)
+}
+
+// RevokeOthers rejects a nil principal and a nil pointer with
+// ErrNilPrincipal, and a principal of another scheme with
+// ErrSchemeMismatch, deleting nothing.
+func TestRevokeOthers_BadPrincipal(t *testing.T) {
+	t.Parallel()
+
+	e := sqliteEnv(t, nil)
+	sess := e.create(t, "alice", nil)
+	other := e.create(t, "alice", nil)
+
+	var typedNil *auth.BasePrincipal
+
+	for _, p := range []gas.Principal{nil, typedNil} {
+		err := e.svc.RevokeOthers(t.Context(), p)
+		require.ErrorIs(t, err, auth.ErrNilPrincipal)
+		require.EqualError(t, err, "gas/auth/session: revoke others: nil principal")
+	}
+
+	err := e.svc.RevokeOthers(t.Context(),
+		auth.NewPrincipal("alice", auth.SchemeJWT, cryptoutil.SHA256Hex(sess.ID), nil))
+	require.ErrorIs(t, err, auth.ErrSchemeMismatch)
+	require.EqualError(t, err, "gas/auth/session: revoke others: principal scheme mismatch")
+
+	for _, id := range []string{sess.ID, other.ID} {
+		_, err = e.authenticate(t.Context(), id)
+		require.NoError(t, err)
+	}
+}
+
 // RevokeAll deletes every session of a subject and no other, and
 // RevokeAllByScheme does so only for the session scheme.
 func TestRevokeAll(t *testing.T) {
@@ -703,7 +917,7 @@ func TestRevokeAll(t *testing.T) {
 	requireDenied(t, auth.ErrUnauthenticated, err)
 }
 
-// Revocation errors from the database carry the operation.
+// Revocation and listing errors from the database carry the operation.
 func TestRevoke_DatabaseErrors(t *testing.T) {
 	t.Parallel()
 
@@ -725,6 +939,18 @@ func TestRevoke_DatabaseErrors(t *testing.T) {
 	require.EqualError(t, e.svc.RevokeAllByScheme(t.Context(), "alice", auth.SchemeSession),
 		"gas/auth/session: revoke all: gas/auth/session-store: delete sessions by subject: "+
 			"sql: database is closed")
+	require.EqualError(t, e.svc.RevokeByID(t.Context(), "alice", p.CredentialID()),
+		"gas/auth/session: revoke by id: gas/auth/session-store: delete session of subject: "+
+			"sql: database is closed")
+	require.EqualError(t, e.svc.RevokeOthers(t.Context(), p),
+		"gas/auth/session: revoke others: gas/auth/session-store: "+
+			"delete other sessions of subject: sql: database is closed")
+
+	list, err := e.svc.List(t.Context(), "alice")
+	require.EqualError(t, err,
+		"gas/auth/session: list: gas/auth/session-store: list sessions by subject: "+
+			"sql: database is closed")
+	assert.Nil(t, list)
 }
 
 // Concurrent creation, authentication and revocation are safe.
@@ -748,6 +974,10 @@ func TestService_Concurrent(t *testing.T) {
 
 			if err == nil && i%2 == 0 {
 				err = e.svc.RevokeAll(t.Context(), "nobody")
+			}
+
+			if err == nil && i%2 == 1 {
+				_, err = e.svc.List(t.Context(), "alice")
 			}
 
 			mu.Lock()

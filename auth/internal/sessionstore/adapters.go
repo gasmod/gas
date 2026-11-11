@@ -27,16 +27,26 @@ func (a *postgresAdapter) getSession(ctx context.Context, idHash string) (*sessi
 		return nil, err
 	}
 
-	return &sessionRow{
-		IDHash:     r.IDHash,
-		Subject:    r.Subject,
-		Metadata:   string(r.Metadata),
-		IPAddress:  r.IpAddress,
-		UserAgent:  r.UserAgent,
-		CreatedAt:  r.CreatedAt,
-		ExpiresAt:  r.ExpiresAt,
-		LastActive: r.LastActive,
-	}, nil
+	return pgRow(r), nil
+}
+
+// listSessionsBySubject reads a subject's session rows, newest first.
+func (a *postgresAdapter) listSessionsBySubject(
+	ctx context.Context,
+	subject string,
+) ([]*sessionRow, error) {
+	rs, err := a.q.ListSessionsBySubject(ctx, subject)
+	if err != nil {
+		//nolint:wrapcheck // Store.ListSessionsBySubject wraps it.
+		return nil, err
+	}
+
+	out := make([]*sessionRow, len(rs))
+	for i, r := range rs {
+		out[i] = pgRow(r)
+	}
+
+	return out, nil
 }
 
 // insertSession writes one session row.
@@ -94,6 +104,32 @@ func (a *postgresAdapter) deleteSession(ctx context.Context, idHash string) erro
 	return err
 }
 
+// deleteSessionOfSubject deletes one session if it is subject's.
+func (a *postgresAdapter) deleteSessionOfSubject(
+	ctx context.Context,
+	idHash, subject string,
+) error {
+	_, err := a.q.DeleteSessionOfSubject(ctx, &pgdb.DeleteSessionOfSubjectParams{
+		IDHash:  idHash,
+		Subject: subject,
+	})
+
+	//nolint:wrapcheck // Store.DeleteSessionOfSubject wraps it.
+	return err
+}
+
+// deleteOtherSessionsOfSubject deletes a subject's sessions but one.
+func (a *postgresAdapter) deleteOtherSessionsOfSubject(
+	ctx context.Context,
+	subject, keepIDHash string,
+) error {
+	//nolint:wrapcheck // Store.DeleteOtherSessionsOfSubject wraps it.
+	return a.q.DeleteOtherSessionsOfSubject(ctx, &pgdb.DeleteOtherSessionsOfSubjectParams{
+		Subject: subject,
+		IDHash:  keepIDHash,
+	})
+}
+
 // deleteSessionsBySubject deletes a subject's sessions.
 func (a *postgresAdapter) deleteSessionsBySubject(ctx context.Context, subject string) error {
 	//nolint:wrapcheck // Store.DeleteSessionsBySubject wraps it.
@@ -113,6 +149,20 @@ func (a *postgresAdapter) deleteExpiredSessions(
 	})
 }
 
+// pgRow returns a Postgres session as a row.
+func pgRow(r *pgdb.GasAuthSession) *sessionRow {
+	return &sessionRow{
+		IDHash:     r.IDHash,
+		Subject:    r.Subject,
+		Metadata:   string(r.Metadata),
+		IPAddress:  r.IpAddress,
+		UserAgent:  r.UserAgent,
+		CreatedAt:  r.CreatedAt,
+		ExpiresAt:  r.ExpiresAt,
+		LastActive: r.LastActive,
+	}
+}
+
 // mysqlAdapter runs the MySQL queries. It truncates every time it
 // passes to a query to the second first, as package sqlutil describes.
 type mysqlAdapter struct {
@@ -130,16 +180,26 @@ func (a *mysqlAdapter) getSession(ctx context.Context, idHash string) (*sessionR
 		return nil, err
 	}
 
-	return &sessionRow{
-		IDHash:     r.IDHash,
-		Subject:    r.Subject,
-		Metadata:   string(r.Metadata),
-		IPAddress:  r.IpAddress,
-		UserAgent:  r.UserAgent,
-		CreatedAt:  r.CreatedAt,
-		ExpiresAt:  r.ExpiresAt,
-		LastActive: r.LastActive,
-	}, nil
+	return myRow(r), nil
+}
+
+// listSessionsBySubject reads a subject's session rows, newest first.
+func (a *mysqlAdapter) listSessionsBySubject(
+	ctx context.Context,
+	subject string,
+) ([]*sessionRow, error) {
+	rs, err := a.q.ListSessionsBySubject(ctx, subject)
+	if err != nil {
+		//nolint:wrapcheck // Store.ListSessionsBySubject wraps it.
+		return nil, err
+	}
+
+	out := make([]*sessionRow, len(rs))
+	for i, r := range rs {
+		out[i] = myRow(r)
+	}
+
+	return out, nil
 }
 
 // insertSession writes one session row.
@@ -197,6 +257,29 @@ func (a *mysqlAdapter) deleteSession(ctx context.Context, idHash string) error {
 	return err
 }
 
+// deleteSessionOfSubject deletes one session if it is subject's.
+func (a *mysqlAdapter) deleteSessionOfSubject(ctx context.Context, idHash, subject string) error {
+	_, err := a.q.DeleteSessionOfSubject(ctx, &mydb.DeleteSessionOfSubjectParams{
+		IDHash:  idHash,
+		Subject: subject,
+	})
+
+	//nolint:wrapcheck // Store.DeleteSessionOfSubject wraps it.
+	return err
+}
+
+// deleteOtherSessionsOfSubject deletes a subject's sessions but one.
+func (a *mysqlAdapter) deleteOtherSessionsOfSubject(
+	ctx context.Context,
+	subject, keepIDHash string,
+) error {
+	//nolint:wrapcheck // Store.DeleteOtherSessionsOfSubject wraps it.
+	return a.q.DeleteOtherSessionsOfSubject(ctx, &mydb.DeleteOtherSessionsOfSubjectParams{
+		Subject: subject,
+		IDHash:  keepIDHash,
+	})
+}
+
 // deleteSessionsBySubject deletes a subject's sessions.
 func (a *mysqlAdapter) deleteSessionsBySubject(ctx context.Context, subject string) error {
 	//nolint:wrapcheck // Store.DeleteSessionsBySubject wraps it.
@@ -214,6 +297,20 @@ func (a *mysqlAdapter) deleteExpiredSessions(
 		ExpiresAt: sqlutil.TruncateToSecond(expiryCutoff),
 		CreatedAt: sqlutil.TruncateToSecond(creationCutoff),
 	})
+}
+
+// myRow returns a MySQL session as a row.
+func myRow(r *mydb.GasAuthSession) *sessionRow {
+	return &sessionRow{
+		IDHash:     r.IDHash,
+		Subject:    r.Subject,
+		Metadata:   string(r.Metadata),
+		IPAddress:  r.IpAddress,
+		UserAgent:  r.UserAgent,
+		CreatedAt:  r.CreatedAt,
+		ExpiresAt:  r.ExpiresAt,
+		LastActive: r.LastActive,
+	}
 }
 
 // sqliteAdapter runs the SQLite queries, converting times to and from the
@@ -234,6 +331,35 @@ func (a *sqliteAdapter) getSession(ctx context.Context, idHash string) (*session
 		return nil, err
 	}
 
+	return liteRow(r)
+}
+
+// listSessionsBySubject reads a subject's session rows, newest first. A
+// stored time that does not parse is an error.
+func (a *sqliteAdapter) listSessionsBySubject(
+	ctx context.Context,
+	subject string,
+) ([]*sessionRow, error) {
+	rs, err := a.q.ListSessionsBySubject(ctx, subject)
+	if err != nil {
+		//nolint:wrapcheck // Store.ListSessionsBySubject wraps it.
+		return nil, err
+	}
+
+	out := make([]*sessionRow, len(rs))
+	for i, r := range rs {
+		out[i], err = liteRow(r)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return out, nil
+}
+
+// liteRow returns a SQLite session as a row, parsing its times. A time
+// that does not parse is an error.
+func liteRow(r *litedb.GasAuthSession) (*sessionRow, error) {
 	createdAt, err := sqlutil.ParseSQLiteTime(r.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("created_at: %w", err)
@@ -314,6 +440,29 @@ func (a *sqliteAdapter) deleteSession(ctx context.Context, idHash string) error 
 
 	//nolint:wrapcheck // Store.DeleteSession wraps it.
 	return err
+}
+
+// deleteSessionOfSubject deletes one session if it is subject's.
+func (a *sqliteAdapter) deleteSessionOfSubject(ctx context.Context, idHash, subject string) error {
+	_, err := a.q.DeleteSessionOfSubject(ctx, &litedb.DeleteSessionOfSubjectParams{
+		IDHash:  idHash,
+		Subject: subject,
+	})
+
+	//nolint:wrapcheck // Store.DeleteSessionOfSubject wraps it.
+	return err
+}
+
+// deleteOtherSessionsOfSubject deletes a subject's sessions but one.
+func (a *sqliteAdapter) deleteOtherSessionsOfSubject(
+	ctx context.Context,
+	subject, keepIDHash string,
+) error {
+	//nolint:wrapcheck // Store.DeleteOtherSessionsOfSubject wraps it.
+	return a.q.DeleteOtherSessionsOfSubject(ctx, &litedb.DeleteOtherSessionsOfSubjectParams{
+		Subject: subject,
+		IDHash:  keepIDHash,
+	})
 }
 
 // deleteSessionsBySubject deletes a subject's sessions.

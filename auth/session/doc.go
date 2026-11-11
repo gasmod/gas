@@ -199,6 +199,22 @@
 // login that issues a session with Create needs no rotation, though the
 // app should Revoke the session the request had, if any.
 //
+// # Listing
+//
+// [Service.List] returns a subject's live sessions as [Info]
+// values, newest first, for a page where a user sees where they are
+// signed in and signs out one device. Sessions created at the same
+// stored time are ordered by ID, descending. Sessions past their idle or
+// absolute expiry are left out, as Authenticate would reject them, even
+// before the cleanup deletes them.
+//
+// An Info holds the session's subject, metadata, address,
+// User-Agent and times, and as its ID the SHA-256 hex of the session ID,
+// never the session ID. Its ID is so safe to show to the user and to
+// send back from a form, and it equals the credential ID of the
+// principal Authenticate returns for the session, which tells the
+// request's own session apart in the list. Rotate changes it.
+//
 // # Revocation
 //
 // Revoking deletes sessions:
@@ -212,6 +228,16 @@
 //   - [Service.RevokeSession] deletes a Session from Create or Rotate,
 //     without a request. A nil session, or one whose ID is not a session
 //     ID, is [ErrInvalidSession].
+//   - [Service.RevokeByID] deletes the session an Info.ID names,
+//     only if it belongs to the subject given, so that a user who sends
+//     back another user's ID deletes nothing. An ID that is not 64
+//     lowercase hex digits, such as a Session.ID, is [ErrInvalidSession].
+//     An ID from before the session was rotated matches nothing.
+//   - [Service.RevokeOthers] deletes every session of a principal's
+//     subject but the principal's own, for "sign out other devices", in
+//     one DELETE. It rejects a principal as Revoke does. If the
+//     principal's session is rotated before the DELETE runs, its ID hash
+//     no longer matches and it is deleted too.
 //   - [Service.RevokeAll] deletes every session of a subject.
 //   - [Service.RevokeAllByScheme] does the same for auth.SchemeSession, and
 //     nothing for any other scheme.
@@ -355,10 +381,12 @@
 //   - auth.ErrValueTooLong: Create was given a subject longer than
 //     auth.MaxValueLength bytes.
 //   - [ErrInvalidSession]: SetCookie or RevokeSession was given a nil
-//     session or one that Create or Rotate did not return.
-//   - auth.ErrNilPrincipal: Revoke was given a nil principal.
-//   - auth.ErrSchemeMismatch: Revoke was given a principal of another
-//     scheme.
+//     session or one that Create or Rotate did not return, or RevokeByID
+//     an ID that is not an Info.ID.
+//   - auth.ErrNilPrincipal: Revoke or RevokeOthers was given a nil
+//     principal.
+//   - auth.ErrSchemeMismatch: Revoke or RevokeOthers was given a
+//     principal of another scheme.
 //
 // [ErrNilConfig], [ErrNoConfigProvider], [ErrInvalidConfig],
 // [ErrNotInitialized] and [ErrNilLogger] are not defined by this package
@@ -368,10 +396,10 @@
 // Every error starts with [ServiceName]. Some errors then name the
 // operation, such as `create:` or `revoke all:`:
 //
-//   - These do: the errors of Create, Rotate, SetCookie, Revoke,
-//     RevokeSession, RevokeAll and RevokeAllByScheme, other than a
-//     denial or ErrNotInitialized, and a database error from
-//     Authenticate.
+//   - These do: the errors of Create, Rotate, SetCookie, List, Revoke,
+//     RevokeSession, RevokeByID, RevokeOthers, RevokeAll and
+//     RevokeAllByScheme, other than a denial or ErrNotInitialized, and a
+//     database error from Authenticate.
 //   - These do not: a denial, ErrNotInitialized, and the errors of the
 //     constructor and Init.
 //
@@ -391,6 +419,7 @@
 //	gas/auth/session: revoke: nil principal
 //	gas/auth/session: revoke: principal scheme mismatch
 //	gas/auth/session: revoke session: invalid session
+//	gas/auth/session: revoke by id: invalid session
 //	gas/auth/session: invalid config: session TTL must not exceed the max lifetime
 //	gas/auth/session: invalid config: cleanup interval must not be negative
 //	gas/auth/session: authenticate: gas/auth/session-store: get session: sql: database is closed
