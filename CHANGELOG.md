@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-11
+
+### Changed
+
+- **Go 1.27.0 or later is required**, down from 1.27.3. Every module
+  declares `go 1.27.0`, the first Go with generic methods, which the
+  core's API uses. Each also declares `toolchain go1.27.4`, which builds
+  this repository and its CI only, since Go ignores a dependency's
+  `toolchain` line. Build apps with Go 1.27.4 or later: earlier 1.27
+  releases can crash an HTTP/1 server
+  ([GO-2026-6859](https://pkg.go.dev/vuln/GO-2026-6859)).
+- `github.com/gasmod/omap` is required at v0.2.1, which requires Go 1.24
+  rather than 1.27.3.
+- `github.com/go-chi/chi/v5` is required at
+  `v5.5.1-0.20261018135022-9f8adb1aabaa`, an untagged commit after
+  v5.5.0.
+- Dependencies updated, and the internal modules required at v0.8.0.
+
 ## [0.7.0] - 2026-11-11
 
 ### Changed
@@ -831,7 +849,8 @@ repository; this entry summarizes the framework as published.
 - Eliminated a data race between the router and the service kill-switch by
   switching route storage to copy-on-write.
 
-[Unreleased]: https://github.com/gasmod/gas/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/gasmod/gas/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/gasmod/gas/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/gasmod/gas/compare/v0.6.3...v0.7.0
 [0.6.3]: https://github.com/gasmod/gas/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/gasmod/gas/compare/v0.6.1...v0.6.2

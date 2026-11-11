@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-11
+
+### Changed
+
+- **Go 1.27.0 or later is required**, down from 1.27.3, as for the core:
+  build apps with Go 1.27.4 or later, for the `net/http` fix of
+  [GO-2026-6859](https://pkg.go.dev/vuln/GO-2026-6859).
+- Dependencies updated, and the internal modules required at v0.8.0.
+
 ## [0.7.0] - 2026-11-11
 
 ### Changed
@@ -287,7 +296,8 @@ repository; this entry summarizes the package as published.
   `gas.JobQueueProvider` that records calls (`CallCount`, `Reset`) and
   delegates to per-method `Fn` fields when set.
 
-[Unreleased]: https://github.com/gasmod/gas/compare/queue/v0.7.0...HEAD
+[Unreleased]: https://github.com/gasmod/gas/compare/queue/v0.8.0...HEAD
+[0.8.0]: https://github.com/gasmod/gas/releases/tag/queue/v0.8.0
 [0.7.0]: https://github.com/gasmod/gas/releases/tag/queue/v0.7.0
 [0.6.3]: https://github.com/gasmod/gas/releases/tag/queue/v0.6.3
 [0.6.2]: https://github.com/gasmod/gas/releases/tag/queue/v0.6.2
