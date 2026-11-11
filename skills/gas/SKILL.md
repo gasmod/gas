@@ -126,6 +126,9 @@ A few things to know:
   tools' variables, such as their API keys, stay out of your config.
 - **Nested keys use `__`.** `APP_DATABASE__DSN` sets the key
   `database.dsn`.
+- **`GAS_ENV` picks the environment.** It holds `development`, the
+  default, `testing`, `staging` or `production`. Any other value fails
+  `cfg.Load`, so a typo such as `prod` stops the app.
 - **SQLite needs a driver.** Import `modernc.org/sqlite`, or another driver
   registered as `sqlite`. PostgreSQL and MySQL drivers come with the
   database module.

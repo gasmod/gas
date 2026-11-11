@@ -111,8 +111,7 @@ func LoadConfigFrom(providers ...config.Provider) (*Config, error) {
 		return nil, errors.New("app: LoadConfigFrom needs a provider")
 	}
 
-	// The extension resolves the environment from GAS_ENV.
-	opts := []config.Option{config.WithExtension(config.NewEnvExtension())}
+	opts := make([]config.Option, 0, len(providers))
 	for _, p := range providers {
 		opts = append(opts, config.WithProvider(p))
 	}
@@ -145,11 +144,10 @@ A few things to know:
   earlier one, and a missing `.env` loads nothing, so a deployment can set
   the environment alone. See [Settings files](#settings-files) for how the
   names differ.
-- **`GAS_ENV` picks the environment.** The `EnvExtension` resolves it, as
-  under
+- **`GAS_ENV` picks the environment.** The `EnvExtension` that
+  `config.New` adds resolves it, as under
   [Resolving the environment](/reference/config/#resolving-the-environment),
-  and stores it where the App reads it. Without the extension the App
-  runs as `development` whatever `GAS_ENV` holds.
+  and stores it where the App reads it.
 - **`LoadConfigFrom` needs a provider.** `config.New` with none falls back
   to an environment provider with no prefix, whose load fails with
   `environment prefix is required`, so `LoadConfigFrom` says what is

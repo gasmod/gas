@@ -269,3 +269,87 @@ func TestEnvironment_Methods(t *testing.T) {
 		assert.Equal(t, string(env), env.String())
 	}
 }
+
+// New adds an EnvExtension with the default options, before the
+// extensions WithExtension adds, so a Config given none reads GAS_ENV and
+// fails on a value that is not allowed.
+//
+// Not parallel: it sets GAS_ENV.
+func TestNew_DefaultEnvExtension(t *testing.T) {
+	t.Setenv("GAS_ENV", "staging")
+
+	var log []string
+
+	seen := map[string]any{}
+	c := config.New(
+		config.WithProvider(newStatic("static", nil)),
+		config.WithExtension(&recorder{
+			name: "ext",
+			log:  &log,
+			fn:   func(hook string, cfg *config.Config) { seen[hook] = cfg.Get("GasEnv") },
+		}),
+	)
+	require.NoError(t, c.Load())
+
+	assert.Equal(t, "staging", c.Get("GasEnv"))
+	assert.Equal(t, map[string]any{"pre": "staging", "post": "staging"}, seen)
+	assert.Equal(t, "config.Config{providers: 1, extensions: 2, keys: 1}", c.String())
+
+	t.Setenv("GAS_ENV", "prod")
+
+	err := config.New(config.WithProvider(newStatic("static", nil))).Load()
+	require.ErrorIs(t, err, config.ErrExtensionPreLoadHookFailed)
+	require.ErrorIs(t, err, config.ErrEnvironmentNotAllowed)
+	assert.Contains(t, err.Error(), "failed to execute extension pre-load hook GasEnv")
+}
+
+// WithoutEnvExtension leaves the default EnvExtension out, so GAS_ENV is
+// neither read nor checked. An EnvExtension given to WithExtension still
+// runs.
+//
+// Not parallel: it sets environment variables.
+func TestNew_WithoutEnvExtension(t *testing.T) {
+	t.Setenv("GAS_ENV", "prod")
+
+	c := config.New(
+		config.WithoutEnvExtension(),
+		config.WithProvider(newStatic("static", nil)),
+	)
+	require.NoError(t, c.Load())
+
+	assert.Nil(t, c.Get("GasEnv"))
+	assert.Equal(t, "config.Config{providers: 1, extensions: 0, keys: 0}", c.String())
+
+	t.Setenv("APP_ENV", "testing")
+
+	ext := config.NewEnvExtension(config.WithEnvVarName("APP_ENV"))
+
+	c = config.New(
+		config.WithoutEnvExtension(),
+		config.WithProvider(newStatic("static", nil)),
+		config.WithExtension(ext),
+	)
+	require.NoError(t, c.Load())
+	assert.Equal(t, config.EnvTesting, ext.Current())
+}
+
+// An EnvExtension given to WithExtension takes the default's place, so
+// only it runs: GAS_ENV holding a value that is not allowed does not fail
+// a load whose extension reads another variable.
+//
+// Not parallel: it sets environment variables.
+func TestNew_EnvExtensionReplacesDefault(t *testing.T) {
+	t.Setenv("GAS_ENV", "prod")
+	t.Setenv("APP_ENV", "staging")
+
+	ext := config.NewEnvExtension(config.WithEnvVarName("APP_ENV"))
+	c := config.New(
+		config.WithProvider(newStatic("static", nil)),
+		config.WithExtension(ext),
+	)
+	require.NoError(t, c.Load())
+
+	assert.Equal(t, config.EnvStaging, ext.Current())
+	assert.Equal(t, "staging", c.Get("GasEnv"))
+	assert.Equal(t, "config.Config{providers: 1, extensions: 1, keys: 1}", c.String())
+}

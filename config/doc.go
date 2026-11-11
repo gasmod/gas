@@ -233,7 +233,7 @@
 //
 // A *Config prints, with fmt and any verb, and logs, with log/slog, only
 // how many providers, extensions and top-level keys it has, such as
-// `config.Config{providers: 1, extensions: 0, keys: 3}`, never a value.
+// `config.Config{providers: 1, extensions: 1, keys: 3}`, never a value.
 // What Values, Get and Find return is the values themselves, secrets
 // included: never log or print them.
 //
@@ -328,7 +328,17 @@
 // development or production, during each load, and stores it at the key
 // `GasEnv`.
 //
-// An app reads it by binding a field of type [Environment], which is
+// [New] adds an EnvExtension with the default options, which runs before
+// the extensions [WithExtension] adds, so every Config resolves the
+// environment unless it is told not to:
+//
+//   - An EnvExtension given to WithExtension takes the default's place, so
+//     one Config never has two.
+//   - [WithoutEnvExtension] leaves the default out, so the configuration
+//     neither reads nor checks `GAS_ENV`, and holds no `GasEnv` unless a
+//     provider sets it.
+//
+// An app reads the environment by binding a field of type [Environment], which is
 // gas.Environment, from that key, as gas.Config.Env does. A field named `Env` needs the tag, as its own name
 // is the key `env`. With [WithConfigKey] set to `env`, it binds without
 // one:
@@ -337,7 +347,8 @@
 //		Env config.Environment `json:"gasenv"`
 //	}
 //
-// The extension also reports the environment itself:
+// The extension also reports the environment itself. The default one is
+// not reachable, so an app that asks it gives New its own:
 //
 //	envExt := config.NewEnvExtension()
 //	cfg := config.New(config.WithExtension(envExt))

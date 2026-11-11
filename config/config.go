@@ -54,6 +54,8 @@ type Config struct {
 	providers  []Provider
 	extensions []Extension
 	mu         sync.RWMutex
+	// withoutEnvExtension is set by WithoutEnvExtension.
+	withoutEnvExtension bool
 	// loadMu orders loads: a load holds it from taking the providers until
 	// their values are merged, so a provider that LoadProvider adds during a
 	// load is merged after the ones it follows, never before. Readers and
@@ -65,6 +67,11 @@ type Config struct {
 // loaded. Without a provider, it has an EnvProvider with the default
 // separator and no prefix, whose Load fails with ErrEnvPrefixRequired, so
 // an app gives New the providers it loads from.
+//
+// It has an EnvExtension with the default options, which runs before the
+// extensions WithExtension adds, so the app runs in the environment
+// GAS_ENV names. An EnvExtension given to WithExtension takes its place,
+// and WithoutEnvExtension leaves it out.
 func New(opts ...Option) *Config {
 	c := &Config{
 		values:     make(map[string]any),
@@ -79,6 +86,10 @@ func New(opts ...Option) *Config {
 
 	if len(c.providers) == 0 {
 		c.providers = append(c.providers, NewEnvProvider())
+	}
+
+	if !c.withoutEnvExtension && !c.hasEnvExtension() {
+		c.extensions = append([]Extension{NewEnvExtension()}, c.extensions...)
 	}
 
 	return c
@@ -343,7 +354,7 @@ func (c *Config) Values() map[string]any {
 
 // String returns the Config's counts of providers, extensions and
 // top-level keys, never a value, such as
-// `config.Config{providers: 1, extensions: 0, keys: 3}`.
+// `config.Config{providers: 1, extensions: 1, keys: 3}`.
 func (c *Config) String() string {
 	providers, extensions, keys := c.counts()
 
@@ -377,6 +388,17 @@ func (c *Config) counts() (providers, extensions, keys int) {
 	defer c.mu.RUnlock()
 
 	return len(c.providers), len(c.extensions), len(c.values)
+}
+
+// hasEnvExtension reports whether WithExtension added an EnvExtension.
+func (c *Config) hasEnvExtension() bool {
+	for _, ext := range c.extensions {
+		if _, ok := ext.(*EnvExtension); ok {
+			return true
+		}
+	}
+
+	return false
 }
 
 // parseKey splits a key on dots into its levels, each trimmed and
