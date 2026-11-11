@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`WithoutEnvExtension`**, which leaves out the `EnvExtension` that
+  `New` now adds.
+
+### Changed
+
+- **BREAKING: `New` adds an `EnvExtension`.** Every `Config` resolves the
+  environment from `GAS_ENV` and stores it at `GasEnv`, where an App reads
+  it, so an app that never registered the extension now runs in the
+  environment `GAS_ENV` names instead of always as `development`. The
+  default runs before the extensions `WithExtension` adds, and an
+  `EnvExtension` given to `WithExtension` takes its place, so a `Config`
+  never has two. What changes for an app that did not register one:
+  - `GAS_ENV`, or a `gasenv` key a provider sets, holding a value that is
+    not `development`, `testing`, `staging` or `production` now fails
+    `Load` with `ErrEnvironmentNotAllowed`, where it was ignored. Fix the
+    value, or pass `WithoutEnvExtension`.
+  - After a load, `Values` holds the key `gasenv`, and `String` and
+    `LogValue` count the extension and that key.
+
+  Pass `WithoutEnvExtension` to keep the old behavior.
+
 ## [0.9.0] - 2026-11-11
 
 ### Changed
