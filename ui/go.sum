@@ -6,8 +6,8 @@ github.com/gasmod/gas/config v0.7.0 h1:eE0bpCQXDG2KybYm1FpM56q12qzSrCeonYjynWQ1z
 github.com/gasmod/gas/config v0.7.0/go.mod h1:dvfMGkXEms3owGqbZ1Gw+NNN+apyoieuuVHkC3SgBK4=
 github.com/gasmod/gas/template v0.7.0 h1:fVmO37FXUzz8bkkgTVz1rQzDA8d/M/f77DGJThXYol8=
 github.com/gasmod/gas/template v0.7.0/go.mod h1:+nQFTJpYR6hKtR+RwMDAnER2iEZMKbPy2Ytfhdp+WFY=
-github.com/gasmod/omap v0.2.0 h1:0DqSlX5VctBnKj7SxhcR+kkJO2b3FgBgssn6E33sBVI=
-github.com/gasmod/omap v0.2.0/go.mod h1:vPphmJIp/85x0tPuwJQnldlI2NDSAwVFzmCL0G5+iLg=
+github.com/gasmod/omap v0.2.1 h1:jvz81PIn/yp84gkOzH5RXfkWXyWd5g50GNBIj3rD3Zk=
+github.com/gasmod/omap v0.2.1/go.mod h1:z1IPmErvTHKLh+Ueb9uUKJq7Kc5dUjtmcbh1eYe6miw=
 github.com/go-chi/chi/v5 v5.5.0 h1:xdKQ1dJmVJsmgahrXSKhUx8NyVPzpwdlyrrQFpMPJgg=
 github.com/go-chi/chi/v5 v5.5.0/go.mod h1:d1IG7GtKPSjPyBP365PH8sAGVHk3qfB/IhjFNRH1wWM=
 github.com/go-playground/assert/v2 v2.2.0 h1:JvknZsQTYeFEAhQwI4qEt9cyV5ONwRHC+lYKSsYSR8s=

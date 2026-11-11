@@ -1,6 +1,8 @@
 module github.com/gasmod/gas/config
 
-go 1.27.4
+go 1.27.0
+
+toolchain go1.27.4
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.48.0
@@ -25,7 +27,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.52.0 // indirect
 	github.com/aws/smithy-go v1.28.9 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.16 // indirect
-	github.com/gasmod/omap v0.2.0 // indirect
+	github.com/gasmod/omap v0.2.1 // indirect
 	github.com/go-chi/chi/v5 v5.5.0 // indirect
 	github.com/go-playground/locales v0.14.2 // indirect
 	github.com/go-playground/universal-translator v0.18.2 // indirect

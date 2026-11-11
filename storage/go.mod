@@ -1,6 +1,8 @@
 module github.com/gasmod/gas/storage
 
-go 1.27.4
+go 1.27.0
+
+toolchain go1.27.4
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.48.0
@@ -47,7 +49,7 @@ require (
 	github.com/ebitengine/purego v0.11.3 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.16 // indirect
-	github.com/gasmod/omap v0.2.0 // indirect
+	github.com/gasmod/omap v0.2.1 // indirect
 	github.com/go-chi/chi/v5 v5.5.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
