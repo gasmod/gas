@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-11
+
+### Changed
+
+- The internal modules are required at v0.7.0.
+
 ## [0.6.3] - 2026-11-10
 
 ### Changed
@@ -281,7 +287,8 @@ repository; this entry summarizes the package as published.
   `gas.JobQueueProvider` that records calls (`CallCount`, `Reset`) and
   delegates to per-method `Fn` fields when set.
 
-[Unreleased]: https://github.com/gasmod/gas/compare/queue/v0.6.3...HEAD
+[Unreleased]: https://github.com/gasmod/gas/compare/queue/v0.7.0...HEAD
+[0.7.0]: https://github.com/gasmod/gas/releases/tag/queue/v0.7.0
 [0.6.3]: https://github.com/gasmod/gas/releases/tag/queue/v0.6.3
 [0.6.2]: https://github.com/gasmod/gas/releases/tag/queue/v0.6.2
 [0.6.1]: https://github.com/gasmod/gas/releases/tag/queue/v0.6.1
