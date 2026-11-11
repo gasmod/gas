@@ -114,11 +114,14 @@ wait honors. It runs these steps, in order:
 1. It emits `SystemServerShuttingDown` and waits for its subscribers,
 until the deadline.
 2. It shuts the HTTP server down.
-3. At the deadline, it cancels the context of every request still
-running, and waits up to ShutdownGracePeriod for them to return.
-4. If some do not, it closes their connections, which ends their
-blocked reads and writes, and waits up to ShutdownGracePeriod
-again. It logs how many are left when it gives up.
+3. Once the server has shut down, or at the deadline if it has not by
+then, it cancels the context of every request still running, and
+waits up to ShutdownGracePeriod for them to return.
+4. If some do not, it closes the server's connections, which ends
+blocked reads and writes on them, and waits up to
+ShutdownGracePeriod again. It logs how many are left when it gives
+up. It does not close a hijacked connection, as described under
+Hijacked connections.
 5. It shuts the Worker down with a context whose deadline is the
 shutdown deadline, or ShutdownGracePeriod from then, whichever is
 later.
@@ -409,6 +412,30 @@ Every App is guarded by `http.CrossOriginProtection`. A request it
 rejects is logged at warn level with its method and path, and answers
 403 with code `CodeForbidden` in the unified error shape, with the
 `SecurityHeaders` defaults. Core ships no CORS.
+
+## Hijacked connections
+
+A handler that hijacks its connection, as a WebSocket upgrade does,
+takes it over from net/http, which then neither tracks nor closes it:
+
+- The route must not be behind `Timeout`, whose writer cannot hijack.
+`SecurityHeaders`, `CacheControl`, `BodyLimit` and auth.Middleware
+pass Hijack on, and `RequestLogger` does for an HTTP/1 request
+only.
+- The server's ReadTimeout, WriteTimeout and IdleTimeout no longer
+apply: net/http clears the connection's deadlines when it is
+hijacked. The handler sets its own.
+- `App.Stop` does not close the connection, even when it closes the
+server's. It cancels the request's context once the server has shut
+down, and counts the handler as a request in flight until it
+returns. A handler still running then holds Stop for both
+ShutdownGracePeriods, and Stop logs `requests still running after
+the shutdown grace period`.
+
+So the handler ends the connection itself: when its request context
+ends, or when a `SystemServerShuttingDown` subscriber closes it. Stop
+runs that subscriber before it shuts the server down, and waits for it
+up to ShutdownTimeout.
 
 ## Events
 
