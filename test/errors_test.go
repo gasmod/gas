@@ -958,3 +958,86 @@ func FuzzWantsJSON(f *testing.F) {
 		assert.Equal(t, want, got, accept)
 	})
 }
+
+// pointerProfile is embedded by the request bodies of
+// TestBindJSON_EmbeddedFieldPointers.
+type pointerProfile struct {
+	Name string `json:"name" validate:"required"`
+}
+
+// pointerFlat embeds pointerProfile untagged, so encoding/json flattens
+// its fields into the body.
+type pointerFlat struct {
+	pointerProfile
+}
+
+// pointerTagged embeds pointerProfile under a json name.
+type pointerTagged struct {
+	pointerProfile `json:"profile"`
+}
+
+// pointerNested flattens pointerProfile into a named field.
+type pointerNested struct {
+	Outer struct {
+		pointerProfile
+	} `json:"outer"`
+}
+
+// pointerRequired requires an untagged embedded pointer, whose error is on
+// the whole body.
+type pointerRequired struct {
+	*pointerProfile `validate:"required"`
+}
+
+// pointerPage is generic, so its type name holds its type argument's
+// package path, dots included.
+type pointerPage[T any] struct {
+	Title string `json:"title" validate:"required"`
+}
+
+// pointerItem is pointerPage's type argument.
+type pointerItem struct{}
+
+// A field error's pointer follows the JSON body: an untagged embedded
+// struct adds no segment, as encoding/json flattens it, a tagged one adds
+// its name, an error on an embedded field at the root is on the whole
+// body, `#`, and the root's type name never appears, a generic one's
+// included.
+func TestBindJSON_EmbeddedFieldPointers(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		dest any
+		want string
+	}{
+		{"flattened", &pointerFlat{}, "#/name"},
+		{"tagged", &pointerTagged{}, "#/profile/name"},
+		{"nested", &pointerNested{}, "#/outer/name"},
+		{"required embedded pointer", &pointerRequired{}, "#"},
+		{"generic root", &pointerPage[pointerItem]{}, "#/title"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			req := httptest.NewRequestWithContext(
+				context.Background(),
+				http.MethodPost,
+				"/",
+				strings.NewReader(`{}`),
+			)
+			ctx := gas.NewContext(req.Context(), httptest.NewRecorder(), req)
+
+			e, ok := gas.AsError(ctx.BindJSON(tc.dest))
+			if !ok {
+				t.Fatal("expected *gas.Error")
+			}
+
+			if len(e.Fields) != 1 || e.Fields[0].Pointer != tc.want {
+				t.Fatalf("fields = %+v, want one with pointer %q", e.Fields, tc.want)
+			}
+		})
+	}
+}

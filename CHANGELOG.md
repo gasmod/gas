@@ -13,6 +13,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The internal modules are required at v0.7.0.
 
+### Fixed
+
+- A field error's `pointer` follows the JSON body for embedded structs.
+  An untagged embedded struct, which encoding/json flattens, added its Go
+  type name as a segment, such as `#/Profile/name` for `name`; it now
+  adds none, `#/name`. An error on such a field at the root, such as a
+  `required` embedded pointer, points at the whole body, `#`.
+- The `pointer` of a field in a generic request type held the type's
+  name and its type argument's package path, such as
+  `#/com~1example~1app/Item%5D/title`; it is now `#/title`.
+
 ## [0.6.3] - 2026-11-10
 
 ### Changed

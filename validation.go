@@ -13,17 +13,22 @@ import (
 // the client actually sent, rather than the Go struct field name, so a client
 // can map a FieldError back onto the payload it submitted.
 func newValidator() *validator.Validate {
-	v := validator.New()
+	v := validator.New(validator.WithTagNameFuncBlankOmit())
 	v.RegisterTagNameFunc(func(field reflect.StructField) string {
 		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
 		if name == "" {
 			name, _, _ = strings.Cut(field.Tag.Get("form"), ",")
 		}
 
-		// Returning "" makes validator fall back to the Go field name, which is
-		// what we want for a field carrying neither tag, or tagged "-".
-		if name == "-" {
+		// An untagged embedded struct is flattened by encoding/json, so it has
+		// no segment of its own.
+		if name == "" && field.Anonymous && embedsStruct(field.Type) {
 			return ""
+		}
+
+		// Blank now means "omit", so the Go-name fallback has to be explicit.
+		if name == "" || name == "-" {
+			return field.Name
 		}
 
 		return name
@@ -32,21 +37,35 @@ func newValidator() *validator.Validate {
 	return v
 }
 
-// validationFieldErrors converts a validator.ValidationErrors into the unified
-// FieldError slice, each pointing at its field by its full path. It
-// reports false when err is not a validation error.
-func validationFieldErrors(err error) ([]FieldError, bool) {
+// embedsStruct reports whether t, the type of an embedded field, is a
+// struct or a pointer to one: the embeddings encoding/json flattens into
+// the outer object.
+func embedsStruct(t reflect.Type) bool {
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+
+	return t.Kind() == reflect.Struct
+}
+
+// validationFieldErrors converts a validator.ValidationErrors from
+// validating dest into the unified FieldError slice, each pointing at its
+// field by its full path. It reports false when err is not a validation
+// error.
+func validationFieldErrors(err error, dest any) ([]FieldError, bool) {
 	var ve validator.ValidationErrors
 
 	if !errors.As(err, &ve) {
 		return nil, false
 	}
 
+	root := rootName(dest)
+
 	fields := make([]FieldError, 0, len(ve))
 	for _, fe := range ve {
 		fields = append(fields, FieldError{
 			Message: validationMessage(fe.Tag(), fe.Param()),
-			Pointer: fieldPointer(fe.Namespace()),
+			Pointer: fieldPointer(fe.Namespace(), root),
 			Rule:    fe.Tag(),
 		})
 	}
@@ -54,14 +73,32 @@ func validationFieldErrors(err error) ([]FieldError, bool) {
 	return fields, true
 }
 
+// rootName returns the name the validator starts dest's namespaces with:
+// the name of its struct type, through one pointer as StructCtx
+// dereferences it. An unnamed struct type has none, and its namespaces
+// start at its fields.
+func rootName(dest any) string {
+	t := reflect.TypeOf(dest)
+	if t != nil && t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+
+	if t == nil {
+		return ""
+	}
+
+	return t.Name()
+}
+
 // fieldPointer returns the JSON pointer of the field at namespace, a
-// validator namespace of client names such as `Req.items[0].name`: below
-// the root struct, each name and each index or map key is a reference
-// token.
-func fieldPointer(namespace string) string {
-	_, path, ok := strings.Cut(namespace, ".")
-	if !ok {
-		path = namespace
+// validator namespace of client names such as `Req.items[0].name`, under
+// root, the root struct's type name: below it, each name and each index or
+// map key is a reference token. A namespace of the root alone, as an
+// untagged embedded struct at the root has, is the whole body, `#`.
+func fieldPointer(namespace, root string) string {
+	path := strings.TrimPrefix(strings.TrimPrefix(namespace, root), ".")
+	if path == "" {
+		return "#"
 	}
 
 	var b strings.Builder
