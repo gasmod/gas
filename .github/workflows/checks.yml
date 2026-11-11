@@ -1,7 +1,8 @@
 name: Checks
 
 # The checks every module must pass, called by test.yml for the modules a
-# push can affect and by release.yml for every module.
+# pull request or a push to main can affect and by release.yml for every
+# module.
 #
 # Each check runs one matrix entry per module, in parallel. The ruleset on
 # main requires only the `gate` job (plus test.yml's detect-modules), so its
