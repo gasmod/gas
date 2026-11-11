@@ -388,11 +388,72 @@ if err != nil {
 
 `cfg` comes from `app.LoadConfigFrom`, with the values the test needs in a
 [`configtest.StaticProvider`](/reference/config/configtest/#static-provider),
-so neither `.env` nor the environment's settings reach the test; `dsn` is
-the test database's. `Start` applies the migrations, so each test runs against the schema the
-modules declare. When the tests need outside services, such as a database
-in a container, keep them behind a build tag, such as `e2e`, so that
-`go test ./...` runs the unit tests alone.
+so neither `.env` nor the environment's settings reach the test.
+
+`dsn` names a database made for the one test, as `Start` applies the
+migrations to whatever database it is given: each test begins with the
+schema the modules declare and no rows, and no test migrates a database
+that matters. One PostgreSQL server, such as a container started before
+`go test`, serves the whole run. The harness reads its address from a
+variable the test run sets, skips the test when it is unset, and calls
+`dsn := newDatabase(t)` before it loads `cfg`:
+
+```go title="test/harness/database.go"
+func newDatabase(t *testing.T) string {
+	t.Helper()
+
+	admin := os.Getenv("TEST_DATABASE_URL")
+	if admin == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+
+	u, err := url.Parse(admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := pgx.Connect(t.Context(), admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() {
+		if err := conn.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
+
+	name := fmt.Sprintf("test_%x", rand.Uint64())
+
+	if _, err := conn.Exec(t.Context(), "CREATE DATABASE "+name); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() {
+		_, err := conn.Exec(context.Background(), "DROP DATABASE "+name+" WITH (FORCE)")
+		if err != nil {
+			t.Error(err)
+		}
+	})
+
+	u.Path = "/" + name
+
+	return u.String()
+}
+```
+
+`TEST_DATABASE_URL` is a URL, such as
+`postgres://postgres:secret@localhost:5432/postgres?sslmode=disable`, and
+`newDatabase` returns the same URL with the new database's name in it.
+`t.Cleanup` runs the cleanups in reverse, so the database is dropped after
+`Stop`; `WITH (FORCE)`, from PostgreSQL 13, ends any connection still open.
+An app on SQLite needs no server:
+`"file:" + filepath.Join(t.TempDir(), "app.db")` is a fresh database for
+each test, removed with the directory.
+
+Keep the tests that need outside services, such as a database in a
+container, behind a build tag, such as `e2e`, so that `go test ./...` runs
+the unit tests alone.
 
 ## Settings files
 
