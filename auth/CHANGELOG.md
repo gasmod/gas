@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **session: `Service.List`** returns a subject's live sessions as `Info`
+  values, newest first, for a page that shows where a user is signed in.
+  Expired sessions are left out. An `Info` carries the hash of the
+  session ID as its `ID`, never the session ID. That hash is also the
+  credential ID of the session's principal, so the request's own session
+  can be picked out.
+- **session: `Service.RevokeByID`** deletes the session an `Info.ID`
+  names, but only if it belongs to the subject given, so a user who sends
+  back another user's ID deletes nothing. An ID that is not an
+  `Info.ID`, such as a `Session.ID`, is `ErrInvalidSession`.
+- **session: `Service.RevokeOthers`** deletes every session of a
+  principal's subject except the principal's own, in one DELETE, for
+  "sign out other devices". It rejects a nil principal or one of another
+  scheme as `Revoke` does.
+
+### Changed
+
+- **session: `Provider`** gains `List`, `RevokeByID` and `RevokeOthers`,
+  so a type that implements it outside this module needs all three.
+
 ## [0.6.3] - 2026-11-10
 
 ### Changed

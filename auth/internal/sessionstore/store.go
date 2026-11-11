@@ -137,28 +137,36 @@ func (s *Store) GetSession(ctx context.Context, idHash string) (*Session, error)
 		return nil, fmt.Errorf("%s: get session: %w", storeName, err)
 	}
 
-	meta := gas.BasePrincipalMetadata{}
-
-	err = json.Unmarshal([]byte(row.Metadata), &meta)
+	sess, err := fromRow(row)
 	if err != nil {
-		return nil, fmt.Errorf("%s: get session: metadata: %w", storeName, errInvalidMetadata)
+		return nil, fmt.Errorf("%s: get session: %w", storeName, err)
 	}
 
-	// JSON null leaves the map nil.
-	if meta == nil {
-		meta = gas.BasePrincipalMetadata{}
+	return sess, nil
+}
+
+// ListSessionsBySubject returns every stored session of subject, expired
+// ones included, newest first; sessions created at the same stored time
+// are ordered by ID hash, descending. A subject without sessions gets an
+// empty slice.
+func (s *Store) ListSessionsBySubject(ctx context.Context, subject string) ([]Session, error) {
+	rows, err := s.q.listSessionsBySubject(ctx, subject)
+	if err != nil {
+		return nil, fmt.Errorf("%s: list sessions by subject: %w", storeName, err)
 	}
 
-	return &Session{
-		IDHash:     row.IDHash,
-		Subject:    row.Subject,
-		Metadata:   meta,
-		IPAddress:  row.IPAddress,
-		UserAgent:  row.UserAgent,
-		CreatedAt:  row.CreatedAt,
-		ExpiresAt:  row.ExpiresAt,
-		LastActive: row.LastActive,
-	}, nil
+	out := make([]Session, len(rows))
+
+	for i, row := range rows {
+		sess, err := fromRow(row)
+		if err != nil {
+			return nil, fmt.Errorf("%s: list sessions by subject: %w", storeName, err)
+		}
+
+		out[i] = *sess
+	}
+
+	return out, nil
 }
 
 // InsertSession stores a new session.
@@ -232,6 +240,33 @@ func (s *Store) DeleteSession(ctx context.Context, idHash string) error {
 	return nil
 }
 
+// DeleteSessionOfSubject deletes the session whose ID hashes to idHash,
+// only if it belongs to subject. A missing session, or one of another
+// subject, is not an error.
+func (s *Store) DeleteSessionOfSubject(ctx context.Context, idHash, subject string) error {
+	err := s.q.deleteSessionOfSubject(ctx, idHash, subject)
+	if err != nil {
+		return fmt.Errorf("%s: delete session of subject: %w", storeName, err)
+	}
+
+	return nil
+}
+
+// DeleteOtherSessionsOfSubject deletes every session of subject but the
+// one whose ID hashes to keepIDHash, in one DELETE. A subject with no
+// other sessions is not an error.
+func (s *Store) DeleteOtherSessionsOfSubject(
+	ctx context.Context,
+	subject, keepIDHash string,
+) error {
+	err := s.q.deleteOtherSessionsOfSubject(ctx, subject, keepIDHash)
+	if err != nil {
+		return fmt.Errorf("%s: delete other sessions of subject: %w", storeName, err)
+	}
+
+	return nil
+}
+
 // DeleteSessionsBySubject deletes every session of a subject.
 func (s *Store) DeleteSessionsBySubject(ctx context.Context, subject string) error {
 	err := s.q.deleteSessionsBySubject(ctx, subject)
@@ -256,6 +291,33 @@ func (s *Store) DeleteExpiredSessions(
 	}
 
 	return n, nil
+}
+
+// fromRow returns a row as a Session, decoding its metadata. Stored JSON
+// null reads as an empty map.
+func fromRow(row *sessionRow) (*Session, error) {
+	meta := gas.BasePrincipalMetadata{}
+
+	err := json.Unmarshal([]byte(row.Metadata), &meta)
+	if err != nil {
+		return nil, fmt.Errorf("metadata: %w", errInvalidMetadata)
+	}
+
+	// JSON null leaves the map nil.
+	if meta == nil {
+		meta = gas.BasePrincipalMetadata{}
+	}
+
+	return &Session{
+		IDHash:     row.IDHash,
+		Subject:    row.Subject,
+		Metadata:   meta,
+		IPAddress:  row.IPAddress,
+		UserAgent:  row.UserAgent,
+		CreatedAt:  row.CreatedAt,
+		ExpiresAt:  row.ExpiresAt,
+		LastActive: row.LastActive,
+	}, nil
 }
 
 // toRow returns sess as a row, with its metadata as JSON. A nil metadata

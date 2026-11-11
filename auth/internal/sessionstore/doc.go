@@ -26,10 +26,15 @@
 // the table does not reveal a cookie that would authenticate.
 //
 // [Store.InsertSession] stores a new session, and fails when its IDHash is
-// taken. [Store.GetSession] reads one back. [Store.ExtendSession] sets a
-// session's expiry and last active time. [Store.DeleteSession] deletes
-// one session and [Store.DeleteSessionsBySubject] every session of a
-// subject; neither fails when there is nothing to delete.
+// taken. [Store.GetSession] reads one back, and
+// [Store.ListSessionsBySubject] every session of a subject, expired ones
+// included, newest first and by ID hash, descending, for a tie.
+// [Store.ExtendSession] sets a session's expiry and last active time.
+// [Store.DeleteSession] deletes one session,
+// [Store.DeleteSessionOfSubject] one session only if it belongs to a
+// given subject, [Store.DeleteOtherSessionsOfSubject] every session of a
+// subject but one, and [Store.DeleteSessionsBySubject] every session of
+// a subject; none fails when there is nothing to delete.
 // [Store.DeleteExpiredSessions] deletes the sessions whose expiry is at
 // or before one time or whose creation time is at or before another, the
 // sessions that are expired at those times, and returns how many it

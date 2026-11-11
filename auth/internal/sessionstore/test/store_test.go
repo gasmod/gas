@@ -206,6 +206,119 @@ func TestStore_Delete(t *testing.T) {
 	)
 }
 
+// ListSessionsBySubject returns every session of the subject, expired
+// ones included, as stored, newest first and by ID hash, descending, for
+// a tie; a subject without sessions gets an empty slice, not nil.
+func TestStore_ListBySubject(t *testing.T) {
+	testutil.ForEachBackend(
+		t,
+		func(t *testing.T, b testutil.Backend) { //nolint:thelper // a subtest body, not a helper
+			store := newStore(t, b)
+			ctx := t.Context()
+
+			// at returns a session of alice created at createdAt.
+			now := time.Now().UTC().Truncate(time.Second)
+			at := func(idHash string, createdAt time.Time, ttl time.Duration) *sessionstore.Session {
+				sess := session(idHash, "alice", ttl)
+
+				sess.CreatedAt = createdAt
+				sess.ExpiresAt = now.Add(ttl)
+				sess.LastActive = createdAt
+
+				return sess
+			}
+
+			older := at("a-older", now.Add(-2*time.Minute), time.Hour)
+			expired := at("a-expired", now.Add(-time.Minute), -time.Second)
+			tieLow := at("a-tie-1", now, time.Hour)
+			tieHigh := at("a-tie-2", now, time.Hour)
+
+			tieHigh.Metadata = nil
+
+			for _, s := range []*sessionstore.Session{
+				older, tieLow, expired, tieHigh,
+				session("b1", "bob", time.Hour),
+			} {
+				require.NoError(t, store.InsertSession(ctx, s))
+			}
+
+			got, err := store.ListSessionsBySubject(ctx, "alice")
+			require.NoError(t, err)
+			require.Len(t, got, 4)
+
+			tieHigh.Metadata = gas.BasePrincipalMetadata{}
+
+			for i, want := range []*sessionstore.Session{tieHigh, tieLow, expired, older} {
+				assertSession(t, want, &got[i])
+			}
+
+			got, err = store.ListSessionsBySubject(ctx, "nobody")
+			require.NoError(t, err)
+			assert.NotNil(t, got)
+			assert.Empty(t, got)
+		},
+	)
+}
+
+// DeleteSessionOfSubject deletes the session only when it is the
+// subject's, and deleting a missing one is not an error.
+func TestStore_DeleteOfSubject(t *testing.T) {
+	testutil.ForEachBackend(
+		t,
+		func(t *testing.T, b testutil.Backend) { //nolint:thelper // a subtest body, not a helper
+			store := newStore(t, b)
+			ctx := t.Context()
+
+			require.NoError(t, store.InsertSession(ctx, session("a1", "alice", time.Hour)))
+			require.NoError(t, store.InsertSession(ctx, session("b1", "bob", time.Hour)))
+
+			require.NoError(t, store.DeleteSessionOfSubject(ctx, "b1", "alice"))
+
+			_, err := store.GetSession(ctx, "b1")
+			require.NoError(t, err)
+
+			require.NoError(t, store.DeleteSessionOfSubject(ctx, "a1", "alice"))
+			require.NoError(t, store.DeleteSessionOfSubject(ctx, "a1", "alice"))
+
+			_, err = store.GetSession(ctx, "a1")
+			require.ErrorIs(t, err, sessionstore.ErrNotFound)
+		},
+	)
+}
+
+// DeleteOtherSessionsOfSubject deletes every session of the subject but
+// the one kept, and no other subject's; with nothing else to delete it
+// is not an error.
+func TestStore_DeleteOthersOfSubject(t *testing.T) {
+	testutil.ForEachBackend(
+		t,
+		func(t *testing.T, b testutil.Backend) { //nolint:thelper // a subtest body, not a helper
+			store := newStore(t, b)
+			ctx := t.Context()
+
+			for _, s := range []*sessionstore.Session{
+				session("a1", "alice", time.Hour),
+				session("a2", "alice", time.Hour),
+				session("a3", "alice", time.Hour),
+				session("b1", "bob", time.Hour),
+			} {
+				require.NoError(t, store.InsertSession(ctx, s))
+			}
+
+			require.NoError(t, store.DeleteOtherSessionsOfSubject(ctx, "alice", "a2"))
+			require.NoError(t, store.DeleteOtherSessionsOfSubject(ctx, "alice", "a2"))
+
+			got, err := store.ListSessionsBySubject(ctx, "alice")
+			require.NoError(t, err)
+			require.Len(t, got, 1)
+			assert.Equal(t, "a2", got[0].IDHash)
+
+			_, err = store.GetSession(ctx, "b1")
+			require.NoError(t, err)
+		},
+	)
+}
+
 // DeleteExpiredSessions deletes the sessions whose expiry is at or before
 // the first time and those created at or before the second, and says how
 // many: a session that expires exactly at the first time, or was created
@@ -466,11 +579,18 @@ func TestStore_DatabaseErrors(t *testing.T) {
 		"gas/auth/session-store: delete session: ")
 	require.ErrorContains(t, store.DeleteSessionsBySubject(ctx, "y"),
 		"gas/auth/session-store: delete sessions by subject: ")
+	require.ErrorContains(t, store.DeleteSessionOfSubject(ctx, "x", "y"),
+		"gas/auth/session-store: delete session of subject: ")
+	require.ErrorContains(t, store.DeleteOtherSessionsOfSubject(ctx, "y", "x"),
+		"gas/auth/session-store: delete other sessions of subject: ")
 	require.ErrorContains(t, store.RotateSession(ctx, "x", session("z", "y", time.Hour)),
 		"gas/auth/session-store: rotate session: ")
 
 	_, err = store.DeleteExpiredSessions(ctx, time.Now(), time.Now())
 	require.ErrorContains(t, err, "gas/auth/session-store: delete expired sessions: ")
+
+	_, err = store.ListSessionsBySubject(ctx, "y")
+	require.ErrorContains(t, err, "gas/auth/session-store: list sessions by subject: ")
 }
 
 // On SQLite a stored time that does not parse fails the read, naming the
@@ -496,6 +616,14 @@ func TestStore_SQLiteBadTime(t *testing.T) {
 		require.EqualError(t, err, "gas/auth/session-store: get session: "+column+
 			": invalid stored time: want the layout 2006-01-02 15:04:05")
 		assert.Nil(t, got)
+
+		list, err := store.ListSessionsBySubject(ctx, "alice")
+		require.ErrorIs(t, err, sqlutil.ErrInvalidTime)
+		require.EqualError(t, err, "gas/auth/session-store: list sessions by subject: "+column+
+			": invalid stored time: want the layout 2006-01-02 15:04:05")
+		assert.Nil(t, list)
+
+		require.NoError(t, store.DeleteSession(ctx, s.IDHash))
 	}
 }
 
@@ -515,6 +643,10 @@ func TestStore_BadMetadata(t *testing.T) {
 
 	_, err = store.GetSession(ctx, "hash-1")
 	require.EqualError(t, err, "gas/auth/session-store: get session: metadata: not a JSON object")
+
+	_, err = store.ListSessionsBySubject(ctx, "alice")
+	require.EqualError(t, err,
+		"gas/auth/session-store: list sessions by subject: metadata: not a JSON object")
 }
 
 // Metadata that cannot be JSON fails the write without quoting it.
