@@ -13,8 +13,8 @@ import (
 	"time"
 )
 
-// ShutdownGracePeriod is how long App.Stop waits for requests that outlive
-// ShutdownTimeout once their contexts are canceled, and the least time it
+// ShutdownGracePeriod is how long App.Stop waits for requests still
+// running once their contexts are canceled, and the least time it
 // leaves services to close, as described under Shutting down in the package
 // documentation.
 const ShutdownGracePeriod = time.Second
@@ -41,7 +41,8 @@ type App struct {
 	// csrfProtection guards the router against cross-origin requests.
 	csrfProtection *http.CrossOriginProtection
 	// baseCtx is the base context of the server's requests, and
-	// cancelBase cancels it, which Stop does at the shutdown deadline.
+	// cancelBase cancels it, which Stop does once the server has shut
+	// down or the shutdown deadline has passed.
 	baseCtx    context.Context //nolint:containedctx // the server's base context, canceled by Stop
 	cancelBase context.CancelFunc
 	// allowedEnvs are the environments Start accepts.
@@ -323,9 +324,10 @@ func (a *App) Serve() error {
 // Stop shuts the App down within ShutdownTimeout, as described under
 // Shutting down in the package documentation: it emits
 // SystemServerShuttingDown, shuts the server down, cancels the context of
-// requests still running at the deadline and waits up to
-// ShutdownGracePeriod for them, then shuts the Worker down. ctx bounds it
-// too. Every error is returned, joined; a clean Stop returns nil.
+// requests still running once it has, or at the deadline, and waits up to
+// ShutdownGracePeriod for them, then shuts the Worker down. It does not
+// close hijacked connections. ctx bounds it too. Every error is returned,
+// joined; a clean Stop returns nil.
 func (a *App) Stop(ctx context.Context) error {
 	a.mu.Lock()
 
@@ -537,10 +539,11 @@ func (a *App) applyBoundServer() {
 
 // drainServer shuts the server down within srvCtx, cancels the context of
 // the requests still running, and gives them ShutdownGracePeriod to
-// return; then it closes their connections, which ends their blocked
-// reads and writes, and gives them ShutdownGracePeriod again, logging how
-// many are left when it gives up. The waits also end with ctx, Stop's
-// own. It returns the server's errors.
+// return; then it closes the server's connections, which ends blocked
+// reads and writes on them but leaves hijacked connections open, and
+// gives the requests ShutdownGracePeriod again, logging how many are left
+// when it gives up. The waits also end with ctx, Stop's own. It returns
+// the server's errors.
 func (a *App) drainServer(ctx, srvCtx context.Context) []error {
 	var errs []error
 
