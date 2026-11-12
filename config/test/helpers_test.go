@@ -74,7 +74,7 @@ func (p *withCtx) LoadContext(ctx context.Context) (map[string]any, error) {
 func newConfig(t *testing.T, values map[string]any) *config.Config {
 	t.Helper()
 
-	c := config.New(config.WithProvider(newStatic("static", values)))
+	c := config.New(config.WithoutEnvExtension(), config.WithProvider(newStatic("static", values)))
 	require.NoError(t, c.Load())
 
 	return c

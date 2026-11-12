@@ -44,7 +44,10 @@ func TestStaticProvider_LoadsAgain(t *testing.T) {
 func TestStaticProvider_NilValues(t *testing.T) {
 	t.Parallel()
 
-	c := config.New(config.WithProvider(configtest.NewStaticProvider(nil)))
+	c := config.New(
+		config.WithoutEnvExtension(),
+		config.WithProvider(configtest.NewStaticProvider(nil)),
+	)
 	require.NoError(t, c.Load())
 
 	assert.Empty(t, c.Values())

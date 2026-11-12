@@ -112,6 +112,35 @@ up file.
 Otherwise the migrations it reads are registered as RegisterSlice
 registers them.
 
+A migration holds one up SQL and one down SQL, whatever the database,
+and the service applies whatever was registered. So a module whose SQL
+differs per dialect registers only its database's files: it keeps one
+directory per dialect, picks one by the database provider's Driver,
+and passes it to RegisterFS through fs.Sub. In the module's Init:
+
+```go
+//go:embed migrations
+var migrations embed.FS
+
+dir, err := fs.Sub(migrations, "migrations/"+db.Driver())
+if err != nil {
+	return err
+}
+
+return svc.RegisterFS(owner, dir)
+```
+
+db is the gas.DatabaseProvider, svc the gas.MigrationManager and owner
+the module's service, with files such as
+`migrations/postgres/001_create_notes.up.sql` and
+`migrations/sqlite/001_create_notes.up.sql`. gas/database's Driver
+reports `postgres`, `mysql` or `sqlite`; another provider may report
+`pgx` or `sqlite3`, which the service also accepts, so the module maps
+those to a directory. fs.Sub does not check that the directory exists: for a
+dialect without one, RegisterFS returns an error, after `read files: `,
+wrapping fs.ErrNotExist. Give every directory the same versions, so
+that each migration is one step on every database.
+
 ## Versions
 
 A version is any non-empty text. Versions are ordered in one of two

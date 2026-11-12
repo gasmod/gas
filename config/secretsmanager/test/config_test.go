@@ -24,7 +24,7 @@ func TestConfig_GetAndBind(t *testing.T) {
 		}`),
 		"myapp/db-pass": str(`hunter2`),
 	})
-	cfg := config.New(config.WithProvider(secretsmanager.NewProvider(
+	cfg := config.New(config.WithoutEnvExtension(), config.WithProvider(secretsmanager.NewProvider(
 		secretsmanager.WithClient(mock),
 		secretsmanager.WithSecret("myapp/config"),
 		secretsmanager.WithSecretAtKey("myapp/db-pass", "database.password"),

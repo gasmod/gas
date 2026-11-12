@@ -2,9 +2,14 @@ package auth_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/gasmod/gas"
 	"github.com/gasmod/gas/auth"
@@ -69,4 +74,41 @@ func withPrincipal(p gas.Principal) *http.Request {
 // it.
 func withLogger(r *http.Request, l gas.Logger) *http.Request {
 	return r.WithContext(gas.WithLogger(r.Context(), l))
+}
+
+// acceptHTML returns r asking for HTML, so the core's error writer
+// answers it with plain text.
+func acceptHTML(r *http.Request) *http.Request {
+	r.Header.Set("Accept", "text/html")
+
+	return r
+}
+
+// assertProblem asserts that rec holds the core's problem details
+// response with status and code, and returns its detail.
+func assertProblem(t *testing.T, rec *httptest.ResponseRecorder, status int, code string) string {
+	t.Helper()
+
+	assert.Equal(t, status, rec.Code)
+	assert.Equal(t, gas.ProblemContentType, rec.Header().Get("Content-Type"))
+	assert.Equal(t, "no-store", rec.Header().Get("Cache-Control"))
+
+	var p gas.Problem
+
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &p))
+	assert.Equal(t, status, p.Status)
+	assert.Equal(t, http.StatusText(status), p.Title)
+	assert.Equal(t, code, p.Code)
+
+	return p.Detail
+}
+
+// assertPlainText asserts that rec holds the core's plain-text error
+// response with status and body.
+func assertPlainText(t *testing.T, rec *httptest.ResponseRecorder, status int, body string) {
+	t.Helper()
+
+	assert.Equal(t, status, rec.Code)
+	assert.Equal(t, "text/plain; charset=utf-8", rec.Header().Get("Content-Type"))
+	assert.Equal(t, body+"\n", rec.Body.String())
 }

@@ -73,6 +73,25 @@ go get github.com/gasmod/gas/database
 All modules share one version and are released together. Keep them on the
 same version as the core.
 
+To upgrade to vX.Y.Z, set every Gas module in your `go.mod` to it, then
+tidy:
+
+```sh
+go mod edit \
+  -require=github.com/gasmod/gas@vX.Y.Z \
+  -require=github.com/gasmod/gas/config@vX.Y.Z \
+  -require=github.com/gasmod/gas/log@vX.Y.Z \
+  -require=github.com/gasmod/gas/database@vX.Y.Z
+go mod tidy
+```
+
+Avoid one `go get` per module, such as `go get github.com/gasmod/gas@vX.Y.Z`
+followed by `go get github.com/gasmod/gas/config@vX.Y.Z`. Once the core at the
+new version is in your module cache, `go get` of a module at that version can
+fail with "module github.com/gasmod/gas@vX.Y.Z found, but does not contain
+package github.com/gasmod/gas/config" without asking the proxy. A single
+`go get` naming every module fails the same way if the core is already cached.
+
 ### Register modules
 
 Modules are services. You register them with the App, and its container
@@ -126,6 +145,9 @@ A few things to know:
   tools' variables, such as their API keys, stay out of your config.
 - **Nested keys use `__`.** `APP_DATABASE__DSN` sets the key
   `database.dsn`.
+- **`GAS_ENV` picks the environment.** It holds `development`, the
+  default, `testing`, `staging` or `production`. Any other value fails
+  `cfg.Load`, so a typo such as `prod` stops the app.
 - **SQLite needs a driver.** Import `modernc.org/sqlite`, or another driver
   registered as `sqlite`. PostgreSQL and MySQL drivers come with the
   database module.
