@@ -30,8 +30,9 @@ func TestMiddleware_Success(t *testing.T) {
 	assert.Equal(t, 1, m.CallCount("Authenticate"))
 }
 
-// No credentials and every denial get a plain-text 401 that says nothing
-// about the cause, and the next handler does not run.
+// No credentials and every denial get the core's 401 problem details,
+// which say nothing about the cause, and the next handler does not run.
+// A client that asks for HTML gets the plain-text form.
 func TestMiddleware_Denials401(t *testing.T) {
 	t.Parallel()
 
@@ -44,10 +45,12 @@ func TestMiddleware_Denials401(t *testing.T) {
 	} {
 		rec := serve(auth.Middleware(returning(nil, err))(okHandler), nil)
 
-		assert.Equal(t, http.StatusUnauthorized, rec.Code, err.Error())
-		assert.Equal(t, "Unauthorized\n", rec.Body.String(), err.Error())
-		assert.Equal(t, "text/plain; charset=utf-8", rec.Header().Get("Content-Type"))
+		detail := assertProblem(t, rec, http.StatusUnauthorized, gas.CodeUnauthorized)
+		assert.Equal(t, "unauthorized", detail, err.Error())
 		assert.Empty(t, rec.Header().Get("WWW-Authenticate"))
+
+		rec = serve(auth.Middleware(returning(nil, err))(okHandler), acceptHTML(newGet()))
+		assertPlainText(t, rec, http.StatusUnauthorized, "unauthorized")
 	}
 }
 
@@ -74,16 +77,20 @@ func TestMiddleware_NilPrincipal401(t *testing.T) {
 }
 
 // An infrastructure error, ErrForbidden from an authenticator included,
-// gets a plain-text 500 that says nothing about the cause.
+// gets the core's 500 problem details, which say nothing about the cause.
+// A client that asks for HTML gets the plain-text form.
 func TestMiddleware_Infrastructure500(t *testing.T) {
 	t.Parallel()
 
 	for _, err := range []error{errDB, auth.ErrForbidden, errors.Join(errDB, auth.ErrForbidden)} {
 		rec := serve(auth.Middleware(returning(nil, err))(okHandler), nil)
 
-		assert.Equal(t, http.StatusInternalServerError, rec.Code)
-		assert.Equal(t, "Internal Server Error\n", rec.Body.String())
+		detail := assertProblem(t, rec, http.StatusInternalServerError, gas.CodeInternal)
+		assert.Equal(t, "internal server error", detail)
 		assert.NotContains(t, rec.Body.String(), "database")
+
+		rec = serve(auth.Middleware(returning(nil, err))(okHandler), acceptHTML(newGet()))
+		assertPlainText(t, rec, http.StatusInternalServerError, "internal server error")
 	}
 }
 
@@ -138,8 +145,7 @@ func TestMiddleware_EndedContextNotLogged(t *testing.T) {
 		auth.Middleware(returning(nil, fmt.Errorf("lookup: %w", context.Canceled)))(okHandler),
 		r,
 	)
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-	assert.Equal(t, "Internal Server Error\n", rec.Body.String())
+	assertProblem(t, rec, http.StatusInternalServerError, gas.CodeInternal)
 
 	rec = serve(auth.Middleware(returning(nil, errDB))(okHandler), r)
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
@@ -184,8 +190,7 @@ func TestMiddleware_WithOnErrorNil(t *testing.T) {
 		auth.Middleware(returning(nil, auth.ErrNoCredentials), auth.WithOnError(nil))(okHandler),
 		nil,
 	)
-	assert.Equal(t, http.StatusUnauthorized, rec.Code)
-	assert.Equal(t, "Unauthorized\n", rec.Body.String())
+	assertProblem(t, rec, http.StatusUnauthorized, gas.CodeUnauthorized)
 }
 
 // WithChallenge sets WWW-Authenticate on a 401, before the error function
@@ -327,9 +332,10 @@ func message(o outcome, name string) string {
 	return name + ": " + o.err.Error()
 }
 
-// model returns the status, body and error Middleware should produce for
-// a chain of the given outcomes, following the package documentation. The
-// error is empty on success.
+// model returns the status, the body on success or else the problem code,
+// and the error Middleware should produce for a chain of the given
+// outcomes, following the package documentation. The error is empty on
+// success.
 func model(outs []outcome) (int, string, string) {
 	var (
 		infra  []string
@@ -353,14 +359,14 @@ func model(outs []outcome) (int, string, string) {
 	}
 
 	if len(infra) > 0 {
-		return http.StatusInternalServerError, "Internal Server Error\n", strings.Join(infra, "\n")
+		return http.StatusInternalServerError, gas.CodeInternal, strings.Join(infra, "\n")
 	}
 
 	if denial == "" {
 		denial = "no credentials"
 	}
 
-	return http.StatusUnauthorized, "Unauthorized\n", denial
+	return http.StatusUnauthorized, gas.CodeUnauthorized, denial
 }
 
 // FuzzChainMiddleware checks Middleware over a Chain against a model of
@@ -391,8 +397,12 @@ func FuzzChainMiddleware(f *testing.F) {
 		wantStatus, wantBody, wantErr := model(outs)
 
 		rec := serve(auth.Middleware(chain)(okHandler), nil)
-		assert.Equal(t, wantStatus, rec.Code)
-		assert.Equal(t, wantBody, rec.Body.String())
+		if wantStatus == http.StatusOK {
+			assert.Equal(t, wantStatus, rec.Code)
+			assert.Equal(t, wantBody, rec.Body.String())
+		} else {
+			assertProblem(t, rec, wantStatus, wantBody)
+		}
 
 		var got error
 
