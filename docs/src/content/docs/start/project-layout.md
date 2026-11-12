@@ -111,8 +111,7 @@ func LoadConfigFrom(providers ...config.Provider) (*Config, error) {
 		return nil, errors.New("app: LoadConfigFrom needs a provider")
 	}
 
-	// The extension resolves the environment from GAS_ENV.
-	opts := []config.Option{config.WithExtension(config.NewEnvExtension())}
+	opts := make([]config.Option, 0, len(providers))
 	for _, p := range providers {
 		opts = append(opts, config.WithProvider(p))
 	}
@@ -145,11 +144,10 @@ A few things to know:
   earlier one, and a missing `.env` loads nothing, so a deployment can set
   the environment alone. See [Settings files](#settings-files) for how the
   names differ.
-- **`GAS_ENV` picks the environment.** The `EnvExtension` resolves it, as
-  under
+- **`GAS_ENV` picks the environment.** The `EnvExtension` that
+  `config.New` adds resolves it, as under
   [Resolving the environment](/reference/config/#resolving-the-environment),
-  and stores it where the App reads it. Without the extension the App
-  runs as `development` whatever `GAS_ENV` holds.
+  and stores it where the App reads it.
 - **`LoadConfigFrom` needs a provider.** `config.New` with none falls back
   to an environment provider with no prefix, whose load fails with
   `environment prefix is required`, so `LoadConfigFrom` says what is
@@ -328,8 +326,8 @@ that knows nothing of the app gets a package of its own under
 
 Unit tests sit beside the code they test. Tests of the whole app go through
 HTTP, as a client does: `test/harness` builds the app with `app.New`,
-starts it, and serves its handler from a test server, and `test/e2e` holds
-the tests.
+starts it, and serves its server from a listener the test owns, and
+`test/e2e` holds the tests.
 
 ```go title="test/harness/harness.go"
 cfg, err := app.LoadConfigFrom(configtest.NewStaticProvider(map[string]any{
@@ -346,24 +344,114 @@ if err := a.Start(t.Context()); err != nil {
 	t.Fatal(err)
 }
 
-srv := httptest.NewServer(a.Handler())
+l, err := net.Listen("tcp", "127.0.0.1:0")
+if err != nil {
+	t.Fatal(err)
+}
+
+srv := a.Server()
+served := make(chan error, 1)
+
+go func() { served <- srv.Serve(l) }()
+
+baseURL := "http://" + l.Addr().String()
 
 t.Cleanup(func() {
-	srv.Close()
-
 	if err := a.Stop(context.Background()); err != nil {
+		t.Error(err)
+	}
+
+	if err := <-served; !errors.Is(err, http.ErrServerClosed) {
 		t.Error(err)
 	}
 })
 ```
 
+`a.Server()` is the `http.Server` the app builds from its `server`
+settings, so the tests meet the timeouts the app runs with; a test server
+around `a.Handler()` would have its own. The listener takes a free port, and
+`baseURL` is where the tests send their requests. `Stop` shuts the server
+down, and `Serve` then returns `http.ErrServerClosed`.
+
+A test reaches a registered service through the started app's container,
+under the type it was registered as, such as the contract the notes module
+implements, with `a` from the harness:
+
+```go
+notes, err := a.ServiceContainer().Resolve[contracts.NoteCounter]()
+if err != nil {
+	t.Fatal(err)
+}
+```
+
 `cfg` comes from `app.LoadConfigFrom`, with the values the test needs in a
 [`configtest.StaticProvider`](/reference/config/configtest/#static-provider),
-so neither `.env` nor the environment's settings reach the test; `dsn` is
-the test database's. `Start` applies the migrations, so each test runs against the schema the
-modules declare. When the tests need outside services, such as a database
-in a container, keep them behind a build tag, such as `e2e`, so that
-`go test ./...` runs the unit tests alone.
+so neither `.env` nor the environment's settings reach the test.
+
+`dsn` names a database made for the one test, as `Start` applies the
+migrations to whatever database it is given: each test begins with the
+schema the modules declare and no rows, and no test migrates a database
+that matters. One PostgreSQL server, such as a container started before
+`go test`, serves the whole run. The harness reads its address from a
+variable the test run sets, skips the test when it is unset, and calls
+`dsn := newDatabase(t)` before it loads `cfg`:
+
+```go title="test/harness/database.go"
+func newDatabase(t *testing.T) string {
+	t.Helper()
+
+	admin := os.Getenv("TEST_DATABASE_URL")
+	if admin == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
+	}
+
+	u, err := url.Parse(admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := pgx.Connect(t.Context(), admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() {
+		if err := conn.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
+
+	name := fmt.Sprintf("test_%x", rand.Uint64())
+
+	if _, err := conn.Exec(t.Context(), "CREATE DATABASE "+name); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() {
+		_, err := conn.Exec(context.Background(), "DROP DATABASE "+name+" WITH (FORCE)")
+		if err != nil {
+			t.Error(err)
+		}
+	})
+
+	u.Path = "/" + name
+
+	return u.String()
+}
+```
+
+`TEST_DATABASE_URL` is a URL, such as
+`postgres://postgres:secret@localhost:5432/postgres?sslmode=disable`, and
+`newDatabase` returns the same URL with the new database's name in it.
+`t.Cleanup` runs the cleanups in reverse, so the database is dropped after
+`Stop`; `WITH (FORCE)`, from PostgreSQL 13, ends any connection still open.
+An app on SQLite needs no server:
+`"file:" + filepath.Join(t.TempDir(), "app.db")` is a fresh database for
+each test, removed with the directory.
+
+Keep the tests that need outside services, such as a database in a
+container, behind a build tag, such as `e2e`, so that `go test ./...` runs
+the unit tests alone.
 
 ## Settings files
 
@@ -390,5 +478,7 @@ reads.
 
 `GAS_ENV` is the exception: the `EnvExtension` reads it from the process
 environment under that name, with no prefix. In `.env`, set the
-environment as `GASENV`, the key it is stored at. A `GAS_ENV` line there
-becomes the key `gas_env`, which nothing reads.
+environment as `GAS_ENV` or `GASENV`: the extension reads the keys
+`gasenv` and `gas_env`, and takes `gasenv` when both are set. The
+`GAS_ENV` variable in the process environment wins over either, as the
+process environment does for every other setting.

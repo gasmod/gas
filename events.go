@@ -38,8 +38,11 @@ type SystemShuttingDown struct {
 type SystemShuttingDownPayload struct{}
 
 // SystemServerShuttingDown is emitted when the HTTP server is shutting down.
-// For code that should run on any shutdown (not just HTTP), subscribe to
-// SystemShuttingDown instead.
+// App.Stop emits it before it shuts the server down and waits for its
+// subscribers up to ShutdownTimeout, so a subscriber is where to close
+// hijacked connections, which Stop does not close. For code that should
+// run on any shutdown (not just HTTP), subscribe to SystemShuttingDown
+// instead.
 type SystemServerShuttingDown struct {
 	Event[SystemServerShuttingDownPayload]
 }

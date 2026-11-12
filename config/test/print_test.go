@@ -19,7 +19,7 @@ func TestConfig_PrintsCountsOnly(t *testing.T) {
 	t.Parallel()
 
 	//nolint:gosec // G101: test input, not a credential.
-	cfg := config.New(config.WithProvider(newStatic("static", m{
+	cfg := config.New(config.WithoutEnvExtension(), config.WithProvider(newStatic("static", m{
 		"database": m{"dsn": "postgres://u:zqxsecret@h/db"},
 		"app":      m{"name": "demo"},
 	})))
