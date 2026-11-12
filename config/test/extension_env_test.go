@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -49,9 +50,9 @@ func TestEnvironment_IsGasEnvironment(t *testing.T) {
 	_ = gas.WithAllowedEnvironments(config.EnvStaging, ext.Current())
 }
 
-// The environment comes from the key when a provider sets it, else from
-// the variable, else, when the variable is unset or empty, from the
-// fallback.
+// The environment comes from the variable unless it is unset or empty,
+// else from the key, else from gas_env, the key a provider makes of the
+// variable's name, else from the fallback.
 //
 // Not parallel: it sets GAS_ENV.
 func TestEnvExtension_Resolution(t *testing.T) {
@@ -63,9 +64,23 @@ func TestEnvExtension_Resolution(t *testing.T) {
 	}{
 		{name: "fallback", want: config.EnvDevelopment},
 		{name: "variable", variable: "staging", want: config.EnvStaging},
-		{name: "key over variable", variable: "staging", values: m{"gasenv": "production"}, want: config.EnvProduction},
+		{name: "variable over key", variable: "staging", values: m{"gasenv": "production"}, want: config.EnvStaging},
+		{name: "variable over gas_env", variable: "staging", values: m{"gas_env": "production"}, want: config.EnvStaging},
+		{
+			name:     "variable over both",
+			variable: "testing",
+			values:   m{"gasenv": "production", "gas_env": "staging"},
+			want:     config.EnvTesting,
+		},
 		{name: "key without variable", values: m{"GasEnv": "testing"}, want: config.EnvTesting},
-		{name: "key is the fallback", variable: "staging", values: m{"gasenv": "development"}, want: config.EnvDevelopment},
+		{name: "gas_env without variable", values: m{"GAS_ENV": "production"}, want: config.EnvProduction},
+		{name: "key over gas_env", values: m{"gasenv": "staging", "gas_env": "production"}, want: config.EnvStaging},
+		{
+			name:   "key is the fallback",
+			values: m{"gasenv": "development", "gas_env": "production"},
+			want:   config.EnvDevelopment,
+		},
+		{name: "empty gas_env is unset", values: m{"gas_env": ""}, want: config.EnvDevelopment},
 	} {
 		t.Setenv("GAS_ENV", tc.variable)
 
@@ -85,7 +100,13 @@ func TestEnvExtension_Resolution(t *testing.T) {
 //
 // Not parallel: it sets GAS_ENV.
 func TestEnvExtension_NotAllowed(t *testing.T) {
-	const allowed = "a value that is not one of development, testing, staging, production"
+	const (
+		allowed  = "a value that is not one of development, testing, staging, production"
+		inKey    = "key GasEnv holds " + allowed
+		inVarKey = "key gas_env holds " + allowed
+	)
+
+	pre, post := config.ErrExtensionPreLoadHookFailed, config.ErrExtensionPostLoadHookFailed
 
 	for _, tc := range []struct {
 		name     string
@@ -94,31 +115,14 @@ func TestEnvExtension_NotAllowed(t *testing.T) {
 		wantErr  error
 		wantMsg  string
 	}{
-		{
-			name:     "variable",
-			variable: "Production",
-			wantErr:  config.ErrExtensionPreLoadHookFailed,
-			wantMsg:  "variable GAS_ENV holds " + allowed,
-		},
-		{
-			name:     "key over an allowed variable",
-			variable: "production",
-			values:   m{"gasenv": "prod"},
-			wantErr:  config.ErrExtensionPostLoadHookFailed,
-			wantMsg:  "key GasEnv holds " + allowed,
-		},
-		{
-			name:    "key not a string",
-			values:  m{"gasenv": 1},
-			wantErr: config.ErrExtensionPostLoadHookFailed,
-			wantMsg: "key GasEnv holds " + allowed,
-		},
-		{
-			name:    "key nil",
-			values:  m{"gasenv": nil},
-			wantErr: config.ErrExtensionPostLoadHookFailed,
-			wantMsg: "key GasEnv holds " + allowed,
-		},
+		{name: "variable", variable: "Production", wantErr: pre, wantMsg: "variable GAS_ENV holds " + allowed},
+		{name: "key, allowed variable", variable: "production", values: m{"gasenv": "prod"}, wantErr: post, wantMsg: inKey},
+		{name: "key", values: m{"gasenv": "prod"}, wantErr: post, wantMsg: inKey},
+		{name: "key not a string", values: m{"gasenv": 1}, wantErr: post, wantMsg: inKey},
+		{name: "key nil", values: m{"gasenv": nil}, wantErr: post, wantMsg: inKey},
+		{name: "gas_env", values: m{"gas_env": "prod"}, wantErr: post, wantMsg: inVarKey},
+		{name: "gas_env, allowed key", values: m{"gasenv": "staging", "gas_env": "prod"}, wantErr: post, wantMsg: inVarKey},
+		{name: "gas_env not a string", values: m{"gas_env": 1}, wantErr: post, wantMsg: inVarKey},
 	} {
 		t.Setenv("GAS_ENV", tc.variable)
 
@@ -172,12 +176,92 @@ func TestEnvExtension_Options(t *testing.T) {
 		"variable APP_ENV holds a value that is not one of development, production, local",
 	)
 
+	t.Setenv("GAS_ENV", "")
+
 	ext = config.NewEnvExtension(config.WithConfigKey("app.env"))
 
 	c := loadEnv(t, ext, m{"app": m{"env": "testing"}})
 	assert.Equal(t, config.EnvTesting, ext.Current())
 	assert.Equal(t, "testing", c.Get("app.env"))
 	assert.Equal(t, "testing", c.Get("GasEnv"))
+
+	// Another key replaces gasenv, not gas_env.
+	ext = config.NewEnvExtension(config.WithConfigKey("app.env"))
+	c = loadEnv(t, ext, m{"app": m{"env": "testing"}, "gasenv": "production", "gas_env": "staging"})
+	assert.Equal(t, config.EnvTesting, ext.Current(), "the key")
+	assert.Equal(t, "testing", c.Get("GasEnv"))
+
+	ext = config.NewEnvExtension(config.WithConfigKey("app.env"))
+	loadEnv(t, ext, m{"gasenv": "production", "gas_env": "staging"})
+	assert.Equal(t, config.EnvStaging, ext.Current(), "gas_env, as gasenv is not the key")
+
+	// Another variable replaces gas_env with the key made of its name, levels
+	// included.
+	t.Setenv("APP__ENV", "")
+
+	ext = config.NewEnvExtension(config.WithEnvVarName("APP__ENV"))
+	loadEnv(t, ext, m{"app": m{"env": "production"}, "gas_env": "staging"})
+	assert.Equal(t, config.EnvProduction, ext.Current())
+}
+
+// A .env file sets the environment as GAS_ENV or GASENV, and either loses
+// to the variable.
+//
+// Not parallel: it sets GAS_ENV and changes the working directory.
+func TestEnvExtension_DotEnv(t *testing.T) {
+	dir := chdir(t)
+
+	for _, tc := range []struct {
+		name     string
+		variable string
+		file     string
+		want     config.Environment
+	}{
+		{name: "GAS_ENV", file: "GAS_ENV=production\n", want: config.EnvProduction},
+		{name: "GASENV", file: "GASENV=production\n", want: config.EnvProduction},
+		{name: "GASENV over GAS_ENV", file: "GAS_ENV=production\nGASENV=staging\n", want: config.EnvStaging},
+		{name: "variable over GAS_ENV", variable: "testing", file: "GAS_ENV=production\n", want: config.EnvTesting},
+		{name: "variable over GASENV", variable: "testing", file: "GASENV=production\n", want: config.EnvTesting},
+	} {
+		t.Setenv("GAS_ENV", tc.variable)
+		writeFile(t, filepath.Join(dir, ".env"), tc.file)
+
+		ext := config.NewEnvExtension()
+		c := config.New(config.WithProvider(config.NewDotEnvProvider()), config.WithExtension(ext))
+		require.NoError(t, c.Load(), tc.name)
+
+		assert.Equal(t, tc.want, ext.Current(), tc.name)
+		assert.Equal(t, string(tc.want), c.Get("GasEnv"), tc.name)
+	}
+
+	t.Setenv("GAS_ENV", "")
+	writeFile(t, filepath.Join(dir, ".env"), "GAS_ENV=prod\n")
+
+	err := config.New(config.WithProvider(config.NewDotEnvProvider())).Load()
+	require.ErrorIs(t, err, config.ErrEnvironmentNotAllowed)
+	assert.Contains(t, err.Error(), "key gas_env holds")
+}
+
+// An unprefixed EnvProvider stores GAS_ENV at gas_env too, which agrees
+// with the variable, and an empty GAS_ENV there counts as unset.
+//
+// Not parallel: it sets GAS_ENV.
+func TestEnvExtension_UnprefixedEnvProvider(t *testing.T) {
+	provider := config.WithProvider(config.NewEnvProvider(config.WithoutEnvPrefix()))
+
+	t.Setenv("GAS_ENV", "staging")
+
+	ext := config.NewEnvExtension()
+	c := config.New(provider, config.WithExtension(ext))
+	require.NoError(t, c.Load())
+	assert.Equal(t, config.EnvStaging, ext.Current())
+	assert.Equal(t, "staging", c.Get("gas_env"), "gas_env is left in place")
+
+	t.Setenv("GAS_ENV", "")
+
+	ext = config.NewEnvExtension()
+	require.NoError(t, config.New(provider, config.WithExtension(ext)).Load())
+	assert.Equal(t, config.EnvDevelopment, ext.Current())
 }
 
 // An Environment field binds the environment from GasEnv.
@@ -232,20 +316,31 @@ func TestEnvExtension_Current(t *testing.T) {
 	assert.False(t, ext.IsDevelopmentLike())
 }
 
-// Once a load has stored the environment at the key, later loads keep it
-// unless a provider sets the key: the variable only fills a key that holds
-// nothing.
+// The variable wins on every load. Once a load has stored the environment
+// at the key, the key holds a value, so a later change to gas_env takes
+// effect only through the variable or the key.
 //
 // Not parallel: it sets GAS_ENV.
 func TestEnvExtension_Reload(t *testing.T) {
 	t.Setenv("GAS_ENV", "staging")
 
 	ext := config.NewEnvExtension()
-	c := loadEnv(t, ext, nil)
+	provider := newStatic("static", nil)
+	c := config.New(config.WithProvider(provider), config.WithExtension(ext))
+	require.NoError(t, c.Load())
 
 	t.Setenv("GAS_ENV", "production")
 	require.NoError(t, c.Load())
-	assert.Equal(t, config.EnvStaging, ext.Current())
+	assert.Equal(t, config.EnvProduction, ext.Current())
+
+	t.Setenv("GAS_ENV", "")
+	provider.set(m{"gas_env": "testing"}, nil)
+	require.NoError(t, c.Load())
+	assert.Equal(t, config.EnvProduction, ext.Current(), "the key keeps the stored value")
+
+	provider.set(m{"gasenv": "testing"}, nil)
+	require.NoError(t, c.Load())
+	assert.Equal(t, config.EnvTesting, ext.Current())
 }
 
 func TestEnvironment_Methods(t *testing.T) {

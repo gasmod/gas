@@ -29,6 +29,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `LogValue` count the extension and that key.
 
   Pass `WithoutEnvExtension` to keep the old behavior.
+- **BREAKING: the `GAS_ENV` variable wins over a provider.** The
+  `EnvExtension` takes the environment from the variable when it is set
+  and not empty, then from the key `gasenv`, then from `gas_env`, then the
+  fallback, so the process environment overrides a file here as it does
+  for every other setting. A `.env` with `GASENV=development` no longer
+  makes a server started with `GAS_ENV=production` run as development.
+  An app that relied on a provider's `gasenv` beating the variable now
+  runs in the variable's environment. Every source that holds a value is
+  checked, so a typo in `gas_env` fails `Load` too. `PreLoad` stores
+  nothing at the key when the variable is unset or empty, where it stored
+  the fallback.
+
+### Fixed
+
+- **`GAS_ENV` in a `.env` file sets the environment.** The file turns it
+  into the key `gas_env`, which nothing read, so the app ran in the
+  fallback environment with no error. The `EnvExtension` now reads that
+  key after its own, and a `.env` may say `GAS_ENV` or `GASENV`. With
+  `WithEnvVarName`, it reads the key made of that name instead, such as
+  `app_env` for `APP_ENV`.
 
 ## [0.9.0] - 2026-11-11
 
