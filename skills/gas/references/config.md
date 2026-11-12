@@ -127,6 +127,11 @@ loaded. The unsafe variables listed under Environment variables are not
 copied. A name left out of the configuration for an empty level is
 still copied.
 
+The file sets the application environment as `GAS_ENV`, which becomes
+the key `gas_env`, or as `GASENV`, the key `gasenv` (see Resolving the
+environment). Either loses to the variable `GAS_ENV` in the process
+environment.
+
 ## JSON files
 
 `JSONProvider` reads a JSON file, whose path `WithJSONFilePath` sets; it
@@ -243,7 +248,7 @@ struct is copied the way Go copies it, so a map inside one is shared.
 
 A *Config prints, with fmt and any verb, and logs, with log/slog, only
 how many providers, extensions and top-level keys it has, such as
-`config.Config{providers: 1, extensions: 0, keys: 3}`, never a value.
+`config.Config{providers: 1, extensions: 1, keys: 3}`, never a value.
 What Values, Get and Find return is the values themselves, secrets
 included: never log or print them.
 
@@ -338,7 +343,17 @@ error keep their new values.
 development or production, during each load, and stores it at the key
 `GasEnv`.
 
-An app reads it by binding a field of type `Environment`, which is
+`New` adds an EnvExtension with the default options, which runs before
+the extensions `WithExtension` adds, so every Config resolves the
+environment unless it is told not to:
+
+- An EnvExtension given to WithExtension takes the default's place, so
+one Config never has two.
+- `WithoutEnvExtension` leaves the default out, so the configuration
+neither reads nor checks `GAS_ENV`, and holds no `GasEnv` unless a
+provider sets it.
+
+An app reads the environment by binding a field of type `Environment`, which is
 gas.Environment, from that key, as gas.Config.Env does. A field named `Env` needs the tag, as its own name
 is the key `env`. With `WithConfigKey` set to `env`, it binds without
 one:
@@ -349,7 +364,8 @@ type AppConfig struct {
 }
 ```
 
-The extension also reports the environment itself:
+The extension also reports the environment itself. The default one is
+not reachable, so an app that asks it gives New its own:
 
 ```go
 envExt := config.NewEnvExtension()
@@ -369,9 +385,21 @@ or the empty Environment before the first load.
 
 The environment is the first of these:
 
-1. The value a provider sets at the key.
-2. Else the value of the variable `GAS_ENV`.
-3. Else, when the variable is unset or empty, the fallback, development.
+1. The value of the variable `GAS_ENV`, unless it is unset or empty.
+2. Else the value at the key, `gasenv`, such as `GASENV` in a `.env`
+file sets.
+3. Else the value at `gas_env`, the key that EnvProvider and
+DotEnvProvider make of the variable's name, such as `GAS_ENV` in a
+`.env` file sets. The empty string there counts as unset, as it does
+for the variable.
+4. Else the fallback, development.
+
+So the process environment wins over a file here as it does for every
+other setting, and a `.env` file may say `GAS_ENV` or `GASENV`. A
+provider that sets both keys to different values gets the one at
+`gasenv`. An unprefixed EnvProvider stores the variable at `gas_env`
+too, which agrees with it. The extension leaves `gas_env` in the
+configuration, as a load leaves every key a provider sets.
 
 The allowed values are development, testing, staging and production,
 compared with their case. The fallback is always allowed.
@@ -384,14 +412,15 @@ rather than running it as development:
 - From a provider, or a key holding anything but a string, PostLoad
 fails.
 
-The variable is checked on every load, even when a provider sets the key
-or an earlier load stored it. So a typo in it fails the load though its
-value would not be used. The error names the variable or key and the
-allowed values, not the value.
+Every source that holds a value is checked on every load, even one that
+an earlier source wins over. So a typo in any of them fails the load
+though its value would not be used. The error names the variable or key
+and the allowed values, not the value.
 
 Options change these defaults:
 
-- `WithEnvVarName` changes the variable.
+- `WithEnvVarName` changes the variable, and with it the key made of
+its name, such as `app_env` for `APP_ENV`.
 - `WithAllowedEnvs` changes the allowed values.
 - `WithDefault` changes the fallback.
 - `WithConfigKey` changes the key. With another key, the environment
@@ -428,10 +457,11 @@ app := gas.NewApp(
 )
 ```
 
-Before the providers load, the extension stores the variable's value, or
-the fallback, at the key unless the key holds a value. So once a load
-has stored it, a later change to the variable takes effect only through
-a provider.
+Before the providers load, the extension stores the variable's value at
+the key when it is set, so the extensions that run after it see the
+environment. After they load, it stores the environment it resolved
+there. So once a load has stored it, the key holds a value, and a later
+change to `gas_env` takes effect only through the variable or the key.
 
 ## Concurrency
 
