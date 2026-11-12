@@ -21,6 +21,16 @@ func WithExtension(ext Extension) Option {
 	}
 }
 
+// WithoutEnvExtension leaves out the EnvExtension that New adds by default,
+// so the configuration does not read GAS_ENV, check it, or store the
+// environment at DefaultConfigKey. An EnvExtension given to WithExtension
+// still runs.
+func WithoutEnvExtension() Option {
+	return func(c *Config) {
+		c.withoutEnvExtension = true
+	}
+}
+
 // WithValidator sets the validator Bind checks structs with, such as one
 // with custom validation tags registered. A nil validator, a nil pointer
 // such as a nil *validator.Validate included, keeps the default,

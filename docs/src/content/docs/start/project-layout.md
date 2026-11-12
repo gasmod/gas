@@ -111,8 +111,7 @@ func LoadConfigFrom(providers ...config.Provider) (*Config, error) {
 		return nil, errors.New("app: LoadConfigFrom needs a provider")
 	}
 
-	// The extension resolves the environment from GAS_ENV.
-	opts := []config.Option{config.WithExtension(config.NewEnvExtension())}
+	opts := make([]config.Option, 0, len(providers))
 	for _, p := range providers {
 		opts = append(opts, config.WithProvider(p))
 	}
@@ -145,11 +144,10 @@ A few things to know:
   earlier one, and a missing `.env` loads nothing, so a deployment can set
   the environment alone. See [Settings files](#settings-files) for how the
   names differ.
-- **`GAS_ENV` picks the environment.** The `EnvExtension` resolves it, as
-  under
+- **`GAS_ENV` picks the environment.** The `EnvExtension` that
+  `config.New` adds resolves it, as under
   [Resolving the environment](/reference/config/#resolving-the-environment),
-  and stores it where the App reads it. Without the extension the App
-  runs as `development` whatever `GAS_ENV` holds.
+  and stores it where the App reads it.
 - **`LoadConfigFrom` needs a provider.** `config.New` with none falls back
   to an environment provider with no prefix, whose load fails with
   `environment prefix is required`, so `LoadConfigFrom` says what is
@@ -328,8 +326,8 @@ that knows nothing of the app gets a package of its own under
 
 Unit tests sit beside the code they test. Tests of the whole app go through
 HTTP, as a client does: `test/harness` builds the app with `app.New`,
-starts it, and serves its handler from a test server, and `test/e2e` holds
-the tests.
+starts it, and serves its server from a listener the test owns, and
+`test/e2e` holds the tests.
 
 ```go title="test/harness/harness.go"
 cfg, err := app.LoadConfigFrom(configtest.NewStaticProvider(map[string]any{
@@ -346,15 +344,44 @@ if err := a.Start(t.Context()); err != nil {
 	t.Fatal(err)
 }
 
-srv := httptest.NewServer(a.Handler())
+l, err := net.Listen("tcp", "127.0.0.1:0")
+if err != nil {
+	t.Fatal(err)
+}
+
+srv := a.Server()
+served := make(chan error, 1)
+
+go func() { served <- srv.Serve(l) }()
+
+baseURL := "http://" + l.Addr().String()
 
 t.Cleanup(func() {
-	srv.Close()
-
 	if err := a.Stop(context.Background()); err != nil {
 		t.Error(err)
 	}
+
+	if err := <-served; !errors.Is(err, http.ErrServerClosed) {
+		t.Error(err)
+	}
 })
+```
+
+`a.Server()` is the `http.Server` the app builds from its `server`
+settings, so the tests meet the timeouts the app runs with; a test server
+around `a.Handler()` would have its own. The listener takes a free port, and
+`baseURL` is where the tests send their requests. `Stop` shuts the server
+down, and `Serve` then returns `http.ErrServerClosed`.
+
+A test reaches a registered service through the started app's container,
+under the type it was registered as, such as the contract the notes module
+implements, with `a` from the harness:
+
+```go
+notes, err := a.ServiceContainer().Resolve[contracts.NoteCounter]()
+if err != nil {
+	t.Fatal(err)
+}
 ```
 
 `cfg` comes from `app.LoadConfigFrom`, with the values the test needs in a
@@ -390,5 +417,7 @@ reads.
 
 `GAS_ENV` is the exception: the `EnvExtension` reads it from the process
 environment under that name, with no prefix. In `.env`, set the
-environment as `GASENV`, the key it is stored at. A `GAS_ENV` line there
-becomes the key `gas_env`, which nothing reads.
+environment as `GAS_ENV` or `GASENV`: the extension reads the keys
+`gasenv` and `gas_env`, and takes `gasenv` when both are set. The
+`GAS_ENV` variable in the process environment wins over either, as the
+process environment does for every other setting.
