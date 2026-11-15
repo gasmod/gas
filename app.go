@@ -2,6 +2,7 @@ package gas
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -282,43 +283,52 @@ func (a *App) Handler() http.Handler {
 	return a.handler
 }
 
-// Serve starts the HTTP server and blocks until it stops. It returns
-// ErrNotStarted before Start succeeds and ErrShutDown once Stop has begun.
-// A server closed by Stop returns nil; any other listener error is
-// returned, wrapped.
+// Serve listens on the server's address and serves on it, as
+// ServeListener does, blocking until the server stops. It returns
+// ErrNotStarted before Start succeeds and ErrShutDown once Stop has begun,
+// without listening. A failure to listen is returned, wrapped.
 func (a *App) Serve() error {
-	a.mu.Lock()
-
-	state := a.state
-	a.mu.Unlock()
-
-	switch state {
-	case lifeIdle, lifeStarting, lifeFailed:
-		return ErrNotStarted
-	case lifeShutDown:
-		return ErrShutDown
-	case lifeStarted:
+	srv, err := a.beginServe()
+	if err != nil {
+		return err
 	}
 
-	srv := a.Server()
+	addr := srv.Addr
+	if addr == "" {
+		addr = ":http"
+		if hasCertificate(srv.TLSConfig) {
+			addr = ":https"
+		}
+	}
 
-	// From here net/http reads the server's fields.
-	a.srvMu.Lock()
-
-	a.srvSettled = true
-	a.srvMu.Unlock()
-
-	a.getLogger().Info("server started").
-		Str("environment", a.Config().Env.String()).
-		Str("addr", srv.Addr).
-		Send()
-
-	err := srv.ListenAndServe()
-	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+	l, err := (&net.ListenConfig{}).Listen(a.baseCtx, "tcp", addr)
+	if err != nil {
 		return fmt.Errorf("gas: serve: %w", err)
 	}
 
-	return nil
+	return a.serve(srv, l)
+}
+
+// ServeListener serves the App's server on l, which the caller has bound,
+// such as to port 0 for a free port, and blocks until the server stops.
+// Once it serves, it logs `server started` with l's address and emits
+// [SystemServerListening]. When the server's TLSConfig holds a
+// certificate (Certificates, GetCertificate or GetConfigForClient), it
+// serves TLS on l, with HTTP/2, as [http.Server.ServeTLS] does.
+//
+// It returns ErrNotStarted before Start succeeds and ErrShutDown once Stop
+// has begun. A server closed by Stop returns nil; any other error is
+// returned, wrapped. l is closed when it returns, as [http.Server.Serve]
+// closes it.
+func (a *App) ServeListener(l net.Listener) error {
+	srv, err := a.beginServe()
+	if err != nil {
+		_ = l.Close()
+
+		return err
+	}
+
+	return a.serve(srv, l)
 }
 
 // Stop shuts the App down within ShutdownTimeout, as described under
@@ -588,4 +598,73 @@ func (a *App) waitInflight(ctx context.Context, grace time.Duration) bool {
 	}
 
 	return true
+}
+
+// beginServe returns the server to serve, and marks its fields final, or
+// ErrNotStarted or ErrShutDown when the App cannot serve.
+func (a *App) beginServe() (*http.Server, error) {
+	a.mu.Lock()
+
+	state := a.state
+	a.mu.Unlock()
+
+	switch state {
+	case lifeIdle, lifeStarting, lifeFailed:
+		return nil, ErrNotStarted
+	case lifeShutDown:
+		return nil, ErrShutDown
+	case lifeStarted:
+	}
+
+	srv := a.Server()
+
+	// From here net/http reads the server's fields.
+	a.srvMu.Lock()
+
+	a.srvSettled = true
+	a.srvMu.Unlock()
+
+	return srv, nil
+}
+
+// serve logs `server started`, emits SystemServerListening and serves srv
+// on l, with TLS when srv's TLSConfig holds a certificate.
+func (a *App) serve(srv *http.Server, l net.Listener) error {
+	useTLS := hasCertificate(srv.TLSConfig)
+
+	a.getLogger().Info("server started").
+		Str("environment", a.Config().Env.String()).
+		Str("addr", l.Addr().String()).
+		Bool("tls", useTLS).
+		Send()
+
+	a.eventBus.Emit[SystemServerListening](SystemServerListeningPayload{
+		Addr: l.Addr(),
+		TLS:  useTLS,
+	})
+
+	serveOn := srv.Serve
+	if useTLS {
+		serveOn = func(l net.Listener) error {
+			err := srv.ServeTLS(l, "", "")
+			// ServeTLS returns without closing l when its setup fails.
+			_ = l.Close()
+
+			return err //nolint:wrapcheck // serve wraps it below.
+		}
+	}
+
+	err := serveOn(l)
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("gas: serve: %w", err)
+	}
+
+	return nil
+}
+
+// hasCertificate reports whether cfg holds a certificate, so that a
+// server with it serves TLS without certificate files.
+func hasCertificate(cfg *tls.Config) bool {
+	return cfg != nil &&
+		(len(cfg.Certificates) > 0 || cfg.GetCertificate != nil || cfg.GetConfigForClient != nil)
 }

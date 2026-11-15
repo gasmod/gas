@@ -574,6 +574,37 @@ config; after, it returns a copy of the bound one.
 service's Init, takes the bound address and timeouts at Start for each
 of those fields the caller has not changed, unless Serve has begun.
 
+## Serving
+
+`App.Serve` listens on the server's address and serves on it.
+`App.ServeListener` serves on a listener the caller bound, such as one
+on port 0, so a test takes a free port with no race:
+
+```go
+l, err := net.Listen("tcp", "127.0.0.1:0")
+if err != nil {
+	return err
+}
+
+go func() { served <- app.ServeListener(l) }()
+
+baseURL := "http://" + l.Addr().String()
+```
+
+Both serve only once Start has succeeded. Once listening, they log
+`server started` with the address, and emit `SystemServerListening`,
+which carries it, without waiting for its subscribers; the ready hooks
+run in Start, before the server listens. A server whose TLSConfig holds
+a certificate, set through App.Server before serving, serves TLS, with
+HTTP/2 as `http.Server.ServeTLS` sets it up:
+
+```go
+app.Server().TLSConfig = &tls.Config{Certificates: []tls.Certificate{cert}}
+```
+
+Stop shuts the server down either way, and Serve or ServeListener then
+returns nil.
+
 ## Concurrency
 
 - A Worker, an App, a ServiceContainer, a Scope, a Router and an
