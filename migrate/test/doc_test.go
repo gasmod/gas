@@ -53,6 +53,74 @@ func TestDoc_Usage(t *testing.T) {
 	}, rows(t, svc))
 }
 
+// The per-dialect example in the package documentation's Migration files
+// section: each database applies its own directory's SQL, and a dialect
+// without a directory fails RegisterFS.
+func TestDoc_PerDialectFiles(t *testing.T) {
+	t.Parallel()
+
+	ups := map[string]string{
+		"postgres": "CREATE TABLE notes (id SERIAL PRIMARY KEY, body TEXT)",
+		"mysql":    "CREATE TABLE notes (id INT AUTO_INCREMENT PRIMARY KEY, body TEXT)",
+		"sqlite":   "CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)",
+	}
+	file := func(body string) *fstest.MapFile { return &fstest.MapFile{Data: []byte(body)} }
+	// files returns a directory of migrations for each of dialects.
+	files := func(dialects ...string) fstest.MapFS {
+		out := fstest.MapFS{}
+
+		for _, d := range dialects {
+			out["migrations/"+d+"/001_create_notes.up.sql"] = file(ups[d])
+			out["migrations/"+d+"/001_create_notes.down.sql"] = file("DROP TABLE notes")
+		}
+
+		return out
+	}
+	// register is the documented registration, in a service's Init.
+	register := func(
+		migrations fs.FS, db gas.DatabaseProvider, svc gas.MigrationManager, owner gas.Service,
+	) error {
+		dir, err := fs.Sub(migrations, "migrations/"+db.Driver())
+		if err != nil {
+			return err
+		}
+
+		return svc.RegisterFS(owner, dir)
+	}
+
+	for _, b := range backends {
+		t.Run(b.name, func(t *testing.T) {
+			t.Parallel()
+
+			e := newEnv(t, b)
+
+			require.NoError(t, register(files("postgres", "mysql", "sqlite"), e.db, e.svc, app))
+			require.NoError(t, e.svc.RunPending())
+
+			_, err := e.db.Exec(t.Context(), "INSERT INTO notes (body) VALUES ('x')")
+			require.NoError(t, err)
+			assert.Equal(t, []migrate.AppliedMigration{
+				{
+					Version:     "001",
+					Service:     "app",
+					Description: "create notes",
+					Checksum:    sum(ups[b.name]),
+				},
+			}, rows(t, e.svc))
+		})
+	}
+
+	t.Run("no directory", func(t *testing.T) {
+		t.Parallel()
+
+		e := sqliteEnv(t)
+
+		err := register(files("postgres", "mysql"), e.db, e.svc, app)
+		require.ErrorIs(t, err, fs.ErrNotExist)
+		assert.Contains(t, err.Error(), "read files: ")
+	})
+}
+
 // errFS is a file system that fails to open anything with
 // fs.ErrNotExist.
 type errFS struct{}

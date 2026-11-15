@@ -22,6 +22,7 @@ func TestLoad_MergeOrder(t *testing.T) {
 	t.Parallel()
 
 	c := config.New(
+		config.WithoutEnvExtension(),
 		config.WithProvider(newStatic("first", m{
 			"db":    m{"host": "a", "port": 1},
 			"cache": m{"host": "c"},
@@ -55,6 +56,7 @@ func TestLoad_KeysNormalized(t *testing.T) {
 	t.Parallel()
 
 	c := config.New(
+		config.WithoutEnvExtension(),
 		config.WithProvider(newStatic("first", m{"DB": m{" Host ": "a"}})),
 		config.WithProvider(newStatic("second", m{"db": m{"HOST": "b"}})),
 	)
@@ -93,7 +95,7 @@ func TestLoad_Reload(t *testing.T) {
 	t.Parallel()
 
 	p := newStatic("static", m{"a": 1, "b": 2})
-	c := config.New(config.WithProvider(p))
+	c := config.New(config.WithoutEnvExtension(), config.WithProvider(p))
 	require.NoError(t, c.Load())
 
 	require.NoError(t, c.Set("a", "set"))
@@ -115,6 +117,7 @@ func TestLoad_FailureMergesNothing(t *testing.T) {
 	failing := newStatic("failing", m{"b": 1})
 	last := newStatic("last", m{"c": 1})
 	c := config.New(
+		config.WithoutEnvExtension(),
 		config.WithProvider(first),
 		config.WithProvider(failing),
 		config.WithProvider(last),
@@ -194,6 +197,7 @@ func TestLoad_ExtensionErrors(t *testing.T) {
 
 	log = nil
 	c = config.New(
+		config.WithoutEnvExtension(),
 		config.WithProvider(p),
 		config.WithExtension(&recorder{name: "one", log: &log, postErr: errBoom}),
 		config.WithExtension(&recorder{name: "two", log: &log}),
@@ -215,6 +219,7 @@ func TestLoad_LoadProvider(t *testing.T) {
 
 	first := newStatic("first", m{"a": 1, "b": 1})
 	c := config.New(
+		config.WithoutEnvExtension(),
 		config.WithProvider(first),
 		config.WithExtension(&recorder{name: "ext", log: &log}),
 	)

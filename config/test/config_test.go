@@ -242,7 +242,10 @@ func TestConfig_SetDefaults(t *testing.T) {
 func TestConfig_DefaultsUnderProviders(t *testing.T) {
 	t.Parallel()
 
-	c := config.New(config.WithProvider(newStatic("static", m{"host": "provider"})))
+	c := config.New(
+		config.WithoutEnvExtension(),
+		config.WithProvider(newStatic("static", m{"host": "provider"})),
+	)
 	require.NoError(t, c.SetDefault("host", "default"))
 	require.NoError(t, c.SetDefault("port", 1))
 	require.NoError(t, c.Load())

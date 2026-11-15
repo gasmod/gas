@@ -43,6 +43,10 @@ var idLength = base64.RawURLEncoding.EncodedLen(idBytes)
 // cleanupTaskName names the cleanup in its log events.
 const cleanupTaskName = "session cleanup"
 
+// bearerScheme is the authentication scheme of a session ID in the
+// Authorization header, matched without regard to case.
+const bearerScheme = "Bearer"
+
 var (
 	// ErrNilConfig indicates that WithConfig was given nil. It is
 	// svcutil.ErrNilConfig.
@@ -75,9 +79,10 @@ var (
 	ErrInvalidSession = errors.New("invalid session")
 )
 
-// Service authenticates requests by a session cookie and manages the
-// sessions, as described in the package documentation. It is safe for
-// concurrent use, Init and Close included.
+// Service authenticates requests by a session cookie, or with
+// AcceptBearer an Authorization header, and manages the sessions, as
+// described in the package documentation. It is safe for concurrent use,
+// Init and Close included.
 type Service struct {
 	// db is the database each Init builds a store on.
 	db gas.DatabaseProvider
@@ -214,8 +219,9 @@ func (s *Service) Config() Config {
 	return *cfg
 }
 
-// Authenticate returns the principal of the session the request's cookie
-// names, as described in the package documentation.
+// Authenticate returns the principal of the session whose ID the
+// request carries, in its cookie or, with AcceptBearer, in a Bearer
+// header, as described in the package documentation.
 func (s *Service) Authenticate(ctx context.Context, r *http.Request) (gas.Principal, error) {
 	st, err := s.current()
 	if err != nil {
@@ -238,7 +244,8 @@ func (s *Service) Authenticate(ctx context.Context, r *http.Request) (gas.Princi
 
 // Create issues a new session for subject with meta, from the request r,
 // and stores it, as described in the package documentation. The caller
-// sends it with SetCookie. meta may be nil; the session holds a copy.
+// sends it with SetCookie, or in the response to a client that sends it
+// back in a Bearer header. meta may be nil; the session holds a copy.
 func (s *Service) Create(
 	ctx context.Context,
 	subject string,
@@ -292,9 +299,10 @@ func (s *Service) Create(
 	return toSession(id, rec), nil
 }
 
-// Rotate moves the session the request's cookie names to a new ID, as
-// described in the package documentation, and returns it. The caller
-// sends it with SetCookie.
+// Rotate moves the session whose ID the request carries, as Authenticate
+// reads it, to a new ID, as described in the package documentation, and
+// returns it. The caller sends it with SetCookie, or in the response to a
+// client that sends it back in a Bearer header.
 func (s *Service) Rotate(ctx context.Context, r *http.Request) (*Session, error) {
 	st, err := s.current()
 	if err != nil {
@@ -559,7 +567,7 @@ func (st *state) revokeAll(ctx context.Context, subject string) error {
 	return nil
 }
 
-// lookup returns the live session the request's cookie names, and the
+// lookup returns the live session the request carries the ID of, and the
 // time it was checked at. A denial is the auth sentinel prefixed with the
 // service's name, and any other error is prefixed with the service's name
 // and op.
@@ -568,16 +576,12 @@ func (st *state) lookup(
 	r *http.Request,
 	op string,
 ) (*sessionstore.Session, time.Time, error) {
-	cookie, err := r.Cookie(st.cfg.Session.CookieName)
-	if err != nil || cookie.Value == "" {
-		return nil, time.Time{}, deny(auth.ErrNoCredentials)
+	id, err := st.sessionID(r)
+	if err != nil {
+		return nil, time.Time{}, err
 	}
 
-	if !validID(cookie.Value) {
-		return nil, time.Time{}, deny(auth.ErrUnauthenticated)
-	}
-
-	sess, err := st.store.GetSession(ctx, cryptoutil.SHA256Hex(cookie.Value))
+	sess, err := st.store.GetSession(ctx, cryptoutil.SHA256Hex(id))
 	if errors.Is(err, sessionstore.ErrNotFound) {
 		return nil, time.Time{}, deny(auth.ErrUnauthenticated)
 	}
@@ -593,6 +597,65 @@ func (st *state) lookup(
 	}
 
 	return sess, now, nil
+}
+
+// sessionID returns the session ID the request carries, as described in
+// the package documentation: the cookie's value when the request has a
+// non-empty cookie, and otherwise, with AcceptBearer on, the token of its
+// one Bearer header that has the form of a session ID. An ID it returns
+// has that form. A denial is the auth sentinel prefixed with the
+// service's name.
+func (st *state) sessionID(r *http.Request) (string, error) {
+	cookie, err := r.Cookie(st.cfg.Session.CookieName)
+	if err == nil && cookie.Value != "" {
+		if !validID(cookie.Value) {
+			return "", deny(auth.ErrUnauthenticated)
+		}
+
+		return cookie.Value, nil
+	}
+
+	if !st.cfg.Session.AcceptBearer {
+		return "", deny(auth.ErrNoCredentials)
+	}
+
+	return bearerID(r.Header)
+}
+
+// bearerID returns the token of the one Authorization header of scheme
+// Bearer, matched without regard to case, whose token has the form of a
+// session ID. A Bearer token of another form, such as a JWT, is left for
+// other authenticators: with none of that form it is auth.ErrNoCredentials,
+// and with more than one auth.ErrUnauthenticated.
+func bearerID(h http.Header) (string, error) {
+	var (
+		id    string
+		found int
+	)
+
+	for _, v := range h.Values("Authorization") {
+		scheme, rest, _ := strings.Cut(strings.TrimSpace(v), " ")
+		if !strings.EqualFold(scheme, bearerScheme) {
+			continue
+		}
+
+		token := strings.TrimLeft(rest, " ")
+		if !validID(token) {
+			continue
+		}
+
+		id = token
+		found++
+	}
+
+	switch found {
+	case 0:
+		return "", deny(auth.ErrNoCredentials)
+	case 1:
+		return id, nil
+	default:
+		return "", deny(auth.ErrUnauthenticated)
+	}
 }
 
 // expired reports whether sess is past its idle or its absolute expiry at

@@ -1,5 +1,6 @@
-// Package session authenticates HTTP requests by a session cookie, with
-// the sessions kept server-side in a SQL database. Its [Service] is an
+// Package session authenticates HTTP requests by a session cookie, or by
+// an `Authorization: Bearer` header for clients that are not browsers,
+// with the sessions kept server-side in a SQL database. Its [Service] is an
 // auth.Authenticator, an auth.PrincipalRevoker and a gas.Service.
 //
 // # Usage
@@ -61,10 +62,12 @@
 // # Session IDs
 //
 // A session ID is 32 random bytes from crypto/rand, 43 characters of
-// unpadded URL-safe base64. The ID is in the returned [Session] and, once
-// [Service.SetCookie] sends it, in the cookie, and nowhere else. The
+// unpadded URL-safe base64. The ID is in the returned [Session], and the
+// service sends it nowhere itself: [Service.SetCookie] puts it in the
+// cookie, or the app returns it in a response body to a client that is
+// not a browser, as described under Clients that are not browsers. The
 // database keys a session by the SHA-256 of its ID, so reading the
-// database, or a backup of it, gives no cookie that authenticates.
+// database, or a backup of it, gives no ID that authenticates.
 //
 // Upgrading from a version that stored the raw ID runs a migration that
 // deletes every stored session, which signs every user out once.
@@ -173,13 +176,29 @@
 //
 // # Authentication
 //
-// [Service.Authenticate] reads the configured cookie and returns:
+// [Service.Authenticate] reads the session ID from the configured cookie
+// and, with AcceptBearer on, from the `Authorization` header:
 //
-//   - auth.ErrNoCredentials when the request is nil, has no such cookie,
-//     its value is empty, or net/http cannot parse it.
-//   - auth.ErrUnauthenticated when the value is not a session ID, or no
-//     stored session has it. A value that does not have the form of a
-//     session ID is rejected without reading the database.
+//   - A request with the cookie, its value not empty, is authenticated by
+//     the cookie alone, and its Authorization headers are not read, even
+//     when the cookie's value is not a session ID.
+//   - Otherwise, with AcceptBearer on, an Authorization header whose
+//     value, trimmed, starts with `Bearer` in any case, then one or more
+//     spaces, carries the ID when its token has the form of a session ID.
+//     A Bearer token of another form, such as a JWT, is not a session
+//     credential and is left for other authenticators.
+//
+// It returns:
+//
+//   - auth.ErrNoCredentials when the request is nil, or carries no ID: no
+//     such cookie, an empty value or one net/http cannot parse, and, with
+//     AcceptBearer on, no Bearer header whose token has the form of a
+//     session ID. An auth.Chain so moves on to its next member, such as a
+//     jwt.Service reading the same header.
+//   - auth.ErrUnauthenticated when the cookie's value is not a session ID,
+//     when more than one Bearer header carries a token of that form, or
+//     when no stored session has the ID. A value that does not have the
+//     form of a session ID is rejected without reading the database.
 //   - auth.ErrCredentialsExpired when the session is past its idle or its
 //     absolute expiry.
 //   - Otherwise an auth.BasePrincipal with the session's subject and
@@ -194,10 +213,12 @@
 //
 // # Rotation
 //
-// [Service.Rotate] moves the session that the request's cookie names to a
-// new ID, and returns it for SetCookie; the old ID no longer
-// authenticates. It fails as Authenticate does when the request is nil
-// ([ErrNilRequest]), or the session is missing or expired.
+// [Service.Rotate] moves the session whose ID the request carries, read
+// as Authenticate reads it, to a new ID, and returns it for SetCookie or
+// for the response to a client that is not a browser; the old ID no
+// longer authenticates. It fails as Authenticate does when the request
+// carries no ID or the session is missing or expired, and with
+// [ErrNilRequest] when the request is nil.
 //
 // The rotated session has:
 //
@@ -301,6 +322,48 @@
 // Behind a proxy that rewrites the Host header, the Origin check rejects
 // every cross-origin-looking request, so forward the original Host.
 //
+// RequireSameOrigin decides by those headers alone. It does not know how
+// the request will be authenticated, and treats one with a Bearer header
+// as any other, since a request that also carries the cookie is
+// authenticated by the cookie. A session ID in a header needs no such
+// check: a browser never adds the header on its own, so another site's
+// page cannot make a request that carries it. A client that is not a
+// browser sends neither Sec-Fetch-Site nor Origin, and is let through.
+// Script in a page of another origin that sends the header is rejected
+// for unsafe methods; leave a route out of RequireSameOrigin for it only
+// when no browser reaches that route with the cookie.
+//
+// # Clients that are not browsers
+//
+// A client that holds the session itself, such as a mobile app calling a
+// JSON API or native code opening a WebSocket, sends the session ID in an
+// `Authorization: Bearer` header instead of a cookie. Turn AcceptBearer
+// on; with it off, the default, the header is never read and the cookie
+// is the only carrier. Then:
+//
+//  1. At sign-in, Create the session and return its [Session].ID to the
+//     client in the response body, rather than calling SetCookie.
+//  2. The client keeps the ID in its secure storage and sends it on every
+//     request as `Authorization: Bearer <id>`.
+//  3. Rotate returns a session with a new ID, and the old one stops
+//     authenticating at once: return the new ID in the response, and the
+//     client replaces the one it keeps.
+//  4. A WebSocket opens with an HTTP GET upgrade request, which
+//     authenticates like any other request, so put the header on it. The
+//     connection is not authenticated again after the upgrade.
+//
+// The session's expiry, extension, listing and revocation are the same
+// as for a cookie session. Revoke the session at sign-out; there is no
+// cookie to clear.
+//
+// The header is read only when the request has no session cookie. A
+// Bearer token that does not have the form of a session ID is
+// auth.ErrNoCredentials for this service, so in an auth.Chain of this
+// service and a jwt.Service the JWTs still reach the jwt.Service:
+//
+//	authn := auth.Chain{sessions, jwtService}
+//	mux.Handle("/api/", auth.Middleware(authn)(apiHandler))
+//
 // # Configuration
 //
 // [Config] holds the [Settings] in the `session` section of the
@@ -335,6 +398,7 @@
 //   - CleanupInterval: [DefaultCleanupInterval] (1 hour).
 //   - CleanupTimeout: [DefaultCleanupTimeout] (30 seconds).
 //   - ActivityInterval: 0, off.
+//   - AcceptBearer: false, the cookie only.
 //
 // [Service.Config] returns a copy of the configuration the last
 // successful Init resolved, defaults included, or the zero Config before

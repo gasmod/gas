@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **session: `Settings.AcceptBearer`** makes `Authenticate` and `Rotate`
+  also read the session ID from an `Authorization: Bearer` header, for
+  clients that are not browsers, such as a mobile app or native code
+  opening a WebSocket: the app returns `Session.ID` in the sign-in
+  response, and the client sends it back in the header. A request with
+  the session cookie is authenticated by the cookie alone. A Bearer
+  token without the form of a session ID, such as a JWT, is
+  `ErrNoCredentials`, so an `auth.Chain` of the session and JWT services
+  still reaches the JWT service; an unknown session ID is
+  `ErrUnauthenticated`, as in a cookie. `RequireSameOrigin` is
+  unchanged. Off, the default, the header is never read. The package
+  documentation describes the flow for such a client.
+### Changed
+
+- **`Middleware`, `RequireScheme` and `RequireAuthorization`** answer
+  401, 403 and 500 with the core's error response, written with
+  `gas.WriteError`, instead of the plain-text bodies `Unauthorized`,
+  `Forbidden` and `Internal Server Error`: an RFC 9457 problem details
+  document with the code `unauthorized`, `forbidden` or
+  `internal_error`, or plain text for a client whose `Accept` header asks
+  for HTML and not JSON, so an API answers every error in one shape. The
+  cause of a 500 is logged as before and is still never written. An app
+  that wants the old plain-text bodies from `Middleware` passes
+  `WithOnError` with a function that writes them, and puts its own
+  middleware in place of `RequireScheme` or `RequireAuthorization`.
+
 ## [0.9.0] - 2026-11-11
 
 ### Changed

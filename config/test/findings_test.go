@@ -72,7 +72,8 @@ func TestConfig_SetDefaultsNilMapPointer(t *testing.T) {
 //
 // Not parallel: it sets GAS_ENV.
 func TestEnvExtension_ConcurrentLoads(t *testing.T) {
-	t.Setenv("GAS_ENV", "staging")
+	// The variable would win over the key, so it is left empty.
+	t.Setenv("GAS_ENV", "")
 
 	ext := config.NewEnvExtension()
 	c := config.New(

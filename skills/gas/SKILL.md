@@ -73,6 +73,25 @@ go get github.com/gasmod/gas/database
 All modules share one version and are released together. Keep them on the
 same version as the core.
 
+To upgrade to vX.Y.Z, set every Gas module in your `go.mod` to it, then
+tidy:
+
+```sh
+go mod edit \
+  -require=github.com/gasmod/gas@vX.Y.Z \
+  -require=github.com/gasmod/gas/config@vX.Y.Z \
+  -require=github.com/gasmod/gas/log@vX.Y.Z \
+  -require=github.com/gasmod/gas/database@vX.Y.Z
+go mod tidy
+```
+
+Avoid one `go get` per module, such as `go get github.com/gasmod/gas@vX.Y.Z`
+followed by `go get github.com/gasmod/gas/config@vX.Y.Z`. Once the core at the
+new version is in your module cache, `go get` of a module at that version can
+fail with "module github.com/gasmod/gas@vX.Y.Z found, but does not contain
+package github.com/gasmod/gas/config" without asking the proxy. A single
+`go get` naming every module fails the same way if the core is already cached.
+
 ### Register modules
 
 Modules are services. You register them with the App, and its container
@@ -126,6 +145,9 @@ A few things to know:
   tools' variables, such as their API keys, stay out of your config.
 - **Nested keys use `__`.** `APP_DATABASE__DSN` sets the key
   `database.dsn`.
+- **`GAS_ENV` picks the environment.** It holds `development`, the
+  default, `testing`, `staging` or `production`. Any other value fails
+  `cfg.Load`, so a typo such as `prod` stops the app.
 - **SQLite needs a driver.** Import `modernc.org/sqlite`, or another driver
   registered as `sqlite`. PostgreSQL and MySQL drivers come with the
   database module.
@@ -172,7 +194,7 @@ INFO server started environment=development addr=0.0.0.0:8080
 - [`github.com/gasmod/gas/auth/apikey`](references/auth/apikey.md): Package apikey authenticates HTTP requests by API key: a Service generates random keys, stores only their SHA-256 hashes in a SQL database, and turns a key presented in a request header into a gas.Principal with the key's subject, scopes and metadata.
 - [`github.com/gasmod/gas/auth/authtest`](references/auth/authtest.md): Package authtest holds mocks of the interfaces in package auth, for tests of code that authenticates, authorizes or revokes: MockAuthenticator, MockAuthorizer and MockRevoker.
 - [`github.com/gasmod/gas/auth/jwt`](references/auth/jwt.md): Package jwt signs and verifies JSON Web Tokens with HS256 or RS256, and authenticates requests that carry one as a bearer token.
-- [`github.com/gasmod/gas/auth/session`](references/auth/session.md): Package session authenticates HTTP requests by a session cookie, with the sessions kept server-side in a SQL database.
+- [`github.com/gasmod/gas/auth/session`](references/auth/session.md): Package session authenticates HTTP requests by a session cookie, or by an `Authorization: Bearer` header for clients that are not browsers, with the sessions kept server-side in a SQL database.
 - [`github.com/gasmod/gas/auth/token`](references/auth/token.md): Package token issues single-use, time-limited tokens, for links such as a password reset, an email verification, a magic login link or an invite.
 
 ### cache

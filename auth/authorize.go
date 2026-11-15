@@ -16,13 +16,13 @@ func RequireScheme(scheme string) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			principal, ok := gas.PrincipalFromContext(r.Context())
 			if !ok {
-				writeStatus(w, http.StatusUnauthorized)
+				writeError(w, r, gas.Unauthorized("unauthorized"))
 
 				return
 			}
 
 			if principal.Scheme() != scheme {
-				writeStatus(w, http.StatusForbidden)
+				writeError(w, r, gas.Forbidden("forbidden"))
 
 				return
 			}
@@ -48,7 +48,7 @@ func RequireAuthorization(a Authorizer, action, resource string) func(http.Handl
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			principal, ok := gas.PrincipalFromContext(r.Context())
 			if !ok {
-				writeStatus(w, http.StatusUnauthorized)
+				writeError(w, r, gas.Unauthorized("unauthorized"))
 
 				return
 			}
@@ -59,10 +59,10 @@ func RequireAuthorization(a Authorizer, action, resource string) func(http.Handl
 			case err == nil:
 				next.ServeHTTP(w, r)
 			case errors.Is(err, ErrForbidden):
-				writeStatus(w, http.StatusForbidden)
+				writeError(w, r, gas.Forbidden("forbidden"))
 			default:
 				logFailure(r, "authorization failed", err)
-				writeStatus(w, http.StatusInternalServerError)
+				writeError(w, r, gas.Internal("internal server error"))
 			}
 		})
 	}

@@ -73,7 +73,10 @@ any of them can be replaced by your own implementation or a test mock without th
 
 All modules share a single version and are released together. A release tags the root module `vX.Y.Z` and each
 submodule `<dir>/vX.Y.Z`, which is what `go get github.com/gasmod/gas/auth@vX.Y.Z` resolves against. Mixing
-versions across modules is not supported, so upgrade them together.
+versions across modules is not supported, so upgrade them together: name every module you use in
+`go mod edit -require=github.com/gasmod/gas@vX.Y.Z -require=github.com/gasmod/gas/auth@vX.Y.Z ...`, then run
+`go mod tidy`. Separate `go get` commands per module can fail with "module found, but does not contain package"
+once the root module's new version is in the module cache.
 
 Gas is pre-1.0: minor versions may contain breaking changes. See the [CHANGELOG](CHANGELOG.md).
 

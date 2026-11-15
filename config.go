@@ -82,7 +82,9 @@ type ServerSettings struct {
 	// IdleTimeout bounds the wait for the next request on a keep-alive
 	// connection. 0 falls back to ReadTimeout, as in net/http, so it must
 	// be positive when ReadTimeout is 0, or an idle connection would stay
-	// open forever.
+	// open forever. ReadTimeout, WriteTimeout and IdleTimeout do not apply
+	// to a hijacked connection, as described under Hijacked connections in
+	// the package documentation.
 	IdleTimeout time.Duration
 
 	// ShutdownTimeout bounds App.Stop, as described under Shutting down in the

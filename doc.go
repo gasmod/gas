@@ -59,6 +59,25 @@
 //     registered, with ctx.
 //  7. It runs the ready hooks, in registration order.
 //
+// A ready hook is a func(*ServiceContainer) error, registered with
+// [WithReadyFunc] or [Worker.ReadyFunc]. It runs once every service is
+// initialized and the migrations have run, so it may resolve any
+// singleton from the container it is given. It is not given Start's ctx.
+//
+//	gas.WithReadyFunc(func(c *gas.ServiceContainer) error {
+//		cache, err := c.Resolve[*Cache]()
+//		if err != nil {
+//			return err
+//		}
+//
+//		return cache.Warm()
+//	})
+//
+// The first hook that returns an error fails Start, with that error after
+// `gas: ready hook: `, and the hooks after it do not run. ReadyFunc
+// panics with an error wrapping [ErrAlreadyStarted] once the hooks have
+// run.
+//
 // When Start fails, it closes every service it had initialized, newest
 // first, with ctx stripped of its cancellation. It returns its error
 // joined with any Close error, and every later Start returns that error
@@ -100,17 +119,20 @@
 //     ErrShutDown.
 //
 // [App.Stop] bounds the whole shutdown by the Config's ShutdownTimeout plus
-// up to three times [ShutdownGracePeriod], and by its ctx, which every
-// wait honors. It runs these steps, in order:
+// up to three times [ShutdownGracePeriod], which is one second, and by its
+// ctx, which every wait honors. It runs these steps, in order:
 //
 //  1. It emits [SystemServerShuttingDown] and waits for its subscribers,
 //     until the deadline.
 //  2. It shuts the HTTP server down.
-//  3. At the deadline, it cancels the context of every request still
-//     running, and waits up to ShutdownGracePeriod for them to return.
-//  4. If some do not, it closes their connections, which ends their
-//     blocked reads and writes, and waits up to ShutdownGracePeriod
-//     again. It logs how many are left when it gives up.
+//  3. Once the server has shut down, or at the deadline if it has not by
+//     then, it cancels the context of every request still running, and
+//     waits up to ShutdownGracePeriod for them to return.
+//  4. If some do not, it closes the server's connections, which ends
+//     blocked reads and writes on them, and waits up to
+//     ShutdownGracePeriod again. It logs how many are left when it gives
+//     up. It does not close a hijacked connection, as described under
+//     Hijacked connections.
 //  5. It shuts the Worker down with a context whose deadline is the
 //     shutdown deadline, or ShutdownGracePeriod from then, whichever is
 //     later.
@@ -288,6 +310,27 @@
 // routes by owner, with the names of the named middleware that applies to
 // each, the top-level ones first.
 //
+// Named middleware lets one service guard the routes of others.
+// [Router.Register] adds middleware under a name, owned by a service, and
+// a name registered again takes the place of the old middleware.
+// [MiddlewareByName] uses it on a route, and [Router.UseMiddlewareByName]
+// and [RouteGroup.UseMiddlewareByName] on every route of the router or of
+// a group:
+//
+//	// The auth service's Init:
+//	s.router.Register(s, "auth", s.requireSession)
+//
+//	// The billing service's Init:
+//	s.router.Route(s, "/billing", func(g *gas.RouteGroup) {
+//		g.UseMiddlewareByName("auth")
+//		g.Get("/invoices", s.listInvoices)
+//	})
+//
+// The name must be registered by the time it is used: a route and
+// Router.Use check it when they are called, and a group's Use when the
+// routing tree is built. A service that uses a name can depend on the
+// service that registers it, so that one's Init runs first.
+//
 // Registration panics with an error wrapping [ErrUnknownMiddleware] for a
 // MiddlewareByName whose name is not registered, and
 // [ErrNotFoundHandlerSet] for a NotFound handler set by a second service.
@@ -339,6 +382,24 @@
 //   - errors: the field errors, each with an RFC 6901 `pointer` to its
 //     field.
 //   - details: the [Error.WithDetail] values.
+//
+// A handler or a service returns field errors of its own in the same
+// shape with [Error.WithField], which points at a top-level body field.
+// Its rule is a name of the application's choosing, written as given,
+// where the field errors of binding carry the validator's tag, such as
+// `required` or `email`:
+//
+//	return gas.Unprocessable("request validation failed").
+//		WithField("email", "unique", "is already taken")
+//
+// This answers 422 with the problem:
+//
+//	{"title":"Unprocessable Entity","status":422,"detail":"request validation failed",
+//	 "code":"validation_failed",
+//	 "errors":[{"detail":"is already taken","pointer":"#/email","rule":"unique"}]}
+//
+// For a nested field, append a [FieldError] with its pointer to the
+// Error's Fields.
 //
 // Every error response carries `Cache-Control: no-store`. Once a response
 // has a status or a body, WriteError writes nothing and returns
@@ -402,6 +463,30 @@
 // 403 with code [CodeForbidden] in the unified error shape, with the
 // [SecurityHeaders] defaults. Core ships no CORS.
 //
+// # Hijacked connections
+//
+// A handler that hijacks its connection, as a WebSocket upgrade does,
+// takes it over from net/http, which then neither tracks nor closes it:
+//
+//   - The route must not be behind [Timeout], whose writer cannot hijack.
+//     [SecurityHeaders], [CacheControl], [BodyLimit] and auth.Middleware
+//     pass Hijack on, and [RequestLogger] does for an HTTP/1 request
+//     only.
+//   - The server's ReadTimeout, WriteTimeout and IdleTimeout no longer
+//     apply: net/http clears the connection's deadlines when it is
+//     hijacked. The handler sets its own.
+//   - [App.Stop] does not close the connection, even when it closes the
+//     server's. It cancels the request's context once the server has shut
+//     down, and counts the handler as a request in flight until it
+//     returns. A handler still running then holds Stop for both
+//     ShutdownGracePeriods, and Stop logs `requests still running after
+//     the shutdown grace period`.
+//
+// So the handler ends the connection itself: when its request context
+// ends, or when a [SystemServerShuttingDown] subscriber closes it. Stop
+// runs that subscriber before it shuts the server down, and waits for it
+// up to ShutdownTimeout.
+//
 // # Events
 //
 // An [EventBus] dispatches an event to each of its subscribers on its own
@@ -409,8 +494,24 @@
 // WaitGroup that completes once they return.
 //
 // A subscriber that panics is recovered and, on a Worker's bus, logged
-// with the event, its owner and the stack. A subscription made with
-// SubscribeWithOwner is removed when the kill switch closes its owner.
+// with the event, its owner and the stack.
+//
+// An event is a type that embeds [Event] with its payload type. A service
+// subscribes from its Init with [EventBus.SubscribeWithOwner], naming the
+// event type, so the kill switch removes the subscription when it closes
+// the service, and a restart's Init subscribes again:
+//
+//	type OrderPlaced struct{ gas.Event[OrderPlacedPayload] }
+//
+//	type OrderPlacedPayload struct{ OrderID string }
+//
+//	// The service's Init:
+//	s.bus.SubscribeWithOwner[OrderPlaced](s, func(p OrderPlacedPayload) {
+//		s.sendReceipt(p.OrderID)
+//	})
+//
+//	// Anywhere with the bus:
+//	bus.Emit[OrderPlaced](OrderPlacedPayload{OrderID: "42"})
 //
 // # Configuration
 //

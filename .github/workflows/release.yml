@@ -8,9 +8,15 @@ name: Release
 #     atomic push. No tag exists before the checks pass, and the root tag
 #     never exists without the others.
 #   - Push the tag vX.Y.Z. The run adds the sub-module tags once the checks
-#     pass. Until then `go get` of a sub-module at vX.Y.Z fails with "module
-#     found, but does not contain package", and the Go proxy may go on
-#     answering so for up to 30 minutes.
+#     pass. Until then a sub-module at vX.Y.Z does not exist.
+#
+# "module github.com/gasmod/gas@vX.Y.Z found, but does not contain package
+# github.com/gasmod/gas/<dir>" after a release does not by itself mean a tag
+# is missing. `go get` of a sub-module at vX.Y.Z gives it, with every tag in
+# place and without asking the proxy, when the root module at vX.Y.Z is in
+# the module cache and the sub-module at vX.Y.Z is not, as after
+# `go get github.com/gasmod/gas@vX.Y.Z`. Upgrading with `go mod edit
+# -require=...` for every module and then `go mod tidy` avoids it.
 #
 # Pushing every tag by hand in one push starts no run: GitHub creates no
 # push event for more than three tags at once.

@@ -89,17 +89,24 @@
 // Otherwise it does not call the next handler, and answers:
 //
 //   - 401 for ErrNoCredentials or an error matching ErrUnauthenticated,
-//     with the plain-text body `Unauthorized`.
-//   - 500 for any other error, with the plain-text body `Internal Server
-//     Error`. When the request's context carries a gas.Logger, as
-//     gas.RequestLogger arranges, the error is logged with it at error
-//     level, with the message `authentication failed` and the error under
-//     `error`. Once the request's context has ended, such as when the
-//     client went away, the 500 is still written but nothing is logged.
+//     with the code `unauthorized`.
+//   - 500 for any other error, with the code `internal_error`. When the
+//     request's context carries a gas.Logger, as gas.RequestLogger
+//     arranges, the error is logged with it at error level, with the
+//     message `authentication failed` and the error under `error`. Once
+//     the request's context has ended, such as when the client went away,
+//     the 500 is still written but nothing is logged.
 //
 // The errors are told apart with [errors.Is], so an error that joins a
 // denial with another error counts as a denial; Chain never returns one.
-// The bodies are those of [http.Error], and say nothing about the cause.
+//
+// Each response is the core's error response, written with gas.WriteError
+// as a handler's error is: an RFC 9457 problem details document with the
+// code above, or plain text for a client whose Accept header asks for HTML
+// and not JSON. It says nothing about the cause. A 500 means the check
+// itself failed, such as the database being down, not that the
+// credentials were refused, so a client should not discard its
+// credentials on one.
 //
 // An authenticator that returns ErrForbidden, which is not a denial of
 // credentials, gets a 500 like any other infrastructure error.
@@ -120,10 +127,12 @@
 // [RequireScheme] lets a request through only when Middleware stored a
 // principal with the given scheme, compared exactly. Otherwise:
 //
-//   - A request without a principal gets a 401 `Unauthorized`.
-//   - A request with another scheme gets a 403 `Forbidden`.
+//   - A request without a principal gets a 401 with the code
+//     `unauthorized`.
+//   - A request with another scheme gets a 403 with the code `forbidden`.
 //
-// Neither response says which scheme was wanted.
+// Both are written as Middleware writes its responses, and neither says
+// which scheme was wanted.
 //
 // # Authorization
 //
@@ -138,11 +147,15 @@
 // principal Middleware stored, and lets the request through when it
 // allows. Otherwise:
 //
-//   - A request without a principal gets a 401 `Unauthorized`.
-//   - A denial gets a 403 `Forbidden`.
-//   - Any other error gets a 500 `Internal Server Error`. It is logged as
-//     Middleware logs one, with the message `authorization failed`, and
-//     likewise not logged once the request's context has ended.
+//   - A request without a principal gets a 401 with the code
+//     `unauthorized`.
+//   - A denial gets a 403 with the code `forbidden`.
+//   - Any other error gets a 500 with the code `internal_error`. It is
+//     logged as Middleware logs one, with the message `authorization
+//     failed`, and likewise not logged once the request's context has
+//     ended.
+//
+// All three are written as Middleware writes its responses.
 //
 // RequireAuthorization panics at construction when the Authorizer is nil
 // or a nil pointer.

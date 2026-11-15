@@ -19,13 +19,13 @@ type middlewareOptions struct {
 }
 
 // WithOnError sets the function that writes the response when
-// authentication fails, in place of the default plain-text 401 or 500. It
-// gets the authenticator's error and owns the whole response. A nil fn
-// keeps the default.
+// authentication fails, in place of the default 401 or 500. It gets the
+// authenticator's error and owns the whole response. A nil fn keeps the
+// default.
 //
-// Default: a plain-text `Unauthorized` with status 401, or `Internal
-// Server Error` with status 500, as described in the package
-// documentation.
+// Default: the core's error response, written with gas.WriteError: a 401
+// with code `unauthorized`, or a 500 with code `internal_error`, as
+// described in the package documentation.
 func WithOnError(fn func(w http.ResponseWriter, r *http.Request, err error)) MiddlewareOption {
 	return func(o *middlewareOptions) {
 		if fn != nil {
@@ -92,18 +92,23 @@ func isDenial(err error) bool {
 // logging the latter, as described in the package documentation.
 func defaultOnError(w http.ResponseWriter, r *http.Request, err error) {
 	if isDenial(err) {
-		writeStatus(w, http.StatusUnauthorized)
+		writeError(w, r, gas.Unauthorized("unauthorized"))
 
 		return
 	}
 
 	logFailure(r, "authentication failed", err)
-	writeStatus(w, http.StatusInternalServerError)
+	writeError(w, r, gas.Internal("internal server error"))
 }
 
-// writeStatus writes a plain-text response holding the status text.
-func writeStatus(w http.ResponseWriter, status int) {
-	http.Error(w, http.StatusText(status), status)
+// writeError writes e as the core's error response with gas.WriteError:
+// problem details, or plain text when the request's Accept header asks for
+// HTML and not JSON. Its error is dropped, as the core's own middleware drops it: auth
+// writes before any handler, so the response is not yet committed, and a
+// failed write means the client is gone. e carries no cause, since the
+// caller logs it and gas.WriteError would not.
+func writeError(w http.ResponseWriter, r *http.Request, e *gas.Error) {
+	_ = gas.WriteError(w, r, e)
 }
 
 // logFailure logs err at error level with the logger on the request's
