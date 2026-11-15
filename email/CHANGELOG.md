@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-15
+
+### Added
+
+- **ses: `Settings.RawErrors`** (`email.rawerrors`, off by default)
+  makes a failed request's error end with the AWS SDK's error, its
+  operation, HTTP status, request ID, code and message, and wrap it, so
+  `errors.As` reaches `smithy.APIError`. It does the same for Init's
+  failures to load the AWS configuration or to retrieve credentials. The
+  reasons, sentinels and context errors are unchanged. It lifts the
+  guarantee that errors hold no endpoint, address or server message, so
+  Init logs a warning when it is set; use it to debug.
+
+### Changed
+
+- The internal modules are required at v0.10.0.
+
 ## [0.9.0] - 2026-11-11
 
 ### Changed

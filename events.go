@@ -1,5 +1,7 @@
 package gas
 
+import "net"
+
 // SystemServiceClosed is emitted when a service is closed at runtime.
 type SystemServiceClosed struct {
 	Event[SystemServiceClosedPayload]
@@ -49,6 +51,20 @@ type SystemServerShuttingDown struct {
 
 // SystemServerShuttingDownPayload is an empty payload for the server-shutting-down event.
 type SystemServerShuttingDownPayload struct{}
+
+// SystemServerListening is emitted when [App.Serve] or
+// [App.ServeListener] has a bound listener and begins to serve on it. It
+// is not waited for: the server serves while its subscribers run.
+type SystemServerListening struct {
+	Event[SystemServerListeningPayload]
+}
+
+// SystemServerListeningPayload carries the address the server listens on,
+// with the port the system chose for port 0, and whether it serves TLS.
+type SystemServerListeningPayload struct {
+	Addr net.Addr
+	TLS  bool
+}
 
 // AppConfigUpdated is emitted when the app config is updated.
 type AppConfigUpdated struct {

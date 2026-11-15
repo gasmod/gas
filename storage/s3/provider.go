@@ -212,6 +212,8 @@ type state struct {
 	region string
 	// opTimeout is Settings.OpTimeout.
 	opTimeout time.Duration
+	// rawErrors is Settings.RawErrors.
+	rawErrors bool
 }
 
 // New returns the constructor of a Provider with opts applied, in the
@@ -409,6 +411,7 @@ func (p *Provider) open(ctx context.Context, set *Settings) (*state, error) {
 		bucket:    set.Bucket,
 		region:    set.Region,
 		opTimeout: set.OpTimeout,
+		rawErrors: set.RawErrors,
 	}
 
 	switch {
@@ -449,8 +452,18 @@ func warnPartial(logger gas.Logger, set *Settings) {
 	}
 }
 
+// warnRawErrors logs a warning that errors show the AWS SDK's, when
+// RawErrors is set, as described in the package documentation.
+func warnRawErrors(logger gas.Logger, set *Settings) {
+	if set.RawErrors {
+		logger.Warn("raw errors enabled: errors and logs can hold the endpoint, " +
+			"a bucket, a key and the server's message").Send()
+	}
+}
+
 // logInitialized logs `service initialized`, as described in the package
-// documentation, with the credential source unless a client was given.
+// documentation, with the credential source unless a client was given,
+// and warns when RawErrors is set.
 func (p *Provider) logInitialized(set *Settings, region, source string) {
 	event := p.logger.Info("service initialized").
 		Str("region", region).
@@ -463,6 +476,8 @@ func (p *Provider) logInitialized(set *Settings, region, source string) {
 	}
 
 	event.Duration("op_timeout", set.OpTimeout).Int("max_retries", set.MaxRetries).Send()
+
+	warnRawErrors(p.logger, set)
 }
 
 // begin starts a call, as lifecycle.Lifecycle.Begin does, on a Provider

@@ -56,6 +56,10 @@ type Settings struct {
 	OpTimeout time.Duration `validate:"gt=0"`
 	// MaxRetries is how many times a failed send is retried.
 	MaxRetries int `validate:"min=0,max=10"`
+	// RawErrors makes a failed send's error also show and wrap the AWS
+	// SDK's error, which can hold the endpoint, addresses and the
+	// server's message. Off by default; use it to debug.
+	RawErrors bool
 }
 
 // Secret is gas.Secret: a string that is never printed, marshaled or

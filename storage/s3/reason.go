@@ -104,7 +104,8 @@ func codes(cs ...string) map[string]bool {
 // a reason or a sentinel's text, and a known AWS error code, and it wraps
 // its sentinels and what the package documentation lists, never the AWS
 // SDK's error, which can hold the endpoint, the bucket, the key, an upload
-// ID or the server's message.
+// ID or the server's message; unless Settings.RawErrors is set, when the
+// text ends with the AWS SDK's error, and it wraps that error too.
 type fixedError struct {
 	// msg is the error text.
 	msg string
@@ -120,23 +121,29 @@ func (e *fixedError) Unwrap() []error { return e.errs }
 
 // requestError returns the failure of op from the error err of a request
 // whose context has not ended: the text classify finds, wrapping its
-// sentinels. An error a request of PutObject's already classified keeps
-// its text and sentinels.
-func requestError(op string, err error) error {
-	reason := reasonOf(op, err)
+// sentinels, and err as raw adds it. An error a request of PutObject's
+// already classified keeps its text and sentinels.
+func requestError(op string, err error, raw bool) error {
+	reason := reasonOf(op, err, raw)
 
 	return &fixedError{msg: opPrefix(op) + ": " + reason.msg, errs: reason.errs}
 }
 
 // reasonOf returns err classified for op, as a fixedError without the
-// prefix of op; an error already classified is returned as it is.
-func reasonOf(op string, err error) *fixedError {
+// prefix of op, with err after the reason, and wrapped, when raw is set;
+// an error already classified is returned as it is.
+func reasonOf(op string, err error, raw bool) *fixedError {
 	reason, ok := errors.AsType[*fixedError](err)
 	if ok {
 		return reason
 	}
 
 	text, errs := classify(op, err)
+	if raw {
+		text += ": " + err.Error()
+
+		errs = append(errs, err)
+	}
 
 	return &fixedError{msg: text, errs: errs}
 }
@@ -292,9 +299,9 @@ func timedOut(err error) bool {
 // credentialsError returns the failure of Init to retrieve credentials,
 // before Init's prefix, from the AWS SDK's error err: `no credentials`
 // and a reason, timed out or failed, wrapping ErrNoCredentials,
-// context.DeadlineExceeded for a timeout, and ctx's error, after the
-// reason, when Init's context ended.
-func credentialsError(ctx context.Context, err error) error {
+// context.DeadlineExceeded for a timeout, err after the reason, when raw
+// is set, and ctx's error, after that, when Init's context ended.
+func credentialsError(ctx context.Context, err error, raw bool) error {
 	e := &fixedError{
 		msg:  ErrNoCredentials.Error() + ": ",
 		errs: []error{ErrNoCredentials},
@@ -306,6 +313,12 @@ func credentialsError(ctx context.Context, err error) error {
 		e.errs = append(e.errs, context.DeadlineExceeded)
 	} else {
 		e.msg += reasonFailed
+	}
+
+	if raw {
+		e.msg += ": " + err.Error()
+
+		e.errs = append(e.errs, err)
 	}
 
 	ctxErr := ctx.Err()

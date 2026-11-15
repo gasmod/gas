@@ -58,6 +58,11 @@ type Settings struct {
 	VisibilityTimeout time.Duration `validate:"min=0,max=12h"`
 	// MaxRetries is how many times a failed request is retried.
 	MaxRetries int `validate:"min=0,max=10"`
+	// RawErrors makes a failed request's error also show and wrap the AWS
+	// SDK's error, which can hold the endpoint, a queue URL, the account
+	// ID, a receipt handle and the server's message. Off by default; use
+	// it to debug.
+	RawErrors bool
 }
 
 // Secret is gas.Secret: a string that is never printed, marshaled or

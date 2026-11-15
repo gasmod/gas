@@ -49,7 +49,11 @@ func (p *Provider) PutObject(
 
 	params.Body = body
 
-	upload := &uploadAPI{API: sess.Value.api, opTimeout: sess.Value.opTimeout}
+	upload := &uploadAPI{
+		API:       sess.Value.api,
+		opTimeout: sess.Value.opTimeout,
+		rawErrors: sess.Value.rawErrors,
+	}
 
 	res, err := upload.run(ctx, sess, params)
 	if err != nil {
@@ -131,7 +135,7 @@ func putFailure(
 	case body.err != nil:
 		err = opError(opPutObject, body.err)
 	default:
-		err = requestError(opPutObject, err)
+		err = requestError(opPutObject, err, sess.Value.rawErrors)
 	}
 
 	abortErr := upload.abortFailure()
@@ -139,7 +143,7 @@ func putFailure(
 		return err
 	}
 
-	reason := reasonOf(opPutObject, abortErr)
+	reason := reasonOf(opPutObject, abortErr, sess.Value.rawErrors)
 
 	return &fixedError{
 		msg:  err.Error() + "; " + ErrUploadNotAborted.Error() + ": " + reason.msg,
@@ -196,6 +200,8 @@ type uploadAPI struct {
 	abortErr error
 	// opTimeout bounds each request.
 	opTimeout time.Duration
+	// rawErrors is Settings.RawErrors.
+	rawErrors bool
 	// mu guards abortErr.
 	mu sync.Mutex
 }
@@ -203,10 +209,12 @@ type uploadAPI struct {
 var _ transfermanager.S3APIClient = (*uploadAPI)(nil)
 
 // bounded calls fn with in within ctx and opTimeout, and returns its
-// output, or its error classified.
+// output, or its error classified, with the AWS SDK's error when raw is
+// set.
 func bounded[I, O any](
 	ctx context.Context,
 	opTimeout time.Duration,
+	raw bool,
 	fn func(context.Context, *I, ...func(*s3.Options)) (*O, error),
 	in *I,
 	optFns []func(*s3.Options),
@@ -220,7 +228,7 @@ func bounded[I, O any](
 	}
 
 	if err != nil {
-		return nil, reasonOf(opPutObject, err)
+		return nil, reasonOf(opPutObject, err, raw)
 	}
 
 	return out, nil
@@ -232,7 +240,7 @@ func (u *uploadAPI) PutObject(
 	in *s3.PutObjectInput,
 	optFns ...func(*s3.Options),
 ) (*s3.PutObjectOutput, error) {
-	return bounded(ctx, u.opTimeout, u.API.PutObject, in, optFns)
+	return bounded(ctx, u.opTimeout, u.rawErrors, u.API.PutObject, in, optFns)
 }
 
 // CreateMultipartUpload begins an upload in parts.
@@ -241,7 +249,7 @@ func (u *uploadAPI) CreateMultipartUpload(
 	in *s3.CreateMultipartUploadInput,
 	optFns ...func(*s3.Options),
 ) (*s3.CreateMultipartUploadOutput, error) {
-	return bounded(ctx, u.opTimeout, u.API.CreateMultipartUpload, in, optFns)
+	return bounded(ctx, u.opTimeout, u.rawErrors, u.API.CreateMultipartUpload, in, optFns)
 }
 
 // UploadPart uploads a part.
@@ -250,7 +258,7 @@ func (u *uploadAPI) UploadPart(
 	in *s3.UploadPartInput,
 	optFns ...func(*s3.Options),
 ) (*s3.UploadPartOutput, error) {
-	return bounded(ctx, u.opTimeout, u.API.UploadPart, in, optFns)
+	return bounded(ctx, u.opTimeout, u.rawErrors, u.API.UploadPart, in, optFns)
 }
 
 // CompleteMultipartUpload completes an upload in parts.
@@ -259,7 +267,7 @@ func (u *uploadAPI) CompleteMultipartUpload(
 	in *s3.CompleteMultipartUploadInput,
 	optFns ...func(*s3.Options),
 ) (*s3.CompleteMultipartUploadOutput, error) {
-	return bounded(ctx, u.opTimeout, u.API.CompleteMultipartUpload, in, optFns)
+	return bounded(ctx, u.opTimeout, u.rawErrors, u.API.CompleteMultipartUpload, in, optFns)
 }
 
 // AbortMultipartUpload aborts an upload in parts, and records its error.
@@ -268,7 +276,7 @@ func (u *uploadAPI) AbortMultipartUpload(
 	in *s3.AbortMultipartUploadInput,
 	optFns ...func(*s3.Options),
 ) (*s3.AbortMultipartUploadOutput, error) {
-	out, err := bounded(ctx, u.opTimeout, u.API.AbortMultipartUpload, in, optFns)
+	out, err := bounded(ctx, u.opTimeout, u.rawErrors, u.API.AbortMultipartUpload, in, optFns)
 	if err != nil {
 		u.mu.Lock()
 		defer u.mu.Unlock()

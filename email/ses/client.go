@@ -18,8 +18,8 @@ import (
 )
 
 // errAWSConfig reports AWS configuration that failed to load, such as a
-// profile that does not exist. The AWS SDK's error is not kept: it can
-// name files and profiles.
+// profile that does not exist. The AWS SDK's error is not kept, unless
+// Settings.RawErrors is set: it can name files and profiles.
 var errAWSConfig = errors.New("AWS configuration failed to load")
 
 // maxReplySize is the largest response body the client Init builds
@@ -161,7 +161,11 @@ func buildClient(ctx context.Context, set *Settings) (*sesv2.Client, *http.Trans
 	}
 
 	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
-	if err != nil {
+
+	switch {
+	case err != nil && set.RawErrors:
+		return nil, nil, fmt.Errorf("%w: %w: %w", email.ErrInvalidConfig, errAWSConfig, err)
+	case err != nil:
 		return nil, nil, fmt.Errorf("%w: %w", email.ErrInvalidConfig, errAWSConfig)
 	}
 
@@ -178,7 +182,7 @@ func buildClient(ctx context.Context, set *Settings) (*sesv2.Client, *http.Trans
 	// them, refreshing them as they expire.
 	_, err = awsCfg.Credentials.Retrieve(credCtx)
 	if err != nil {
-		return nil, nil, credentialsError(ctx, err)
+		return nil, nil, credentialsError(ctx, err, set.RawErrors)
 	}
 
 	client := sesv2.NewFromConfig(awsCfg, func(o *sesv2.Options) {

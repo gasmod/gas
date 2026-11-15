@@ -57,7 +57,8 @@ func run(
 // deadline was opDeadline: the context's error when ctx ended,
 // storage.ErrClosed when a Close canceled the session,
 // context.DeadlineExceeded for a timeout while ctx's deadline was the one
-// in force, and else the error requestError makes. A zero opDeadline is
+// in force, and else the error requestError makes, with the AWS SDK's
+// error when the session shows it. A zero opDeadline is
 // never the one in force.
 func failure(
 	ctx context.Context,
@@ -80,5 +81,5 @@ func failure(
 		return opError(op, context.DeadlineExceeded)
 	}
 
-	return requestError(op, err)
+	return requestError(op, err, sess.Value.rawErrors)
 }

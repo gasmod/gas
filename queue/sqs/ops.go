@@ -160,7 +160,15 @@ func (s *Service) Dequeue(
 
 	valid := validMessages(out.Messages)
 	if len(valid) < len(out.Messages) || len(out.Messages) > maxMessages {
-		return nil, s.release(ctx, st, q, valid, requestError(opDequeue, q.Name, errInvalidReply))
+		// The error is the store's own, not the AWS SDK's, so it is not
+		// shown again.
+		return nil, s.release(
+			ctx,
+			st,
+			q,
+			valid,
+			requestError(opDequeue, q.Name, errInvalidReply, false),
+		)
 	}
 
 	if st.isClosing() {
@@ -484,8 +492,9 @@ func (s *Service) request(
 // st.ctx, and returns its error as op's: the context's error when ctx
 // ended, queue.ErrClosed when a Close canceled st.ctx,
 // context.DeadlineExceeded for a timeout while ctx's deadline was the one
-// in force, and else the error requestError makes. A queue that does not
-// exist drops the URL the name resolved to.
+// in force, and else the error requestError makes, with the AWS SDK's
+// error when st shows it. A queue that does not exist drops the URL the
+// name resolved to.
 func (s *Service) requestBy(
 	ctx context.Context,
 	st *state,
@@ -524,7 +533,7 @@ func (s *Service) requestBy(
 		return opError(op, q.Name, context.DeadlineExceeded)
 	}
 
-	err = requestError(op, q.Name, err)
+	err = requestError(op, q.Name, err, st.rawErrors)
 	if errors.Is(err, queue.ErrQueueNotFound) {
 		forget(st, q)
 	}

@@ -2,6 +2,7 @@ package ses_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sesv2"
+	"github.com/aws/smithy-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -505,4 +507,53 @@ func TestName(t *testing.T) {
 
 	s, _ := build(t)
 	assert.Equal(t, "gas/email/ses", s.Name())
+}
+
+// With RawErrors, an error ends with the AWS SDK's error, the server's
+// message included, and wraps it as well as its sentinels; Init warns of
+// it.
+func TestRawErrors(t *testing.T) {
+	t.Parallel()
+
+	cfg := ses.DefaultConfig()
+
+	cfg.Email.RawErrors = true
+
+	api := &fakeAPI{err: &smithy.GenericAPIError{Code: "MessageRejected", Message: "zqx-message"}}
+	s, _ := build(t, ses.WithConfig(cfg), ses.WithClient(api))
+	require.NoError(t, s.Init(t.Context()))
+
+	err := s.Send(t.Context(), message())
+	require.ErrorIs(t, err, ses.ErrRejected)
+	require.ErrorIs(t, err, ses.ErrCommand)
+	require.EqualError(t, err,
+		"gas/email/ses: send: rejected (MessageRejected): api error MessageRejected: zqx-message")
+
+	apiErr, ok := errors.AsType[smithy.APIError](err)
+	require.True(t, ok, "%v does not reach the SDK's error", err)
+	assert.Equal(t, "zqx-message", apiErr.ErrorMessage())
+
+	f := newFake(t, func(call) reply { return awsError(400, "MessageRejected", "zqx-message") })
+	fcfg := config(f.srv.URL)
+
+	fcfg.Email.MaxRetries = 0
+	fcfg.Email.RawErrors = true
+
+	fs, log := build(t, ses.WithConfig(fcfg))
+	require.NoError(t, fs.Init(t.Context()))
+
+	err = fs.Send(t.Context(), message())
+	require.ErrorIs(t, err, ses.ErrRejected)
+	require.ErrorContains(t, err, "gas/email/ses: send: rejected (MessageRejected): "+
+		"operation error SESv2: SendEmail")
+	require.ErrorContains(t, err, "zqx-message")
+
+	_, ok = errors.AsType[smithy.APIError](err)
+	assert.True(t, ok, "%v does not reach the SDK's error", err)
+
+	entries := log.entries()
+	require.Len(t, entries, 2)
+	assert.Equal(t, "warn", entries[1].level)
+	assert.Equal(t, "raw errors enabled: errors and logs can hold the endpoint, "+
+		"addresses and the server's message", entries[1].msg)
 }

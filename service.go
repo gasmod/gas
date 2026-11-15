@@ -43,6 +43,14 @@ type Service interface {
 	// Init that ignores it holds up startup or the resolution. ctx is
 	// canceled as soon as Init returns, so work that outlives Init, such as a
 	// background goroutine, must not derive from it.
+	//
+	// Init can run again on the same instance: Worker.RestartService calls
+	// it on a singleton the kill switch closed, after its Close returned,
+	// whether that Close succeeded or timed out. So Init builds anew all it
+	// starts, such as goroutines and the sync.WaitGroup, channels and
+	// contexts that track them, rather than reusing what an earlier run
+	// left, which a timed-out Close may not have finished with. One-time
+	// setup belongs in the constructor.
 	Init(ctx context.Context) error
 
 	// Close gracefully shuts down the service. Called at shutdown

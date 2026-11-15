@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-15
+
 ### Added
 
 - **`WithoutEnvExtension`**, which leaves out the `EnvExtension` that
@@ -40,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   checked, so a typo in `gas_env` fails `Load` too. `PreLoad` stores
   nothing at the key when the variable is unset or empty, where it stored
   the fallback.
+- The internal modules are required at v0.10.0.
 
 ### Fixed
 

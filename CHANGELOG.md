@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-15
+
+### Added
+
+- **`App.ServeListener(net.Listener)`** serves the app's own
+  `http.Server` on a listener the caller bound, such as one on port 0, so
+  a test harness takes a free port with no race. It checks the lifecycle
+  as `Serve` does, returning `ErrNotStarted` before Start and
+  `ErrShutDown` once Stop has begun, and closes the listener when it
+  returns.
+- **`SystemServerListening`**, emitted by `Serve` and `ServeListener` once
+  the listener is bound, with its address (the chosen port for port 0)
+  and whether it serves TLS. It is not waited for. The ready hooks still
+  run in Start, before the server listens.
+- **TLS**: a server whose `TLSConfig` holds a certificate
+  (`Certificates`, `GetCertificate` or `GetConfigForClient`), set through
+  `App.Server()` before serving, is served over TLS, with HTTP/2 as
+  `http.Server.ServeTLS` sets it up.
+
+### Changed
+
+- `Serve` binds the address before it logs `server started`, so the log
+  carries the bound address, and a `tls` field; a failure to listen is
+  still returned after `gas: serve: `.
+- The `Service.Init` documentation states that `Worker.RestartService`
+  runs Init again on the same instance, after Close, so Init builds anew
+  the goroutines, WaitGroups, channels and contexts it starts.
+- The internal modules are required at v0.10.0.
+
 ## [0.9.0] - 2026-11-11
 
 ### Changed

@@ -118,6 +118,8 @@ type state struct {
 	from string
 	// opTimeout is Settings.OpTimeout.
 	opTimeout time.Duration
+	// rawErrors is Settings.RawErrors.
+	rawErrors bool
 }
 
 // New returns the constructor of a Service with opts applied, in the shape
@@ -179,7 +181,12 @@ func (s *Service) Init(ctx context.Context) error {
 
 		set = &cfg.Email
 
-		st := &state{client: s.client, from: set.FromEmail, opTimeout: set.OpTimeout}
+		st := &state{
+			client:    s.client,
+			from:      set.FromEmail,
+			opTimeout: set.OpTimeout,
+			rawErrors: set.RawErrors,
+		}
 
 		switch {
 		case s.clientSet && isNil(s.client):
@@ -282,7 +289,8 @@ func (s *Service) Client() *sesv2.Client {
 }
 
 // logInitialized logs `service initialized`, as described in the package
-// documentation, with the credential source unless a client was given.
+// documentation, with the credential source unless a client was given,
+// and warns when RawErrors is set.
 func (s *Service) logInitialized(set *Settings, region, source string) {
 	event := s.logger.Info("service initialized").
 		Str("region", region).
@@ -294,6 +302,11 @@ func (s *Service) logInitialized(set *Settings, region, source string) {
 	}
 
 	event.Duration("op_timeout", set.OpTimeout).Int("max_retries", set.MaxRetries).Send()
+
+	if set.RawErrors {
+		s.logger.Warn("raw errors enabled: errors and logs can hold the endpoint, " +
+			"addresses and the server's message").Send()
+	}
 }
 
 // build returns the client buildClient builds of set, its transport,
