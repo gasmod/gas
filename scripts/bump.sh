@@ -40,7 +40,8 @@ if ! grep -qE "^export const version = '[^']*';\$" "$DOCS_VERSION"; then
 fi
 
 changed=0
-for f in $(find . -name go.mod -not -path './.git/*' | sort) ./go.work; do
+# .claude/ holds agent worktrees: checkouts of other branches, not modules of this one.
+for f in $(find . -name go.mod -not -path './.git/*' -not -path './.claude/*' | sort) ./go.work; do
   before=$(shasum "$f" | cut -d' ' -f1)
   perl -pi -e "s{$PATTERN}{\$1 $VERSION}g" "$f"
   after=$(shasum "$f" | cut -d' ' -f1)
