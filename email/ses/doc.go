@@ -62,6 +62,9 @@
 //     [MaxRetries] (10), with the AWS SDK's standard retryer and its
 //     backoff, whatever `AWS_MAX_ATTEMPTS` and `AWS_RETRY_MODE` say.
 //     Default: [DefaultMaxRetries], 2, so 3 attempts.
+//   - `email.rawerrors`: whether a failed send's error also shows and
+//     wraps the AWS SDK's error, as under Error replies. It breaks the
+//     guarantees under Security, so use it to debug. Default: false.
 //
 // [Service.Init] resolves the configuration each time it runs, from one
 // of two sources:
@@ -167,7 +170,8 @@
 //
 // A send that fails at the connection returns an error wrapping
 // [ErrConnect] and a reason, never the AWS SDK's error, which holds the
-// endpoint. The reasons:
+// endpoint, unless `email.rawerrors` is set, as under Error replies. The
+// reasons:
 //
 //   - `timed out`: a deadline passed, in a context or on the network.
 //     The error then wraps context.DeadlineExceeded too.
@@ -194,6 +198,14 @@
 // when it is one SES or the AWS APIs document. The reply's message, which
 // can quote an address, is never kept, nor a code of any other text, nor
 // the AWS SDK's error.
+//
+// With `email.rawerrors` set, the error's text ends with `: ` and the
+// AWS SDK's error, its operation, HTTP status, request ID, code and
+// message, and the error wraps it, so errors.As reaches the SDK's types,
+// such as smithy.APIError. It does the same for a connection error, and
+// for the failure of Init to load the AWS configuration or to retrieve
+// credentials. The reason, the sentinels and the context's errors are as
+// without it. Init logs a warning when it is set.
 //
 // The reasons, in the order they are told:
 //
@@ -285,7 +297,9 @@
 //
 // No error the sender makes and no log it writes holds an address, a
 // subject, a body, a header value, template data, the endpoint, or a
-// credential, the access key ID included. The logs carry:
+// credential, the access key ID included, unless `email.rawerrors` is
+// set: then an error can hold what the AWS SDK's error holds, such as
+// the endpoint, addresses and the server's message. The logs carry:
 //
 //   - the region;
 //   - whether an endpoint, a client and a default sender were given;

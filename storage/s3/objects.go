@@ -123,7 +123,12 @@ func (p *Provider) GetObject(
 	}
 
 	return &storage.Object{
-		Body: &objectBody{ctx: ctx, body: res.Body, cancel: cancel},
+		Body: &objectBody{
+			ctx:       ctx,
+			body:      res.Body,
+			cancel:    cancel,
+			rawErrors: sess.Value.rawErrors,
+		},
 		ObjectInfo: objectInfo(&fields{
 			cacheControl:       res.CacheControl,
 			contentDisposition: res.ContentDisposition,
@@ -193,6 +198,8 @@ type objectBody struct {
 	body io.ReadCloser
 	// cancel frees the request's context.
 	cancel context.CancelFunc
+	// rawErrors is Settings.RawErrors.
+	rawErrors bool
 }
 
 // Read reads the body. io.EOF is returned as it is; any other error is
@@ -229,7 +236,7 @@ func (b *objectBody) bodyError(err error) error {
 		return opError(opGetObject, fmt.Errorf("read body: %w", ctxErr))
 	}
 
-	reason := reasonOf(opGetObject, err)
+	reason := reasonOf(opGetObject, err, b.rawErrors)
 
 	return &fixedError{msg: opPrefix(opGetObject) + ": read body: " + reason.msg, errs: reason.errs}
 }
@@ -315,13 +322,13 @@ func (p *Provider) ListObjects(
 
 	out, next, err := listPage(res)
 	if err != nil {
-		return nil, requestError(opListObjects, err)
+		return nil, requestError(opListObjects, err, st.rawErrors)
 	}
 
 	if next != "" {
 		out.NextContinuationToken, err = sealToken(st.codec, scope, next)
 		if err != nil {
-			return nil, requestError(opListObjects, err)
+			return nil, requestError(opListObjects, err, st.rawErrors)
 		}
 	}
 

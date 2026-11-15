@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awssqs "github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
+	"github.com/aws/smithy-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -706,4 +707,44 @@ func TestName(t *testing.T) {
 
 	s, _ := build(t)
 	assert.Equal(t, "gas/queue/sqs", s.Name())
+}
+
+// With RawErrors, an error ends with the AWS SDK's error, the server's
+// message included, and wraps it as well as its sentinels; Init warns of
+// it.
+func TestRawErrors(t *testing.T) {
+	t.Parallel()
+
+	f := newFake(t, func(c call) reply {
+		if c.op == "SendMessage" {
+			return awsError(http.StatusBadRequest, "RequestThrottled", "", "zqx-message")
+		}
+
+		return ok(c)
+	})
+
+	cfg := f.config()
+
+	cfg.Queue.MaxRetries = 0
+	cfg.Queue.RawErrors = true
+
+	s, log := build(t, sqs.WithConfig(cfg))
+	require.NoError(t, s.Init(t.Context()))
+
+	err := s.Enqueue(t.Context(), "orders", []byte("v"))
+	require.ErrorIs(t, err, sqs.ErrThrottled)
+	require.ErrorIs(t, err, sqs.ErrCommand)
+	require.EqualError(t, err, `gas/queue/sqs: enqueue "orders": throttled (RequestThrottled): `+
+		"operation error SQS: SendMessage, exceeded maximum number of attempts, 1, "+
+		"https response error StatusCode: 400, RequestID: , RequestThrottled: zqx-message")
+
+	apiErr, ok := errors.AsType[smithy.APIError](err)
+	require.True(t, ok, "%v does not reach the SDK's error", err)
+	assert.Equal(t, "zqx-message", apiErr.ErrorMessage())
+
+	entries := log.entries()
+	require.Len(t, entries, 2)
+	assert.Equal(t, "warn", entries[1].level)
+	assert.Equal(t, "raw errors enabled: errors and logs can hold the endpoint, "+
+		"a queue URL, the account ID, a receipt handle and the server's message", entries[1].msg)
 }

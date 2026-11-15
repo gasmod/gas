@@ -112,7 +112,7 @@ func headSource(
 				Key:    new(src.Key),
 			})
 			if hErr != nil {
-				return nil, reasonOf(opHeadObject, hErr)
+				return nil, reasonOf(opHeadObject, hErr, sess.Value.rawErrors)
 			}
 
 			return out, nil
@@ -125,7 +125,7 @@ func headSource(
 		func(ctx context.Context) (*s3.HeadBucketOutput, error) {
 			out, hErr := api.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: new(src.Bucket)})
 			if hErr != nil {
-				return nil, reasonOf(opHeadBucket, hErr)
+				return nil, reasonOf(opHeadBucket, hErr, sess.Value.rawErrors)
 			}
 
 			return out, nil

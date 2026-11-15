@@ -542,3 +542,62 @@ func (b *closeBody) isClosed() bool {
 
 	return b.closed
 }
+
+// With RawErrors, an error ends with the AWS SDK's error, the server's
+// message included, and wraps it as well as its sentinels; Init warns of
+// it, on the store and on the presigner.
+func TestRawErrors(t *testing.T) {
+	t.Parallel()
+
+	cfg := s3store.DefaultConfig()
+
+	cfg.Storage.RawErrors = true
+
+	p := stubbed(t, &stubAPI{
+		head: func(context.Context) (*awss3.HeadObjectOutput, error) {
+			return nil, &smithy.GenericAPIError{Code: "SlowDown", Message: "zqx-message"}
+		},
+	}, cfg)
+
+	_, err := p.HeadObject(t.Context(), &storage.HeadObjectInput{Bucket: new("b-1"), Key: "k"})
+	require.ErrorIs(t, err, s3store.ErrThrottled)
+	require.EqualError(t, err,
+		"gas/storage/s3: head object: throttled (SlowDown): api error SlowDown: zqx-message")
+
+	apiErr, ok := errors.AsType[smithy.APIError](err)
+	require.True(t, ok, "%v does not reach the SDK's error", err)
+	assert.Equal(t, "zqx-message", apiErr.ErrorMessage())
+
+	f := newFake(t)
+	fcfg := f.config("b-1")
+
+	fcfg.Storage.MaxRetries = 0
+	fcfg.Storage.RawErrors = true
+
+	fp, log := build(t, s3store.WithConfig(fcfg))
+	require.NoError(t, fp.Init(t.Context()))
+
+	f.setHook(awsError(http.StatusInternalServerError, "InternalError"))
+
+	_, err = fp.HeadObject(t.Context(), &storage.HeadObjectInput{BaseObjectInput: keyK})
+	require.ErrorIs(t, err, storage.ErrBackend)
+	require.ErrorContains(t, err, "gas/storage/s3: head object: failed (InternalServerError): "+
+		"operation error S3: HeadObject")
+
+	_, ok = errors.AsType[smithy.APIError](err)
+	assert.True(t, ok, "%v does not reach the SDK's error", err)
+
+	entries := log.entries()
+	require.Len(t, entries, 2)
+	assert.Equal(t, "warn", entries[1].level)
+	assert.Equal(t, "raw errors enabled: errors and logs can hold the endpoint, "+
+		"a bucket, a key and the server's message", entries[1].msg)
+
+	sg, slog := buildSigner(t, s3store.WithPresignerConfig(fcfg))
+	require.NoError(t, sg.Init(t.Context()))
+
+	sentries := slog.entries()
+	require.Len(t, sentries, 2)
+	assert.Equal(t, "warn", sentries[1].level)
+	assert.Equal(t, entries[1].msg, sentries[1].msg)
+}

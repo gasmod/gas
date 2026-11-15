@@ -166,6 +166,8 @@ type state struct {
 	mu sync.Mutex
 	// closing reports whether Close began.
 	closing bool
+	// rawErrors is Settings.RawErrors.
+	rawErrors bool
 }
 
 // New returns the constructor of a Service with opts applied, in the shape
@@ -247,6 +249,7 @@ func (s *Service) Init(ctx context.Context) error {
 		urls:       make(map[string]string),
 		opTimeout:  set.OpTimeout,
 		visibility: time.Duration(queue.WholeSeconds(set.VisibilityTimeout)) * time.Second,
+		rawErrors:  set.RawErrors,
 	})
 	s.bound.Store(cfg)
 
@@ -359,7 +362,8 @@ func (s *Service) Client() *awssqs.Client {
 }
 
 // logInitialized logs `service initialized`, as described in the package
-// documentation, with the credential source unless a client was given.
+// documentation, with the credential source unless a client was given,
+// and warns when RawErrors is set.
 func (s *Service) logInitialized(set *Settings, region, source string) {
 	event := s.logger.Info("service initialized").
 		Str("region", region).
@@ -370,6 +374,11 @@ func (s *Service) logInitialized(set *Settings, region, source string) {
 	}
 
 	event.Duration("op_timeout", set.OpTimeout).Send()
+
+	if set.RawErrors {
+		s.logger.Warn("raw errors enabled: errors and logs can hold the endpoint, " +
+			"a queue URL, the account ID, a receipt handle and the server's message").Send()
+	}
 }
 
 // build returns the client buildClient builds of set, its transport,

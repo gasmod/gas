@@ -18,9 +18,20 @@ import (
 )
 
 // errAWSConfig reports AWS configuration that failed to load, such as a
-// profile that does not exist. The AWS SDK's error is not kept: it can
-// name files and profiles.
+// profile that does not exist. The AWS SDK's error is not kept, unless
+// Settings.RawErrors is set: it can name files and profiles.
 var errAWSConfig = errors.New("AWS configuration failed to load")
+
+// awsConfigError returns the failure to load the AWS configuration,
+// wrapping queue.ErrInvalidConfig and errAWSConfig, and the AWS SDK's
+// error err after them, when raw is set.
+func awsConfigError(err error, raw bool) error {
+	if raw {
+		return fmt.Errorf("%w: %w: %w", queue.ErrInvalidConfig, errAWSConfig, err)
+	}
+
+	return fmt.Errorf("%w: %w", queue.ErrInvalidConfig, errAWSConfig)
+}
 
 // maxReplySize is the largest response body the client Init builds
 // reads, in bytes: 64 MiB, above the largest legal reply (10 messages of
@@ -161,11 +172,7 @@ func buildClient(ctx context.Context, set *Settings) (*awssqs.Client, *http.Tran
 
 	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
 	if err != nil {
-		return nil, nil, opError(
-			opInit,
-			"",
-			fmt.Errorf("%w: %w", queue.ErrInvalidConfig, errAWSConfig),
-		)
+		return nil, nil, opError(opInit, "", awsConfigError(err, set.RawErrors))
 	}
 
 	if awsCfg.Region == "" {
@@ -181,7 +188,7 @@ func buildClient(ctx context.Context, set *Settings) (*awssqs.Client, *http.Tran
 	// them, refreshing them as they expire.
 	_, err = awsCfg.Credentials.Retrieve(credCtx)
 	if err != nil {
-		return nil, nil, credentialsError(ctx, err)
+		return nil, nil, credentialsError(ctx, err, set.RawErrors)
 	}
 
 	client := awssqs.NewFromConfig(awsCfg, func(o *awssqs.Options) {

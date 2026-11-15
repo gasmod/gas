@@ -90,7 +90,9 @@ func codes(cs ...string) map[string]bool {
 // the queue name, a reason and a known AWS error code, and it wraps its
 // sentinels and what the package documentation lists, never the AWS
 // SDK's error, which can hold the endpoint, a receipt handle, an
-// attribute name or a parameter's value.
+// attribute name or a parameter's value; unless Settings.RawErrors is
+// set, when the text ends with the AWS SDK's error, and it wraps that
+// error too.
 type fixedError struct {
 	// msg is the error text.
 	msg string
@@ -109,9 +111,14 @@ func (e *fixedError) Unwrap() []error { return e.errs }
 // requestError returns the failure of op on the queue name from the
 // error err of a request whose context, ctx, has not ended: the reason
 // classify finds, with the code it finds, wrapping the reason's
-// sentinels.
-func requestError(op, name string, err error) error {
+// sentinels, and err after the reason, and wrapped, when raw is set.
+func requestError(op, name string, err error, raw bool) error {
 	text, errs := classify(err)
+	if raw {
+		text += ": " + err.Error()
+
+		errs = append(errs, err)
+	}
 
 	e := &fixedError{msg: opPrefix(op, name) + ": " + text, errs: errs}
 
@@ -243,8 +250,9 @@ func timedOut(err error) bool {
 // credentialsError returns the failure of Init to retrieve credentials,
 // from the AWS SDK's error err: `no credentials` and a reason, timed out
 // or failed, wrapping ErrNoCredentials, context.DeadlineExceeded for a
-// timeout, and ctx's error, after the reason, when Init's context ended.
-func credentialsError(ctx context.Context, err error) error {
+// timeout, err after the reason, when raw is set, and ctx's error, after
+// that, when Init's context ended.
+func credentialsError(ctx context.Context, err error, raw bool) error {
 	e := &fixedError{
 		msg:  opPrefix(opInit, "") + ": " + ErrNoCredentials.Error() + ": ",
 		errs: []error{ErrNoCredentials},
@@ -256,6 +264,12 @@ func credentialsError(ctx context.Context, err error) error {
 		e.errs = append(e.errs, context.DeadlineExceeded)
 	} else {
 		e.msg += reasonFailed
+	}
+
+	if raw {
+		e.msg += ": " + err.Error()
+
+		e.errs = append(e.errs, err)
 	}
 
 	ctxErr := ctx.Err()

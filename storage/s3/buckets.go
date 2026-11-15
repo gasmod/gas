@@ -191,7 +191,7 @@ func (p *Provider) ListBuckets(
 	if next := aws.ToString(res.ContinuationToken); next != "" {
 		out.NextContinuationToken, err = sealToken(st.codec, scope, next)
 		if err != nil {
-			return nil, requestError(opListBuckets, err)
+			return nil, requestError(opListBuckets, err, st.rawErrors)
 		}
 	}
 

@@ -101,6 +101,8 @@ type signer struct {
 	bucket string
 	// opTimeout is Settings.OpTimeout.
 	opTimeout time.Duration
+	// rawErrors is Settings.RawErrors.
+	rawErrors bool
 }
 
 // NewPresigner returns the constructor of a Presigner with opts applied,
@@ -168,7 +170,12 @@ func (p *Presigner) Init(ctx context.Context) error {
 
 		set = &cfg.Storage
 
-		sg := &signer{api: p.client, bucket: set.Bucket, opTimeout: set.OpTimeout}
+		sg := &signer{
+			api:       p.client,
+			bucket:    set.Bucket,
+			opTimeout: set.OpTimeout,
+			rawErrors: set.RawErrors,
+		}
 
 		switch {
 		case p.clientSet && isNilPresign(p.client):
@@ -202,6 +209,8 @@ func (p *Presigner) Init(ctx context.Context) error {
 	}
 
 	event.Duration("op_timeout", set.OpTimeout).Send()
+
+	warnRawErrors(p.logger, set)
 
 	return nil
 }
@@ -455,7 +464,7 @@ func presign(
 		return nil, signerError(op, storage.ErrClosed)
 	}
 
-	reason := reasonOf(op, err)
+	reason := reasonOf(op, err, sess.Value.rawErrors)
 
 	return nil, &fixedError{msg: PresignerName + ": " + op + ": " + reason.msg, errs: reason.errs}
 }

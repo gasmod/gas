@@ -54,6 +54,9 @@
 //   - `queue.maxretries`: how many times a failed request is retried, 0
 //     to [MaxRetries] (10), with the AWS SDK's standard retryer and its
 //     backoff. Default: [DefaultMaxRetries], 2, so 3 attempts.
+//   - `queue.rawerrors`: whether a failed request's error also shows and
+//     wraps the AWS SDK's error, as under Raw errors. It breaks the
+//     guarantees under Security, so use it to debug. Default: false.
 //
 // [Service.Init] resolves the configuration each time it runs, from one
 // of two sources:
@@ -206,7 +209,8 @@
 //
 // A request that fails at the connection returns an error wrapping
 // [ErrConnect] and a reason, never the AWS SDK's error, which holds the
-// endpoint. The reasons:
+// endpoint, unless `queue.rawerrors` is set, as under Raw errors. The
+// reasons:
 //
 //   - `timed out`: a deadline passed, in a context or on the network.
 //     The error then wraps context.DeadlineExceeded too.
@@ -227,7 +231,8 @@
 // reason told by its AWS error code. The code follows, in parentheses,
 // when it is one SQS or the AWS APIs document. The reply's message, which
 // can quote a receipt handle, an attribute name or a parameter's value,
-// is never kept, nor a code of any other text.
+// is never kept, nor a code of any other text, unless `queue.rawerrors`
+// is set, as under Raw errors.
 //
 // The reasons, in the order they are told:
 //
@@ -248,6 +253,18 @@
 //     ReceiveMessage or GetQueueUrl reply as under Receiving and Queues.
 //   - `failed`: any other reply, or a request that failed for another
 //     reason, such as a reply that is not valid JSON.
+//
+// # Raw errors
+//
+// With `queue.rawerrors` set, the error of a failed request's text ends
+// with `: ` and the AWS SDK's error, its operation, HTTP status, request
+// ID, code and message, or its transport error, and the error wraps it,
+// so errors.As reaches the SDK's types, such as smithy.APIError. It does
+// the same for the failure of Init to load the AWS configuration or to
+// retrieve credentials. The reason, the code, the sentinels and the
+// context's errors are as without it. An invalid reply of Dequeue and an
+// entry of a release that SQS reports failed have no error of the SDK's,
+// and stay as they are. Init logs a warning when it is set.
 //
 // # Lifecycle
 //
@@ -339,7 +356,10 @@
 //
 // No error the store makes and no log it writes holds a payload, an
 // attribute, a receipt handle, a queue URL, the endpoint, or a
-// credential, the access key ID included. The logs carry:
+// credential, the access key ID included, unless `queue.rawerrors` is
+// set: then an error can hold what the AWS SDK's error holds, such as the
+// endpoint, a queue URL, the account ID, a receipt handle and the
+// server's message. The logs carry:
 //
 //   - the region;
 //   - whether an endpoint and a client were given;

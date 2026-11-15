@@ -81,7 +81,8 @@ func (s *Service) SendFromTemplate(ctx context.Context, msg *gas.TemplatedEmail)
 // its context, and returns its error as op's: the context's error when
 // ctx ended, email.ErrClosed when a Close canceled the session,
 // context.DeadlineExceeded for a timeout while ctx's deadline was the one
-// in force, and else the error requestError makes.
+// in force, and else the error requestError makes, with the AWS SDK's
+// error when the session shows it.
 func (s *Service) send(
 	ctx context.Context,
 	sess *lifecycle.Session[*state],
@@ -146,7 +147,7 @@ func failure(
 		return opError(op, context.DeadlineExceeded)
 	}
 
-	return requestError(op, err)
+	return requestError(op, err, sess.Value.rawErrors)
 }
 
 // input returns the SendEmail input of msg, a message email.CheckEmail
