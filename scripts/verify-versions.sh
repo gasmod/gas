@@ -22,8 +22,9 @@ cd "$(dirname "$0")/.."
 
 PATTERN='github\.com/gasmod/gas(/[A-Za-z0-9._-]+)*[[:space:]]+v[0-9]+\.[0-9]+\.[0-9]+[^[:space:]]*'
 
+# .claude/ holds agent worktrees: checkouts of other branches, not modules of this one.
 mismatches=$(
-  for f in $(find . -name go.mod -not -path './.git/*' | sort) ./go.work; do
+  for f in $(find . -name go.mod -not -path './.git/*' -not -path './.claude/*' | sort) ./go.work; do
     grep -oE "$PATTERN" "$f" 2>/dev/null |
       awk -v want="$VERSION" -v file="${f#./}" '$2 != want { printf "  %s: %s %s\n", file, $1, $2 }'
   done

@@ -15,7 +15,8 @@ REPO_ROOT := $(shell git rev-parse --show-toplevel)
 
 # Directories containing a Makefile, relative to this one, without trailing
 # slashes. Includes "." for this directory. Used by the *-all targets.
-MODS := $(patsubst %/,%,$(dir $(shell find . -name Makefile -type f)))
+# Skips .claude/, whose agent worktrees are checkouts of other branches.
+MODS := $(patsubst %/,%,$(dir $(shell find . -name Makefile -type f -not -path "./.claude/*")))
 
 ##@ General
 
