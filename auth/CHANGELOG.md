@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-15
+
 ### Added
 
 - **session: `Settings.AcceptBearer`** makes `Authenticate` and `Rotate`
@@ -21,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ErrUnauthenticated`, as in a cookie. `RequireSameOrigin` is
   unchanged. Off, the default, the header is never read. The package
   documentation describes the flow for such a client.
+
 ### Changed
 
 - **`Middleware`, `RequireScheme` and `RequireAuthorization`** answer
@@ -34,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that wants the old plain-text bodies from `Middleware` passes
   `WithOnError` with a function that writes them, and puts its own
   middleware in place of `RequireScheme` or `RequireAuthorization`.
+- The internal modules are required at v0.10.0.
 
 ## [0.9.0] - 2026-11-11
 
