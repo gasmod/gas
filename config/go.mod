@@ -8,7 +8,7 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.48.0
 	github.com/aws/aws-sdk-go-v2/config v1.33.18
 	github.com/aws/aws-sdk-go-v2/credentials v1.21.0
-	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.50.12
+	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.51.0
 	github.com/gasmod/gas v0.10.0
 	github.com/go-playground/validator/v10 v10.30.6
 	github.com/stretchr/testify v1.12.1
@@ -28,7 +28,7 @@ require (
 	github.com/aws/smithy-go v1.28.9 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.16 // indirect
 	github.com/gasmod/omap v0.2.1 // indirect
-	github.com/go-chi/chi/v5 v5.5.0 // indirect
+	github.com/go-chi/chi/v5 v5.5.1-0.20261018135022-9f8adb1aabaa // indirect
 	github.com/go-playground/locales v0.14.2 // indirect
 	github.com/go-playground/universal-translator v0.18.2 // indirect
 	github.com/gorilla/schema v1.4.1 // indirect
