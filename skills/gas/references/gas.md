@@ -88,8 +88,9 @@ The first hook that returns an error fails Start, with that error after
 panics with an error wrapping `ErrAlreadyStarted` once the hooks have
 run.
 
-When Start fails, it closes every service it had initialized, newest
-first, with ctx stripped of its cancellation. It returns its error
+When Start fails, it ends the lifetime context (see Lifetime), then
+closes every service it had initialized, newest first, with ctx stripped
+of its cancellation. It returns its error
 joined with any Close error, and every later Start returns that error
 again.
 
@@ -106,11 +107,12 @@ has begun returns `ErrShutDown`.
 
 `Worker.Shutdown` runs these steps, in order:
 
-1. It waits for a CloseService or RestartService in progress.
-2. It emits `SystemShuttingDown` and waits for its subscribers.
-3. It closes every active service, in the reverse order of their Init,
+1. It ends the lifetime context (see Lifetime).
+2. It waits for a CloseService or RestartService in progress.
+3. It emits `SystemShuttingDown` and waits for its subscribers.
+4. It closes every active service, in the reverse order of their Init,
 passing its ctx to each Close.
-4. It logs `shutdown complete` and flushes the Logger. Last of all, it
+5. It logs `shutdown complete` and flushes the Logger. Last of all, it
 closes the Logger, if it is a service, and then the services the
 Logger depends on, newest first.
 
@@ -187,6 +189,39 @@ ends the process.
 Ending ctx is a normal stop: Run returns the shutdown's error, nil when
 it is clean. App.Run also logs the route map and serves. It stops when
 the server fails, and returns that error joined with Stop's.
+
+## Lifetime
+
+`Worker.Context` returns the lifetime context: the one context that
+lasts as long as the Worker's run. Work that outlives a request and an
+Init, such as a goroutine a handler or a ready hook starts, or the I/O
+of an event subscriber, runs under it. It is the same value from
+NewWorker on, with no values and no deadline, and it ends:
+
+- when Shutdown begins, before Shutdown waits for anything, with
+`ErrShutDown` as its cause;
+- when Start fails, before Start closes a service, with the error
+that failed it as its cause.
+
+An App's Stop drains the server before it shuts the Worker down, so
+the lifetime context ends once the requests have returned or been given
+up on. Every request's context descends from it, so a Shutdown called
+on an App directly, without Stop, cancels the requests still running.
+It ends before `SystemShuttingDown` is emitted: a subscriber that works
+while the Worker shuts down needs a context of its own.
+
+NewWorker registers the Worker as a `LifetimeProvider`, so a
+constructor, a service or a DI-aware handler takes it as a dependency:
+
+```go
+gas.WithSingletonService[*Poller](func(lp gas.LifetimeProvider) *Poller {
+	return &Poller{life: lp}
+})
+```
+
+CloseService does not end it. A service that starts goroutines in Init
+derives a context for them from it there, and cancels that context in
+Close, so the kill switch stops them.
 
 ## Services
 

@@ -64,7 +64,11 @@ const (
 // routing and an HTTP server. A Worker runs once: Start, then Shutdown. It
 // is safe for concurrent use.
 type Worker struct {
-	logger           Logger
+	logger Logger
+	// lifeCtx is the lifetime context, and endLife ends it. Both are set
+	// by NewWorker and never change; endLife is called with mu held.
+	lifeCtx          context.Context //nolint:containedctx // the lifetime context, by design
+	endLife          context.CancelCauseFunc
 	startErr         error
 	optErr           error
 	serviceContainer *ServiceContainer
@@ -88,8 +92,9 @@ type Worker struct {
 }
 
 var (
-	_ HealthProvider = (*Worker)(nil)
-	_ ReadyProvider  = (*Worker)(nil)
+	_ HealthProvider   = (*Worker)(nil)
+	_ ReadyProvider    = (*Worker)(nil)
+	_ LifetimeProvider = (*Worker)(nil)
 )
 
 // NewWorker returns a Worker with opts applied. Only WorkerOption values
@@ -103,6 +108,8 @@ func NewWorker(opts ...Option) *Worker {
 		shutdownTimeout:  DefaultShutdownTimeout,
 	}
 
+	w.lifeCtx, w.endLife = context.WithCancelCause(context.Background())
+
 	// Recovered subscriber panics are logged through the Worker's logger.
 	w.eventBus.logger = w.getLogger
 	w.serviceContainer.gate = w.checkActive
@@ -110,6 +117,7 @@ func NewWorker(opts ...Option) *Worker {
 	w.serviceContainer.RegisterServiceInstance[*EventBus](w.eventBus)
 	w.serviceContainer.RegisterServiceInstance[HealthProvider](w)
 	w.serviceContainer.RegisterServiceInstance[ReadyProvider](w)
+	w.serviceContainer.RegisterServiceInstance[LifetimeProvider](w)
 
 	for _, opt := range opts {
 		switch o := opt.(type) {
@@ -122,6 +130,13 @@ func NewWorker(opts ...Option) *Worker {
 
 	return w
 }
+
+// Context returns the Worker's lifetime context, as described under
+// Lifetime in the package documentation. It ends when Shutdown begins, with
+// ErrShutDown as its cause, or when Start fails, with the error that failed
+// it, in both cases before any service closes. It is the same value from
+// NewWorker on.
+func (w *Worker) Context() context.Context { return w.lifeCtx }
 
 // EventBus returns the Worker's event bus.
 func (w *Worker) EventBus() *EventBus { return w.eventBus }
@@ -220,6 +235,8 @@ func (w *Worker) Start(ctx context.Context) error {
 	err := optErr
 	if err == nil {
 		err = w.start(ctx)
+	} else {
+		w.endLifetime(err)
 	}
 
 	w.finishStart(context.WithoutCancel(ctx), err)
@@ -457,6 +474,15 @@ func (w *Worker) RegisterServiceAlias[Target, Alias any]() {
 	w.serviceContainer.RegisterServiceAlias[Target, Alias]()
 }
 
+// endLifetime ends the lifetime context with cause, unless it has ended
+// already.
+func (w *Worker) endLifetime(cause error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	w.endLife(cause)
+}
+
 // finishStart records the result of Start and lets a waiting Shutdown go
 // on. When a Shutdown gave up waiting for Start, it closes what Start
 // initialized itself, with ctx.
@@ -499,6 +525,8 @@ func (w *Worker) finishStart(ctx context.Context, err error) {
 func (w *Worker) cleanupAfterPanic(ctx context.Context, rec any) error {
 	err := fmt.Errorf("%w in Start: %v", ErrPanic, rec)
 
+	w.endLifetime(err)
+
 	w.mu.Lock()
 
 	tracked := len(w.services) > 0
@@ -525,6 +553,7 @@ func (w *Worker) beginShutdown(ctx context.Context) (bool, error) {
 	prev := w.state
 
 	w.state = lifeShutDown
+	w.endLife(ErrShutDown)
 	w.mu.Unlock()
 
 	switch prev {
@@ -621,6 +650,8 @@ func (w *Worker) recordOptionError(err error) {
 func (w *Worker) start(ctx context.Context) error {
 	err := w.serviceContainer.BuildAll(ctx)
 	if err != nil {
+		w.endLifetime(err)
+
 		// Nothing is tracked yet, so close what the container had
 		// initialized before the failure.
 		built := w.serviceContainer.initializedServices()
@@ -638,6 +669,8 @@ func (w *Worker) start(ctx context.Context) error {
 	w.mu.Unlock()
 
 	cleanup := func(err error) error {
+		w.endLifetime(err)
+
 		return errors.Join(err, w.closeActive(context.WithoutCancel(ctx), nil))
 	}
 

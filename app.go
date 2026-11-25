@@ -41,9 +41,9 @@ type App struct {
 	cfg *Config
 	// csrfProtection guards the router against cross-origin requests.
 	csrfProtection *http.CrossOriginProtection
-	// baseCtx is the base context of the server's requests, and
-	// cancelBase cancels it, which Stop does once the server has shut
-	// down or the shutdown deadline has passed.
+	// baseCtx is the base context of the server's requests, a child of
+	// the lifetime context, and cancelBase cancels it, which Stop does
+	// once the server has shut down or the shutdown deadline has passed.
 	baseCtx    context.Context //nolint:containedctx // the server's base context, canceled by Stop
 	cancelBase context.CancelFunc
 	// allowedEnvs are the environments Start accepts.
@@ -180,7 +180,7 @@ func WithAllowedEnvironments(envs ...Environment) AppOption {
 func NewApp(opts ...Option) *App {
 	w := NewWorker()
 
-	baseCtx, cancelBase := context.WithCancel(context.Background())
+	baseCtx, cancelBase := context.WithCancel(w.Context())
 
 	a := &App{
 		Worker:         w,

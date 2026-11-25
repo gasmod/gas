@@ -191,6 +191,17 @@ type ReadyProvider interface {
 	CheckReady(ctx context.Context) map[string]error
 }
 
+// LifetimeProvider gives the Worker's lifetime context, as described under
+// Lifetime in the package documentation. NewWorker registers the Worker
+// under it, so a constructor, a service or a DI-aware handler takes it as
+// a dependency.
+type LifetimeProvider interface {
+	// Context returns a context that ends when the Worker's run ends: when
+	// Shutdown begins, or when Start fails, before any service closes. It
+	// is the same value for the Worker's whole life.
+	Context() context.Context
+}
+
 // ConfigProvider is how services, and App.Start, read configuration, as
 // described under Configuration in the package documentation. The config
 // module's *config.Config implements it; core defines it so the root

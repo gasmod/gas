@@ -151,3 +151,22 @@ func TestDoc_FieldErrorFromHandler(t *testing.T) {
 		rr.Body.String(),
 	)
 }
+
+// docPoller keeps the LifetimeProvider it was built with.
+type docPoller struct{ life gas.LifetimeProvider }
+
+// The example under Lifetime: a constructor takes the LifetimeProvider,
+// whose context is the Worker's own.
+func TestDoc_Lifetime(t *testing.T) {
+	t.Parallel()
+
+	w := startedWorker(t,
+		gas.WithSingletonService[*docPoller](func(lp gas.LifetimeProvider) *docPoller {
+			return &docPoller{life: lp}
+		}),
+	)
+
+	p, err := w.ServiceContainer().Resolve[*docPoller]()
+	require.NoError(t, err)
+	assert.Equal(t, w.Context(), p.life.Context())
+}
