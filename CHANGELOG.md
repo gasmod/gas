@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-11-25
+
+The first complete release of the changes below. The `v0.11.0` tag was
+pushed on the merge commit without the release bump, so it has no
+sub-module tags; use v0.11.1.
+
 ### Added
 
 - **`Worker.Context()`**, the lifetime context: one context per Worker,
