@@ -18,16 +18,16 @@ use (
 )
 
 replace (
-	github.com/gasmod/gas v0.10.0 => .
-	github.com/gasmod/gas/auth v0.10.0 => ./auth
-	github.com/gasmod/gas/cache v0.10.0 => ./cache
-	github.com/gasmod/gas/config v0.10.0 => ./config
-	github.com/gasmod/gas/database v0.10.0 => ./database
-	github.com/gasmod/gas/email v0.10.0 => ./email
-	github.com/gasmod/gas/log v0.10.0 => ./log
-	github.com/gasmod/gas/migrate v0.10.0 => ./migrate
-	github.com/gasmod/gas/queue v0.10.0 => ./queue
-	github.com/gasmod/gas/storage v0.10.0 => ./storage
-	github.com/gasmod/gas/template v0.10.0 => ./template
-	github.com/gasmod/gas/ui v0.10.0 => ./ui
+	github.com/gasmod/gas v0.11.1 => .
+	github.com/gasmod/gas/auth v0.11.1 => ./auth
+	github.com/gasmod/gas/cache v0.11.1 => ./cache
+	github.com/gasmod/gas/config v0.11.1 => ./config
+	github.com/gasmod/gas/database v0.11.1 => ./database
+	github.com/gasmod/gas/email v0.11.1 => ./email
+	github.com/gasmod/gas/log v0.11.1 => ./log
+	github.com/gasmod/gas/migrate v0.11.1 => ./migrate
+	github.com/gasmod/gas/queue v0.11.1 => ./queue
+	github.com/gasmod/gas/storage v0.11.1 => ./storage
+	github.com/gasmod/gas/template v0.11.1 => ./template
+	github.com/gasmod/gas/ui v0.11.1 => ./ui
 )
