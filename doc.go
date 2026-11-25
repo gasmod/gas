@@ -146,6 +146,19 @@
 // services it uses, so it closes first, or stop it from a
 // [SystemShuttingDown] subscriber, which runs before any Close.
 //
+// A request that does not end by itself, such as a server-sent event
+// stream, holds Stop for the whole ShutdownTimeout: the server waits for
+// its connection, and Stop cancels the request's context only at the
+// deadline, then returns `gas: server shutdown: context deadline
+// exceeded`. So end such a handler on [SystemServerShuttingDown], which
+// Stop emits before it shuts the server down. Subscribe from the service
+// that registers the route, with [EventBus.SubscribeWithOwner] in its
+// Init: [Worker.CloseService] removes the subscription and
+// [Worker.RestartService] adds it back, so there is only ever one. The
+// subscriber signals the open streams, such as by closing a channel they
+// select on. A subscription per request would stay behind once the
+// request ends, since the bus has no unsubscribe.
+//
 // # Running
 //
 // [Worker.Run] and [App.Run] run the whole lifecycle:

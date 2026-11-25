@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The Shutting down documentation states that a request that does not
+  end by itself, such as a server-sent event stream, holds Stop for the
+  whole ShutdownTimeout and makes it return `gas: server shutdown:
+  context deadline exceeded`, and that such a handler ends on
+  `SystemServerShuttingDown`, subscribed with `SubscribeWithOwner` in
+  the owning service's Init.
+
 ## [0.10.0] - 2026-11-15
 
 ### Added
