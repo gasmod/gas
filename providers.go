@@ -191,6 +191,33 @@ type ReadyProvider interface {
 	CheckReady(ctx context.Context) map[string]error
 }
 
+// LifetimeProvider gives the Worker's lifetime context, as described under
+// Lifetime in the package documentation. NewWorker registers the Worker
+// under it, so a constructor, a service or a DI-aware handler takes it as
+// a dependency.
+type LifetimeProvider interface {
+	// Context returns a context that ends when the Worker's run ends: when
+	// Shutdown begins, or when Start fails, before any service closes. It
+	// is the same value for the Worker's whole life.
+	Context() context.Context
+
+	// Go runs fn on a new goroutine with the lifetime context, and
+	// Shutdown waits for it before it closes any service.
+	Go(name string, fn func(ctx context.Context) error) error
+}
+
+// DrainProvider gives an App's drain context, as described under Lifetime
+// in the package documentation. NewApp registers the App under it, so a
+// service or a DI-aware handler takes it as a dependency.
+type DrainProvider interface {
+	// DrainContext returns a context that ends when the App's HTTP drain
+	// begins, just before SystemServerShuttingDown is emitted, or when the
+	// lifetime context ends, whichever comes first. A request that does
+	// not end by itself, such as a stream, ends when it does, so the drain
+	// can finish. It is the same value for the App's whole life.
+	DrainContext() context.Context
+}
+
 // ConfigProvider is how services, and App.Start, read configuration, as
 // described under Configuration in the package documentation. The config
 // module's *config.Config implements it; core defines it so the root

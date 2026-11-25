@@ -11,6 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/gasmod/gas"
 )
 
@@ -1141,7 +1144,7 @@ func TestWorker_FailedReadyHookClosesAll(t *testing.T) {
 		gas.WithSingletonService[*probeB](func(*probeA) *probeB {
 			return &probeB{&startProbe{name: "b", log: log}}
 		}),
-		gas.WithReadyFunc(func(*gas.ServiceContainer) error { return hookErr }),
+		gas.WithReadyFunc(func(context.Context, *gas.ServiceContainer) error { return hookErr }),
 	)
 
 	err := w.Start(context.Background())
@@ -1320,7 +1323,7 @@ func TestWorker_Start_InitFailure(t *testing.T) {
 
 func TestWorker_Start_ReadyHookFailure(t *testing.T) {
 	w := gas.NewWorker(
-		gas.WithReadyFunc(func(_ *gas.ServiceContainer) error {
+		gas.WithReadyFunc(func(context.Context, *gas.ServiceContainer) error {
 			return errHookFailed
 		}),
 	)
@@ -1335,12 +1338,12 @@ func TestWorker_Start_ReadyHooksRunInOrder(t *testing.T) {
 	var order []int
 
 	w := gas.NewWorker(
-		gas.WithReadyFunc(func(_ *gas.ServiceContainer) error {
+		gas.WithReadyFunc(func(context.Context, *gas.ServiceContainer) error {
 			order = append(order, 1)
 
 			return nil
 		}),
-		gas.WithReadyFunc(func(_ *gas.ServiceContainer) error {
+		gas.WithReadyFunc(func(context.Context, *gas.ServiceContainer) error {
 			order = append(order, 2)
 
 			return nil
@@ -1441,4 +1444,43 @@ func TestWorker_Start_EmitsAllServicesInitialized(t *testing.T) {
 	if !emitted.Load() {
 		t.Fatal("expected SystemAllServicesInitialized to be emitted")
 	}
+}
+
+// A ready hook gets Start's ctx: its values, and its cancellation, so a
+// hook that honors it ends when startup is canceled.
+func TestWorker_ReadyHookGetsStartContext(t *testing.T) {
+	t.Parallel()
+
+	type key struct{}
+
+	entered := make(chan struct{})
+
+	var value any
+
+	w := gas.NewWorker(
+		gas.WithServiceInstance[gas.Logger](&gas.NopLogger{}),
+		gas.WithReadyFunc(func(ctx context.Context, _ *gas.ServiceContainer) error {
+			value = ctx.Value(key{})
+
+			close(entered)
+			<-ctx.Done()
+
+			return ctx.Err()
+		}),
+	)
+
+	ctx, cancel := context.WithCancel(context.WithValue(t.Context(), key{}, "start"))
+	defer cancel()
+
+	started := make(chan error, 1)
+
+	go func() { started <- w.Start(ctx) }()
+
+	<-entered
+	cancel()
+
+	err := receive(t, started)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, "gas: ready hook: context canceled", err.Error())
+	assert.Equal(t, "start", value)
 }

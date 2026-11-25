@@ -3,7 +3,9 @@ package gas_test
 import (
 	"context"
 	"net/http"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -103,7 +105,7 @@ func TestDoc_ReadyHooks(t *testing.T) {
 	w := gas.NewWorker(
 		gas.WithServiceInstance[gas.Logger](&gas.NopLogger{}),
 		gas.WithServiceInstance[gas.MigrationManager](m),
-		gas.WithReadyFunc(func(c *gas.ServiceContainer) error {
+		gas.WithReadyFunc(func(_ context.Context, c *gas.ServiceContainer) error {
 			got, err := c.Resolve[gas.MigrationManager]()
 			if err != nil {
 				return err
@@ -115,7 +117,7 @@ func TestDoc_ReadyHooks(t *testing.T) {
 
 			return errCacheCold
 		}),
-		gas.WithReadyFunc(func(*gas.ServiceContainer) error {
+		gas.WithReadyFunc(func(context.Context, *gas.ServiceContainer) error {
 			log = append(log, "hook 2")
 
 			return nil
@@ -150,4 +152,110 @@ func TestDoc_FieldErrorFromHandler(t *testing.T) {
 			`"rule":"unique"}]}`+"\n",
 		rr.Body.String(),
 	)
+}
+
+// docPoller keeps the LifetimeProvider it was built with.
+type docPoller struct{ life gas.LifetimeProvider }
+
+// The example under Lifetime: a constructor takes the LifetimeProvider,
+// whose context is the Worker's own.
+func TestDoc_Lifetime(t *testing.T) {
+	t.Parallel()
+
+	w := startedWorker(t,
+		gas.WithSingletonService[*docPoller](func(lp gas.LifetimeProvider) *docPoller {
+			return &docPoller{life: lp}
+		}),
+	)
+
+	p, err := w.ServiceContainer().Resolve[*docPoller]()
+	require.NoError(t, err)
+	assert.Equal(t, w.Context(), p.life.Context())
+}
+
+// The stream example under Shutting down: a handler that ends with the
+// drain context lets Stop finish at once, though its client is still
+// connected and ShutdownTimeout is long.
+func TestDoc_DrainContext(t *testing.T) {
+	t.Parallel()
+
+	cfg := gas.DefaultConfig()
+
+	cfg.Server.ShutdownTimeout = 10 * time.Second
+
+	app := quietApp(gas.WithBaseConfig(*cfg))
+
+	updates := make(chan string)
+	entered := make(chan struct{})
+
+	app.Router().Get(nil, "/events", func(c gas.Context, dp gas.DrainProvider) error {
+		close(entered)
+
+		for {
+			select {
+			case <-c.Done():
+				return nil
+			case <-dp.DrainContext().Done():
+				return nil
+			case <-updates:
+			}
+		}
+	})
+
+	url := serveApp(t, app)
+	go getQuietly(t, url+"/events")
+
+	<-entered
+
+	began := time.Now()
+
+	require.NoError(t, app.Stop(t.Context()))
+	assert.Less(t, time.Since(began), cfg.Server.ShutdownTimeout/2)
+}
+
+// The example under Lifetime for Go: a handler starts a background task,
+// which runs until the lifetime context ends, and Stop waits for it
+// before it closes a service.
+func TestDoc_Go(t *testing.T) {
+	t.Parallel()
+
+	var rendered atomic.Bool
+
+	render := func(ctx context.Context) error {
+		<-ctx.Done()
+		time.Sleep(20 * time.Millisecond)
+		rendered.Store(true)
+
+		return ctx.Err()
+	}
+
+	var renderedAtClose atomic.Bool
+
+	app := quietApp(gas.WithServiceInstance(&fakeService{
+		name: "store",
+		closeFn: func(context.Context) error {
+			renderedAtClose.Store(rendered.Load())
+
+			return nil
+		},
+	}))
+
+	app.Router().Post(nil, "/reports", func(_ gas.Context, lp gas.LifetimeProvider) error {
+		return lp.Go("render report", func(ctx context.Context) error {
+			return render(ctx)
+		})
+	})
+
+	require.NoError(t, app.Start(t.Context()))
+
+	rr := serve(
+		app.Handler(),
+		http.MethodPost,
+		"/reports",
+		http.Header{"Sec-Fetch-Site": {"same-origin"}},
+	)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	require.NoError(t, app.Stop(t.Context()))
+	assert.True(t, renderedAtClose.Load())
 }

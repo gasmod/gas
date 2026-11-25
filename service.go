@@ -42,7 +42,9 @@ type Service interface {
 	// passes the container cancels ctx and waits for Init to return, so an
 	// Init that ignores it holds up startup or the resolution. ctx is
 	// canceled as soon as Init returns, so work that outlives Init, such as a
-	// background goroutine, must not derive from it.
+	// background goroutine, must not derive from it: derive it from the
+	// lifetime context, which LifetimeProvider gives, and cancel it in
+	// Close.
 	//
 	// Init can run again on the same instance: Worker.RestartService calls
 	// it on a singleton the kill switch closed, after its Close returned,

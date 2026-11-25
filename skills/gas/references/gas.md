@@ -67,19 +67,22 @@ registered, and emits `AppConfigUpdated`.
 registered, with ctx.
 7. It runs the ready hooks, in registration order.
 
-A ready hook is a func(*ServiceContainer) error, registered with
-`WithReadyFunc` or `Worker.ReadyFunc`. It runs once every service is
-initialized and the migrations have run, so it may resolve any
-singleton from the container it is given. It is not given Start's ctx.
+A ready hook is a func(context.Context, *ServiceContainer) error,
+registered with `WithReadyFunc` or `Worker.ReadyFunc`. It runs once
+every service is initialized and the migrations have run, so it may
+resolve any singleton from the container it is given. It gets Start's
+ctx, so a hook that honors it ends when startup is canceled, as by a
+signal under Run. Work that outlives Start goes to `Worker.Go` instead
+(see Lifetime).
 
 ```go
-gas.WithReadyFunc(func(c *gas.ServiceContainer) error {
+gas.WithReadyFunc(func(ctx context.Context, c *gas.ServiceContainer) error {
 	cache, err := c.Resolve[*Cache]()
 	if err != nil {
 		return err
 	}
 
-	return cache.Warm()
+	return cache.Warm(ctx)
 })
 ```
 
@@ -88,8 +91,9 @@ The first hook that returns an error fails Start, with that error after
 panics with an error wrapping `ErrAlreadyStarted` once the hooks have
 run.
 
-When Start fails, it closes every service it had initialized, newest
-first, with ctx stripped of its cancellation. It returns its error
+When Start fails, it ends the lifetime context and waits for the
+background tasks (see Lifetime), then closes every service it had
+initialized, newest first, with ctx stripped of its cancellation. It returns its error
 joined with any Close error, and every later Start returns that error
 again.
 
@@ -106,11 +110,14 @@ has begun returns `ErrShutDown`.
 
 `Worker.Shutdown` runs these steps, in order:
 
-1. It waits for a CloseService or RestartService in progress.
-2. It emits `SystemShuttingDown` and waits for its subscribers.
-3. It closes every active service, in the reverse order of their Init,
+1. It ends the lifetime context (see Lifetime).
+2. It waits for a CloseService or RestartService in progress.
+3. It emits `SystemShuttingDown` and waits for its subscribers.
+4. It waits for the background tasks `Worker.Go` started (see
+Lifetime).
+5. It closes every active service, in the reverse order of their Init,
 passing its ctx to each Close.
-4. It logs `shutdown complete` and flushes the Logger. Last of all, it
+6. It logs `shutdown complete` and flushes the Logger. Last of all, it
 closes the Logger, if it is a service, and then the services the
 Logger depends on, newest first.
 
@@ -132,8 +139,9 @@ ErrShutDown.
 up to three times `ShutdownGracePeriod`, which is one second, and by its
 ctx, which every wait honors. It runs these steps, in order:
 
-1. It emits `SystemServerShuttingDown` and waits for its subscribers,
-until the deadline.
+1. It ends the drain context (see Lifetime), then emits
+`SystemServerShuttingDown` and waits for its subscribers, until the
+deadline.
 2. It shuts the HTTP server down.
 3. Once the server has shut down, or at the deadline if it has not by
 then, it cancels the context of every request still running, and
@@ -156,6 +164,28 @@ that service closes. Either run it in a service that depends on the
 services it uses, so it closes first, or stop it from a
 `SystemShuttingDown` subscriber, which runs before any Close.
 
+A request that does not end by itself, such as a server-sent event
+stream, holds Stop for the whole ShutdownTimeout: the server waits for
+its connection, and Stop cancels the request's context only at the
+deadline, then returns `gas: server shutdown: context deadline
+exceeded`. So such a handler also ends when the drain context does,
+which Stop ends first of all:
+
+```go
+func events(c gas.Context, dp gas.DrainProvider) error {
+	for {
+		select {
+		case <-c.Done():
+			return nil
+		case <-dp.DrainContext().Done():
+			return nil
+		case ev := <-updates:
+			// write ev to the stream
+		}
+	}
+}
+```
+
 ## Running
 
 `Worker.Run` and `App.Run` run the whole lifecycle:
@@ -174,6 +204,71 @@ ends the process.
 Ending ctx is a normal stop: Run returns the shutdown's error, nil when
 it is clean. App.Run also logs the route map and serves. It stops when
 the server fails, and returns that error joined with Stop's.
+
+## Lifetime
+
+`Worker.Context` returns the lifetime context: the one context that
+lasts as long as the Worker's run. Work that outlives a request and an
+Init, such as a goroutine a handler or a ready hook starts, or the I/O
+of an event subscriber, runs under it. It is the same value from
+NewWorker on, with no values and no deadline, and it ends:
+
+- when Shutdown begins, before Shutdown waits for anything, with
+`ErrShutDown` as its cause;
+- when Start fails, before Start closes a service, with the error
+that failed it as its cause.
+
+An App's Stop drains the server before it shuts the Worker down, so
+the lifetime context ends once the requests have returned or been given
+up on. Every request's context descends from it, so a Shutdown called
+on an App directly, without Stop, cancels the requests still running.
+It ends before `SystemShuttingDown` is emitted: a subscriber that works
+while the Worker shuts down needs a context of its own.
+
+NewWorker registers the Worker as a `LifetimeProvider`, so a
+constructor, a service or a DI-aware handler takes it as a dependency:
+
+```go
+gas.WithSingletonService[*Poller](func(lp gas.LifetimeProvider) *Poller {
+	return &Poller{life: lp}
+})
+```
+
+CloseService does not end it. A service that starts goroutines in Init
+derives a context for them from it there, and cancels that context in
+Close, so the kill switch stops them.
+
+`Worker.Go`, which LifetimeProvider has too, runs a background task:
+a func on a goroutine of its own, given the lifetime context. Shutdown
+waits for every task after the `SystemShuttingDown` subscribers and
+before the first Close, so a task may use any service until it returns;
+a Start that fails waits for them the same way, within the shutdown
+timeout. A task returns once its context ends:
+
+```go
+app.Router().Post(nil, "/reports", func(c gas.Context, lp gas.LifetimeProvider) error {
+	return lp.Go("render report", func(ctx context.Context) error {
+		return render(ctx)
+	})
+})
+```
+
+The wait ends ShutdownGracePeriod before the deadline of Shutdown's ctx,
+so the closes keep that long, and not at all when less is left. It then
+logs how many tasks are still running, and Shutdown returns the wait's
+error. A task that calls Shutdown or Stop waits on itself until then.
+Go returns `ErrNotStarted` before Start and `ErrShutDown` once the
+lifetime context has ended, without running the task. An error a task
+returns is logged with its name, unless it is the context's own
+cancellation, and so is a panic, which Go recovers.
+
+An App also has a drain context, from `App.DrainContext`. It ends when
+Stop begins to drain the server, just before `SystemServerShuttingDown`
+is emitted, or when the lifetime context ends, whichever comes first.
+NewApp registers the App as a `DrainProvider`, so a handler takes it as
+a dependency. A request that does not end by itself, such as a stream
+or a hijacked connection, ends with it, as Shutting down shows. Request
+contexts do not descend from it, so ending it cancels no request.
 
 ## Services
 
@@ -499,9 +594,8 @@ ShutdownGracePeriods, and Stop logs `requests still running after
 the shutdown grace period`.
 
 So the handler ends the connection itself: when its request context
-ends, or when a `SystemServerShuttingDown` subscriber closes it. Stop
-runs that subscriber before it shuts the server down, and waits for it
-up to ShutdownTimeout.
+ends, or when the drain context does (see Lifetime), which Stop ends
+before it shuts the server down.
 
 ## Events
 
@@ -675,6 +769,7 @@ gas: service already active: "billing"
 gas: server shutdown: context deadline exceeded
 gas: stop: wait for SystemServerShuttingDown subscribers: context deadline exceeded
 gas: shutdown: wait for SystemShuttingDown subscribers: context deadline exceeded
+gas: shutdown: wait for background tasks: context deadline exceeded
 gas: shutdown: wait for the kill switch: context deadline exceeded
 gas: shutdown: wait for Start: context deadline exceeded
 gas: panic in Start: boom
