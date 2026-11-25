@@ -46,6 +46,10 @@ type App struct {
 	// once the server has shut down or the shutdown deadline has passed.
 	baseCtx    context.Context //nolint:containedctx // the server's base context, canceled by Stop
 	cancelBase context.CancelFunc
+	// drainCtx is the drain context, a child of the lifetime context, and
+	// cancelDrain cancels it, which Stop does as its drain begins.
+	drainCtx    context.Context //nolint:containedctx // the drain context, by design
+	cancelDrain context.CancelFunc
 	// allowedEnvs are the environments Start accepts.
 	allowedEnvs []Environment
 	// srvCopied holds what Server copied from the Config into srv, so
@@ -66,6 +70,8 @@ type App struct {
 	// them.
 	srvSettled bool
 }
+
+var _ DrainProvider = (*App)(nil)
 
 // serverFields are the fields of the *http.Server that Server sets from the
 // Config.
@@ -181,6 +187,7 @@ func NewApp(opts ...Option) *App {
 	w := NewWorker()
 
 	baseCtx, cancelBase := context.WithCancel(w.Context())
+	drainCtx, cancelDrain := context.WithCancel(w.Context())
 
 	a := &App{
 		Worker:         w,
@@ -189,6 +196,8 @@ func NewApp(opts ...Option) *App {
 		csrfProtection: http.NewCrossOriginProtection(),
 		baseCtx:        baseCtx,
 		cancelBase:     cancelBase,
+		drainCtx:       drainCtx,
+		cancelDrain:    cancelDrain,
 		allowedEnvs:    standardEnvironments,
 	}
 
@@ -197,6 +206,7 @@ func NewApp(opts ...Option) *App {
 	a.router.logger = w.getLogger
 
 	w.serviceContainer.RegisterServiceInstance[*Router](a.router)
+	w.serviceContainer.RegisterServiceInstance[DrainProvider](a)
 
 	w.afterBuild = a.afterBuild
 	w.onServiceClose = func(s Service) { a.router.RemoveByService(s) }
@@ -227,6 +237,13 @@ func (a *App) Config() Config {
 
 	return *a.cfg
 }
+
+// DrainContext returns the App's drain context, as described under
+// Lifetime in the package documentation. It ends when Stop begins to drain
+// the server, just before it emits SystemServerShuttingDown, or when the
+// lifetime context ends, whichever comes first. It is the same value from
+// NewApp on.
+func (a *App) DrainContext() context.Context { return a.drainCtx }
 
 // Router returns the App's router.
 func (a *App) Router() *Router { return a.router }
@@ -332,8 +349,8 @@ func (a *App) ServeListener(l net.Listener) error {
 }
 
 // Stop shuts the App down within ShutdownTimeout, as described under
-// Shutting down in the package documentation: it emits
-// SystemServerShuttingDown, shuts the server down, cancels the context of
+// Shutting down in the package documentation: it ends the drain context,
+// emits SystemServerShuttingDown, shuts the server down, cancels the context of
 // requests still running once it has, or at the deadline, and waits up to
 // ShutdownGracePeriod for them, then shuts the Worker down. It does not
 // close hijacked connections. ctx bounds it too. Every error is returned,
@@ -357,6 +374,8 @@ func (a *App) Stop(ctx context.Context) error {
 	defer cancel()
 
 	var errs []error
+
+	a.cancelDrain()
 
 	err := emitAndWait[SystemServerShuttingDown](
 		srvCtx,

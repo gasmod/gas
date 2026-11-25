@@ -134,8 +134,9 @@ ErrShutDown.
 up to three times `ShutdownGracePeriod`, which is one second, and by its
 ctx, which every wait honors. It runs these steps, in order:
 
-1. It emits `SystemServerShuttingDown` and waits for its subscribers,
-until the deadline.
+1. It ends the drain context (see Lifetime), then emits
+`SystemServerShuttingDown` and waits for its subscribers, until the
+deadline.
 2. It shuts the HTTP server down.
 3. Once the server has shut down, or at the deadline if it has not by
 then, it cancels the context of every request still running, and
@@ -162,14 +163,23 @@ A request that does not end by itself, such as a server-sent event
 stream, holds Stop for the whole ShutdownTimeout: the server waits for
 its connection, and Stop cancels the request's context only at the
 deadline, then returns `gas: server shutdown: context deadline
-exceeded`. So end such a handler on `SystemServerShuttingDown`, which
-Stop emits before it shuts the server down. Subscribe from the service
-that registers the route, with `EventBus.SubscribeWithOwner` in its
-Init: `Worker.CloseService` removes the subscription and
-`Worker.RestartService` adds it back, so there is only ever one. The
-subscriber signals the open streams, such as by closing a channel they
-select on. A subscription per request would stay behind once the
-request ends, since the bus has no unsubscribe.
+exceeded`. So such a handler also ends when the drain context does,
+which Stop ends first of all:
+
+```go
+func events(c gas.Context, dp gas.DrainProvider) error {
+	for {
+		select {
+		case <-c.Done():
+			return nil
+		case <-dp.DrainContext().Done():
+			return nil
+		case ev := <-updates:
+			// write ev to the stream
+		}
+	}
+}
+```
 
 ## Running
 
@@ -222,6 +232,14 @@ gas.WithSingletonService[*Poller](func(lp gas.LifetimeProvider) *Poller {
 CloseService does not end it. A service that starts goroutines in Init
 derives a context for them from it there, and cancels that context in
 Close, so the kill switch stops them.
+
+An App also has a drain context, from `App.DrainContext`. It ends when
+Stop begins to drain the server, just before `SystemServerShuttingDown`
+is emitted, or when the lifetime context ends, whichever comes first.
+NewApp registers the App as a `DrainProvider`, so a handler takes it as
+a dependency. A request that does not end by itself, such as a stream
+or a hijacked connection, ends with it, as Shutting down shows. Request
+contexts do not descend from it, so ending it cancels no request.
 
 ## Services
 
@@ -547,9 +565,8 @@ ShutdownGracePeriods, and Stop logs `requests still running after
 the shutdown grace period`.
 
 So the handler ends the connection itself: when its request context
-ends, or when a `SystemServerShuttingDown` subscriber closes it. Stop
-runs that subscriber before it shuts the server down, and waits for it
-up to ShutdownTimeout.
+ends, or when the drain context does (see Lifetime), which Stop ends
+before it shuts the server down.
 
 ## Events
 

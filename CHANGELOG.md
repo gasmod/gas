@@ -17,19 +17,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`LifetimeProvider`**, under which `NewWorker` registers the Worker, so
   a constructor, a service or a DI-aware handler takes the lifetime
   context as a dependency.
+- **`App.DrainContext()`**, the drain context, and **`DrainProvider`**,
+  under which `NewApp` registers the App. It ends when `Stop` begins to
+  drain the server, just before `SystemServerShuttingDown`, or when the
+  lifetime context ends. A request that does not end by itself, such as a
+  server-sent event stream, ends with it, so `Stop` no longer waits out
+  the whole `ShutdownTimeout` for it.
 
 ### Changed
 
 - An App's request contexts descend from the lifetime context. A
   `Shutdown` called on an App directly, without `Stop`, now cancels the
   requests still running.
-
 - The Shutting down documentation states that a request that does not
-  end by itself, such as a server-sent event stream, holds Stop for the
-  whole ShutdownTimeout and makes it return `gas: server shutdown:
-  context deadline exceeded`, and that such a handler ends on
-  `SystemServerShuttingDown`, subscribed with `SubscribeWithOwner` in
-  the owning service's Init.
+  end by itself, such as a server-sent event stream, holds `Stop` for the
+  whole `ShutdownTimeout` and makes it return `gas: server shutdown:
+  context deadline exceeded`, unless it ends with the drain context.
 
 ## [0.10.0] - 2026-11-15
 

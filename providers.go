@@ -202,6 +202,18 @@ type LifetimeProvider interface {
 	Context() context.Context
 }
 
+// DrainProvider gives an App's drain context, as described under Lifetime
+// in the package documentation. NewApp registers the App under it, so a
+// service or a DI-aware handler takes it as a dependency.
+type DrainProvider interface {
+	// DrainContext returns a context that ends when the App's HTTP drain
+	// begins, just before SystemServerShuttingDown is emitted, or when the
+	// lifetime context ends, whichever comes first. A request that does
+	// not end by itself, such as a stream, ends when it does, so the drain
+	// can finish. It is the same value for the App's whole life.
+	DrainContext() context.Context
+}
+
 // ConfigProvider is how services, and App.Start, read configuration, as
 // described under Configuration in the package documentation. The config
 // module's *config.Config implements it; core defines it so the root

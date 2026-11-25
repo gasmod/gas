@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -169,4 +170,44 @@ func TestDoc_Lifetime(t *testing.T) {
 	p, err := w.ServiceContainer().Resolve[*docPoller]()
 	require.NoError(t, err)
 	assert.Equal(t, w.Context(), p.life.Context())
+}
+
+// The stream example under Shutting down: a handler that ends with the
+// drain context lets Stop finish at once, though its client is still
+// connected and ShutdownTimeout is long.
+func TestDoc_DrainContext(t *testing.T) {
+	t.Parallel()
+
+	cfg := gas.DefaultConfig()
+
+	cfg.Server.ShutdownTimeout = 10 * time.Second
+
+	app := quietApp(gas.WithBaseConfig(*cfg))
+
+	updates := make(chan string)
+	entered := make(chan struct{})
+
+	app.Router().Get(nil, "/events", func(c gas.Context, dp gas.DrainProvider) error {
+		close(entered)
+
+		for {
+			select {
+			case <-c.Done():
+				return nil
+			case <-dp.DrainContext().Done():
+				return nil
+			case <-updates:
+			}
+		}
+	})
+
+	url := serveApp(t, app)
+	go getQuietly(t, url+"/events")
+
+	<-entered
+
+	began := time.Now()
+
+	require.NoError(t, app.Stop(t.Context()))
+	assert.Less(t, time.Since(began), cfg.Server.ShutdownTimeout/2)
 }
