@@ -123,7 +123,7 @@ func TestWorker_ShutdownAfterFailedStart(t *testing.T) {
 	t.Parallel()
 
 	w := gas.NewWorker(
-		gas.WithReadyFunc(func(*gas.ServiceContainer) error { return errNo }),
+		gas.WithReadyFunc(func(context.Context, *gas.ServiceContainer) error { return errNo }),
 	)
 	require.Error(t, w.Start(t.Context()))
 	require.NoError(t, w.Shutdown(t.Context()))

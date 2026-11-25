@@ -28,7 +28,7 @@ func TestFindings_StartTwice(t *testing.T) {
 
 	var hooks atomic.Int32
 
-	w := startedWorker(t, gas.WithReadyFunc(func(*gas.ServiceContainer) error {
+	w := startedWorker(t, gas.WithReadyFunc(func(context.Context, *gas.ServiceContainer) error {
 		hooks.Add(1)
 
 		return nil

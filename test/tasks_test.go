@@ -61,7 +61,9 @@ func TestGo_Refused(t *testing.T) {
 
 	failed := gas.NewWorker(
 		gas.WithServiceInstance[gas.Logger](&gas.NopLogger{}),
-		gas.WithReadyFunc(func(*gas.ServiceContainer) error { return errLifetimeReady }),
+		gas.WithReadyFunc(
+			func(context.Context, *gas.ServiceContainer) error { return errLifetimeReady },
+		),
 	)
 	require.Error(t, failed.Start(t.Context()))
 	require.ErrorIs(t, failed.Go("after failure", task), gas.ErrShutDown)
@@ -127,7 +129,9 @@ func TestGo_FailedStartWaits(t *testing.T) {
 	w = gas.NewWorker(
 		gas.WithServiceInstance[gas.Logger](&gas.NopLogger{}),
 		gas.WithServiceInstance(starter),
-		gas.WithReadyFunc(func(*gas.ServiceContainer) error { return errLifetimeReady }),
+		gas.WithReadyFunc(
+			func(context.Context, *gas.ServiceContainer) error { return errLifetimeReady },
+		),
 	)
 
 	require.ErrorIs(t, w.Start(t.Context()), errLifetimeReady)
@@ -156,7 +160,9 @@ func TestGo_FailedStartWaitIsBounded(t *testing.T) {
 		gas.WithServiceInstance[gas.Logger](&gas.NopLogger{}),
 		gas.WithShutdownTimeout(gas.ShutdownGracePeriod+100*time.Millisecond),
 		gas.WithServiceInstance(starter),
-		gas.WithReadyFunc(func(*gas.ServiceContainer) error { return errLifetimeReady }),
+		gas.WithReadyFunc(
+			func(context.Context, *gas.ServiceContainer) error { return errLifetimeReady },
+		),
 	)
 
 	began := time.Now()

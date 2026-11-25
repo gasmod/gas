@@ -82,7 +82,7 @@ type Worker struct {
 	startDone          chan struct{}
 	shutdownDone       chan struct{}
 	services           []*trackedService
-	readyFuncs         []func(*ServiceContainer) error
+	readyFuncs         []func(context.Context, *ServiceContainer) error
 	ops                sync.WaitGroup
 	tasks              sync.WaitGroup // the background tasks Go started
 	shutdownTimeout    time.Duration
@@ -459,14 +459,14 @@ func watchSignals(parent context.Context) (context.Context, <-chan os.Signal, fu
 }
 
 // ReadyFunc registers a function that runs once every service is
-// initialized and the migrations are applied, before Start returns. It is
-// the imperative form of WithReadyFunc and may be called any number of
-// times before Start runs the ready hooks; the funcs run in registration
-// order and the first error fails Start.
+// initialized and the migrations are applied, before Start returns, with
+// Start's ctx. It is the imperative form of WithReadyFunc and may be
+// called any number of times before Start runs the ready hooks; the funcs
+// run in registration order and the first error fails Start.
 //
 // Safe for concurrent use. It panics with ErrAlreadyStarted once Start has
 // run the ready hooks, because the func would never run.
-func (w *Worker) ReadyFunc(fn func(*ServiceContainer) error) {
+func (w *Worker) ReadyFunc(fn func(ctx context.Context, c *ServiceContainer) error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -826,7 +826,7 @@ func (w *Worker) start(ctx context.Context) error {
 		return cleanup(err)
 	}
 
-	err = w.runReadyHooks()
+	err = w.runReadyHooks(ctx)
 	if err != nil {
 		return cleanup(err)
 	}
@@ -857,9 +857,9 @@ func (w *Worker) runMigrations(ctx context.Context) error {
 	return nil
 }
 
-// runReadyHooks runs the ready hooks in order and returns the first
-// error, wrapped.
-func (w *Worker) runReadyHooks() error {
+// runReadyHooks runs the ready hooks in order, with ctx, and returns the
+// first error, wrapped.
+func (w *Worker) runReadyHooks(ctx context.Context) error {
 	// Snapshot under the lock so a concurrent ReadyFunc either lands
 	// before this point or panics; it is never silently dropped.
 	w.mu.Lock()
@@ -871,7 +871,7 @@ func (w *Worker) runReadyHooks() error {
 	w.mu.Unlock()
 
 	for _, fn := range readyFuncs {
-		err := fn(w.serviceContainer)
+		err := fn(ctx, w.serviceContainer)
 		if err != nil {
 			return fmt.Errorf("gas: ready hook: %w", err)
 		}
@@ -1019,7 +1019,7 @@ func WithServiceAlias[Target, Alias any]() WorkerOption {
 }
 
 // WithReadyFunc registers a ready hook, as ReadyFunc does.
-func WithReadyFunc(fn func(*ServiceContainer) error) WorkerOption {
+func WithReadyFunc(fn func(ctx context.Context, c *ServiceContainer) error) WorkerOption {
 	return func(w *Worker) { w.ReadyFunc(fn) }
 }
 

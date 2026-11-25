@@ -59,18 +59,21 @@
 //     registered, with ctx.
 //  7. It runs the ready hooks, in registration order.
 //
-// A ready hook is a func(*ServiceContainer) error, registered with
-// [WithReadyFunc] or [Worker.ReadyFunc]. It runs once every service is
-// initialized and the migrations have run, so it may resolve any
-// singleton from the container it is given. It is not given Start's ctx.
+// A ready hook is a func(context.Context, *ServiceContainer) error,
+// registered with [WithReadyFunc] or [Worker.ReadyFunc]. It runs once
+// every service is initialized and the migrations have run, so it may
+// resolve any singleton from the container it is given. It gets Start's
+// ctx, so a hook that honors it ends when startup is canceled, as by a
+// signal under Run. Work that outlives Start goes to [Worker.Go] instead
+// (see Lifetime).
 //
-//	gas.WithReadyFunc(func(c *gas.ServiceContainer) error {
+//	gas.WithReadyFunc(func(ctx context.Context, c *gas.ServiceContainer) error {
 //		cache, err := c.Resolve[*Cache]()
 //		if err != nil {
 //			return err
 //		}
 //
-//		return cache.Warm()
+//		return cache.Warm(ctx)
 //	})
 //
 // The first hook that returns an error fails Start, with that error after

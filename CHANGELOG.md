@@ -33,6 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING: ready hooks get Start's ctx.** `Worker.ReadyFunc` and
+  `WithReadyFunc` take a `func(context.Context, *ServiceContainer) error`,
+  and Start passes its own ctx, so a hook that honors it ends when
+  startup is canceled, as by a signal under `Run`. Add a
+  `context.Context` first parameter to every hook. Work that outlives
+  Start goes to `Worker.Go`.
 - An App's request contexts descend from the lifetime context. A
   `Shutdown` called on an App directly, without `Stop`, now cancels the
   requests still running.

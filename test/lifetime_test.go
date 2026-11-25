@@ -100,7 +100,7 @@ func TestLifetime_StableUntilShutdown(t *testing.T) {
 
 			return s
 		}),
-		gas.WithReadyFunc(func(c *gas.ServiceContainer) error {
+		gas.WithReadyFunc(func(_ context.Context, c *gas.ServiceContainer) error {
 			lp, err := c.Resolve[gas.LifetimeProvider]()
 
 			readyLP = lp
@@ -262,9 +262,11 @@ func startFailures() map[string]startFailure {
 		},
 		"ready hook error": {
 			cause: errLifetimeReady,
-			opts: []gas.Option{gas.WithReadyFunc(func(*gas.ServiceContainer) error {
-				return errLifetimeReady
-			})},
+			opts: []gas.Option{
+				gas.WithReadyFunc(func(context.Context, *gas.ServiceContainer) error {
+					return errLifetimeReady
+				}),
+			},
 		},
 	}
 }

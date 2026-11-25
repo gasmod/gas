@@ -235,9 +235,10 @@ func TestDoc_Errors(t *testing.T) {
 				Start(t.Context())
 		},
 		"gas: ready hook: cache cold": func() error {
-			return gas.NewWorker(gas.WithReadyFunc(func(*gas.ServiceContainer) error {
+			return gas.NewWorker(gas.WithReadyFunc(func(context.Context, *gas.ServiceContainer) error {
 				return errCacheCold
-			})).Start(t.Context())
+			})).
+				Start(t.Context())
 		},
 		`gas: handler GET /x (service "gas/router"): dependency *bytes.Buffer is not registered`: func() error {
 			app := quietApp()
@@ -486,7 +487,7 @@ func TestDoc_Errors(t *testing.T) {
 			w := startedWorker(t)
 
 			return panicErr(
-				func() { w.ReadyFunc(func(*gas.ServiceContainer) error { return nil }) },
+				func() { w.ReadyFunc(func(context.Context, *gas.ServiceContainer) error { return nil }) },
 			)
 		},
 		"gas: nil instance: gas.ConfigProvider": func() error {

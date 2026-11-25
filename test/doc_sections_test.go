@@ -105,7 +105,7 @@ func TestDoc_ReadyHooks(t *testing.T) {
 	w := gas.NewWorker(
 		gas.WithServiceInstance[gas.Logger](&gas.NopLogger{}),
 		gas.WithServiceInstance[gas.MigrationManager](m),
-		gas.WithReadyFunc(func(c *gas.ServiceContainer) error {
+		gas.WithReadyFunc(func(_ context.Context, c *gas.ServiceContainer) error {
 			got, err := c.Resolve[gas.MigrationManager]()
 			if err != nil {
 				return err
@@ -117,7 +117,7 @@ func TestDoc_ReadyHooks(t *testing.T) {
 
 			return errCacheCold
 		}),
-		gas.WithReadyFunc(func(*gas.ServiceContainer) error {
+		gas.WithReadyFunc(func(context.Context, *gas.ServiceContainer) error {
 			log = append(log, "hook 2")
 
 			return nil
