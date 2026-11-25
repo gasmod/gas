@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"reflect"
+	"runtime/debug"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -77,14 +78,17 @@ type Worker struct {
 	onServiceClose   func(s Service)
 	// onServiceRestarted runs once a restart's Init succeeds.
 	onServiceRestarted func(s Service)
+	stopTimeout        func() time.Duration // an App's shutdown timeout, in place of shutdownTimeout
 	startDone          chan struct{}
 	shutdownDone       chan struct{}
 	services           []*trackedService
 	readyFuncs         []func(*ServiceContainer) error
 	ops                sync.WaitGroup
+	tasks              sync.WaitGroup // the background tasks Go started
 	shutdownTimeout    time.Duration
 	mu                 sync.Mutex
 	loggerMu           sync.Mutex
+	tasksN             atomic.Int64 // the background tasks still running
 	opsN               atomic.Int32
 	state              lifecycle
 	readyRan           bool
@@ -137,6 +141,38 @@ func NewWorker(opts ...Option) *Worker {
 // it, in both cases before any service closes. It is the same value from
 // NewWorker on.
 func (w *Worker) Context() context.Context { return w.lifeCtx }
+
+// Go runs fn on a new goroutine with the lifetime context, as described
+// under Lifetime in the package documentation. Shutdown, and a Start that
+// fails, wait for fn to return before they close any service. It returns
+// ErrNotStarted before Start is called, and ErrShutDown once the lifetime
+// context has ended, without running fn. An error fn returns, unless it is
+// the lifetime context's own cancellation, is logged with name; so is a
+// panic in fn, which Go recovers.
+func (w *Worker) Go(name string, fn func(ctx context.Context) error) error {
+	w.mu.Lock()
+
+	switch {
+	case w.lifeCtx.Err() != nil:
+		w.mu.Unlock()
+
+		return ErrShutDown
+	case w.state == lifeIdle:
+		w.mu.Unlock()
+
+		return ErrNotStarted
+	}
+
+	// Under mu, which every end of the lifetime context holds, so no task
+	// is added once a wait for them may have begun.
+	w.tasks.Add(1)
+	w.tasksN.Add(1)
+	w.mu.Unlock()
+
+	go w.runTask(name, fn)
+
+	return nil
+}
 
 // EventBus returns the Worker's event bus.
 func (w *Worker) EventBus() *EventBus { return w.eventBus }
@@ -288,6 +324,11 @@ func (w *Worker) Shutdown(ctx context.Context) error {
 			errs,
 			fmt.Errorf("gas: shutdown: wait for SystemShuttingDown subscribers: %w", err),
 		)
+	}
+
+	err = w.waitTasks(ctx)
+	if err != nil {
+		errs = append(errs, fmt.Errorf("gas: shutdown: wait for background tasks: %w", err))
 	}
 
 	return errors.Join(append(errs, w.closeAll(ctx))...)
@@ -483,6 +524,103 @@ func (w *Worker) endLifetime(cause error) {
 	w.endLife(cause)
 }
 
+// runTask runs fn, a background task named name, with the lifetime
+// context, and logs its error or panic.
+func (w *Worker) runTask(name string, fn func(ctx context.Context) error) {
+	defer w.tasks.Done()
+	defer w.tasksN.Add(-1)
+
+	defer func() {
+		rec := recover()
+		if rec == nil {
+			return
+		}
+
+		w.getLogger().Error("background task panic").
+			Str("task", name).
+			Err("error", fmt.Errorf("%w in background task: %v", ErrPanic, rec)).
+			Str("stack", string(debug.Stack())).
+			Send()
+	}()
+
+	err := fn(w.lifeCtx)
+	if err == nil || (w.lifeCtx.Err() != nil && errors.Is(err, context.Canceled)) {
+		return
+	}
+
+	w.getLogger().Error("background task failed").Str("task", name).Err("error", err).Send()
+}
+
+// waitTasks waits for the background tasks Go started: until ctx ends,
+// or, when ctx has a deadline, until ShutdownGracePeriod before it, so the
+// closes that follow keep that long. When it gives up it logs how many
+// are still running and returns the error of the wait cut short.
+func (w *Worker) waitTasks(ctx context.Context) error {
+	if w.tasksN.Load() == 0 {
+		return nil
+	}
+
+	waitCtx := ctx
+
+	if deadline, ok := ctx.Deadline(); ok {
+		var cancel context.CancelFunc
+
+		waitCtx, cancel = context.WithDeadline(ctx, deadline.Add(-ShutdownGracePeriod))
+		defer cancel()
+	}
+
+	err := waitFor(waitCtx, w.tasks.Wait)
+	if err != nil {
+		w.getLogger().Warn("background tasks still running").Int64("tasks", w.tasksN.Load()).Send()
+
+		return err
+	}
+
+	return nil
+}
+
+// waitTasksWithin waits for the background tasks as waitTasks does, within
+// the shutdown timeout, for a Start that fails or a Shutdown that gave up
+// on it, whose ctx has no deadline. It returns the error of the wait cut
+// short, wrapped.
+func (w *Worker) waitTasksWithin(ctx context.Context) error {
+	if w.tasksN.Load() == 0 {
+		return nil
+	}
+
+	waitCtx, cancel := context.WithTimeout(ctx, w.currentShutdownTimeout())
+	defer cancel()
+
+	err := w.waitTasks(waitCtx)
+	if err != nil {
+		return fmt.Errorf("gas: start: wait for background tasks: %w", err)
+	}
+
+	return nil
+}
+
+// failStart ends the lifetime context with the error that failed Start,
+// and waits for the background tasks before Start closes its services.
+// ctx has no cancellation.
+func (w *Worker) failStart(ctx context.Context, cause error) error {
+	w.endLifetime(cause)
+
+	return w.waitTasksWithin(ctx)
+}
+
+// currentShutdownTimeout returns the shutdown timeout: an App's Config's,
+// or the Worker's own.
+func (w *Worker) currentShutdownTimeout() time.Duration {
+	if w.stopTimeout != nil {
+		return w.stopTimeout()
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	return w.shutdownTimeout
+}
+
 // finishStart records the result of Start and lets a waiting Shutdown go
 // on. When a Shutdown gave up waiting for Start, it closes what Start
 // initialized itself, with ctx.
@@ -509,7 +647,7 @@ func (w *Worker) finishStart(ctx context.Context, err error) {
 	if abandoned {
 		// The Shutdown that gave up has returned; the error has no one
 		// else to go to.
-		closeErr := w.closeActive(ctx, nil)
+		closeErr := errors.Join(w.waitTasksWithin(ctx), w.closeActive(ctx, nil))
 		if closeErr != nil {
 			w.getLogger().
 				Error("close after an abandoned shutdown failed").
@@ -525,7 +663,7 @@ func (w *Worker) finishStart(ctx context.Context, err error) {
 func (w *Worker) cleanupAfterPanic(ctx context.Context, rec any) error {
 	err := fmt.Errorf("%w in Start: %v", ErrPanic, rec)
 
-	w.endLifetime(err)
+	waitErr := w.failStart(ctx, err)
 
 	w.mu.Lock()
 
@@ -533,13 +671,13 @@ func (w *Worker) cleanupAfterPanic(ctx context.Context, rec any) error {
 	w.mu.Unlock()
 
 	if tracked {
-		return errors.Join(err, w.closeActive(ctx, nil))
+		return errors.Join(err, waitErr, w.closeActive(ctx, nil))
 	}
 
 	built := w.serviceContainer.initializedServices()
 	slices.Reverse(built)
 
-	return errors.Join(err, w.closeServices(ctx, built))
+	return errors.Join(err, waitErr, w.closeServices(ctx, built))
 }
 
 // beginShutdown moves the Worker to shut down and reports whether this
@@ -650,14 +788,14 @@ func (w *Worker) recordOptionError(err error) {
 func (w *Worker) start(ctx context.Context) error {
 	err := w.serviceContainer.BuildAll(ctx)
 	if err != nil {
-		w.endLifetime(err)
+		waitErr := w.failStart(context.WithoutCancel(ctx), err)
 
 		// Nothing is tracked yet, so close what the container had
 		// initialized before the failure.
 		built := w.serviceContainer.initializedServices()
 		slices.Reverse(built)
 
-		return errors.Join(err, w.closeServices(context.WithoutCancel(ctx), built))
+		return errors.Join(err, waitErr, w.closeServices(context.WithoutCancel(ctx), built))
 	}
 
 	w.mu.Lock()
@@ -669,9 +807,9 @@ func (w *Worker) start(ctx context.Context) error {
 	w.mu.Unlock()
 
 	cleanup := func(err error) error {
-		w.endLifetime(err)
+		waitErr := w.failStart(context.WithoutCancel(ctx), err)
 
-		return errors.Join(err, w.closeActive(context.WithoutCancel(ctx), nil))
+		return errors.Join(err, waitErr, w.closeActive(context.WithoutCancel(ctx), nil))
 	}
 
 	if w.afterBuild != nil {

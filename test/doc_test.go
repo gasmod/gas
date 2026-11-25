@@ -341,6 +341,20 @@ func TestDoc_Errors(t *testing.T) {
 
 			return w.Shutdown(expired(t))
 		},
+		"gas: shutdown: wait for background tasks: context deadline exceeded": func() error {
+			release := make(chan struct{})
+			defer close(release)
+
+			w := gas.NewWorker()
+			require.NoError(t, w.Start(t.Context()))
+			require.NoError(t, w.Go("stuck", func(context.Context) error {
+				<-release
+
+				return nil
+			}))
+
+			return w.Shutdown(expired(t))
+		},
 		"gas: shutdown: wait for the kill switch: context deadline exceeded": func() error {
 			release := make(chan struct{})
 			entered := make(chan struct{})

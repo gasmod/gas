@@ -47,10 +47,10 @@ type lifeProbe struct {
 
 var _ gas.Service = (*lifeProbe)(nil)
 
-// newLifeProbe returns a lifeProbe named name that records lp's context in
-// its Close.
-func newLifeProbe(name string, lp gas.LifetimeProvider) *lifeProbe {
-	return &lifeProbe{life: lp, name: name}
+// newLifeProbe returns a lifeProbe named "probe" that records lp's context
+// in its Close.
+func newLifeProbe(lp gas.LifetimeProvider) *lifeProbe {
+	return &lifeProbe{life: lp, name: "probe"}
 }
 
 // Name returns p.name.
@@ -135,9 +135,7 @@ func TestLifetime_EndsBeforeFirstClose(t *testing.T) {
 
 	w := gas.NewWorker(
 		gas.WithServiceInstance[gas.Logger](&gas.NopLogger{}),
-		gas.WithSingletonService[*lifeProbe](func(lp gas.LifetimeProvider) *lifeProbe {
-			return newLifeProbe("probe", lp)
-		}),
+		gas.WithSingletonService[*lifeProbe](newLifeProbe),
 	)
 	w.EventBus().Subscribe[gas.SystemShuttingDown](func(gas.SystemShuttingDownPayload) {
 		atEvent = seeLife(w)
@@ -285,7 +283,7 @@ func TestLifetime_StartFailures(t *testing.T) {
 			opts := append([]gas.Option{
 				gas.WithServiceInstance[gas.Logger](&gas.NopLogger{}),
 				gas.WithSingletonService[*lifeProbe](func(lp gas.LifetimeProvider) *lifeProbe {
-					probe = newLifeProbe("probe", lp)
+					probe = newLifeProbe(lp)
 
 					return probe
 				}),
@@ -355,7 +353,7 @@ func TestLifetime_AliveDuringDrain(t *testing.T) {
 
 	entered := hangRoute(app, func(gas.Context) { atCancel <- seeLife(app) })
 
-	probe := newLifeProbe("probe", app)
+	probe := newLifeProbe(app)
 	app.RegisterServiceInstance(probe)
 
 	url := serveApp(t, app)

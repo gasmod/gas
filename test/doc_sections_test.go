@@ -3,6 +3,7 @@ package gas_test
 import (
 	"context"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -210,4 +211,51 @@ func TestDoc_DrainContext(t *testing.T) {
 
 	require.NoError(t, app.Stop(t.Context()))
 	assert.Less(t, time.Since(began), cfg.Server.ShutdownTimeout/2)
+}
+
+// The example under Lifetime for Go: a handler starts a background task,
+// which runs until the lifetime context ends, and Stop waits for it
+// before it closes a service.
+func TestDoc_Go(t *testing.T) {
+	t.Parallel()
+
+	var rendered atomic.Bool
+
+	render := func(ctx context.Context) error {
+		<-ctx.Done()
+		time.Sleep(20 * time.Millisecond)
+		rendered.Store(true)
+
+		return ctx.Err()
+	}
+
+	var renderedAtClose atomic.Bool
+
+	app := quietApp(gas.WithServiceInstance(&fakeService{
+		name: "store",
+		closeFn: func(context.Context) error {
+			renderedAtClose.Store(rendered.Load())
+
+			return nil
+		},
+	}))
+
+	app.Router().Post(nil, "/reports", func(_ gas.Context, lp gas.LifetimeProvider) error {
+		return lp.Go("render report", func(ctx context.Context) error {
+			return render(ctx)
+		})
+	})
+
+	require.NoError(t, app.Start(t.Context()))
+
+	rr := serve(
+		app.Handler(),
+		http.MethodPost,
+		"/reports",
+		http.Header{"Sec-Fetch-Site": {"same-origin"}},
+	)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	require.NoError(t, app.Stop(t.Context()))
+	assert.True(t, renderedAtClose.Load())
 }

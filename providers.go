@@ -200,6 +200,10 @@ type LifetimeProvider interface {
 	// Shutdown begins, or when Start fails, before any service closes. It
 	// is the same value for the Worker's whole life.
 	Context() context.Context
+
+	// Go runs fn on a new goroutine with the lifetime context, and
+	// Shutdown waits for it before it closes any service.
+	Go(name string, fn func(ctx context.Context) error) error
 }
 
 // DrainProvider gives an App's drain context, as described under Lifetime

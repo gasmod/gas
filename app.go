@@ -209,6 +209,7 @@ func NewApp(opts ...Option) *App {
 	w.serviceContainer.RegisterServiceInstance[DrainProvider](a)
 
 	w.afterBuild = a.afterBuild
+	w.stopTimeout = func() time.Duration { return a.Config().Server.ShutdownTimeout }
 	w.onServiceClose = func(s Service) { a.router.RemoveByService(s) }
 	w.onServiceRestarted = func(s Service) { a.router.settleUse(s) }
 

@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`LifetimeProvider`**, under which `NewWorker` registers the Worker, so
   a constructor, a service or a DI-aware handler takes the lifetime
   context as a dependency.
+- **`Worker.Go(name, fn)`**, also on `LifetimeProvider`, runs a
+  background task with the lifetime context. `Shutdown` waits for every
+  task after the `SystemShuttingDown` subscribers and before the first
+  `Close`, until `ShutdownGracePeriod` before its deadline, and returns
+  `gas: shutdown: wait for background tasks: …` when it gives up; a
+  failed `Start` waits the same way within the shutdown timeout. A
+  task's error and panic are logged with its name.
 - **`App.DrainContext()`**, the drain context, and **`DrainProvider`**,
   under which `NewApp` registers the App. It ends when `Stop` begins to
   drain the server, just before `SystemServerShuttingDown`, or when the
