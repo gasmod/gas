@@ -15,7 +15,7 @@ require (
 require (
 	github.com/gabriel-vasile/mimetype v1.4.16 // indirect
 	github.com/gasmod/omap v0.2.1 // indirect
-	github.com/go-chi/chi/v5 v5.5.0 // indirect
+	github.com/go-chi/chi/v5 v5.5.1-0.20261018135022-9f8adb1aabaa // indirect
 	github.com/go-playground/locales v0.14.2 // indirect
 	github.com/go-playground/universal-translator v0.18.2 // indirect
 	github.com/gorilla/schema v1.4.1 // indirect

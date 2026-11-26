@@ -10,7 +10,7 @@ require (
 	github.com/gasmod/gas/database v0.11.1
 	github.com/gasmod/gas/migrate v0.11.1
 	github.com/go-playground/validator/v10 v10.30.6
-	github.com/go-sql-driver/mysql v1.10.1
+	github.com/go-sql-driver/mysql v1.10.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/lib/pq v1.12.3
@@ -42,7 +42,7 @@ require (
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.16 // indirect
 	github.com/gasmod/omap v0.2.1 // indirect
-	github.com/go-chi/chi/v5 v5.5.0 // indirect
+	github.com/go-chi/chi/v5 v5.5.1-0.20261018135022-9f8adb1aabaa // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect

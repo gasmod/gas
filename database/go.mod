@@ -8,7 +8,7 @@ require (
 	github.com/gasmod/gas v0.11.1
 	github.com/gasmod/gas/config v0.11.1
 	github.com/go-playground/validator/v10 v10.30.6
-	github.com/go-sql-driver/mysql v1.10.1
+	github.com/go-sql-driver/mysql v1.10.2
 	github.com/jackc/pgx/v5 v5.12.0
 	github.com/stretchr/testify v1.12.1
 	github.com/testcontainers/testcontainers-go v0.45.0
@@ -38,7 +38,7 @@ require (
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.16 // indirect
 	github.com/gasmod/omap v0.2.1 // indirect
-	github.com/go-chi/chi/v5 v5.5.0 // indirect
+	github.com/go-chi/chi/v5 v5.5.1-0.20261018135022-9f8adb1aabaa // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
