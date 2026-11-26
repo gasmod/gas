@@ -19,7 +19,7 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/mysql v0.45.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.45.0
 	go.yaml.in/yaml/v3 v3.0.6
-	modernc.org/sqlite v1.62.0
+	modernc.org/sqlite v1.63.0
 )
 
 require (
@@ -42,7 +42,7 @@ require (
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.16 // indirect
 	github.com/gasmod/omap v0.2.1 // indirect
-	github.com/go-chi/chi/v5 v5.5.0 // indirect
+	github.com/go-chi/chi/v5 v5.5.1-0.20261018135022-9f8adb1aabaa // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
